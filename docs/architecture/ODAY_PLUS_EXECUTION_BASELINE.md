@@ -2,7 +2,7 @@
 doc_id: ODP-R0-EXECUTION-BASELINE
 title: "ODay Plus Execution Baseline"
 version: 0.1.0
-status: draft-for-review
+status: approved
 document_class: execution-governance
 project: ODay Plus
 language: zh-TW
@@ -112,4 +112,4 @@ R0 Foundation covers governance artifacts, ADR baseline, release gate checklist,
 
 | Version | Date | Change Class | Summary | Author | Approver |
 |---|---|---|---|---|---|
-| 0.1.0 | 2026-06-26 | C1 | Initial engineering execution baseline derived from ODP governance, architecture, QA, and operations documents | Codex2 | Pending |
+| 0.1.0 | 2026-06-26 | C1 | Initial engineering execution baseline derived from ODP governance, architecture, QA, and operations documents | Codex2 | Claude |

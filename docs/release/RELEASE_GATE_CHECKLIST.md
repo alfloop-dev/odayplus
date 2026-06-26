@@ -2,7 +2,7 @@
 doc_id: ODP-R0-RELEASE-GATE-CHECKLIST
 title: "ODay Plus Release Gate Checklist"
 version: 0.1.0
-status: draft-for-review
+status: approved
 document_class: release-governance
 project: ODay Plus
 language: zh-TW
@@ -156,4 +156,4 @@ Allowed statuses: `not-started`, `passed`, `passed-with-deviation`, `failed`, `n
 
 | Version | Date | Change Class | Summary | Author | Approver |
 |---|---|---|---|---|---|
-| 0.1.0 | 2026-06-26 | C1 | Initial release gate checklist derived from ODP QA, SD, and OPS documents | Codex2 | Pending |
+| 0.1.0 | 2026-06-26 | C1 | Initial release gate checklist derived from ODP QA, SD, and OPS documents | Codex2 | Claude |

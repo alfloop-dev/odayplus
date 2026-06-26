@@ -2,7 +2,7 @@
 doc_id: ODP-R0-EXECUTION-RTM
 title: "ODay Plus Execution RTM"
 version: 0.1.0
-status: draft-for-review
+status: approved
 document_class: requirements-traceability
 project: ODay Plus
 language: zh-TW
@@ -90,4 +90,4 @@ Source / Commitment
 
 | Version | Date | Change Class | Summary | Author | Approver |
 |---|---|---|---|---|---|
-| 0.1.0 | 2026-06-26 | C1 | Initial execution RTM working artifact with foundation governance rows | Codex2 | Pending |
+| 0.1.0 | 2026-06-26 | C1 | Initial execution RTM working artifact with foundation governance rows | Codex2 | Claude |

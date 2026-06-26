@@ -2,11 +2,11 @@
 adr_id: ADR-0001
 title: "Platform Foundation Baseline"
 version: 0.1.1
-status: proposed
+status: accepted
 document_class: architecture-decision-record
 project: ODay Plus
 language: zh-TW
-decision_date: null
+decision_date: 2026-06-26
 updated_at: 2026-06-26
 owner: "Architecture Owner"
 approvers: "Technology Lead / Product Lead / QA Lead"
@@ -144,5 +144,5 @@ Rollback for foundation changes uses:
 
 | Version | Date | Change Class | Summary | Author | Approver |
 |---|---|---|---|---|---|
-| 0.1.1 | 2026-06-26 | C1 | Added formal ADR metadata and explicit Monorepo/Multirepo decision required by ODP-00-04 and ODP-SD-04 | Codex2 | Pending |
-| 0.1.0 | 2026-06-26 | C2 | Proposed initial platform foundation decision for R0 execution | Codex2 | Pending |
+| 0.1.1 | 2026-06-26 | C1 | Added formal ADR metadata and explicit Monorepo/Multirepo decision required by ODP-00-04 and ODP-SD-04 | Codex2 | Claude |
+| 0.1.0 | 2026-06-26 | C2 | Proposed initial platform foundation decision for R0 execution | Codex2 | Claude |
