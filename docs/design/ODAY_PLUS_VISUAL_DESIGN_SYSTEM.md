@@ -220,7 +220,11 @@ Confidence **不以單一顏色代表**，必須附原因（sample size、資料
 
 ### 6.5 Model stage 顏色
 
-模型相關狀態統一走 purple 家族（`color.model.production / candidate / shadow / canary / rollback`），與一般 status 色分離，避免「模型階段」被誤讀成「業務風險」。
+模型階段色與一般 status 色分離，避免「模型階段」被誤讀成「業務風險」，但並非全部走同一色相；實際值以 `ODAY_PLUS_DESIGN_TOKENS §3.5` 為準（§11.2 決定論解析），分三組：
+
+- **模型身分**走 purple 家族：`color.model.production`（purple.700）、`color.model.candidate`（purple.500）。
+- **漸進評估 / 放量**走 blue（資訊、進行中，與 §6.1 的 Blue＝Canary 一致）：`color.model.shadow`（blue.500）、`color.model.canary`（blue.700）。
+- **回滾**走 red：`color.model.rollback`（red.500）。此色相與 `color.status.red` 重疊但語意不同（模型回滾 vs 業務危急），依 §6.2 必須搭配文字／icon 區分，不得僅以紅色傳達。
 
 ---
 
