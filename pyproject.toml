@@ -25,6 +25,7 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = [".orchestrator", "scripts"]
+testpaths = [".orchestrator", "scripts", "tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+pythonpath = ["."]
