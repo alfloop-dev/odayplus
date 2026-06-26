@@ -1,0 +1,56 @@
+name: Promote dev to main
+
+# Ladder step: dev -> main.
+# When CI passes on dev, open (or reuse) an auto-merge PR from dev into main,
+# unless a blocking label (hold-promote / regression) is present.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [dev]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Open or reuse promote PR (dev -> main) and enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Nothing to promote if dev is not ahead of main.
+          ahead=$(git rev-list --count origin/main..origin/dev)
+          if [ "$ahead" = "0" ]; then
+            echo "dev is not ahead of main; nothing to promote."
+            exit 0
+          fi
+
+          pr=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            gh pr create --base main --head dev \
+              --title "Promote dev -> main" \
+              --body "Auto-promote: CI is green on dev ($ahead commit(s) ahead of main)." \
+              --label auto-promote
+            pr=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number')
+          fi
+
+          labels=$(gh pr view "$pr" --json labels --jq '[.labels[].name] | join(",")')
+          case ",$labels," in
+            *,hold-promote,*|*,regression,*)
+              echo "Promotion PR #$pr blocked by label(s): $labels"
+              exit 0
+              ;;
+          esac
+
+          # Auto-merge once main's required checks pass (no-op if already merging).
+          gh pr merge "$pr" --auto --merge || echo "Auto-merge not enabled on repo; PR #$pr left open for manual merge."
