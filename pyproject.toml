@@ -1,0 +1,30 @@
+[project]
+name = "odayplus"
+version = "0.1.0"
+description = "odayplus — multi-agent orchestration system (supervisor, GitHub bus, worker runtime) and supporting tooling."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+# This repo is run as a set of scripts/services, not built as a distributable
+# wheel, so no [build-system] is declared. Add one if you later package it.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = [".orchestrator", "scripts"]
+python_files = ["test_*.py"]
+addopts = "-q"

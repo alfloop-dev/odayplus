@@ -1,0 +1,68 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# uv
+# (uv.lock IS committed; only ignore the cache)
+.uv-cache/
+
+# --- Editors / OS ---
+.idea/
+*.swp
+*.swo
+.DS_Store
+# Keep shared VS Code settings, ignore per-user noise
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# --- Secrets / local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.orchestrator/config.json
+.orchestrator/config.local.json
+
+# --- Vendored large binaries (download separately, don't commit) ---
+.orchestrator/bin/cloudflared
+
+# --- Orchestrator runtime state & outputs (machine-local) ---
+.orchestrator/logs/
+.orchestrator/metrics/
+.orchestrator/backups/
+.orchestrator/evidence/
+.orchestrator/reviews/
+.orchestrator/worker-runtime/
+.orchestrator/state.json
+.orchestrator/*-state.json
+.orchestrator/*-queue.json
+.orchestrator/approval-queue.json
+.orchestrator/event-queue.jsonl
+.orchestrator/*.jsonl
+.orchestrator/provider_capabilities.json
