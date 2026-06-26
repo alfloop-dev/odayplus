@@ -1,11 +1,27 @@
 ---
 adr_id: ADR-0001
 title: "Platform Foundation Baseline"
+version: 0.1.1
 status: proposed
+document_class: architecture-decision-record
+project: ODay Plus
+language: zh-TW
 decision_date: null
+updated_at: 2026-06-26
+owner: "Architecture Owner"
+approvers: "Technology Lead / Product Lead / QA Lead"
 owners:
   - Architecture Owner
   - Technology Lead
+content_format: markdown
+source_documents:
+  - ODP-00-04_DOCUMENT_VERSION_AND_ADR_GOVERNANCE.md
+  - ODP-00-05_REQUIREMENTS_TRACEABILITY_MATRIX.md
+  - ODP-SD-01_SYSTEM_OVERALL_ARCHITECTURE.md
+  - ODP-SD-04_REPOSITORY_AND_CODE_MODULE_DESIGN.md
+  - ODP-SD-12_CICD_IAC_AND_ENVIRONMENT_DESIGN.md
+  - ODP-QA-01_TEST_MASTER_PLAN.md
+  - ODP-OPS-01_DEVELOPMENT_WBS_AND_RELEASE_PLAN.md
 related_requirements:
   - ODP-HLR-GOV-001
   - ODP-HLR-GOV-002
@@ -32,14 +48,16 @@ The source documents establish these constraints:
 - Prediction, recommendation, approval or decision, execution, and outcome must be separated and auditable.
 - High-risk functions require feature flags, manual approval, canary, rollback, or equivalent controls.
 - Release artifacts must be traceable to requirements, tests, evidence, and commit SHA.
+- `ODP-00-04` requires ADR coverage for Monorepo/Multirepo boundaries, and `ODP-SD-04` recommends Monorepo for the first phase while preserving future service or repository extraction paths.
 
 ## Decision Drivers
 
 1. Support full module coverage while keeping R0 implementation manageable.
 2. Preserve traceability across requirements, data, API, jobs, model versions, decision policies, tests, releases, and audit evidence.
 3. Avoid premature microservice fragmentation before ownership, cadence, and runtime boundaries are proven.
-4. Keep GCP as the production deployment baseline while allowing OSS components where they are supportable and governed.
-5. Make model, solver, and high-risk decision releases reversible.
+4. Avoid premature repository fragmentation while most modules share domain, auth, audit, job, workflow, OpenAPI, and data-contract surfaces.
+5. Keep GCP as the production deployment baseline while allowing OSS components where they are supportable and governed.
+6. Make model, solver, and high-risk decision releases reversible.
 
 ## Considered Alternatives
 
@@ -47,12 +65,15 @@ The source documents establish these constraints:
 |---|---|---|
 | Microservice-first platform | Split each module into a separately deployed service from the beginning | Adds coordination, deployment, data ownership, and observability cost before module boundaries are validated |
 | Monolith-only platform | Put web, API, jobs, data, model serving, and solver execution in one runtime | Makes long-running work, model release, job reliability, and scaling boundaries too rigid |
+| Multirepo-first platform | Split frontend, backend, data, models, solver, and modules into separate repositories from the beginning | Adds cross-repository versioning, contract synchronization, review, CI, and release overhead before independent ownership or cadence exists |
 | SaaS-heavy managed decision platform | Use managed low-code or packaged decisioning for core workflows | Risks lock-in and weak traceability for custom geospatial, causal, solver, and subsidy evidence requirements |
 | Data warehouse only implementation | Build mostly in BigQuery/dbt and reports | Cannot cover transactional approvals, workflows, job control, rollback, role-based operations, and audit logs |
 
 ## Decision
 
-Adopt a modular-monolith-first platform foundation with explicit deployable boundaries for web/BFF, core API, asynchronous workers, scheduled jobs, data transformation, model training/serving, and solver execution.
+Adopt a monorepo, modular-monolith-first platform foundation with explicit deployable boundaries for web/BFF, core API, asynchronous workers, scheduled jobs, data transformation, model training/serving, and solver execution.
+
+The repository decision is Monorepo for R0 and the first implementation phase. Frontend, API, workers, modules, shared packages, data pipelines, model code, solver code, infra, tests, and governance docs should start in one repository with package and module boundaries enforced by CI. A move to Multirepo is not part of this baseline; it requires a follow-up ADR when independent team ownership, security domains, deployment cadence, external delivery, regulatory isolation, or materially different lifecycle needs make repository extraction justified.
 
 The foundation baseline is:
 
@@ -71,6 +92,7 @@ The foundation baseline is:
 ## Positive Consequences
 
 - Teams can implement module behavior without committing to premature service splits.
+- Shared contracts, generated clients, schema checks, tests, and governance artifacts can evolve atomically in one review and release flow.
 - The architecture supports synchronous APIs, asynchronous jobs, events, data pipelines, model releases, and solver workflows from the start.
 - High-risk decisions remain auditable and controlled by policy, feature flags, approvals, and rollback.
 - RTM, release gate, and evidence artifacts can point to a stable foundation.
@@ -78,6 +100,8 @@ The foundation baseline is:
 ## Negative Consequences / Risks
 
 - A modular monolith needs strong package and ownership discipline to avoid hidden coupling.
+- A monorepo needs dependency, ownership, and CI discipline to prevent unrelated modules from coupling through shared internals.
+- Large changes may require stricter review scopes, generated artifact controls, and selective CI to keep feedback fast.
 - Some future module boundaries may require extraction and migration.
 - Cloud SQL, BigQuery, Cloud Storage, Pub/Sub, and model registry patterns must be wired carefully to avoid duplicate truth.
 - The foundation creates governance overhead that must be automated through CI where possible.
@@ -85,6 +109,8 @@ The foundation baseline is:
 ## Migration and Rollback
 
 The R0 foundation should start with repository structure, package boundaries, document checks, and local/dev execution. Production resources should be introduced through IaC after service boundaries and data contracts are stable enough for review.
+
+Repository migration from Monorepo to Multirepo is a future extraction path, not the default rollback path. Extraction requires a dedicated ADR, ownership assignment, compatibility window, release choreography, CI split plan, and contract publishing plan.
 
 Rollback for foundation changes uses:
 
@@ -109,6 +135,7 @@ Rollback for foundation changes uses:
 - `ODP-00-04_DOCUMENT_VERSION_AND_ADR_GOVERNANCE.md`
 - `ODP-00-05_REQUIREMENTS_TRACEABILITY_MATRIX.md`
 - `ODP-SD-01_SYSTEM_OVERALL_ARCHITECTURE.md`
+- `ODP-SD-04_REPOSITORY_AND_CODE_MODULE_DESIGN.md`
 - `ODP-SD-12_CICD_IAC_AND_ENVIRONMENT_DESIGN.md`
 - `ODP-QA-01_TEST_MASTER_PLAN.md`
 - `ODP-OPS-01_DEVELOPMENT_WBS_AND_RELEASE_PLAN.md`
@@ -117,4 +144,5 @@ Rollback for foundation changes uses:
 
 | Version | Date | Change Class | Summary | Author | Approver |
 |---|---|---|---|---|---|
+| 0.1.1 | 2026-06-26 | C1 | Added formal ADR metadata and explicit Monorepo/Multirepo decision required by ODP-00-04 and ODP-SD-04 | Codex2 | Pending |
 | 0.1.0 | 2026-06-26 | C2 | Proposed initial platform foundation decision for R0 execution | Codex2 | Pending |
