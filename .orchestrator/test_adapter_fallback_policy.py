@@ -213,7 +213,11 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             )
             fake_process = mock.Mock(pid=1234)
             with (
-                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch.dict(
+                    os.environ,
+                    {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config")},
+                    clear=False,
+                ),
                 mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
                 mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
                 mock.patch(
