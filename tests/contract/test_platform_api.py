@@ -8,15 +8,16 @@ from apps.api.oday_api.main import create_app
 def test_health_routes_publish_correlation_id() -> None:
     client = TestClient(create_app())
 
-    response = client.get("/platform/health", headers={"x-correlation-id": "corr-test-1"})
+    response = client.get("/health", headers={"x-correlation-id": "corr-test-1"})
 
     assert response.status_code == 200
     assert response.headers["x-correlation-id"] == "corr-test-1"
-    assert response.json() == {
-        "status": "ok",
-        "service": "oday-api",
-        "correlation_id": "corr-test-1",
-    }
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "oday-api"
+    assert body["version"] == "0.1.0"
+    assert body["correlation_id"] == "corr-test-1"
+    assert "time" in body
 
 
 def test_job_enqueue_is_idempotent_and_audited() -> None:
@@ -33,6 +34,10 @@ def test_job_enqueue_is_idempotent_and_audited() -> None:
     second_body = second.json()
     assert first_body["created"] is True
     assert second_body["created"] is False
+    assert first_body["job_id"] == first_body["job"]["job_id"]
+    assert first_body["status"] == "queued"
+    assert first_body["correlation_id"] == "corr-job-1"
+    assert first_body["idempotency_key"] == "idem-1"
     assert first_body["job"]["job_id"] == second_body["job"]["job_id"]
     assert first_body["job"]["status"] == "queued"
     assert first_body["job"]["correlation_id"] == "corr-job-1"
@@ -43,6 +48,7 @@ def test_job_enqueue_is_idempotent_and_audited() -> None:
     assert audit.status_code == 200
     events = audit.json()["events"]
     assert [event["outcome"] for event in events] == ["accepted", "idempotent_replay"]
+    assert [event["result"] for event in events] == ["accepted", "idempotent_replay"]
     assert {event["job_id"] for event in events} == {first_body["job"]["job_id"]}
 
 
@@ -59,6 +65,7 @@ def test_job_lookup_and_openapi_contract() -> None:
     assert lookup.json()["job_id"] == job_id
     assert openapi.status_code == 200
     paths = openapi.json()["paths"]
+    assert "/health" in paths
     assert "/healthz" in paths
     assert "/platform/health" in paths
     assert "/jobs" in paths

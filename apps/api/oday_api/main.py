@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 
+API_VERSION = "0.1.0"
+
 
 def health_payload() -> dict[str, str]:
     return {"status": "ok", "service": "oday-api"}
+
+
+def health_detail_payload(*, correlation_id: str) -> dict[str, str]:
+    return {
+        **health_payload(),
+        "version": API_VERSION,
+        "time": datetime.now(UTC).isoformat(),
+        "correlation_id": correlation_id,
+    }
 
 
 try:
@@ -30,7 +42,7 @@ else:
     ) -> FastAPI:
         audit_log = audit_log or InMemoryAuditLog()
         job_queue = job_queue or InMemoryJobQueue()
-        api = FastAPI(title="ODay Plus API", version="0.1.0")
+        api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
@@ -44,12 +56,13 @@ else:
         def healthz() -> dict[str, str]:
             return health_payload()
 
+        @api.get("/health", tags=["platform"])
+        def health(request: Request) -> dict[str, str]:
+            return health_detail_payload(correlation_id=request.state.correlation_id)
+
         @api.get("/platform/health", tags=["platform"])
         def platform_health(request: Request) -> dict[str, str]:
-            return {
-                **health_payload(),
-                "correlation_id": request.state.correlation_id,
-            }
+            return health_detail_payload(correlation_id=request.state.correlation_id)
 
         @api.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
@@ -79,6 +92,10 @@ else:
                 )
             )
             return {
+                "job_id": job.job_id,
+                "status": job.status.value,
+                "correlation_id": job.correlation_id,
+                "idempotency_key": job.idempotency_key,
                 "job": job.to_dict(),
                 "created": created,
                 "audit_event_id": audit_event.event_id,

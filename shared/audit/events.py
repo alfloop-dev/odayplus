@@ -26,6 +26,7 @@ class AuditEvent:
             "actor": self.actor,
             "action": self.action,
             "resource": self.resource,
+            "result": self.outcome,
             "outcome": self.outcome,
             "correlation_id": self.correlation_id,
             "job_id": self.job_id,
