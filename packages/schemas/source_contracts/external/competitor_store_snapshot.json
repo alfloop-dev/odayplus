@@ -1,0 +1,26 @@
+{
+  "contract_id": "competitor_store_snapshot",
+  "title": "Competitor Store Snapshot",
+  "kind": "external",
+  "doc_ref": "ODP-DATA-03 §6 (CONN-GEO-COMPETITOR), §9.2; ODP-DATA-05 §6.2",
+  "source_system": "SRC-EXT-COMPETITOR",
+  "source_dataset": "competitor_store_snapshot",
+  "canonical_target": "competitor_store",
+  "mapping_id": "MAP-EXT-COMPETITOR-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "acquisition_method": "manual",
+  "fields": [
+    {"name": "source_competitor_id", "type": "string", "required": true, "description": "Source competitor id."},
+    {"name": "brand_name", "type": "string", "required": false, "description": "Competitor brand."},
+    {"name": "store_name", "type": "string", "required": true, "description": "Competitor store name."},
+    {"name": "address_raw", "type": "string", "required": false, "description": "Raw address."},
+    {"name": "latitude", "type": "number", "required": false, "minimum": -90, "description": "Latitude."},
+    {"name": "longitude", "type": "number", "required": false, "minimum": -180, "description": "Longitude."},
+    {"name": "estimated_capacity", "type": "number", "required": false, "minimum": 0, "description": "Capacity proxy (non-authoritative)."},
+    {"name": "status", "type": "string", "required": true, "enum": ["active", "closed", "unknown"], "description": "Competitor status."},
+    {"name": "confidence", "type": "number", "required": false, "minimum": 0, "description": "Fusion confidence (0-1)."},
+    {"name": "last_verified_at", "type": "timestamp", "required": false, "description": "Last verification time."},
+    {"name": "snapshot_id", "type": "string", "required": true, "description": "Source snapshot id for reproducibility."}
+  ]
+}

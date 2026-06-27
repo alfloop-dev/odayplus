@@ -1,0 +1,28 @@
+{
+  "contract_id": "maintenance_work_order_event",
+  "title": "Maintenance Work Order Event",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.8; ODP-DATA-05 §5.7",
+  "source_system": "ops",
+  "source_dataset": "maintenance_work_order_event",
+  "canonical_target": "work_order",
+  "mapping_id": "MAP-INT-WORKORDER-v1",
+  "integration_mode": "incremental_batch",
+  "envelope": "batch",
+  "invariants": [
+    {"rule": "time_order", "earlier": "opened_at", "later": "closed_at", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "source_work_order_id", "type": "string", "required": true, "description": "Work order id."},
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Store id."},
+    {"name": "source_machine_id", "type": "string", "required": false, "description": "Machine id."},
+    {"name": "issue_type", "type": "string", "required": true, "enum": ["failure", "cleaning", "inspection", "complaint"], "description": "Issue type."},
+    {"name": "issue_subtype", "type": "string", "required": false, "description": "Issue subtype."},
+    {"name": "opened_at", "type": "timestamp", "required": true, "description": "Open time."},
+    {"name": "closed_at", "type": "timestamp", "required": false, "description": "Close time."},
+    {"name": "status", "type": "string", "required": true, "enum": ["open", "in_progress", "resolved", "cancelled"], "description": "Work order status."},
+    {"name": "severity", "type": "string", "required": false, "enum": ["low", "medium", "high", "critical"], "description": "Severity."},
+    {"name": "cost_amount", "type": "number", "required": false, "minimum": 0, "invalid_code": "invalid_amount", "description": "Repair cost."},
+    {"name": "root_cause", "type": "string", "required": false, "description": "Root cause."}
+  ]
+}

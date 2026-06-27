@@ -1,0 +1,28 @@
+{
+  "contract_id": "store_master_snapshot",
+  "title": "Store Master Snapshot",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.1; ODP-DATA-05 §5.1",
+  "source_system": "store_master",
+  "source_dataset": "store_master_snapshot",
+  "canonical_target": "store",
+  "mapping_id": "MAP-INT-STORE-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "fields": [
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Upstream store id."},
+    {"name": "brand_code", "type": "string", "required": true, "description": "Brand code."},
+    {"name": "store_name", "type": "string", "required": true, "description": "Store name."},
+    {"name": "store_status", "type": "string", "required": true, "enum": ["planned", "open", "suspended", "closed", "transferred"], "description": "Store lifecycle status."},
+    {"name": "open_date", "type": "date", "required": false, "description": "Opening date."},
+    {"name": "close_date", "type": "date", "required": false, "description": "Close date."},
+    {"name": "address_raw", "type": "string", "required": true, "description": "Raw address; open stores must have a resolvable address."},
+    {"name": "latitude", "type": "number", "required": false, "minimum": -90, "description": "Source latitude."},
+    {"name": "longitude", "type": "number", "required": false, "minimum": -180, "description": "Source longitude."},
+    {"name": "store_format", "type": "string", "required": false, "description": "Format code e.g. ODay G2."},
+    {"name": "owned_flag", "type": "boolean", "required": false, "description": "Owned vs franchise."},
+    {"name": "region_code", "type": "string", "required": false, "description": "Region / supervision area."},
+    {"name": "effective_from", "type": "timestamp", "required": true, "description": "SCD2 effective-from."},
+    {"name": "effective_to", "type": "timestamp", "required": false, "description": "SCD2 effective-to."}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "contract_id": "price_schedule_snapshot",
+  "title": "Price Schedule Snapshot",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.6; ODP-DATA-05 §5.6",
+  "source_system": "pricing",
+  "source_dataset": "price_schedule_snapshot",
+  "canonical_target": "price_schedule",
+  "mapping_id": "MAP-INT-PRICE-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "fields": [
+    {"name": "source_price_id", "type": "string", "required": true, "description": "Source price schedule id."},
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Store id."},
+    {"name": "machine_family", "type": "string", "required": true, "enum": ["washer", "dryer", "combo", "payment_terminal", "other"], "description": "Equipment type."},
+    {"name": "capacity_band", "type": "string", "required": false, "enum": ["small", "medium", "large", "xlarge"], "description": "Capacity band."},
+    {"name": "time_band", "type": "string", "required": false, "description": "Time band e.g. off_peak/peak/weekend."},
+    {"name": "price_amount", "type": "number", "required": true, "minimum": 0, "invalid_code": "invalid_amount", "description": "Price amount."},
+    {"name": "currency", "type": "string", "required": true, "description": "Currency code."},
+    {"name": "effective_from", "type": "timestamp", "required": true, "description": "Effective-from time."},
+    {"name": "effective_to", "type": "timestamp", "required": false, "description": "Effective-to time."},
+    {"name": "approved_by", "type": "string", "required": false, "description": "Approver."}
+  ]
+}
