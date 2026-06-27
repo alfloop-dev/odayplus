@@ -1,0 +1,24 @@
+{
+  "contract_id": "price_schedule_snapshot",
+  "records": [
+    {
+      "source_price_id": "PR-0001",
+      "source_store_id": "S001",
+      "machine_family": "washer",
+      "capacity_band": "medium",
+      "time_band": "peak",
+      "price_amount": 70.0,
+      "currency": "TWD",
+      "effective_from": "2026-04-01T00:00:00+08:00",
+      "approved_by": "ops-manager-01"
+    },
+    {
+      "source_price_id": "PR-0002",
+      "source_store_id": "S001",
+      "machine_family": "dryer",
+      "price_amount": 50.0,
+      "currency": "TWD",
+      "effective_from": "2026-04-01T00:00:00+08:00"
+    }
+  ]
+}

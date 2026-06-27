@@ -1,0 +1,35 @@
+{
+  "contract_id": "machine_status_event",
+  "cases": [
+    {
+      "label": "missing required status_type",
+      "record": {
+        "source_status_event_id": "evt_err_1",
+        "source_machine_id": "M-ABC123",
+        "status_event_time": "2026-06-26T08:15:00+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped status_type and severity enums",
+      "record": {
+        "source_status_event_id": "evt_err_2",
+        "source_machine_id": "M-ABC123",
+        "status_event_time": "2026-06-26T08:15:00+08:00",
+        "status_type": "blinking",
+        "severity": "fatal"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "unparseable status_event_time",
+      "record": {
+        "source_status_event_id": "evt_err_3",
+        "source_machine_id": "M-ABC123",
+        "status_event_time": "26/06/2026 08:15",
+        "status_type": "error"
+      },
+      "expect_codes": ["invalid_time"]
+    }
+  ]
+}

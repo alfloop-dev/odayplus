@@ -1,0 +1,24 @@
+{
+  "contract_id": "competitor_store_snapshot",
+  "records": [
+    {
+      "source_competitor_id": "CMP-001",
+      "brand_name": "潔衣家",
+      "store_name": "潔衣家信義店",
+      "address_raw": "台北市信義區松仁路50號",
+      "latitude": 25.035,
+      "longitude": 121.567,
+      "estimated_capacity": 12.0,
+      "status": "active",
+      "confidence": 0.7,
+      "last_verified_at": "2026-06-20T00:00:00+08:00",
+      "snapshot_id": "cmp-2026-06-01"
+    },
+    {
+      "source_competitor_id": "CMP-002",
+      "store_name": "自助洗衣坊",
+      "status": "unknown",
+      "snapshot_id": "cmp-2026-06-01"
+    }
+  ]
+}

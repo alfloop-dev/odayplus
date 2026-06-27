@@ -1,0 +1,36 @@
+{
+  "contract_id": "listing_raw_snapshot",
+  "cases": [
+    {
+      "label": "missing required address_raw and snapshot_id",
+      "record": {
+        "source_listing_id": "LST-901",
+        "rent_amount": 45000.0,
+        "listing_status": "active"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "negative rent_amount",
+      "record": {
+        "source_listing_id": "LST-902",
+        "address_raw": "台北市中山區南京東路三段1號",
+        "rent_amount": -1000.0,
+        "listing_status": "active",
+        "snapshot_id": "listing-2026-06-26"
+      },
+      "expect_codes": ["invalid_amount"]
+    },
+    {
+      "label": "unmapped listing_status enum",
+      "record": {
+        "source_listing_id": "LST-903",
+        "address_raw": "台北市中山區南京東路三段1號",
+        "rent_amount": 30000.0,
+        "listing_status": "pending",
+        "snapshot_id": "listing-2026-06-26"
+      },
+      "expect_codes": ["enum_violation"]
+    }
+  ]
+}

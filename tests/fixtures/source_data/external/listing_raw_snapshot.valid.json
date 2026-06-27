@@ -1,0 +1,24 @@
+{
+  "contract_id": "listing_raw_snapshot",
+  "records": [
+    {
+      "source_listing_id": "LST-001",
+      "address_raw": "台北市大安區復興南路二段100號1樓",
+      "rent_amount": 45000.0,
+      "currency": "TWD",
+      "area_ping": 25.5,
+      "floor": "1F",
+      "available_from": "2026-07-01",
+      "listing_status": "active",
+      "confidence": 0.8,
+      "snapshot_id": "listing-2026-06-26"
+    },
+    {
+      "source_listing_id": "LST-002",
+      "address_raw": "新北市板橋區中山路一段50號",
+      "rent_amount": 38000.0,
+      "listing_status": "stale",
+      "snapshot_id": "listing-2026-06-26"
+    }
+  ]
+}

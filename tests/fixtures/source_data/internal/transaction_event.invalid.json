@@ -1,0 +1,56 @@
+{
+  "contract_id": "transaction_event",
+  "cases": [
+    {
+      "label": "missing required gross_amount and status",
+      "record": {
+        "source_transaction_id": "TX90001",
+        "source_store_id": "S001",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "net_amount": 130.0,
+        "currency": "TWD"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "negative gross_amount",
+      "record": {
+        "source_transaction_id": "TX90002",
+        "source_store_id": "S001",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "gross_amount": -150.0,
+        "net_amount": -150.0,
+        "currency": "TWD",
+        "transaction_status": "succeeded"
+      },
+      "expect_codes": ["invalid_amount"]
+    },
+    {
+      "label": "unmapped transaction_status enum",
+      "record": {
+        "source_transaction_id": "TX90003",
+        "source_store_id": "S001",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "gross_amount": 150.0,
+        "net_amount": 150.0,
+        "currency": "TWD",
+        "transaction_status": "pending"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "payment_time earlier than event_time",
+      "record": {
+        "source_transaction_id": "TX90004",
+        "source_store_id": "S001",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "payment_time": "2026-06-26T08:00:00+08:00",
+        "gross_amount": 150.0,
+        "net_amount": 150.0,
+        "currency": "TWD",
+        "transaction_status": "succeeded"
+      },
+      "expect_codes": ["invalid_time"]
+    }
+  ]
+}
