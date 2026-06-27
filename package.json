@@ -10,7 +10,12 @@
   "scripts": {
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "tokens:build": "npm run build:css --workspace=@oday-plus/design-tokens",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.48.2"
   },
   "engines": {
     "node": ">=20"
