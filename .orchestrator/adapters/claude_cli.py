@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-import json
 import os
 
-from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.claude_code import ClaudeCodeAdapter
 from common import (
     agent_config_for,
     apply_claude_oauth_token_file,
-    claude_auth_ready as shared_claude_auth_ready,
+    command_exists,
     config_path,
     delivery_runtime_env,
     delivery_workspace_root,
-    preserve_github_cli_auth_env,
     new_runtime_id,
+    preserve_github_cli_auth_env,
     runtime_log_path,
     shell_quote,
     spawn_background_process,
-    command_exists,
-    run_command,
     worker_runtime_paths,
 )
+from common import (
+    claude_auth_ready as shared_claude_auth_ready,
+)
+
+from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
+from adapters.claude_code import ClaudeCodeAdapter
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:

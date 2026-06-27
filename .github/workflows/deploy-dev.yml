@@ -1,0 +1,28 @@
+name: Deploy Dev
+
+# Ladder step: dev branch -> dev environment.
+# Auto-deploys on every push to dev (after the CI workflow gates merges into dev).
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ vars.ODP_DEV_DEPLOY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO(infra): wire the real dev deployment here.
+      # The dev environment / ODP_DEV_DEPLOY_URL target does not exist yet,
+      # so this is a placeholder that documents the ladder rule.
+      - name: Deploy to dev environment
+        run: |
+          echo "Deploying commit ${GITHUB_SHA} (branch dev) to the DEV environment."
+          echo "TODO: replace with real deploy to ${{ vars.ODP_DEV_DEPLOY_URL }}"

@@ -7,8 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 from common import load_jsonl
 from coordination_file_watcher import sync_coordination_files
+
+# These exercise cross-repo coordination against sidecar checkouts
+# (../front-ai-trading-system etc.) that do not exist in a clean CI runner.
+pytestmark = pytest.mark.requires_live_env
 
 
 class CoordinationWatcherTests(unittest.TestCase):

@@ -5,8 +5,7 @@ import argparse
 import fcntl
 import json
 import os
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +17,7 @@ def parse_utc_timestamp(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -108,7 +107,7 @@ def evaluate_runtime_health(
     require_watchdog: bool = False,
     max_watchdog_age: float = 180.0,
 ) -> dict[str, Any]:
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now = (now or datetime.now(UTC)).astimezone(UTC)
     config_path_resolved = config_path_arg or (repo_root / ".orchestrator" / "config.json")
     config = load_json(config_path_resolved, default={})
     if not isinstance(config, dict):
@@ -234,8 +233,7 @@ def main() -> int:
         status = "healthy" if report["healthy"] else "unhealthy"
         supervisor = report["supervisor"]
         print(
-            "supervisor_runtime_health=%s pid=%s alive=%s heartbeat_age=%s lifecycle=%s"
-            % (
+            "supervisor_runtime_health={} pid={} alive={} heartbeat_age={} lifecycle={}".format(
                 status,
                 supervisor.get("pid"),
                 supervisor.get("alive"),

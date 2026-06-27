@@ -1,0 +1,28 @@
+name: Deploy Staging
+
+# Ladder step: main branch -> staging environment.
+# Auto-deploys on every push to main (main is reached via the dev -> main promote PR).
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.ODP_STAGING_DEPLOY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO(infra): wire the real staging deployment here.
+      # The staging environment / ODP_STAGING_DEPLOY_URL target does not exist yet,
+      # so this is a placeholder that documents the ladder rule.
+      - name: Deploy to staging environment
+        run: |
+          echo "Deploying commit ${GITHUB_SHA} (branch main) to the STAGING environment."
+          echo "TODO: replace with real deploy to ${{ vars.ODP_STAGING_DEPLOY_URL }}"

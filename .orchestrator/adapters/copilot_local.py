@@ -4,8 +4,6 @@ import json
 import os
 from pathlib import Path
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     command_exists,
     delivery_runtime_env,
@@ -17,6 +15,9 @@ from common import (
     spawn_background_process,
     worker_runtime_paths,
 )
+
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
+from adapters.file_inbox import FileInboxAdapter
 
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"

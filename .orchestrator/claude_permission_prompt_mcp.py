@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +14,8 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import create_approval, wait_for_decision
-from common import load_config, utc_now, write_activity_log
+from common import load_config, write_activity_log
 from permission_broker import evaluate_tool_request
-
 
 SERVER_NAME = "orchestrator_approval_broker"
 TOOL_NAME = "approval_prompt"
@@ -51,7 +50,7 @@ def read_message() -> dict[str, Any] | None:
 
 def write_message(payload: dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode()
     sys.stdout.buffer.write(header)
     sys.stdout.buffer.write(body)
     sys.stdout.buffer.flush()
@@ -101,7 +100,7 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
         .get("approval_wait_seconds", 3600)
     )
     expires_at = (
-        datetime.now(timezone.utc) + timedelta(seconds=timeout)
+        datetime.now(UTC) + timedelta(seconds=timeout)
     ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if decision["decision"] == "allow":
         write_activity_log(

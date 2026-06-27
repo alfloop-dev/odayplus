@@ -25,7 +25,6 @@ from multi_repo_registry import (
     iter_local_repositories,
     matching_repo_id,
     repository_slug,
-    resolve_repository,
     worker_route,
 )
 from runtime_state import enqueue_event

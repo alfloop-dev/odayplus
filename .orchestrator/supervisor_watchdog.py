@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +16,15 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import append_jsonl, config_path, load_config, load_json, utc_now, write_activity_log, write_json
-
+from common import (
+    append_jsonl,
+    config_path,
+    load_config,
+    load_json,
+    utc_now,
+    write_activity_log,
+    write_json,
+)
 
 ACTIVE_WORKER_STATUSES = {
     "running",
@@ -38,11 +45,11 @@ def parse_utc_timestamp(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def isoformat_utc(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def resolve_repo_path(value: str | Path | None, default: str) -> Path:
@@ -392,7 +399,7 @@ def summarize_decision(
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
     settings = watchdog_settings(config)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     runtime_state, state_error = load_runtime_state_file(config)
     watchdog_state = load_watchdog_state(config, settings)
     attempts = trim_restart_attempts(watchdog_state.setdefault("restart_attempts", []), now)
@@ -407,7 +414,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
     health = evaluate_supervisor_health(runtime_state, pid, alive, now, settings)
     resource = resource_snapshot(config, runtime_state, settings)
     pressure_reasons = resource_pressure_reasons(resource, settings, state_error)
-    restart_counts = restart_attempt_counts(attempts, now, settings)
+    restart_attempt_counts(attempts, now, settings)
     decision = "observe_only"
     reason = str(health.get("reason") or "healthy")
     new_pid: int | None = None
