@@ -104,6 +104,39 @@ def test_heatzone_state_rules_cover_absorbed_under_realized_and_expandable() -> 
     assert by_h3["h3r9_expand"].state == HeatZoneState.STILL_EXPANDABLE
 
 
+def test_heatzone_mapping_coercion_preserves_explicit_zero_quality_values() -> None:
+    scores = score_heatzones(
+        [
+            {
+                "h3_index": "h3r9_zero_quality",
+                "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+                "poi_count": 20,
+                "active_listing_count": 8,
+                "average_confidence": 0,
+                "data_quality_score": 0,
+                "source_snapshot_ids": ["geo"],
+            },
+            {
+                "h3_index": "h3r9_zero_data_quality_alias",
+                "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+                "poi_count": 20,
+                "active_listing_count": 8,
+                "average_confidence": 0.8,
+                "data_quality": 0,
+                "source_snapshot_ids": ["geo"],
+            }
+        ],
+        prediction_origin_time=PREDICTION_TIME,
+    )
+
+    by_h3 = {score.h3_index: score for score in scores}
+    assert by_h3["h3r9_zero_quality"].confidence == 0
+    assert by_h3["h3r9_zero_quality"].state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert by_h3["h3r9_zero_quality"].warnings == ("low_confidence",)
+    assert by_h3["h3r9_zero_data_quality_alias"].confidence == 0
+    assert by_h3["h3r9_zero_data_quality_alias"].state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+
+
 def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target() -> None:
     client = TestClient(create_app())
     payload = {

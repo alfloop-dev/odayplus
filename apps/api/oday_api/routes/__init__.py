@@ -1,2 +1,1 @@
 """ODay API route modules."""
-

@@ -71,7 +71,7 @@ class HeatZoneFeatureInput:
             active_listing_count=snapshot.active_listing_count,
             median_listing_rent=snapshot.median_listing_rent,
             competitor_capacity=snapshot.competitor_capacity,
-            average_confidence=snapshot.average_confidence or 1.0,
+            average_confidence=_value_or_default(snapshot.average_confidence, 1.0),
             source_snapshot_ids=snapshot.source_snapshot_ids,
             existing_store_count=existing_store_count,
             realized_revenue_ratio=realized_revenue_ratio,
@@ -88,24 +88,31 @@ class HeatZoneFeatureInput:
                 data.get("feature_snapshot_time") or datetime.now(UTC)
             ),
             view_version=str(data.get("view_version") or HEATZONE_FEATURE_VERSION),
-            poi_count=int(data.get("poi_count") or data.get("poi_total_count") or 0),
-            competitor_count=int(data.get("competitor_count") or data.get("competitor_count_500m") or 0),
+            poi_count=int(_first_present(data, "poi_count", "poi_total_count", default=0)),
+            competitor_count=int(
+                _first_present(data, "competitor_count", "competitor_count_500m", default=0)
+            ),
             active_listing_count=int(
-                data.get("active_listing_count") or data.get("listing_count_active") or 0
+                _first_present(data, "active_listing_count", "listing_count_active", default=0)
             ),
             median_listing_rent=float(
-                data.get("median_listing_rent") or data.get("rent_p50_per_ping") or 0.0
+                _first_present(data, "median_listing_rent", "rent_p50_per_ping", default=0.0)
             ),
             competitor_capacity=float(
-                data.get("competitor_capacity") or data.get("competitor_capacity_proxy_500m") or 0.0
+                _first_present(
+                    data,
+                    "competitor_capacity",
+                    "competitor_capacity_proxy_500m",
+                    default=0.0,
+                )
             ),
             average_confidence=_bounded(
-                data.get("average_confidence") or data.get("confidence") or 1.0
+                _first_present(data, "average_confidence", "confidence", default=1.0)
             ),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
-            existing_store_count=int(data.get("existing_store_count") or 0),
+            existing_store_count=int(_value_or_default(data.get("existing_store_count"), 0)),
             realized_revenue_ratio=_optional_float(data.get("realized_revenue_ratio")),
-            data_quality_score=_bounded(data.get("data_quality_score") or 1.0),
+            data_quality_score=_bounded(_data_quality_score(data)),
             admin_city=str(data.get("admin_city") or ""),
             admin_district=str(data.get("admin_district") or ""),
         )
@@ -352,6 +359,30 @@ def _bounded(value: Any) -> float:
     except (TypeError, ValueError):
         number = 0.0
     return max(0.0, min(1.0, number))
+
+
+def _first_present(data: Mapping[str, Any], *keys: str, default: Any) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+def _value_or_default(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    return value
+
+
+def _data_quality_score(data: Mapping[str, Any]) -> Any:
+    score = data.get("data_quality_score")
+    if score is not None:
+        return score
+    data_quality = data.get("data_quality")
+    if isinstance(data_quality, int | float | str):
+        return data_quality
+    return 1.0
 
 
 def _optional_float(value: Any) -> float | None:

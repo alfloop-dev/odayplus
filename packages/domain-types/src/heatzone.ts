@@ -93,4 +93,3 @@ export type HeatZoneScoreJobResponse = {
   audit_event_id?: string;
   correlation_id?: string;
 };
-

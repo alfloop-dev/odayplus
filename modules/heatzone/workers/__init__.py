@@ -11,4 +11,3 @@ __all__ = [
     "HeatZoneScoringWorker",
     "run_heatzone_batch_score",
 ]
-
