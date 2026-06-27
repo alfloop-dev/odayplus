@@ -1,42 +1,89 @@
-# odayplus
+# ODay Plus
 
-Multi-agent orchestration system and supporting tooling.
+ODay Plus is a monorepo for the full platform described by the ODP source
+documents. The initial repository shape follows `ODP-SD-04` section 3 and the
+R0 foundation scope in `ODP-OPS-01`.
 
-## Components
+## Repository Layout
 
-- **`.orchestrator/`** — core orchestration runtime: supervisor, GitHub event bus,
-  permission broker, dispatch policy, worker runtime, and their tests.
-- **`scripts/`** — operational scripts (status reporting, supervisor watchdog,
-  runtime health checks).
-
-## Requirements
-
-- Python >= 3.12
-- [uv](https://docs.astral.sh/uv/) for environment and dependency management
-
-## Setup
-
-```bash
-# Create the virtual environment and install dev dependencies
-uv sync
-
-# Copy the example config to a local working config (gitignored)
-cp .orchestrator/config.example.json .orchestrator/config.json
+```text
+apps/
+  api/          FastAPI core API and BFF entrypoint
+  web/          OpsBoard web shell
+  worker/       Event consumers and async workers
+  scheduler/    Scheduled triggers and orchestration entrypoints
+  cli/          Admin and migration utilities
+modules/        Domain modules with domain/application/infrastructure/api/workers layers
+shared/         Cross-cutting Python primitives, auth, audit, jobs, workflow, observability
+packages/       TypeScript packages for generated clients, schemas, UI, and testkit
+pipelines/      dbt, orchestration, and data quality assets
+models/         Model code, validation, and model-card generation surfaces
+solver/         Optimization models for pricing and network planning
+infra/          Terraform, Docker, optional Kubernetes, and Cloud Build assets
+tests/          Cross-module contract, integration, e2e, performance, and security tests
 ```
 
-## Running tests
+The domain modules currently scaffolded under `modules/` are:
+
+- `integration`
+- `external_data`
+- `heatzone`
+- `listing`
+- `sitescore`
+- `forecastops`
+- `intervention`
+- `priceops`
+- `adlift`
+- `avm`
+- `netplan`
+- `learninghub`
+- `opsboard`
+
+Each module keeps the same internal boundary:
+
+```text
+domain/
+application/
+infrastructure/
+api/
+workers/
+tests/
+README.md
+```
+
+Domain code should not import concrete infrastructure, cloud SDKs, HTTP
+clients, or framework code. Cross-domain interaction should go through shared
+DTOs, events, APIs, read-only model-ready views, or workflow orchestration.
+
+## Local Setup
+
+Python tooling is managed with `uv`:
 
 ```bash
+uv sync
 uv run pytest
 ```
 
-## Layout notes
+Node workspaces are declared in the root `package.json`:
 
-- `config.json` and `config.local.json` are machine-local and **gitignored**;
-  `config.example.json` is the tracked template.
-- Runtime state and outputs (`logs/`, `metrics/`, `backups/`, `evidence/`,
-  `reviews/`, `worker-runtime/`, `*-state.json`, `*.jsonl`) are gitignored.
+```bash
+npm install
+npm run lint --workspaces --if-present
+```
 
-## License
+The R0 skeleton intentionally keeps runtime dependencies light. Later tasks
+will add FastAPI, Next.js, dbt, model, solver, and infrastructure dependencies
+inside their owned surfaces.
 
-MIT
+## Foundation Acceptance
+
+This scaffold provides stable landing zones for:
+
+- backend API, async worker, scheduler, and CLI entrypoints under `apps/`
+- OpsBoard frontend workspace under `apps/web`
+- shared Python platform primitives under `shared/`
+- generated/frontend package surfaces under `packages/`
+- data, ML, solver, infrastructure, and cross-cutting test surfaces
+
+The initial tests verify the expected folders and importable Python skeletons
+without requiring external services.
