@@ -1,0 +1,37 @@
+{
+  "contract_id": "poi_snapshot",
+  "cases": [
+    {
+      "label": "missing required source_poi_id and snapshot_id",
+      "record": {
+        "poi_name": "無快照 POI",
+        "poi_category": "Daily Life",
+        "status": "active"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped status enum",
+      "record": {
+        "source_poi_id": "POI-901",
+        "poi_name": "狀態錯誤 POI",
+        "poi_category": "Daily Life",
+        "status": "demolished",
+        "snapshot_id": "poi-2026-06-01"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "wrong type for latitude",
+      "record": {
+        "source_poi_id": "POI-902",
+        "poi_name": "座標錯誤 POI",
+        "poi_category": "Daily Life",
+        "latitude": "25.04N",
+        "status": "active",
+        "snapshot_id": "poi-2026-06-01"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}

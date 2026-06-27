@@ -1,0 +1,22 @@
+{
+  "contract_id": "machine_status_event",
+  "title": "Machine Status Event",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.5, §6.1; ODP-DATA-05 §5.5",
+  "source_system": "iot_core",
+  "source_dataset": "machine_status_event",
+  "canonical_target": "machine_status_event",
+  "mapping_id": "MAP-INT-STATUS-v1",
+  "integration_mode": "event_stream",
+  "envelope": "event",
+  "fields": [
+    {"name": "source_status_event_id", "type": "string", "required": true, "description": "Source event id."},
+    {"name": "source_machine_id", "type": "string", "required": true, "description": "Machine id."},
+    {"name": "status_event_time", "type": "timestamp", "required": true, "description": "Status change time."},
+    {"name": "status_type", "type": "string", "required": true, "enum": ["online", "offline", "error", "available", "occupied", "maintenance"], "description": "Status type."},
+    {"name": "error_code", "type": "string", "required": false, "description": "Error code."},
+    {"name": "severity", "type": "string", "required": false, "enum": ["info", "warn", "error", "critical"], "description": "Severity."},
+    {"name": "resolved_time", "type": "timestamp", "required": false, "description": "Resolution time."},
+    {"name": "source_payload", "type": "json", "required": false, "description": "Original status payload."}
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "contract_id": "store_master_snapshot",
+  "cases": [
+    {
+      "label": "missing source_store_id and address",
+      "record": {
+        "brand_code": "ODAY",
+        "store_name": "無編號店",
+        "store_status": "open",
+        "effective_from": "2025-03-01T00:00:00+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped store_status enum",
+      "record": {
+        "source_store_id": "S003",
+        "brand_code": "ODAY",
+        "store_name": "狀態錯誤店",
+        "store_status": "paused",
+        "address_raw": "台中市西區公益路100號",
+        "effective_from": "2025-03-01T00:00:00+08:00"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "unparseable effective_from timestamp",
+      "record": {
+        "source_store_id": "S004",
+        "brand_code": "ODAY",
+        "store_name": "時間錯誤店",
+        "store_status": "open",
+        "address_raw": "高雄市前鎮區中山二路2號",
+        "effective_from": "not-a-timestamp"
+      },
+      "expect_codes": ["invalid_time"]
+    }
+  ]
+}

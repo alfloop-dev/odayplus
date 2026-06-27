@@ -1,0 +1,27 @@
+{
+  "contract_id": "store_master_snapshot",
+  "records": [
+    {
+      "source_store_id": "S001",
+      "brand_code": "ODAY",
+      "store_name": "信義概念店",
+      "store_status": "open",
+      "open_date": "2025-03-01",
+      "address_raw": "台北市信義區信義路五段7號",
+      "latitude": 25.033964,
+      "longitude": 121.564468,
+      "store_format": "ODay G2",
+      "owned_flag": true,
+      "region_code": "TPE-EAST",
+      "effective_from": "2025-03-01T00:00:00+08:00"
+    },
+    {
+      "source_store_id": "S002",
+      "brand_code": "ODAY",
+      "store_name": "板橋籌備店",
+      "store_status": "planned",
+      "address_raw": "新北市板橋區文化路一段100號",
+      "effective_from": "2026-01-15T00:00:00+08:00"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "contract_id": "poi_snapshot",
+  "records": [
+    {
+      "source_poi_id": "POI-001",
+      "poi_name": "台北捷運市政府站",
+      "poi_category": "Transit",
+      "poi_subcategory": "metro_station",
+      "address_raw": "台北市信義區忠孝東路五段",
+      "latitude": 25.040944,
+      "longitude": 121.565472,
+      "status": "active",
+      "confidence": 0.95,
+      "snapshot_id": "poi-2026-06-01"
+    },
+    {
+      "source_poi_id": "POI-002",
+      "poi_name": "信義國小",
+      "poi_category": "Education",
+      "status": "active",
+      "snapshot_id": "poi-2026-06-01"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "contract_id": "customer_service_case_event",
+  "title": "Customer Service Case Event",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.9; ODP-DATA-05 §5.7",
+  "source_system": "crm",
+  "source_dataset": "customer_service_case_event",
+  "canonical_target": "customer_service_case",
+  "mapping_id": "MAP-INT-CSCASE-v1",
+  "integration_mode": "incremental_batch",
+  "envelope": "batch",
+  "invariants": [
+    {"rule": "time_order", "earlier": "case_opened_at", "later": "case_closed_at", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "source_case_id", "type": "string", "required": true, "description": "CS case id."},
+    {"name": "source_store_id", "type": "string", "required": false, "description": "Related store id."},
+    {"name": "source_machine_id", "type": "string", "required": false, "description": "Related machine id."},
+    {"name": "member_source_id", "type": "string", "required": false, "description": "Member source id (PII masked downstream)."},
+    {"name": "case_opened_at", "type": "timestamp", "required": true, "description": "Case open time."},
+    {"name": "case_closed_at", "type": "timestamp", "required": false, "description": "Case close time."},
+    {"name": "channel", "type": "string", "required": false, "enum": ["LINE", "web", "phone", "system"], "description": "Channel."},
+    {"name": "topic_code", "type": "string", "required": true, "description": "Complaint / issue topic."},
+    {"name": "sentiment_score", "type": "number", "required": false, "description": "Sentiment score."},
+    {"name": "resolution_status", "type": "string", "required": false, "enum": ["resolved", "unresolved", "escalated"], "description": "Resolution status."}
+  ]
+}
