@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,29 @@ from modules.learninghub.domain.dataset_snapshot import (
     build_dataset_snapshot,
     validate_point_in_time,
 )
+
+
+def test_model_ready_dbt_baseline_views_are_versioned() -> None:
+    model_dir = Path("pipelines/dbt/models/model_ready")
+    expected_views = {
+        "geo_grid_view",
+        "candidate_site_view",
+        "store_machine_timeseries_view",
+        "forecast_training_view",
+        "intervention_panel_view",
+        "valuation_view",
+        "network_plan_view",
+    }
+
+    for view_name in expected_views:
+        sql = (model_dir / f"{view_name}.sql").read_text(encoding="utf-8")
+        assert f"'{view_name}' as view_name" in sql
+        assert "'v1' as view_version" in sql
+        assert "feature_snapshot_time" in sql
+        assert "prediction_origin_time" in sql
+        assert "source_snapshot_ids" in sql
+        assert "is_training_eligible" in sql
+        assert "is_scoring_eligible" in sql
 
 
 def test_dataset_snapshot_indexes_view_versions_sources_and_entity_count() -> None:

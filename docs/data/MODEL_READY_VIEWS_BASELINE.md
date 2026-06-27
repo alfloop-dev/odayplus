@@ -15,12 +15,14 @@ or canonical tables directly.
 | `candidate_site_view` | candidate site x decision time | SiteScore | `expansion.candidate_sites`, `expansion.listings`, `core.address_locations` |
 | `store_machine_timeseries_view` | store/machine x date | ForecastOps, monitoring | `core.transactions`, `core.machine_cycles` |
 | `forecast_training_view` | store x date x snapshot | ForecastOps training | `core.transactions` |
+| `intervention_panel_view` | store x date x intervention | InterventionOps, PriceOps | `operations.interventions`, `operations.intervention_outcomes` |
+| `valuation_view` | store x valuation date | DealRoomAVM | `asset.valuation_runs`, `operations.forecast_outputs`, `core.stores` |
+| `network_plan_view` | planning entity x quarter | NetPlan | `network.network_plans`, `network.network_plan_actions` |
 
 The broader `ODP-DATA-06` catalog also includes `brand_transfer_view`,
-`ramp_curve_view`, `intervention_panel_view`, `matched_control_view`,
-`valuation_view`, and `network_plan_view`. Those remain documented follow-on
-views because the current canonical baseline does not yet include every source
-table needed for a useful physical model.
+`ramp_curve_view`, and `matched_control_view`. Those remain documented
+follow-on views because the current canonical baseline does not yet include
+every source table needed for a useful physical model.
 
 ## Common Contract
 
