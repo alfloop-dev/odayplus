@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: forecast_training_view
+    description: Store-date forecast model-ready view with PIT-safe lag features.
+    columns:
+      - name: entity_id
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        tests:
+          - not_null
+  - name: candidate_site_view
+    description: Candidate-site scoring view for SiteScore.
+    columns:
+      - name: entity_id
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        tests:
+          - not_null
+  - name: geo_grid_view
+    description: H3-cell HeatZone feature baseline.
+    columns:
+      - name: h3_index
+        tests:
+          - not_null
+  - name: store_machine_timeseries_view
+    description: Store-date operational time series for ForecastOps and monitoring.
+    columns:
+      - name: store_id
+        tests:
+          - not_null
+  - name: intervention_panel_view
+    description: Store-date intervention treatment/outcome panel for InterventionOps and causal review.
+    columns:
+      - name: intervention_id
+        tests:
+          - not_null
+      - name: treatment_flag
+        tests:
+          - not_null
+  - name: valuation_view
+    description: Store valuation model-ready baseline for DealRoomAVM.
+    columns:
+      - name: store_id
+        tests:
+          - not_null
+      - name: valuation_date
+        tests:
+          - not_null
+  - name: network_plan_view
+    description: Planning entity and quarter baseline for NetPlan.
+    columns:
+      - name: planning_entity_id
+        tests:
+          - not_null
+      - name: planning_quarter
+        tests:
+          - not_null
