@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,6 @@ from common import (
     load_json,
     load_jsonl,
     load_status,
-    relpath,
     render_template,
     run_command,
     utc_now,
@@ -30,10 +29,18 @@ from common import (
     write_json,
 )
 from coordination_file_watcher import queue_coordination_dispatch
-from cross_repo_issue_mapper import coordination_issue_body, coordination_issue_labels, coordination_issue_title
+from cross_repo_issue_mapper import (
+    coordination_issue_body,
+    coordination_issue_labels,
+    coordination_issue_title,
+)
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
-from multi_repo_registry import coordination_enabled, matching_repo_id, repository_slug, resolve_worker_kind
+from multi_repo_registry import (
+    coordination_enabled,
+    repository_slug,
+    resolve_worker_kind,
+)
 from runtime_state import enqueue_event
 from watch_events import render_wakeup_message
 
@@ -57,7 +64,7 @@ def resolve_gh_binary() -> str | None:
 
 
 def _iso_now_dt() -> datetime:
-    return datetime.now(timezone.utc).replace(microsecond=0)
+    return datetime.now(UTC).replace(microsecond=0)
 
 
 def _parse_iso(value: str | None) -> datetime | None:

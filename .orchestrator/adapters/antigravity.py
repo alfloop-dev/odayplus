@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
@@ -16,6 +14,8 @@ from common import (
     worker_runtime_paths,
 )
 
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
+from adapters.file_inbox import FileInboxAdapter
 
 # Antigravity CLI (`agy`) is the successor to the Gemini CLI; Google stops
 # serving the legacy Gemini CLI for consumer tiers on 2026-06-18. The OAuth

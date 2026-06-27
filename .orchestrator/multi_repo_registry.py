@@ -13,7 +13,6 @@ from typing import Any
 
 from common import resolve_path, to_bool
 
-
 DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
     "pantheon": {
         "display_name": "Pantheon",

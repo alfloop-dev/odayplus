@@ -6,10 +6,9 @@ import json
 import os
 import shlex
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
-
 
 DEFAULT_ENV_FILE = Path.home() / ".config" / "pantheon" / "worker-git.env"
 SUPPORTED_MODES = {"auto", "ssh", "pat"}

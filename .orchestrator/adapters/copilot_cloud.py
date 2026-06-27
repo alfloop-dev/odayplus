@@ -4,7 +4,6 @@ import os
 import re
 from pathlib import Path
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
     command_exists,
     config_path,
@@ -16,6 +15,8 @@ from common import (
     spawn_background_process,
     worker_runtime_paths,
 )
+
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
 
 def _configured_gh_cli(config: dict | None = None) -> str | None:
@@ -65,7 +66,7 @@ class CopilotCloudAdapter(BaseAdapter):
                 host="GitHub CLI coding agent",
                 notes="`gh` is not installed, so GitHub cloud agent submission is unavailable.",
             )
-        version = _parse_version((run_command([gh, "--version"]).stdout or ""))
+        version = _parse_version(run_command([gh, "--version"]).stdout or "")
         min_version = (2, 80, 0)
         if version and version < min_version:
             return DeliveryCapability(

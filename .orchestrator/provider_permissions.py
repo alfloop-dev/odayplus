@@ -456,7 +456,8 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
 def _verified_claude_hooks() -> dict[str, Any]:
     broker_path = ROOT / ".orchestrator" / "permission_broker.py"
     command = f"python3 {broker_path} hook"
-    hook = lambda event: [{"hooks": [{"type": "command", "command": f"{command} {event}", "shell": "bash"}]}]
+    def hook(event):
+        return [{"hooks": [{"type": "command", "command": f"{command} {event}", "shell": "bash"}]}]
     return {
         "PreToolUse": hook("PreToolUse"),
         "PermissionRequest": hook("PermissionRequest"),
@@ -717,8 +718,8 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     claude_local = _claude_local_settings()
     gemini_settings = _gemini_settings(config, "gemini")
     gemini_env = _gemini_runtime_env(config, "gemini")
-    gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
-    gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
+    _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
+    _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
     custom_agents = _custom_agents_info()
 
     claude_permissions = claude_local.get("permissions", {})
@@ -734,7 +735,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
-    gemini_installed = bool(gemini_path or gemini_binary)
+    bool(gemini_path or gemini_binary)
     codex_installed = bool(openai_path or codex_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
@@ -761,7 +762,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     )
 
     codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
-    codex_applied = (
+    (
         codex_profile.get("ask_for_approval", "never") == "never"
         and codex_profile.get("sandbox_mode", "workspace-write") == "workspace-write"
     )

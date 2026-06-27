@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Create local config from example
+        run: cp .orchestrator/config.example.json .orchestrator/config.json
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Run tests
+        # Exclude tests that require a live multi-repo / CLI / local-path environment
+        # (cross-repo coordination, machine-specific workspace roots) which cannot
+        # run in a clean CI runner.
+        run: uv run pytest -m "not requires_live_env"

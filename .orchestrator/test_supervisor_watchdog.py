@@ -5,7 +5,7 @@ import fcntl
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -61,7 +61,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         }
 
     def test_healthy_supervisor_observes_only(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
@@ -112,7 +112,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(watchdog_state["restart_attempts"][0]["new_pid"], 999)
 
     def test_restart_budget_suppresses_after_window_exhausted(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
         (self.root / "watchdog-state.json").write_text(
@@ -163,7 +163,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
     def test_lock_held_with_missing_pid_observes_only(self) -> None:
         """Regression: clean-restart seam (pid file gone) while the flock is held
         must NOT trigger a missing_pid restart."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.hold_lock()
         # Deliberately do NOT write supervisor.pid -> read_pid_file returns None.
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
@@ -181,7 +181,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
     def test_no_lock_and_missing_pid_restarts(self) -> None:
         """No flock held AND no pid file -> genuinely dead -> restart with missing_pid."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # No lock file, no pid file.
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 

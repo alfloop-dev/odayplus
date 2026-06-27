@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +33,7 @@ DEFAULT_RECENT_LIMIT = 20
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def ensure_parent(path: Path) -> None:

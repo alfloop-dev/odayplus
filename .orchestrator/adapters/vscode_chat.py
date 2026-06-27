@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import command_exists, run_command
+
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
 
 class VSCodeChatAdapter(BaseAdapter):

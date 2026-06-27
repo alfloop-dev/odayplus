@@ -3,8 +3,17 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from common import (
+    agent_config_for,
+    command_exists,
+    delivery_workspace_root,
+    ensure_parent,
+    new_runtime_id,
+    normalize_agent_id,
+    relpath,
+)
+
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from common import agent_config_for, command_exists, delivery_workspace_root, ensure_parent, new_runtime_id, normalize_agent_id, relpath
 
 
 class FileInboxAdapter(BaseAdapter):

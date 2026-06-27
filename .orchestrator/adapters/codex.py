@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
     agent_config_for,
     command_exists,
@@ -14,6 +13,7 @@ from common import (
     worker_runtime_paths,
 )
 
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
 CODEX_INHERITED_SESSION_ENV = (
     "CODEX_THREAD_ID",
