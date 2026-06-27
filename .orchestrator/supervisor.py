@@ -11,12 +11,12 @@ import math
 import os
 import random
 import re
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,20 +26,20 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from adapters import build_adapter
-from approval_queue import prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
+from approval_queue import prune_stale_approvals, resolve_approval
 from common import (
     agent_config_for,
     command_exists,
     config_path,
     display_name_for,
     execution_context_files,
+    is_github_cli_auth_failure,
     load_config,
     load_json,
     load_status,
     new_runtime_id,
     normalize_agent_id,
-    is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
@@ -48,10 +48,10 @@ from common import (
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
+    worker_runtime_paths,
+    write_activity_log,
     write_failure_evidence,
     write_json,
-    write_activity_log,
-    worker_runtime_paths,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -68,15 +68,22 @@ from dispatch_policy import (
 from github_bus import sync_github_bus
 from provider_permissions import (
     codex_config_health,
-    provider_capabilities as build_provider_capabilities,
     write_provider_capabilities,
 )
+from provider_permissions import (
+    provider_capabilities as build_provider_capabilities,
+)
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
-from runtime_state import enqueue_event
+from runtime_state import (
+    enqueue_event,
+    load_approval_state,
+    load_event_queue,
+    load_runtime_state,
+    queue_event_record,
+    save_runtime_state,
+)
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
-
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
 BLOCKED_OWNER_RESCUE_KEYWORDS = (
@@ -405,8 +412,8 @@ def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None
     safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
     if safe_mode_until is None:
         return False
-    now_dt = now or datetime.now(timezone.utc)
-    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+    now_dt = now or datetime.now(UTC)
+    return now_dt.astimezone(UTC) < safe_mode_until.astimezone(UTC)
 
 
 def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
@@ -1812,7 +1819,7 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
     state.setdefault("workers", {})[worker_run_id] = {
@@ -1919,7 +1926,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if record.get("status") == "retry_backoff":
             next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
-            if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
+            if next_retry_at is not None and next_retry_at > datetime.now(UTC):
                 continue
         active_worker = next(
             (
@@ -2164,7 +2171,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
 
         worker_run_id = outcome or event_id
-        queue_started_at = datetime.now(timezone.utc)
+        queue_started_at = datetime.now(UTC)
         record["status"] = "manual_pending" if delivery and delivery.get("manual_confirmation_required") and not delivery.get("auto_delivered") else "started"
         record["run_id"] = worker_run_id
         record["lease_owner"] = worker_run_id
@@ -2932,7 +2939,7 @@ def apply_chair_review_decision(
         summary_lines = [str(decision.get("reason") or "Chair review decision recorded.")]
 
     now = utc_now()
-    current_dt = _parse_iso_utc(now) or datetime.now(timezone.utc)
+    current_dt = _parse_iso_utc(now) or datetime.now(UTC)
     approved = bool(decision.get("sidecar_approved"))
     if approved:
         approval_until = current_dt + timedelta(minutes=int(decision.get("approval_ttl_minutes") or 0))
@@ -3865,7 +3872,7 @@ def queue_discussion_planning_event(
 def file_iso_mtime(path: Path) -> str | None:
     if not path.exists():
         return None
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
@@ -4089,7 +4096,7 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
 
 
 def _isoformat_utc(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -4183,18 +4190,18 @@ def record_worker_runtime_measurement(
 
 def worker_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
     settings = worker_runtime_settings(config)
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
     return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("worker_lease_seconds", 1800)))))
 
 
 def queue_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
     settings = worker_runtime_settings(config)
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
     return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("queue_lease_seconds", 1800)))))
 
 
 def refresh_worker_lease(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> None:
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
     worker.setdefault("lease_acquired_at", _isoformat_utc(now_dt))
     worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
 
@@ -4263,17 +4270,17 @@ def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], no
     heartbeat_dt = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
     if heartbeat_dt is None:
         return True
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
     stale_after = int(settings.get("heartbeat_stale_seconds", 300)) + int(settings.get("heartbeat_grace_seconds", 60))
-    return (now_dt - heartbeat_dt.astimezone(timezone.utc)).total_seconds() > max(60, stale_after)
+    return (now_dt - heartbeat_dt.astimezone(UTC)).total_seconds() > max(60, stale_after)
 
 
 def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
     lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
     if lease_expires_at is None:
         return False
-    now_dt = now or datetime.now(timezone.utc)
-    return now_dt > lease_expires_at.astimezone(timezone.utc) and worker_heartbeat_is_stale(config, worker, now_dt)
+    now_dt = now or datetime.now(UTC)
+    return now_dt > lease_expires_at.astimezone(UTC) and worker_heartbeat_is_stale(config, worker, now_dt)
 
 
 _QUOTA_RETRY_AT_PATTERN = re.compile(
@@ -4330,7 +4337,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     """
     if not reason:
         return None
-    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    hint_tz = UTC if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
     date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
     if date_match:
         month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
@@ -4353,7 +4360,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
                 hour,
                 minute,
                 tzinfo=hint_tz,
-            ).astimezone(timezone.utc)
+            ).astimezone(UTC)
         except ValueError:
             return None
 
@@ -4373,7 +4380,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
         candidate += timedelta(days=1)
-    return candidate.astimezone(timezone.utc)
+    return candidate.astimezone(UTC)
 
 
 def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -4422,7 +4429,7 @@ def current_provider_dispatch_pause(
         if not isinstance(entry, dict):
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if blocked_until is not None and blocked_until <= now:
             bucket.pop(pause_id, None)
             continue
@@ -4486,7 +4493,7 @@ def mark_provider_dispatch_paused(
     if not provider_id:
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
     if effective_pause_kind in {"auth", "provider_config"}:
         if not settings.get("pause_on_auth_failure", True):
@@ -4604,7 +4611,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     bucket = _dispatch_pause_bucket(state)
     if not bucket:
         return False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expired: list[tuple[str, dict[str, Any]]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
@@ -4688,7 +4695,7 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
     retry = dict(config.get("worker_retry", {}) or {})
     if provider:
-        retry.update((config.get("providers", {}).get(provider, {}).get("retry", {}) or {}))
+        retry.update(config.get("providers", {}).get(provider, {}).get("retry", {}) or {})
     retry.setdefault("enabled", True)
     retry.setdefault("max_attempts", 5)
     retry.setdefault("backoff_schedule_seconds", [5, 15, 30, 60, 120])
@@ -5361,7 +5368,7 @@ def schedule_queue_event_retry(config: dict[str, Any], record: dict[str, Any], *
             "retry_count": int(record.get("retry_count", 0)),
         },
     )
-    retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
+    retry_at = datetime.fromtimestamp(datetime.now(UTC).timestamp() + delay, tz=UTC)
     record["status"] = "retry_backoff"
     record["retry_count"] = int(record.get("retry_count", 0)) + 1
     record["next_retry_at"] = retry_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -5443,7 +5450,7 @@ def requeue_stale_manual_pending_worker(
 
 def schedule_worker_retry(config: dict[str, Any], worker: dict[str, Any], reason: str) -> None:
     delay = retry_delay_seconds(config, worker)
-    retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
+    retry_at = datetime.fromtimestamp(datetime.now(UTC).timestamp() + delay, tz=UTC)
     worker["status"] = "retry_backoff"
     worker["retry_count"] = int(worker.get("retry_count", 0)) + 1
     worker["next_retry_at"] = retry_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -5728,7 +5735,7 @@ def resume_claude_worker(
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
     worker["previous_log_paths"] = previous_logs
     worker["pid"] = process.pid
     worker["status"] = "running"
@@ -5775,7 +5782,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             resolved_by_run.setdefault(run_id, []).append(item)
 
     stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if provider_report is None:
         provider_report = load_provider_report(config)
     changed = retry_due_workers(config, state, provider_report, now) or changed
@@ -6493,7 +6500,7 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
     if interval > 0:
         last_at = bucket.get("last_run_at")
         last_dt = _parse_iso_utc(str(last_at or ""))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
     bucket["last_run_at"] = utc_now()
@@ -6612,7 +6619,7 @@ def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> 
     if interval > 0:
         last_at = bucket.get("last_run_at")
         last_dt = _parse_iso_utc(str(last_at or ""))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
     bucket["last_run_at"] = utc_now()
@@ -6700,7 +6707,7 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
     changed = False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
     counts = {
@@ -7675,7 +7682,7 @@ def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
     created_at = _parse_iso_utc(str(event.get("created_at") or ""))
     if created_at is None:
         return None
-    return max(0.0, (datetime.now(timezone.utc) - created_at.astimezone(timezone.utc)).total_seconds())
+    return max(0.0, (datetime.now(UTC) - created_at.astimezone(UTC)).total_seconds())
 
 
 def queue_event_is_orphaned(
@@ -8323,7 +8330,7 @@ def dispatch_ready_tasks(
     task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
-    owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
+    [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))

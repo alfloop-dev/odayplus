@@ -21,7 +21,6 @@ from common import (
     load_json,
     load_status,
     new_runtime_id,
-    relpath,
     render_template,
     resolve_path,
     snapshot_task,
@@ -170,7 +169,7 @@ def compute_events(previous: dict[str, Any], current: dict[str, Any], config: di
     events: list[dict[str, Any]] = []
     previous_tasks = previous.get("tasks", {})
     current_tasks = current.get("tasks", {})
-    review_statuses = {value.lower() for value in config.get("events", {}).get("review_statuses", ["review"])}
+    {value.lower() for value in config.get("events", {}).get("review_statuses", ["review"])}
 
     for task_id, task in current_tasks.items():
         old_task = previous_tasks.get(task_id)

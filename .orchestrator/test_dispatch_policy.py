@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
     DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,

@@ -1,0 +1,7 @@
+{"ts": "2026-06-27T05:29:06Z", "agent": "Claude", "type": "review_approved", "task_id": "REG-002", "message": "Review passed. Owner should finalize."}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Codex", "type": "done", "task_id": "REG-002", "message": "Owner finalized approved task", "delivery": {"recorded_at": "2026-06-27T05:29:06Z"}}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Codex", "type": "handoff", "task_id": "REG-002", "message": "Handoff to Claude: Ready for review"}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Claude", "type": "reopen", "task_id": "REG-002", "message": "Please address the requested changes"}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Codex", "type": "superseded", "task_id": "REG-002", "message": "Superseded by REG-010 after accepted consensus.", "replacement_task_id": "REG-010"}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Codex", "type": "archive_migrate", "message": "Archived 1 terminal tasks from ai-status.json.", "task_ids": ["REG-100"]}
+{"ts": "2026-06-27T05:29:06Z", "agent": "Codex", "type": "assign", "task_id": "APP-001-SIDECAR-BFF-HANDOFF", "message": "Assigned APP-001-SIDECAR-BFF-HANDOFF to Gemini with reviewer Copilot"}

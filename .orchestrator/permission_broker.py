@@ -30,7 +30,6 @@ from common import (
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
 from runtime_state import load_approval_state, load_runtime_state
 
-
 SAFE_BASH_PATTERNS = [
     re.compile(r"^pwd$"),
     re.compile(r"^echo(\s|$)"),

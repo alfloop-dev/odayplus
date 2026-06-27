@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import os
+import subprocess
 import tempfile
 import unittest
-import os
-import json
-import subprocess
+from datetime import UTC
 from pathlib import Path
 from unittest import mock
 
@@ -14,39 +15,42 @@ import supervisor
 
 
 class RuntimeConfigTests(unittest.TestCase):
-    def test_codex_quota_groups_allow_four_concurrent_slots(self) -> None:
+    def test_codex_pair_shares_one_account_quota_group(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
-        quota_caps = config["ready_dispatcher"]["max_concurrent_per_quota_group"]
+        quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
 
         self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
-        self.assertEqual(quota_caps["codex1"], 4)
-        self.assertEqual(quota_caps["codex2"], 4)
-        self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 4)
-        self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 4)
+        # codex and codex2 reuse the same Codex account -> one shared quota group "codex".
+        self.assertEqual(quota_caps["codex"], 6)
+        self.assertEqual(supervisor.agent_quota_group_id(config, "codex"), "codex")
+        self.assertEqual(supervisor.agent_quota_group_id(config, "codex2"), "codex")
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
-    def test_claude_concurrency_is_explicitly_capped_at_three(self) -> None:
+    def test_claude_concurrency_is_explicitly_capped(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 3)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 3)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
 
-    def test_claude2_new_work_target_and_concurrency_are_capped(self) -> None:
+    def test_claude2_shares_claude_account_quota_group(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
+        quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
 
-        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 3)
+        # claude2 reuses the Claude account -> same quota group, no separate claude2 cap.
+        self.assertNotIn("claude2", quota_caps)
+        self.assertEqual(supervisor.agent_quota_group_id(config, "claude2"), "claude")
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude2"), 3)
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
@@ -431,61 +435,61 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertFalse(supervisor.pid_is_alive(43210))
 
     def test_parse_quota_retry_hint_codex_pm(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # 03:05Z on 2026-04-28 = 11:05 LOCAL (Asia/Taipei). "7:00 PM" in local
         # time = 19:00 LOCAL = 11:00 UTC same day.
-        now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=UTC)
         hint = supervisor.parse_quota_retry_hint(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
             now=now,
         )
 
-        self.assertEqual(hint, datetime(2026, 4, 28, 11, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(hint, datetime(2026, 4, 28, 11, 0, 0, tzinfo=UTC))
 
     def test_parse_quota_retry_hint_rolls_to_next_day_when_past(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # 06:00Z on 2026-04-28 = 14:00 LOCAL same day (Asia/Taipei). "1pm" = 13:00
         # LOCAL is already past, so the hint should roll forward to the next day:
         # 2026-04-29 13:00 LOCAL = 2026-04-29 05:00 UTC.
-        now = datetime(2026, 4, 28, 6, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 28, 6, 0, 0, tzinfo=UTC)
         hint = supervisor.parse_quota_retry_hint(
             "You've hit your limit · resets 1pm (Asia/Taipei)",
             now=now,
         )
 
-        self.assertEqual(hint, datetime(2026, 4, 29, 5, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(hint, datetime(2026, 4, 29, 5, 0, 0, tzinfo=UTC))
 
     def test_parse_quota_retry_hint_honors_explicit_utc(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 5, 8, 16, 53, 27, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 8, 16, 53, 27, tzinfo=UTC)
         hint = supervisor.parse_quota_retry_hint(
             "You've hit your limit · resets 8:40pm (UTC)",
             now=now,
         )
 
-        self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
+        self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=UTC))
 
     def test_parse_quota_retry_hint_codex_full_date(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=UTC)
         hint = supervisor.parse_quota_retry_hint(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
             "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
             now=now,
         )
 
-        self.assertEqual(hint, datetime(2026, 5, 18, 16, 40, 0, tzinfo=timezone.utc))
+        self.assertEqual(hint, datetime(2026, 5, 18, 16, 40, 0, tzinfo=UTC))
 
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
 
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -493,7 +497,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         }
         state: dict = {}
 
-        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=UTC)
         with (
             mock.patch.object(supervisor, "datetime") as datetime_mock,
             mock.patch.object(supervisor, "write_activity_log"),
@@ -520,7 +524,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(entry["reset_after_seconds"], int((11 - 3) * 3600 - 5 * 60))
 
     def test_mark_provider_dispatch_paused_honors_codex_full_date_retry_at(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -529,7 +533,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         }
         state: dict = {}
 
-        fake_now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=UTC)
         with (
             mock.patch.object(supervisor, "datetime") as datetime_mock,
             mock.patch.object(supervisor, "write_activity_log"),
@@ -554,7 +558,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(entry["reset_after_seconds"], 196464)
 
     def test_mark_provider_dispatch_paused_caps_codex_retry_hint_when_configured(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         config = {
             "provider_guardrails": {
@@ -567,7 +571,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         }
         state: dict = {}
 
-        fake_now = datetime(2026, 5, 17, 20, 2, 2, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 5, 17, 20, 2, 2, tzinfo=UTC)
         with (
             mock.patch.object(supervisor, "datetime") as datetime_mock,
             mock.patch.object(supervisor, "write_activity_log"),
@@ -593,7 +597,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(entry["reset_after_seconds"], 3600)
 
     def test_mark_provider_dispatch_paused_uses_default_when_no_hint(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -601,7 +605,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         }
         state: dict = {}
 
-        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=UTC)
         with (
             mock.patch.object(supervisor, "datetime") as datetime_mock,
             mock.patch.object(supervisor, "write_activity_log"),
@@ -7745,8 +7749,9 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
 
     def test_throttled_within_interval(self) -> None:
-        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-        recent_ts = (_dt.now(_tz.utc) - _td(seconds=30)).isoformat().replace("+00:00", "Z")
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        recent_ts = (_dt.now(UTC) - _td(seconds=30)).isoformat().replace("+00:00", "Z")
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 600}}
         state = {"worker_worktree_housekeeping": {"last_run_at": recent_ts}}
         with mock.patch.object(supervisor, "worker_worktree_settings") as ws:

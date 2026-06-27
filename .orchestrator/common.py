@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -10,14 +11,14 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
-import hashlib
 import urllib.error
 import urllib.request
+import uuid
+from collections.abc import Mapping
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from task_archive import TaskResolver
 
@@ -54,7 +55,7 @@ CLAUDE_OAUTH_REFRESH_HEADERS = {
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def ensure_parent(path: Path) -> None:
@@ -482,7 +483,7 @@ def _rotate_activity_log_if_needed(config: dict[str, Any], log_path: Path) -> No
         return
     archive_dir = ROOT / ACTIVITY_LOG_ARCHIVE_SUBDIR
     archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     archive_path = archive_dir / f"{log_path.stem}-{stamp}.jsonl.gz"
     counter = 1
     while archive_path.exists():
@@ -516,13 +517,13 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
 
 def runtime_log_path(prefix: str, target: str) -> Path:
     slug = normalize_agent_id(target) or "unknown"
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = uuid.uuid4().hex[:6]
     return ORCHESTRATOR_DIR / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
 
 
 def new_runtime_id(prefix: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{prefix}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 

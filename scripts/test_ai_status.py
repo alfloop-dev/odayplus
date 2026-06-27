@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import io
+import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

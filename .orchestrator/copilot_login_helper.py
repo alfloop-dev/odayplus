@@ -14,7 +14,6 @@ import termios
 import time
 from pathlib import Path
 
-
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_]")
 DEVICE_CODE_PATTERN = re.compile(r"\b([A-Z0-9]{4}-[A-Z0-9]{4})\b")
 
