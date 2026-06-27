@@ -62,6 +62,22 @@ def test_geo_pipeline_flags_out_of_market_and_low_confidence() -> None:
     assert "low_geocode_confidence" in result.quality_flags
 
 
+def test_geo_pipeline_flags_stale_source_snapshot() -> None:
+    pipeline = GeoPipeline()
+    result = pipeline.geocode_record(
+        {
+            "address_raw": "台北市大安區和平東路二段100號",
+            "latitude": 25.024,
+            "longitude": 121.543,
+            "source_snapshot_time": "2026-01-01T00:00:00Z",
+        },
+        as_of=datetime(2026, 6, 27, tzinfo=UTC),
+    )
+
+    assert result.address.h3_res_9.startswith("h3r9_")
+    assert "stale_source_snapshot" in result.quality_flags
+
+
 def test_external_geo_feature_job_rolls_up_poi_competitor_and_listing_snapshots() -> None:
     provider = StaticGeocodeProvider(
         {

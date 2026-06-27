@@ -6,7 +6,7 @@ import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any, Protocol
 
@@ -146,14 +146,19 @@ class GeoPipeline:
         *,
         h3_resolutions: Sequence[int] = DEFAULT_H3_RESOLUTIONS,
         view_version: str = "geo-grid-view-v1",
+        max_record_age: timedelta = timedelta(days=90),
     ) -> None:
         self.provider = provider
         self.h3_resolutions = tuple(h3_resolutions)
         self.view_version = view_version
+        self.max_record_age = max_record_age
 
-    def geocode_record(self, record: Mapping[str, Any]) -> GeocodeResult:
+    def geocode_record(self, record: Mapping[str, Any], *, as_of: datetime | None = None) -> GeocodeResult:
         normalized = normalize_address(str(record.get("address_raw") or record.get("raw_address") or record.get("address") or ""))
         flags: list[str] = []
+        freshness_time = as_of or datetime.now(UTC)
+        if _is_stale_record(record, freshness_time, self.max_record_age):
+            flags.append("stale_source_snapshot")
         candidate = self._candidate_from_coordinates(record)
         if candidate is None and self.provider is not None:
             candidate = self.provider.lookup(normalized)
@@ -222,7 +227,7 @@ class GeoPipeline:
         )
 
         for record in poi_records:
-            h3_index = self._h3_for_record(record, resolution)
+            h3_index = self._h3_for_record(record, resolution, snapshot_time)
             if h3_index is None:
                 continue
             bucket = buckets[h3_index]
@@ -230,7 +235,7 @@ class GeoPipeline:
             self._track_common(bucket, record)
 
         for record in competitor_records:
-            h3_index = self._h3_for_record(record, resolution)
+            h3_index = self._h3_for_record(record, resolution, snapshot_time)
             if h3_index is None:
                 continue
             bucket = buckets[h3_index]
@@ -241,7 +246,7 @@ class GeoPipeline:
         for record in listing_records:
             if str(record.get("listing_status") or "active") != "active":
                 continue
-            h3_index = self._h3_for_record(record, resolution)
+            h3_index = self._h3_for_record(record, resolution, snapshot_time)
             if h3_index is None:
                 continue
             bucket = buckets[h3_index]
@@ -289,8 +294,8 @@ class GeoPipeline:
             str(record.get("district") or ""),
         )
 
-    def _h3_for_record(self, record: Mapping[str, Any], resolution: int) -> str | None:
-        result = self.geocode_record(record)
+    def _h3_for_record(self, record: Mapping[str, Any], resolution: int, as_of: datetime) -> str | None:
+        result = self.geocode_record(record, as_of=as_of)
         return result.h3_resolution_map.get(resolution)
 
     def _track_common(self, bucket: dict[str, Any], record: Mapping[str, Any]) -> None:
@@ -320,6 +325,30 @@ def _float(value: Any) -> float:
 
 def _bounded_confidence(value: Any) -> float:
     return max(0.0, min(1.0, _float(value)))
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time(), tzinfo=UTC)
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _is_stale_record(record: Mapping[str, Any], as_of: datetime, max_age: timedelta) -> bool:
+    timestamp = (
+        _parse_datetime(record.get("source_snapshot_time"))
+        or _parse_datetime(record.get("snapshot_time"))
+        or _parse_datetime(record.get("observed_at"))
+        or _parse_datetime(record.get("last_verified_at"))
+    )
+    return timestamp is not None and as_of - timestamp > max_age
 
 
 __all__ = [
