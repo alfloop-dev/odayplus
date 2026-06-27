@@ -1,3 +1,12 @@
+# --- Node / web ---
+node_modules/
+.next/
+out/
+playwright-report/
+test-results/
+.playwright/
+*.tsbuildinfo
+
 # --- Python ---
 __pycache__/
 *.py[cod]

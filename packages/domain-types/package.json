@@ -1,0 +1,17 @@
+{
+  "name": "@oday-plus/domain-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ODay Plus shared domain TypeScript types: canonical state vocabularies, roles, navigation contracts",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
