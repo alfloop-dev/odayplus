@@ -23,7 +23,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "PantheonGitHubWebhook/1.0"
 
     def do_POST(self) -> None:  # noqa: N802
-        server: "GitHubWebhookServer" = self.server  # type: ignore[assignment]
+        server: GitHubWebhookServer = self.server  # type: ignore[assignment]
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
         if not server.verify_signature(raw, self.headers.get("X-Hub-Signature-256")):

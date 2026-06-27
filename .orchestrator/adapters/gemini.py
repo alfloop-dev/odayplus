@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
@@ -17,6 +15,8 @@ from common import (
     worker_runtime_paths,
 )
 
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
+from adapters.file_inbox import FileInboxAdapter
 
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"

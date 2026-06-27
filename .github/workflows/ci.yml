@@ -30,4 +30,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run tests
-        run: uv run pytest
+        # Exclude tests that require a live multi-repo / CLI / local-path environment
+        # (cross-repo coordination, machine-specific workspace roots) which cannot
+        # run in a clean CI runner.
+        run: uv run pytest -m "not requires_live_env"

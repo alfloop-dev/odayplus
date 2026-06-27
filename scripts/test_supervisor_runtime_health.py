@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from supervisor_runtime_health import evaluate_runtime_health
@@ -15,7 +15,7 @@ def write_json(path: Path, payload: object) -> None:
 
 def test_health_passes_when_supervisor_lock_and_heartbeat_are_fresh(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(
         repo / ".orchestrator" / "config.json",
         {
@@ -49,7 +49,7 @@ def test_health_passes_when_supervisor_lock_and_heartbeat_are_fresh(tmp_path: Pa
 
 def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(repo / ".orchestrator" / "config.json", {"paths": {"state_file": ".orchestrator/state.json"}})
     write_json(
         repo / ".orchestrator" / "state.json",
@@ -66,7 +66,7 @@ def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
 
 def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(
         repo / ".orchestrator" / "config.json",
         {

@@ -13,8 +13,8 @@ if str(THIS_DIR) not in sys.path:
 
 from adapters.base import DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
-from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
+from adapters.copilot_local import CopilotLocalAdapter
 from adapters.gemini import GeminiAdapter
 
 

@@ -8,6 +8,7 @@ from unittest import mock
 
 import permission_broker
 import provider_permissions
+import pytest
 from provider_permissions import ROOT, _verified_claude_hooks
 
 
@@ -186,6 +187,7 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "defer")
         self.assertEqual(evaluation["risk_class"], "unknown")
 
+    @pytest.mark.requires_live_env
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Edit",

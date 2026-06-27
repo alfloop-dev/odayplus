@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,9 +30,8 @@ from common import (
     utc_now,
     write_activity_log,
     write_approval_evidence,
-    write_json,
 )
-from runtime_state import default_approval_state, load_approval_state, load_runtime_state, save_approval_state
+from runtime_state import load_approval_state, load_runtime_state, save_approval_state
 
 
 @contextmanager
@@ -133,7 +132,7 @@ def _pruned_pending_item(item: dict[str, Any], *, note: str) -> dict[str, Any]:
 
 
 def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stale_after_seconds = _stale_pending_seconds(config)
     pruned: list[dict[str, Any]] = []
     with approval_lock(config):
@@ -478,8 +477,7 @@ def consume_resume_override(
             history[index] = updated
             save_approval_state(config, state)
             if inserted and rule:
-                from permission_broker import remove_temporary_allow_rule
-                from permission_broker import restore_rules
+                from permission_broker import remove_temporary_allow_rule, restore_rules
 
                 remove_temporary_allow_rule(config, rule=rule)
                 restore_rules(config, bucket="ask", rules=suspended_ask_rules)
@@ -605,7 +603,7 @@ def main() -> int:
     if args.command in {"allow", "deny"}:
         resolved = resolve_approval(
             config,
-            getattr(args, "approval_id"),
+            args.approval_id,
             decision=args.command,
             note=getattr(args, "note", None),
             remember=getattr(args, "remember", False),

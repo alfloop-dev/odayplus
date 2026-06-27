@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -32,9 +32,16 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+from multi_repo_registry import (
+    repository_local_path,
+    repository_slug,
+    resolve_repository,
+    task_artifact_repository_ids,
+    task_primary_repository_id,
+)
+from runtime_state import load_runtime_state
 from task_archive import (
     ARCHIVE_TASKS_DIR,
-    DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
     archive_display_path,
     archive_task_path,
@@ -44,17 +51,10 @@ from task_archive import (
     load_archived_snapshot,
     rebuild_archive_index,
     recent_terminal_summaries,
-    task_satisfies_dependency,
-    terminal_outcome_for,
 )
-from multi_repo_registry import (
-    repository_local_path,
-    repository_slug,
-    resolve_repository,
-    task_artifact_repository_ids,
-    task_primary_repository_id,
+from task_archive import (
+    DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
 )
-from runtime_state import load_runtime_state
 
 STATUS_FILE = STATUS_ROOT / "ai-status.json"
 LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
@@ -417,7 +417,7 @@ def build_onboarding_prompt(state: dict[str, Any]) -> str:
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -430,7 +430,7 @@ def parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -988,7 +988,7 @@ def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
         archive_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         return None
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%MZ")
     archive_path = archive_dir / f"{log_path.name}-{timestamp}.gz"
     try:
         data = log_path.read_bytes()
@@ -2289,7 +2289,7 @@ def detect_truth_mismatches(
     task_map = {task["id"]: task for task in state.get("tasks", [])}
     orchestrator = orchestrator_state or {}
     provider_guardrails = orchestrator.get("provider_guardrails") if isinstance(orchestrator.get("provider_guardrails"), dict) else {}
-    dispatch_pauses = (
+    (
         provider_guardrails.get("dispatch_pauses")
         if isinstance(provider_guardrails.get("dispatch_pauses"), dict)
         else orchestrator.get("dispatch_pauses")
@@ -2537,7 +2537,7 @@ def normalized_source_ref(task: dict[str, Any] | None) -> dict[str, Any]:
 
 def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dict[str, Any]:
     resolver = task_resolver(state)
-    task_map = resolver.active_task_map()
+    resolver.active_task_map()
     proposed = planning.get("proposed_execution_tasks") or []
     contract = planning.get("materialization_contract") if isinstance(planning.get("materialization_contract"), dict) else {}
     artifacts = planning.get("artifacts") if isinstance(planning.get("artifacts"), dict) else {}
@@ -3804,8 +3804,8 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"restore_approved is only valid when status is in_progress (current: {task.get('status')})")
     if not task.get("review_notes_zh"):
         raise SystemExit(
-            f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
-            f"Use the normal review lifecycle if the task has not been reviewed yet."
+            "restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
+            "Use the normal review lifecycle if the task has not been reviewed yet."
         )
     timestamp = iso_now()
     task["status"] = "review_approved"

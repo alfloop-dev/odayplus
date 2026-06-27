@@ -41,7 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -61,7 +61,7 @@ STALE_LOCK_SECONDS = 3600
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -200,7 +200,7 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
     if open_pr_exists():
         return True, "skip: existing OPS-ARCHIVE-AUTO-COMMIT-* PR is open"
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     task_id = f"{TASK_ID_PREFIX}-{timestamp}"
     kebab = task_id.lower()
     worktree_path = Path(f"/tmp/pantheon-worker-worktrees/pantheon/{kebab}")
