@@ -3,3 +3,5 @@ export type EventEnvelope<TPayload> = {
   version: number;
   payload: TPayload;
 };
+
+export * from '../canonical';
