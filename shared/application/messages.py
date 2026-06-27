@@ -10,9 +10,12 @@ class Command:
     name: str
     payload: dict[str, Any]
     command_id: str = field(default_factory=lambda: str(uuid4()))
+    idempotency_key: str | None = None
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True)
 class Query:
     name: str
     filters: dict[str, Any]
+    correlation_id: str | None = None

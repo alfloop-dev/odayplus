@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from apps.api.oday_api.main import create_app
+
+
+def test_health_routes_publish_correlation_id() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/health", headers={"x-correlation-id": "corr-test-1"})
+
+    assert response.status_code == 200
+    assert response.headers["x-correlation-id"] == "corr-test-1"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "oday-api"
+    assert body["version"] == "0.1.0"
+    assert body["correlation_id"] == "corr-test-1"
+    assert "time" in body
+
+
+def test_job_enqueue_is_idempotent_and_audited() -> None:
+    client = TestClient(create_app())
+    headers = {"x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}
+    payload = {"job_type": "forecastops.score", "payload": {"site_id": "site-123"}}
+
+    first = client.post("/jobs", json=payload, headers=headers)
+    second = client.post("/jobs", json=payload, headers=headers)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body["created"] is True
+    assert second_body["created"] is False
+    assert first_body["job_id"] == first_body["job"]["job_id"]
+    assert first_body["status"] == "queued"
+    assert first_body["correlation_id"] == "corr-job-1"
+    assert first_body["idempotency_key"] == "idem-1"
+    assert first_body["job"]["job_id"] == second_body["job"]["job_id"]
+    assert first_body["job"]["status"] == "queued"
+    assert first_body["job"]["correlation_id"] == "corr-job-1"
+    assert first_body["job"]["idempotency_key"] == "idem-1"
+
+    audit = client.get("/audit/events", params={"correlation_id": "corr-job-1"})
+
+    assert audit.status_code == 200
+    events = audit.json()["events"]
+    assert [event["outcome"] for event in events] == ["accepted", "idempotent_replay"]
+    assert [event["result"] for event in events] == ["accepted", "idempotent_replay"]
+    assert {event["job_id"] for event in events} == {first_body["job"]["job_id"]}
+
+
+def test_job_lookup_and_openapi_contract() -> None:
+    client = TestClient(create_app())
+
+    enqueue = client.post("/jobs", json={"job_type": "netplan.solve", "payload": {}})
+    job_id = enqueue.json()["job"]["job_id"]
+
+    lookup = client.get(f"/jobs/{job_id}")
+    openapi = client.get("/openapi.json")
+
+    assert lookup.status_code == 200
+    assert lookup.json()["job_id"] == job_id
+    assert openapi.status_code == 200
+    paths = openapi.json()["paths"]
+    assert "/health" in paths
+    assert "/healthz" in paths
+    assert "/platform/health" in paths
+    assert "/jobs" in paths
+    assert "/jobs/{job_id}" in paths
+    assert "/audit/events" in paths
