@@ -1,0 +1,38 @@
+{
+  "contract_id": "machine_master_snapshot",
+  "cases": [
+    {
+      "label": "missing required machine_family and status",
+      "record": {
+        "source_machine_id": "M-ABC900",
+        "source_store_id": "S001",
+        "machine_serial_no": "SN-0900"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "negative capacity_kg",
+      "record": {
+        "source_machine_id": "M-ABC901",
+        "source_store_id": "S001",
+        "machine_serial_no": "SN-0901",
+        "machine_family": "washer",
+        "capacity_kg": -5.0,
+        "status": "active"
+      },
+      "expect_codes": ["invalid_amount"]
+    },
+    {
+      "label": "wrong type for capacity_kg",
+      "record": {
+        "source_machine_id": "M-ABC902",
+        "source_store_id": "S001",
+        "machine_serial_no": "SN-0902",
+        "machine_family": "washer",
+        "capacity_kg": "15kg",
+        "status": "active"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}

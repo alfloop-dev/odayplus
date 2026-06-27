@@ -1,0 +1,23 @@
+{
+  "contract_id": "customer_service_case_event",
+  "records": [
+    {
+      "source_case_id": "CS-0001",
+      "source_store_id": "S001",
+      "source_machine_id": "M-ABC123",
+      "member_source_id": "member-token-001",
+      "case_opened_at": "2026-06-26T08:30:00+08:00",
+      "case_closed_at": "2026-06-26T09:15:00+08:00",
+      "channel": "LINE",
+      "topic_code": "machine_error",
+      "sentiment_score": -0.4,
+      "resolution_status": "resolved"
+    },
+    {
+      "source_case_id": "CS-0002",
+      "case_opened_at": "2026-06-26T10:00:00+08:00",
+      "channel": "web",
+      "topic_code": "billing_query"
+    }
+  ]
+}

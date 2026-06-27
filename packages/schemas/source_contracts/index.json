@@ -1,0 +1,55 @@
+{
+  "registry_id": "odp_source_contracts",
+  "version": "0.1.0",
+  "description": "Registry of ODay Plus source-data contracts (internal IoT/upstream + external connectors) used by the Integration Layer and External Data Platform to canonicalize raw inputs.",
+  "doc_refs": ["ODP-DATA-02", "ODP-DATA-03", "ODP-DATA-05"],
+  "envelopes": [
+    {"kind": "batch", "file": "envelopes/batch_envelope.json", "doc_ref": "ODP-DATA-02 §3"},
+    {"kind": "event", "file": "envelopes/event_envelope.json", "doc_ref": "ODP-DATA-02 §6.1"}
+  ],
+  "integration_modes": [
+    "batch_snapshot",
+    "incremental_batch",
+    "event_stream",
+    "backfill",
+    "api_lookup"
+  ],
+  "acquisition_methods": ["api", "file", "manual", "feed", "public_dataset", "generated", "internal"],
+  "quarantine_reasons": [
+    "missing_required_field",
+    "schema_mismatch",
+    "invalid_time",
+    "invalid_amount",
+    "duplicate_key_conflict",
+    "missing_reference",
+    "low_geocode_confidence",
+    "license_blocked"
+  ],
+  "canonical_entities": [
+    "store",
+    "address_location",
+    "machine",
+    "transaction",
+    "machine_cycle",
+    "machine_status_event",
+    "work_order",
+    "customer_service_case",
+    "price_schedule",
+    "poi",
+    "competitor_store",
+    "listing"
+  ],
+  "contracts": [
+    {"contract_id": "store_master_snapshot", "kind": "internal", "file": "internal/store_master_snapshot.json", "canonical_target": "store", "integration_mode": "batch_snapshot", "envelope": "batch"},
+    {"contract_id": "machine_master_snapshot", "kind": "internal", "file": "internal/machine_master_snapshot.json", "canonical_target": "machine", "integration_mode": "batch_snapshot", "envelope": "batch"},
+    {"contract_id": "transaction_event", "kind": "internal", "file": "internal/transaction_event.json", "canonical_target": "transaction", "integration_mode": "incremental_batch", "envelope": "batch"},
+    {"contract_id": "machine_cycle_event", "kind": "internal", "file": "internal/machine_cycle_event.json", "canonical_target": "machine_cycle", "integration_mode": "incremental_batch", "envelope": "batch"},
+    {"contract_id": "machine_status_event", "kind": "internal", "file": "internal/machine_status_event.json", "canonical_target": "machine_status_event", "integration_mode": "event_stream", "envelope": "event"},
+    {"contract_id": "price_schedule_snapshot", "kind": "internal", "file": "internal/price_schedule_snapshot.json", "canonical_target": "price_schedule", "integration_mode": "batch_snapshot", "envelope": "batch"},
+    {"contract_id": "maintenance_work_order_event", "kind": "internal", "file": "internal/maintenance_work_order_event.json", "canonical_target": "work_order", "integration_mode": "incremental_batch", "envelope": "batch"},
+    {"contract_id": "customer_service_case_event", "kind": "internal", "file": "internal/customer_service_case_event.json", "canonical_target": "customer_service_case", "integration_mode": "incremental_batch", "envelope": "batch"},
+    {"contract_id": "poi_snapshot", "kind": "external", "file": "external/poi_snapshot.json", "canonical_target": "poi", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "api"},
+    {"contract_id": "competitor_store_snapshot", "kind": "external", "file": "external/competitor_store_snapshot.json", "canonical_target": "competitor_store", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "manual"},
+    {"contract_id": "listing_raw_snapshot", "kind": "external", "file": "external/listing_raw_snapshot.json", "canonical_target": "listing", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "feed"}
+  ]
+}

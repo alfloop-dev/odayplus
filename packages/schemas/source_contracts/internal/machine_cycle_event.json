@@ -1,0 +1,27 @@
+{
+  "contract_id": "machine_cycle_event",
+  "title": "Machine Cycle Event",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.4; ODP-DATA-05 §5.4",
+  "source_system": "iot_core",
+  "source_dataset": "machine_cycle_event",
+  "canonical_target": "machine_cycle",
+  "mapping_id": "MAP-INT-CYCLE-v1",
+  "integration_mode": "incremental_batch",
+  "envelope": "batch",
+  "invariants": [
+    {"rule": "time_order", "earlier": "cycle_start_time", "later": "cycle_end_time", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "source_cycle_id", "type": "string", "required": true, "description": "Source cycle id."},
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Store id."},
+    {"name": "source_machine_id", "type": "string", "required": true, "description": "Machine id."},
+    {"name": "cycle_start_time", "type": "timestamp", "required": true, "description": "Cycle start time."},
+    {"name": "cycle_end_time", "type": "timestamp", "required": false, "description": "Cycle end time."},
+    {"name": "cycle_type", "type": "string", "required": false, "enum": ["wash", "dry", "combo", "cleaning", "test"], "description": "Cycle type."},
+    {"name": "duration_sec", "type": "integer", "required": false, "minimum": 0, "description": "Duration in seconds."},
+    {"name": "cycle_status", "type": "string", "required": true, "enum": ["started", "completed", "failed", "cancelled"], "description": "Cycle status."},
+    {"name": "error_code", "type": "string", "required": false, "description": "Error code."},
+    {"name": "transaction_reference_id", "type": "string", "required": false, "description": "Linked transaction."}
+  ]
+}

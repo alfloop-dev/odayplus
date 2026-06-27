@@ -1,0 +1,38 @@
+{
+  "contract_id": "maintenance_work_order_event",
+  "cases": [
+    {
+      "label": "missing required issue_type and status",
+      "record": {
+        "source_work_order_id": "WO-9001",
+        "source_store_id": "S001",
+        "opened_at": "2026-06-26T08:20:00+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "closed_at before opened_at",
+      "record": {
+        "source_work_order_id": "WO-9002",
+        "source_store_id": "S001",
+        "issue_type": "failure",
+        "opened_at": "2026-06-26T11:00:00+08:00",
+        "closed_at": "2026-06-26T08:20:00+08:00",
+        "status": "resolved"
+      },
+      "expect_codes": ["invalid_time"]
+    },
+    {
+      "label": "negative cost_amount",
+      "record": {
+        "source_work_order_id": "WO-9003",
+        "source_store_id": "S001",
+        "issue_type": "failure",
+        "opened_at": "2026-06-26T08:20:00+08:00",
+        "status": "open",
+        "cost_amount": -100.0
+      },
+      "expect_codes": ["invalid_amount"]
+    }
+  ]
+}

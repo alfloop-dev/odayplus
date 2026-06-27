@@ -1,0 +1,32 @@
+{
+  "contract_id": "batch_envelope",
+  "title": "Common Batch / Snapshot Exchange Envelope",
+  "kind": "envelope",
+  "doc_ref": "ODP-DATA-02 §3",
+  "source_system": "*",
+  "source_dataset": "*",
+  "canonical_target": "",
+  "mapping_id": "",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "allow_unknown": true,
+  "invariants": [
+    {"rule": "time_order", "earlier": "event_time", "later": "observation_time", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "source_system", "type": "string", "required": true, "description": "Source system code, e.g. iot_core, payment, crm."},
+    {"name": "source_dataset", "type": "string", "required": true, "description": "Source dataset / table / topic."},
+    {"name": "source_record_id", "type": "string", "required": true, "description": "Unique source record id; derive from natural key if absent."},
+    {"name": "source_event_type", "type": "string", "required": true, "enum": ["snapshot", "create", "update", "delete", "void", "refund", "correction"], "description": "Record-level change type."},
+    {"name": "event_time", "type": "timestamp", "required": true, "description": "When the event actually occurred."},
+    {"name": "observation_time", "type": "timestamp", "required": true, "description": "When the upstream system observed/received it."},
+    {"name": "source_updated_at", "type": "timestamp", "required": true, "description": "Source last-updated timestamp."},
+    {"name": "ingested_at", "type": "timestamp", "required": false, "description": "Filled by the Integration Layer on receipt."},
+    {"name": "source_version", "type": "string", "required": false, "description": "Source schema / data version."},
+    {"name": "idempotency_key", "type": "string", "required": true, "description": "Replay de-duplication key."},
+    {"name": "correlation_id", "type": "string", "required": false, "description": "Cross-event tracing id."},
+    {"name": "payload_hash", "type": "string", "required": false, "description": "Content hash for change detection."},
+    {"name": "is_deleted", "type": "boolean", "required": false, "description": "Logical delete flag."},
+    {"name": "raw_payload", "type": "json", "required": false, "description": "Original payload, masked per security policy."}
+  ]
+}
