@@ -1,0 +1,309 @@
+/*
+ * OpsBoard shell styles. Token-only: every value is a var(--odp-*) from
+ * @oday-plus/design-tokens (visual system §10.1). No hard-coded colours,
+ * sizes, radii, shadows or z-index here.
+ */
+
+.odp-shell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: var(--odp-layout-header-height) 1fr;
+  grid-template-areas:
+    "header header"
+    "sidebar main";
+  min-height: 100vh;
+  background: var(--odp-color-bg-canvas);
+  color: var(--odp-color-text-primary);
+  font-family: var(--odp-font-family-sans);
+  font-size: var(--odp-font-size-md);
+  line-height: var(--odp-line-height-normal);
+}
+
+.odp-skip-link {
+  position: absolute;
+  left: var(--odp-space-2);
+  top: calc(-1 * var(--odp-space-16));
+  z-index: var(--odp-z-toast);
+  padding: var(--odp-space-2) var(--odp-space-4);
+  background: var(--odp-color-bg-surface);
+  border: 1px solid var(--odp-color-border-strong);
+  border-radius: var(--odp-radius-md);
+  transition: top var(--odp-motion-duration-fast) var(--odp-motion-easing-standard);
+}
+.odp-skip-link:focus {
+  top: var(--odp-space-2);
+}
+
+/* ---- Global header ---- */
+.odp-header {
+  grid-area: header;
+  position: sticky;
+  top: 0;
+  z-index: var(--odp-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--odp-space-4);
+  height: var(--odp-layout-header-height);
+  padding: 0 var(--odp-space-4);
+  background: var(--odp-color-bg-surface);
+  border-bottom: 1px solid var(--odp-color-border-default);
+}
+.odp-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--odp-space-2);
+  font-weight: var(--odp-font-weight-bold);
+}
+.odp-header__spacer {
+  flex: 1 1 auto;
+}
+.odp-header__search {
+  flex: 0 1 320px;
+  height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  background: var(--odp-color-bg-inset);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-primary);
+  font: inherit;
+}
+.odp-header__search:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+
+/* env badge — text required, never colour-only (contracts §3.2) */
+.odp-env-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-1) var(--odp-space-2);
+  border-radius: var(--odp-radius-sm);
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.odp-env-badge[data-env="production"] {
+  background: var(--odp-color-status-red-soft);
+  color: var(--odp-color-status-red-on);
+}
+.odp-env-badge[data-env="staging"] {
+  background: var(--odp-color-status-yellow-soft);
+  color: var(--odp-color-status-yellow-on);
+}
+.odp-env-badge[data-env="dev"] {
+  background: var(--odp-color-status-blue-soft);
+  color: var(--odp-color-status-blue-on);
+}
+
+.odp-iconbtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--odp-density-control-height);
+  height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.odp-iconbtn:hover {
+  background: var(--odp-color-bg-muted);
+}
+.odp-iconbtn:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+.odp-iconbtn__count {
+  position: absolute;
+  top: var(--odp-space-0);
+  right: var(--odp-space-0);
+  min-width: var(--odp-space-4);
+  padding: 0 var(--odp-space-1);
+  background: var(--odp-color-status-orange);
+  color: var(--odp-color-text-inverse);
+  border-radius: var(--odp-radius-full);
+  font-size: var(--odp-font-size-xs);
+  line-height: var(--odp-line-height-compact);
+}
+
+.odp-select {
+  height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-2);
+  background: var(--odp-color-bg-surface);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-primary);
+  font: inherit;
+}
+.odp-select:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+
+/* ---- Sidebar ---- */
+.odp-sidebar {
+  grid-area: sidebar;
+  width: var(--odp-layout-sidebar-width);
+  padding: var(--odp-space-3) var(--odp-space-2);
+  background: var(--odp-color-bg-surface);
+  border-right: 1px solid var(--odp-color-border-default);
+  overflow-y: auto;
+}
+.odp-sidebar[data-collapsed="true"] {
+  width: var(--odp-layout-sidebar-collapsed);
+}
+.odp-sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-1);
+}
+.odp-navlink {
+  display: flex;
+  align-items: center;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-secondary);
+  text-decoration: none;
+}
+.odp-navlink:hover {
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-primary);
+}
+.odp-navlink:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+.odp-navlink[aria-current="page"] {
+  background: var(--odp-color-bg-info-soft);
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+}
+.odp-navlink__icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--odp-space-6);
+  height: var(--odp-space-6);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-muted);
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+  text-transform: uppercase;
+}
+.odp-navlink__label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.odp-navlink__ro {
+  flex: 0 0 auto;
+  font-size: var(--odp-font-size-xs);
+  color: var(--odp-color-text-muted);
+}
+
+/* ---- Main / page header ---- */
+.odp-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.odp-pageheader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-6) var(--odp-layout-content-gutter) var(--odp-space-4);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-surface);
+}
+.odp-pageheader__top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--odp-space-4);
+}
+.odp-pageheader__title {
+  margin: 0;
+  font-size: var(--odp-font-size-2xl);
+  font-weight: var(--odp-font-weight-semibold);
+  line-height: var(--odp-line-height-compact);
+}
+.odp-pageheader__summary {
+  margin: 0;
+  color: var(--odp-color-text-secondary);
+}
+.odp-pageheader__spacer {
+  flex: 1 1 auto;
+}
+.odp-breadcrumb {
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-muted);
+}
+.odp-breadcrumb ol {
+  list-style: none;
+  display: flex;
+  gap: var(--odp-space-2);
+  margin: 0;
+  padding: 0;
+}
+.odp-breadcrumb a {
+  color: var(--odp-color-text-link);
+  text-decoration: none;
+}
+
+.odp-content {
+  flex: 1 1 auto;
+  padding: var(--odp-space-6) var(--odp-layout-content-gutter);
+}
+
+/* ---- Badge ---- */
+.odp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-1) var(--odp-space-2);
+  border-radius: var(--odp-radius-full);
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+  line-height: var(--odp-line-height-compact);
+}
+
+/* ---- Placeholder module screen ---- */
+.odp-placeholder {
+  max-width: var(--odp-layout-readable-max);
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-4);
+}
+.odp-card {
+  padding: var(--odp-density-card-padding);
+  background: var(--odp-color-bg-surface);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  box-shadow: var(--odp-elevation-card);
+}
+.odp-card__title {
+  margin: 0 0 var(--odp-space-2);
+  font-size: var(--odp-font-size-lg);
+  font-weight: var(--odp-font-weight-semibold);
+}
+.odp-muted {
+  color: var(--odp-color-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odp-skip-link {
+    transition: none;
+  }
+}
