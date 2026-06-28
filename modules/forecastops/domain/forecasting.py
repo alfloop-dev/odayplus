@@ -11,6 +11,7 @@ from uuid import uuid4
 FORECASTOPS_MODEL_VERSION = "forecastops-baseline-v1"
 FORECASTOPS_FEATURE_VERSION = "store-machine-timeseries-view-v1"
 FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"
+FORECAST_HORIZON_WEEKS = (4, 8, 12, 24)
 
 
 class AlertLevel(StrEnum):
@@ -18,6 +19,16 @@ class AlertLevel(StrEnum):
     YELLOW = "yellow"
     ORANGE = "orange"
     RED = "red"
+
+
+@dataclass(frozen=True)
+class ForecastBand:
+    p10: float
+    p50: float
+    p90: float
+
+    def to_dict(self) -> dict[str, float]:
+        return {"p10": self.p10, "p50": self.p50, "p90": self.p90}
 
 
 @dataclass(frozen=True)
@@ -126,6 +137,10 @@ class ForecastOutput:
     p10: float
     p50: float
     p90: float
+    w4: ForecastBand
+    w8: ForecastBand
+    w12: ForecastBand
+    w24: ForecastBand
     trajectory_class: str
     turning_point_probability: float
     sitescore_gap_ratio: float
@@ -149,6 +164,12 @@ class ForecastOutput:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        forecast_bands = {
+            "w4": self.w4.to_dict(),
+            "w8": self.w8.to_dict(),
+            "w12": self.w12.to_dict(),
+            "w24": self.w24.to_dict(),
+        }
         return {
             "forecast_output_id": self.forecast_output_id,
             "forecast_version": self.forecast_version,
@@ -159,6 +180,11 @@ class ForecastOutput:
             "p10": self.p10,
             "p50": self.p50,
             "p90": self.p90,
+            "w4": forecast_bands["w4"],
+            "w8": forecast_bands["w8"],
+            "w12": forecast_bands["w12"],
+            "w24": forecast_bands["w24"],
+            "forecast_bands": forecast_bands,
             "trajectory_class": self.trajectory_class,
             "turning_point_probability": self.turning_point_probability,
             "sitescore_gap_ratio": self.sitescore_gap_ratio,
@@ -295,8 +321,8 @@ def _forecast_one(
         turning_point_probability = round(_bounded(abs(delta_ratio) * 0.8), 4)
 
     spread = 0.18 if len(observations) >= 7 else 0.28
-    p10 = round(p50 * (1.0 - spread), 2)
-    p90 = round(p50 * (1.0 + spread), 2)
+    bands = _forecast_bands(p50=p50, spread=spread, trajectory_class=trajectory_class)
+    w4 = bands["w4"]
     gap_ratio = _sitescore_gap_ratio(actual=actual, baseline=baseline)
     return ForecastOutput(
         forecast_output_id=f"forecast-output-{uuid4()}",
@@ -304,9 +330,13 @@ def _forecast_one(
         prediction_run_id=f"forecast-run-{uuid4()}",
         horizon_days=forecast_input.horizon_days,
         target_metric=forecast_input.target_metric,
-        p10=p10,
-        p50=p50,
-        p90=p90,
+        p10=w4.p10,
+        p50=w4.p50,
+        p90=w4.p90,
+        w4=w4,
+        w8=bands["w8"],
+        w12=bands["w12"],
+        w24=bands["w24"],
         trajectory_class=trajectory_class,
         turning_point_probability=turning_point_probability,
         sitescore_gap_ratio=gap_ratio,
@@ -390,6 +420,31 @@ def _trajectory_class(delta_ratio: float) -> str:
     if delta_ratio <= -0.10:
         return "declining"
     return "plateau"
+
+
+def _forecast_bands(
+    *,
+    p50: float,
+    spread: float,
+    trajectory_class: str,
+) -> dict[str, ForecastBand]:
+    trajectory_growth = {
+        "growing": 0.08,
+        "ramping": 0.04,
+        "plateau": 0.0,
+        "declining": -0.06,
+    }[trajectory_class]
+    bands: dict[str, ForecastBand] = {}
+    for weeks in FORECAST_HORIZON_WEEKS:
+        multiplier = max(0.0, 1.0 + trajectory_growth * ((weeks - 4) / 4))
+        horizon_p50 = round(p50 * multiplier, 2)
+        horizon_spread = spread + (weeks / 24) * 0.08
+        bands[f"w{weeks}"] = ForecastBand(
+            p10=round(horizon_p50 * (1.0 - horizon_spread), 2),
+            p50=horizon_p50,
+            p90=round(horizon_p50 * (1.0 + horizon_spread), 2),
+        )
+    return bands
 
 
 def _sitescore_gap_ratio(*, actual: float, baseline: float | None) -> float:

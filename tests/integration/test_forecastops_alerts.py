@@ -65,6 +65,10 @@ def test_forecast_job_emits_four_light_alerts_and_handoffs() -> None:
     forecast = result.forecasts[0]
     assert forecast.forecast_version == 1
     assert forecast.p10 <= forecast.p50 <= forecast.p90
+    assert forecast.w4.p10 <= forecast.w4.p50 <= forecast.w4.p90
+    assert forecast.w8.p10 <= forecast.w8.p50 <= forecast.w8.p90
+    assert forecast.w12.p10 <= forecast.w12.p50 <= forecast.w12.p90
+    assert forecast.w24.p10 <= forecast.w24.p50 <= forecast.w24.p90
     assert forecast.trajectory_class == "declining"
     assert forecast.sitescore_gap_ratio == -0.72
 
@@ -106,6 +110,7 @@ def test_batch_worker_persists_versions() -> None:
     assert first.job_id == "forecast-job-1"
     assert first.status == "succeeded"
     assert first.to_dict()["forecasts"][0]["forecast_version"] == 1
+    assert set(first.to_dict()["forecasts"][0]["forecast_bands"]) == {"w4", "w8", "w12", "w24"}
     assert second.to_dict()["forecasts"][0]["forecast_version"] == 2
 
 
@@ -144,6 +149,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
     body = response.json()
     assert body["created"] is True
     assert body["correlation_id"] == "corr-forecast-1"
+    assert set(body["forecasts"][0]["forecast_bands"]) == {"w4", "w8", "w12", "w24"}
     assert body["alerts"][0]["alert_level"] == "orange"
     assert body["handoffs"][0]["store_id"] == "store-api-001"
     assert body["handoffs"][0]["intervention_type"] == "promotion"
