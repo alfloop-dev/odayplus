@@ -45,6 +45,7 @@ else:
         forecastops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
+        adlift_repository: Any = None,
         intervention_workflow: Any = None,
         intervention_label_registry: Any = None,
     ) -> FastAPI:
@@ -126,11 +127,13 @@ else:
                 ]
             }
 
+        from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.avm import create_avm_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
+        from modules.adlift.infrastructure import InMemoryAdLiftRepository
         from modules.avm.infrastructure import InMemoryAVMRepository
         from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.intervention.application.workflow import InterventionWorkflow
@@ -142,6 +145,7 @@ else:
         avm_repo = avm_repository or InMemoryAVMRepository()
         site_repository = sitescore_repository or InMemorySiteScoreRepository()
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        adlift_repo = adlift_repository or InMemoryAdLiftRepository()
         label_registry = intervention_label_registry or InMemoryLabelRegistry()
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             audit_log=audit_log, label_hooks=[label_registry]
@@ -160,6 +164,7 @@ else:
                 audit_log=audit_log,
             )
         )
+        api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
         api.include_router(
             create_interventions_router(
                 workflow=interventions_workflow,
@@ -174,6 +179,7 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.adlift_repository = adlift_repo
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_label_registry = label_registry
         return api
