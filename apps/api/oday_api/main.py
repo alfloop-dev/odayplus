@@ -47,10 +47,19 @@ else:
         sitescore_workflow: Any = None,
         adlift_repository: Any = None,
         intervention_workflow: Any = None,
+        intervention_repository: Any = None,
         intervention_label_registry: Any = None,
+        persistence: Any = None,
     ) -> FastAPI:
-        audit_log = audit_log or InMemoryAuditLog()
-        job_queue = job_queue or InMemoryJobQueue()
+        # Defaults come from the persistence factory, which selects in-memory
+        # (default) or durable SQLite storage from the environment
+        # (ODP_PERSISTENCE / ODP_DB_PATH). Explicit arguments still win, so
+        # tests can inject hand-built doubles. See ODP-PV-009.
+        from shared.infrastructure.persistence import build_persistence
+
+        bundle = persistence or build_persistence()
+        audit_log = audit_log or bundle.audit_log
+        job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or HeatZoneResultStore()
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
@@ -134,22 +143,20 @@ else:
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
-        from modules.adlift.infrastructure import InMemoryAdLiftRepository
-        from modules.avm.infrastructure import InMemoryAVMRepository
-        from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.intervention.application.workflow import InterventionWorkflow
-        from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
-        from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
-        forecast_repository = forecastops_repository or InMemoryForecastOpsRepository()
-        avm_repo = avm_repository or InMemoryAVMRepository()
-        site_repository = sitescore_repository or InMemorySiteScoreRepository()
+        forecast_repository = forecastops_repository or bundle.forecastops_repository
+        avm_repo = avm_repository or bundle.avm_repository
+        site_repository = sitescore_repository or bundle.sitescore_repository
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
-        adlift_repo = adlift_repository or InMemoryAdLiftRepository()
-        label_registry = intervention_label_registry or InMemoryLabelRegistry()
+        adlift_repo = adlift_repository or bundle.adlift_repository
+        label_registry = intervention_label_registry or bundle.intervention_label_registry
+        intervention_repo = intervention_repository or bundle.intervention_repository
         interventions_workflow = intervention_workflow or InterventionWorkflow(
-            audit_log=audit_log, label_hooks=[label_registry]
+            repository=intervention_repo,
+            audit_log=audit_log,
+            label_hooks=[label_registry],
         )
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
@@ -183,7 +190,9 @@ else:
         api.state.sitescore_workflow = decision_workflow
         api.state.adlift_repository = adlift_repo
         api.state.intervention_workflow = interventions_workflow
+        api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
+        api.state.persistence = bundle
         return api
 
     app = create_app()
