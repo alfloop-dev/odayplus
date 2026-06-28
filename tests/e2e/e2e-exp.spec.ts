@@ -22,7 +22,8 @@ test("Expansion workflow routes render inside the OpsBoard shell", async ({ page
 test("HeatZone Radar exposes map, ranked list, drawer, freshness, and low confidence guard", async ({ page }) => {
   await page.goto("/w/expansion/heatzone?selected=hz-0773&drawer=zone");
   await expect(page.getByTestId("exp-heatzone-page")).toBeVisible();
-  await expect(page.getByLabel("HeatZone map preview")).toContainText("桃園市中壢區");
+  await expect(page.getByLabel("Interactive HeatZone map")).toHaveAttribute("data-selected-zone", "hz-0773");
+  await expect(page.getByLabel("Map legend")).toContainText("low confidence");
   await expect(page.getByLabel("Ranked HeatZone list")).toContainText("SUPPRESSED_LOW_CONFIDENCE");
   await expect(page.getByTestId("heatzone-drawer")).toContainText("低信心 guard");
   await expect(page.getByText("source snap-expansion-20260628-0100")).toBeVisible();

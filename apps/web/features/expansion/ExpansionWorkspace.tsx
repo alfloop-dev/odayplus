@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
+import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
 import {
   candidates,
   decisionTone,
@@ -192,27 +193,27 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
           </label>
         </FilterBar>
         <section className={styles.mapLayout}>
-          <div className={styles.mapPanel} aria-label="HeatZone map preview">
-            {heatZones.map((zone) => (
-              <Link
-                className={styles.mapCell}
-                data-state={zone.state}
-                href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`}
-                key={zone.id}
-                style={{ gridColumn: zone.rank, gridRow: zone.rank }}
-              >
-                <strong>{zone.score}</strong>
-                <span>{zone.district}</span>
-              </Link>
-            ))}
-          </div>
+          <HeatZoneMap
+            candidates={candidates}
+            freshness={freshness}
+            listings={listings}
+            selectedZoneId={selectedZone.id}
+            zones={heatZones}
+          />
           <aside className={styles.sidePanel} aria-label="Ranked HeatZone list">
             <h2>Top zones</h2>
             <DenseTable
               headers={["Rank", "Zone", "Score", "Confidence", "State"]}
               rows={heatZones.map((zone) => [
                 `#${zone.rank}`,
-                <a href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`} key={zone.id}>{zone.id}</a>,
+                <a
+                  aria-current={zone.id === selectedZone.id ? "true" : undefined}
+                  data-testid={`heatzone-row-${zone.id}`}
+                  href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`}
+                  key={zone.id}
+                >
+                  {zone.id}
+                </a>,
                 zone.score,
                 zone.confidence.toFixed(2),
                 zone.state,

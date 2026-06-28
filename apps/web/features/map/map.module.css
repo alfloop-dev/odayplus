@@ -1,0 +1,124 @@
+.mapShell {
+  display: grid;
+  grid-template-rows: auto minmax(380px, 1fr) auto;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-inset);
+}
+
+.mapToolbar,
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-3);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-bg-surface);
+  border-bottom: 1px solid var(--odp-color-border-default);
+}
+
+.legend {
+  border-top: 1px solid var(--odp-color-border-default);
+  border-bottom: 0;
+}
+
+.mapToolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  min-height: var(--odp-density-control-height);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+  white-space: nowrap;
+}
+
+.mapToolbar input {
+  width: 16px;
+  height: 16px;
+}
+
+.mapCanvas {
+  position: relative;
+  min-height: 380px;
+}
+
+.deckOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.mapCanvas :global(.maplibregl-canvas),
+.deckOverlay canvas {
+  outline: none;
+}
+
+.mapCanvas :global(.maplibregl-map) {
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+}
+
+.mapStatus {
+  position: absolute;
+  left: var(--odp-space-3);
+  bottom: var(--odp-space-3);
+  z-index: 2;
+  max-width: min(460px, calc(100% - var(--odp-space-6)));
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: color-mix(in srgb, var(--odp-color-bg-surface) 92%, transparent);
+  color: var(--odp-color-text-secondary);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-sm);
+}
+
+.swatchGreen {
+  background: #2f855a;
+}
+
+.swatchYellow {
+  background: #b7791f;
+}
+
+.swatchOrange {
+  background: #c05621;
+}
+
+.swatchBlue {
+  background: #2b6cb0;
+}
+
+.swatchPurple {
+  background: #6b46c1;
+}
+
+@media (max-width: 960px) {
+  .mapShell {
+    min-height: 460px;
+    grid-template-rows: auto minmax(320px, 1fr) auto;
+  }
+
+  .mapCanvas {
+    min-height: 320px;
+  }
+}
