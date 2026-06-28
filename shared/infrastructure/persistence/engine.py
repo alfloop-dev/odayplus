@@ -6,9 +6,9 @@ against storage that survives a process restart, *without* requiring a live
 database server in CI. A file-backed SQLite database (stdlib ``sqlite3``, WAL
 journaling) gives exactly that: durable, restart-survivable, dependency-free.
 
-The schema is owned by ``infra/db/migrations/000002_durable_e2e_persistence.sql``
-and executed verbatim on bootstrap, so the migration artifact and the runtime
-engine can never drift.
+The schema is owned by the engine-neutral migration files under
+``infra/db/migrations`` and executed verbatim on bootstrap, so the migration
+artifacts and the runtime engine can never drift.
 """
 
 from __future__ import annotations
@@ -17,14 +17,19 @@ import sqlite3
 import threading
 from pathlib import Path
 
-# Repo-relative path to the durable-persistence DDL. Resolved from this file so
-# it works regardless of the process working directory.
-_SCHEMA_FILE = (
-    Path(__file__).resolve().parents[3]
-    / "infra"
-    / "db"
-    / "migrations"
-    / "000002_durable_e2e_persistence.sql"
+_MIGRATIONS_DIR = (
+    Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
+)
+
+# Engine-neutral (SQLite-compatible) durable-persistence DDL, applied in order
+# at bootstrap. 000001 is the canonical PostgreSQL + PostGIS schema and is
+# intentionally excluded — it is not SQLite-compatible. Each durable migration
+# that the E2E store depends on is listed here explicitly so adding one is a
+# deliberate, reviewable step rather than a directory glob that could sweep in
+# a Postgres-only file.
+_SCHEMA_FILES = (
+    "000002_durable_e2e_persistence.sql",
+    "000003_durable_audit_evidence.sql",
 )
 
 
@@ -57,9 +62,10 @@ class SqliteEngine:
         return self._lock
 
     def _bootstrap(self) -> None:
-        ddl = _SCHEMA_FILE.read_text(encoding="utf-8")
         with self._lock:
-            self._conn.executescript(ddl)
+            for filename in _SCHEMA_FILES:
+                ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
+                self._conn.executescript(ddl)
             self._conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:

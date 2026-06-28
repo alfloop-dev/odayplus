@@ -39,6 +39,7 @@ else:
     def create_app(
         *,
         audit_log: InMemoryAuditLog | None = None,
+        evidence_store: Any = None,
         job_queue: InMemoryJobQueue | None = None,
         heatzone_store: HeatZoneResultStore | None = None,
         avm_repository: Any = None,
@@ -59,6 +60,7 @@ else:
 
         bundle = persistence or build_persistence()
         audit_log = audit_log or bundle.audit_log
+        evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or HeatZoneResultStore()
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
@@ -160,7 +162,9 @@ else:
         )
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
-        api.include_router(create_audit_router(audit_log=audit_log))
+        api.include_router(
+            create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
+        )
         api.include_router(listings_router)
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
@@ -182,6 +186,7 @@ else:
         )
 
         api.state.audit_log = audit_log
+        api.state.evidence_store = evidence_store
         api.state.job_queue = job_queue
         api.state.heatzone_store = heatzone_store
         api.state.avm_repository = avm_repo

@@ -31,6 +31,7 @@ class PersistenceBundle:
 
     mode: str
     audit_log: Any
+    evidence_store: Any
     job_queue: Any
     avm_repository: Any
     forecastops_repository: Any
@@ -55,11 +56,13 @@ def _memory_bundle() -> PersistenceBundle:
     )
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
+    from shared.audit.persistence import InMemoryEvidenceBundleStore
     from shared.jobs.queue import InMemoryJobQueue
 
     return PersistenceBundle(
         mode="memory",
         audit_log=InMemoryAuditLog(),
+        evidence_store=InMemoryEvidenceBundleStore(),
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
@@ -71,6 +74,7 @@ def _memory_bundle() -> PersistenceBundle:
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+    from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
@@ -89,6 +93,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     return PersistenceBundle(
         mode="durable",
         audit_log=DurableAuditLog(engine),
+        evidence_store=DurableEvidenceBundleStore(engine),
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),

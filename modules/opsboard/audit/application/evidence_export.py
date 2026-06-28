@@ -14,7 +14,9 @@ from modules.opsboard.audit.domain.evidence import (
     build_bundle_checksum,
     build_subsidy_matrix,
 )
+from modules.opsboard.audit.evidence_store import retained_evidence_from_bundle
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.persistence import EvidenceBundleStore, resolve_retention_policy
 
 
 class AuditEvidenceExportError(ValueError):
@@ -22,10 +24,21 @@ class AuditEvidenceExportError(ValueError):
 
 
 class AuditEvidenceExportService:
-    """Builds an immutable audit evidence bundle for review and subsidy checks."""
+    """Builds an immutable audit evidence bundle for review and subsidy checks.
 
-    def __init__(self, *, audit_log: InMemoryAuditLog | None = None) -> None:
+    When an ``evidence_store`` is supplied the built bundle is also persisted as
+    a hash-stamped, retention-scoped record so the export survives a process
+    restart (ODP-PV-011). With no store the service behaves exactly as before.
+    """
+
+    def __init__(
+        self,
+        *,
+        audit_log: InMemoryAuditLog | None = None,
+        evidence_store: EvidenceBundleStore | None = None,
+    ) -> None:
         self.audit_log = audit_log or InMemoryAuditLog()
+        self.evidence_store = evidence_store
 
     def export(
         self,
@@ -58,6 +71,10 @@ class AuditEvidenceExportService:
             subsidy_matrix=matrix,
             generated_at=normalized_generated_at,
         )
+        retention_policy = resolve_retention_policy(
+            request.data_classification, sensitive=request.sensitive
+        )
+        retain_until = retention_policy.retain_until(normalized_generated_at)
         export_event = self.audit_log.record(
             AuditEvent(
                 event_type="audit.evidence_export.v1",
@@ -74,10 +91,13 @@ class AuditEvidenceExportService:
                     "missing_requirements": list(missing),
                     "bundle_checksum": checksum,
                     "policy_version": AUDIT_EVIDENCE_POLICY_VERSION,
+                    "retention_class": retention_policy.retention_class,
+                    "retain_until": retain_until.isoformat(),
+                    "data_classification": request.data_classification,
                 },
             )
         )
-        return AuditEvidenceBundle(
+        bundle = AuditEvidenceBundle(
             export_id=export_id,
             program_id=request.program_id,
             purpose=request.purpose,
@@ -92,7 +112,19 @@ class AuditEvidenceExportService:
             missing_requirements=missing,
             bundle_checksum=checksum,
             audit_event_id=export_event.event_id,
+            retention_class=retention_policy.retention_class,
+            retain_until=retain_until,
         )
+        if self.evidence_store is not None:
+            self.evidence_store.save(
+                retained_evidence_from_bundle(
+                    bundle,
+                    request,
+                    retention_policy=retention_policy,
+                    correlation_id=request.correlation_ids[0],
+                )
+            )
+        return bundle
 
     def _events_for_request(
         self,
