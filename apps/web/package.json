@@ -10,9 +10,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@deck.gl/core": "^9.3.5",
+    "@deck.gl/layers": "^9.3.5",
     "@oday-plus/design-tokens": "0.1.0",
     "@oday-plus/domain-types": "0.1.0",
     "@oday-plus/ui": "0.1.0",
+    "h3-js": "^4.4.0",
+    "maplibre-gl": "^5.24.0",
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1"
