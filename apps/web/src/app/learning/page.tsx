@@ -1,14 +1,5 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import { LearningHubWorkspace } from "../../../features/learninghub/LearningHubWorkspace.tsx";
 
 export default function LearningPage() {
-  return (
-    <ModulePlaceholder
-      routeKey="learning"
-      scope={[
-        "ModelReleaseCard：版本、champion/challenger、release stage",
-        "metric summary、segment regression、drift 狀態",
-        "release / rollback 須觸發後端 Audit",
-      ]}
-    />
-  );
+  return <LearningHubWorkspace />;
 }
