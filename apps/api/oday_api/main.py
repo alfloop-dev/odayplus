@@ -41,6 +41,7 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_queue: InMemoryJobQueue | None = None,
         heatzone_store: HeatZoneResultStore | None = None,
+        forecastops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
     ) -> FastAPI:
@@ -122,16 +123,22 @@ else:
                 ]
             }
 
+        from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
+        from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
+        forecast_repository = forecastops_repository or InMemoryForecastOpsRepository()
         site_repository = sitescore_repository or InMemorySiteScoreRepository()
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
         api.include_router(listings_router)
+        api.include_router(
+            create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
+        )
         api.include_router(
             create_sitescore_router(
                 repository=site_repository,
@@ -143,6 +150,7 @@ else:
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
         api.state.heatzone_store = heatzone_store
+        api.state.forecastops_repository = forecast_repository
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
         return api
