@@ -120,7 +120,10 @@ else:
                 ]
             }
 
+        from apps.api.app.routes.listings import router as listings_router
+
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
+        api.include_router(listings_router)
 
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
