@@ -1,0 +1,32 @@
+# Local dev stack for ODay Plus: API (FastAPI) + web (Next.js).
+#   docker compose up --build
+#   web -> http://localhost:3000   api -> http://localhost:8000  (/healthz, /docs)
+# No database is required: the API uses in-memory stores by default.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: odayplus/api:dev
+    ports:
+      - "8000:8000"
+    environment:
+      ODP_ENV: dev
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    image: odayplus/web:dev
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # Web currently renders from bundled data; this is wired for when it
+      # starts calling the API from the browser.
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
