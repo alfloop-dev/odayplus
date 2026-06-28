@@ -1,0 +1,305 @@
+.workspaceNav,
+.toolbar,
+.badgeRow,
+.actionRow,
+.checkRow,
+.timelineMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+}
+
+.workspaceNav {
+  margin-bottom: var(--odp-space-5);
+}
+
+.workspaceNav a,
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-primary);
+  text-decoration: none;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.workspaceNav a[aria-current="page"],
+.primaryButton {
+  border-color: var(--odp-color-border-focus);
+  background: var(--odp-color-bg-info-soft);
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.secondaryButton {
+  color: var(--odp-color-text-secondary);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.toolbar {
+  align-items: flex-end;
+  margin-bottom: var(--odp-space-4);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.toolbar label {
+  display: grid;
+  gap: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.toolbar select,
+.toolbar input,
+.field,
+.textarea {
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-primary);
+  font: inherit;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 76px;
+  padding-top: var(--odp-space-2);
+  resize: vertical;
+}
+
+.overviewGrid,
+.detailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
+  gap: var(--odp-space-4);
+  align-items: start;
+}
+
+.flowGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--odp-space-4);
+  margin-bottom: var(--odp-space-4);
+}
+
+.panel,
+.flowCard,
+.summaryBand {
+  padding: var(--odp-density-card-padding);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  box-shadow: var(--odp-elevation-card);
+}
+
+.flowCard {
+  color: var(--odp-color-text-primary);
+  text-decoration: none;
+}
+
+.panel h2,
+.flowCard h2,
+.panel h3 {
+  margin: 0 0 var(--odp-space-2);
+  font-size: var(--odp-font-size-lg);
+  line-height: var(--odp-line-height-compact);
+}
+
+.panel p,
+.flowCard p {
+  margin: 0;
+  color: var(--odp-color-text-secondary);
+}
+
+.summaryBand {
+  margin-bottom: var(--odp-space-4);
+}
+
+.metricRow,
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--odp-space-3);
+}
+
+.metric {
+  display: grid;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.metric span,
+.subtle {
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.metric strong {
+  font-size: var(--odp-font-size-lg);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--odp-font-size-sm);
+}
+
+.table th,
+.table td {
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.link {
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+  text-decoration: none;
+}
+
+.mono {
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.stagePill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-1) var(--odp-space-2);
+  border-radius: var(--odp-radius-full);
+  background: var(--odp-color-bg-model-soft);
+  color: var(--odp-color-text-model);
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.warn {
+  border-color: var(--odp-color-border-warning);
+  background: var(--odp-color-status-yellow-soft);
+  color: var(--odp-color-status-yellow-on);
+}
+
+.danger {
+  border-color: var(--odp-color-border-danger);
+  background: var(--odp-color-status-red-soft);
+  color: var(--odp-color-status-red-on);
+}
+
+.passText {
+  color: var(--odp-color-text-success);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.failText {
+  color: var(--odp-color-text-danger);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.checklist {
+  display: grid;
+  gap: var(--odp-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkRow {
+  justify-content: space-between;
+  padding: var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.sectionStack {
+  display: grid;
+  gap: var(--odp-space-4);
+}
+
+.auditGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--odp-space-2) var(--odp-space-4);
+  margin: 0;
+}
+
+.auditGrid dt {
+  color: var(--odp-color-text-secondary);
+}
+
+.auditGrid dd {
+  margin: 0;
+}
+
+.stickyPanel {
+  position: sticky;
+  top: calc(var(--odp-layout-header-height) + var(--odp-space-4));
+  display: grid;
+  gap: var(--odp-space-4);
+}
+
+.timeline {
+  display: grid;
+  gap: var(--odp-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline li {
+  padding: var(--odp-space-3);
+  border-left: var(--odp-space-1) solid var(--odp-color-status-purple);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+@media (max-width: 960px) {
+  .overviewGrid,
+  .detailGrid,
+  .flowGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .stickyPanel {
+    position: static;
+  }
+}
