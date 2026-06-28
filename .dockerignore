@@ -1,0 +1,21 @@
+# Keep build contexts small & deterministic.
+**/node_modules
+**/.next
+**/.turbo
+.venv
+.venv-*
+**/__pycache__
+**/*.pyc
+.git
+.github
+.orchestrator
+.pytest_cache
+.ruff_cache
+.vscode
+.claude
+docs_archive
+ai-activity-log.jsonl
+ai-task-archive
+archive
+*.zip
+*.log
