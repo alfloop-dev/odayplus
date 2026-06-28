@@ -88,11 +88,59 @@ export function HeatZoneMap({
       zoom: 9.1,
       attributionControl: false,
       interactive: true,
+      canvasContextAttributes: {
+        preserveDrawingBuffer: true,
+      },
       renderWorldCopies: false,
     });
 
     mapRef.current = map;
     map.on("load", () => {
+      map.addSource("odp-local-heatzones", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: zoneFeatures,
+        },
+      });
+      map.addLayer({
+        id: "odp-local-heatzone-fill",
+        type: "fill",
+        source: "odp-local-heatzones",
+        paint: {
+          "fill-color": [
+            "match",
+            ["get", "state"],
+            "UNDER_REALIZED",
+            "#b7791f",
+            "STILL_EXPANDABLE",
+            "#2f855a",
+            "SUPPRESSED_LOW_CONFIDENCE",
+            "#c05621",
+            "#3182ce",
+          ],
+          "fill-opacity": 0.34,
+        },
+      });
+      map.addLayer({
+        id: "odp-local-heatzone-line",
+        type: "line",
+        source: "odp-local-heatzones",
+        paint: {
+          "line-color": [
+            "case",
+            ["==", ["get", "id"], selectedZoneId],
+            "#172554",
+            "#ffffff",
+          ],
+          "line-width": [
+            "case",
+            ["==", ["get", "id"], selectedZoneId],
+            4,
+            1.5,
+          ],
+        },
+      });
       fitToZones(map, zones);
       map.resize();
     });
@@ -115,7 +163,7 @@ export function HeatZoneMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [zones]);
+  }, [selectedZoneId, zoneFeatures, zones]);
 
   return (
     <section
