@@ -50,6 +50,7 @@ node-check:
 		npm ci; \
 		npm run lint --workspaces --if-present; \
 		npm run typecheck --workspaces --if-present; \
+		npm run build --workspaces --if-present; \
 		npm run test --workspaces --if-present; \
 	else \
 		printf "Skipping Node workspace checks: package-lock.json is not present yet.\n"; \

@@ -14,6 +14,7 @@ def test_ci_baseline_includes_security_gate() -> None:
     assert "audit:security" in (ROOT / "package.json").read_text(encoding="utf-8")
     assert "npm run audit:security" in makefile
     assert "security: bootstrap dependency-audit" in makefile
+    assert "npm run build --workspaces --if-present" in makefile
     assert "ci: bootstrap lint security test smoke node-check" in makefile
     assert "make ci" in workflow
 
@@ -39,3 +40,4 @@ def test_release_blocker_evidence_records_dependency_remediation() -> None:
     assert "`@playwright/test` to `1.61.1" in evidence
     assert "npm audit --audit-level=high" in evidence
     assert "0 high or critical findings" in evidence
+    assert "production build" in evidence

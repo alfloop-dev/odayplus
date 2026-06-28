@@ -19,6 +19,7 @@ ODP-PV-012 removes production-readiness blockers identified in the PV package:
 | Unfilled release metadata in `docs/evidence/PRODUCTION_READINESS_PACKAGE.md` | Filled task-scoped release-candidate metadata for release id, environment, build version, commit baseline, data snapshot, model applicability, feature flags, and release owner. |
 | High dependency audit findings in Next.js, eslint-config-next, Playwright, transitive `glob`, and transitive `postcss` | Upgraded `next` and `eslint-config-next` to `15.5.19`; upgraded `@playwright/test` to `1.61.1`; regenerated `package-lock.json`. |
 | CI did not run an explicit security/dependency gate | Added `npm run audit:security`, `make dependency-audit`, `make security`, and included `security` in `make ci`. |
+| Production build was not part of the Node release gate | Migrated app routes to the Next 15 async `params`/`searchParams` contract and added `npm run build --workspaces --if-present` to `make node-check`. |
 | Security gate regression was not directly asserted | Added `tests/security/test_release_security_gate.py` to verify the CI security target, high-level audit command, and production-readiness metadata are present. |
 
 ## Dependency Audit Result
@@ -52,6 +53,17 @@ make security
 `make security` runs the high/critical dependency audit and the checked-in
 security acceptance tests under `tests/security`.
 
+The Node release gate now runs:
+
+```bash
+make node-check
+```
+
+`make node-check` performs `npm ci`, lint, typecheck, production build, and
+workspace tests when a lockfile exists. The production build step is required
+because Next.js route contract validation is enforced by `next build`, not by
+plain `tsc --noEmit`.
+
 ## Verification Results
 
 Local verification on 2026-06-28:
@@ -62,5 +74,7 @@ Local verification on 2026-06-28:
 | `uv run pytest tests/security` | passed, 35 tests |
 | `npm run lint --workspaces --if-present` | passed |
 | `npm run typecheck --workspaces --if-present` | passed |
+| `npm run build --workspace=@oday-plus/web` | passed; Next 15 production build generated 31 app routes |
 | `make security` | passed; high audit plus 35 security tests |
-| `make ci` | passed; ruff, high audit, security tests, 672 pytest tests, 2 smoke tests, npm ci, lint, and typecheck |
+| `make node-check` | passed; npm ci, lint, typecheck, Next production build, and workspace tests |
+| `make ci` | passed; ruff, high audit, 35 security tests, 704 pytest tests, 2 smoke tests, npm ci, lint, typecheck, Next production build, and workspace tests |

@@ -93,7 +93,8 @@ missing audit export, or missing high-risk UAT sign-off blocks production.
 | Acceptance/security/performance registry | `uv run pytest tests/e2e/test_acceptance_coverage.py tests/performance tests/security` | passed, 39 tests |
 | OpsBoard E2E smoke | `npm run test:e2e` | passed, 29 tests |
 | Dependency security audit | `npm audit --audit-level=high` | passed; 0 high/critical findings after ODP-PV-012 remediation |
-| Security CI gate | `make security` | added to `make ci`; dependency audit plus `tests/security` |
+| Security CI gate | `make security` | passed; dependency audit plus `tests/security` |
+| Production build gate | `make node-check` | passed after Next 15 async route migration; includes `next build` |
 
 ODP-PV-012 remediates the high dependency audit findings by upgrading
 `next`/`eslint-config-next` to `15.5.19` and `@playwright/test` to `1.61.1`.
@@ -101,3 +102,8 @@ ODP-PV-012 remediates the high dependency audit findings by upgrading
 findings inherited through Next.js, but they are below the documented
 high/critical release-blocking threshold and remain visible in the remediation
 evidence for Security Owner tracking.
+
+The Next 15 upgrade requires App Router `params` and `searchParams` to be
+treated as async values. ODP-PV-012 migrates the affected route wrappers and
+adds `next build` to the Node CI gate so the production route contract cannot
+pass readiness on `tsc --noEmit` alone.

@@ -1,9 +1,10 @@
 import { AuditWorkspace } from "../../../../../../features/audit/AuditWorkspace.tsx";
 
 type PageProps = {
-  params: { decisionId: string };
+  params: Promise<{ decisionId: string }>;
 };
 
-export default function AuditDecisionDetailPage({ params }: PageProps) {
-  return <AuditWorkspace view="decisionDetail" decisionId={decodeURIComponent(params.decisionId)} />;
+export default async function AuditDecisionDetailPage({ params }: PageProps) {
+  const { decisionId } = await params;
+  return <AuditWorkspace view="decisionDetail" decisionId={decodeURIComponent(decisionId)} />;
 }
