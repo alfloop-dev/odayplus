@@ -7,6 +7,12 @@ test-results/
 .playwright/
 *.tsbuildinfo
 
+# --- Durable E2E persistence (SQLite data files, ODP-PV-009) ---
+.odp_data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
 # --- Python ---
 __pycache__/
 *.py[cod]
