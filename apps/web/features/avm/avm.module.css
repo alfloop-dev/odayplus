@@ -1,0 +1,410 @@
+.workspaceNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+  margin-bottom: var(--odp-space-5);
+}
+
+.workspaceNav a,
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-primary);
+  text-decoration: none;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.workspaceNav a[aria-current="page"],
+.primaryButton {
+  background: var(--odp-color-bg-info-soft);
+  border-color: var(--odp-color-border-focus);
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.secondaryButton {
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+}
+
+.headerActions,
+.badgeRow,
+.metricRow,
+.drawerFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+}
+
+.flowGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--odp-space-4);
+}
+
+.flowCard,
+.reportSection,
+.approvalPanel,
+.sidePanel,
+.drawer,
+.summaryBand {
+  padding: var(--odp-density-card-padding);
+  background: var(--odp-color-bg-surface);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  box-shadow: var(--odp-elevation-card);
+}
+
+.flowCard {
+  color: var(--odp-color-text-primary);
+  text-decoration: none;
+}
+
+.flowCard h2,
+.reportSection h2,
+.approvalPanel h2,
+.sidePanel h2,
+.drawer h2,
+.softBlock h3,
+.warningBlock h3 {
+  margin: 0 0 var(--odp-space-2);
+  font-size: var(--odp-font-size-lg);
+  line-height: var(--odp-line-height-compact);
+}
+
+.flowCard p,
+.reportSection p,
+.approvalPanel p,
+.softBlock p,
+.warningBlock p {
+  margin: 0;
+  color: var(--odp-color-text-secondary);
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--odp-space-6);
+  height: var(--odp-space-6);
+  margin-bottom: var(--odp-space-3);
+  border-radius: var(--odp-radius-full);
+  background: var(--odp-color-status-purple-soft);
+  color: var(--odp-color-status-purple-on);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.twoColumn,
+.reportGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 30%);
+  gap: var(--odp-space-4);
+  margin-top: var(--odp-space-4);
+  align-items: start;
+}
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-3);
+  align-items: flex-end;
+  margin-bottom: var(--odp-space-4);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-bg-muted);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+}
+
+.filterBar label,
+.approvalPanel label {
+  display: grid;
+  gap: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.filterBar input,
+.filterBar select,
+.approvalPanel select,
+.approvalPanel textarea,
+.approvalPanel input {
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-primary);
+  font: inherit;
+}
+
+.approvalPanel textarea {
+  min-height: 96px;
+  padding-top: var(--odp-space-2);
+  resize: vertical;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+}
+
+.table,
+.intervalTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--odp-font-size-sm);
+}
+
+.table caption,
+.intervalTable caption {
+  padding: var(--odp-space-2);
+  text-align: left;
+  color: var(--odp-color-text-secondary);
+}
+
+.table th,
+.table td,
+.intervalTable th,
+.intervalTable td {
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th,
+.intervalTable th {
+  position: sticky;
+  top: 0;
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.table tr:focus-visible,
+.workspaceNav a:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+
+.drawer {
+  margin-top: var(--odp-space-4);
+}
+
+.drawerHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--odp-space-3);
+}
+
+.drawerFooter {
+  margin-top: var(--odp-space-4);
+  padding-top: var(--odp-space-3);
+  border-top: 1px solid var(--odp-color-border-default);
+}
+
+.cardStack,
+.reportMain,
+.approvalPanel form {
+  display: grid;
+  gap: var(--odp-space-3);
+}
+
+.metric {
+  display: grid;
+  gap: var(--odp-space-1);
+  min-width: 120px;
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.metric span {
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.metric strong {
+  font-size: var(--odp-font-size-lg);
+}
+
+.softBlock,
+.warningBlock {
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.warningBlock {
+  background: var(--odp-color-status-orange-soft);
+  color: var(--odp-color-status-orange-on);
+}
+
+.blockedAction,
+.riskNotice {
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-status-orange);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-status-orange-soft);
+  color: var(--odp-color-status-orange-on);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.auditLine {
+  color: var(--odp-color-text-secondary);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+}
+
+.summaryBand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-3);
+  margin-bottom: var(--odp-space-4);
+}
+
+.anchorTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+  margin-bottom: var(--odp-space-4);
+}
+
+.anchorTabs a {
+  color: var(--odp-color-text-link);
+}
+
+.reportGrid {
+  margin-top: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+
+.stickyPanel {
+  position: sticky;
+  top: calc(var(--odp-layout-header-height) + var(--odp-space-4));
+  display: grid;
+  gap: var(--odp-space-4);
+}
+
+.auditGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--odp-space-2) var(--odp-space-4);
+  margin: 0;
+}
+
+.auditGrid dt {
+  color: var(--odp-color-text-secondary);
+}
+
+.auditGrid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--odp-font-family-mono);
+}
+
+.timeline {
+  margin: 0;
+  padding-left: var(--odp-space-5);
+  color: var(--odp-color-text-secondary);
+}
+
+.checkboxLine {
+  display: flex !important;
+  align-items: center;
+  gap: var(--odp-space-2);
+}
+
+/* ValuationRangeChart — explicit P10/P50/P90 interval bars per lens. */
+.rangeChart {
+  display: grid;
+  gap: var(--odp-space-3);
+}
+
+.rangeRow {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: var(--odp-space-3);
+  align-items: center;
+}
+
+.rangeLabel {
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.rangeTrack {
+  position: relative;
+  height: 26px;
+  border-radius: var(--odp-radius-full);
+  background: var(--odp-color-bg-inset);
+  border: 1px solid var(--odp-color-border-default);
+}
+
+.rangeBand {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: var(--odp-radius-full);
+  background: var(--odp-color-status-blue-soft);
+  border: 1px solid var(--odp-color-border-focus);
+}
+
+.rangeMid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--odp-color-text-link);
+}
+
+.rangeReserve,
+.rangeAsking {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+}
+
+.rangeReserve {
+  background: var(--odp-color-status-orange-on);
+}
+
+.rangeAsking {
+  background: var(--odp-color-status-green-on);
+}
+
+.comparison {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--odp-space-2);
+}
+
+@media (max-width: 960px) {
+  .flowGrid,
+  .twoColumn,
+  .reportGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rangeRow {
+    grid-template-columns: 1fr;
+  }
+
+  .stickyPanel {
+    position: static;
+  }
+}
