@@ -9,8 +9,19 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.artifact_store import (
+    ArtifactRecord,
+    artifact_uri,
+    compute_content_digest,
+    make_artifact_id,
+)
+from models.shared_ml.model_card import ModelCard
+from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
+from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
 from modules.forecastops.domain.forecasting import (
@@ -20,6 +31,8 @@ from modules.forecastops.domain.forecasting import (
     InterventionHandoff,
 )
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
+from modules.learninghub.domain import DatasetSnapshot
+from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
@@ -265,11 +278,223 @@ class DurableLabelRegistry:
         ]
 
 
+class DurableLearningHubRepository:
+    """Durable mirror of ``InMemoryLearningHubRepository``.
+
+    Implements the full :class:`LearningHubRepository` surface over
+    :class:`SqliteDocumentStore`, so model versions, validation runs, model
+    cards, aliases, shadow/canary/promotion/rollback state, and release
+    decisions all survive a process restart. Alias pointers are stored as small
+    overwritable documents (the document store has no delete; clearing an alias
+    writes a ``None`` pointer), matching the in-memory mapping semantics.
+    """
+
+    _DATASETS = "learninghub.datasets"
+    _VERSIONS = "learninghub.model_versions"
+    _CARDS = "learninghub.model_cards"
+    _VALIDATIONS = "learninghub.validation_runs"
+    _ALIASES = "learninghub.aliases"
+    _RELEASES = "learninghub.release_decisions"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    # -- datasets ---------------------------------------------------------
+
+    def save_dataset_snapshot(self, snapshot: DatasetSnapshot) -> DatasetSnapshot:
+        self._store.put(self._DATASETS, snapshot.dataset_snapshot_id, snapshot)
+        return snapshot
+
+    def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None:
+        return self._store.get(self._DATASETS, dataset_snapshot_id)
+
+    # -- model versions ---------------------------------------------------
+
+    def save_model_version(self, model_version: ModelVersion) -> ModelVersion:
+        self._store.put(
+            self._VERSIONS,
+            model_version.model_id,
+            model_version,
+            group_key=model_version.model_name,
+        )
+        return model_version
+
+    def get_model_version(self, model_name: str, version: str) -> ModelVersion | None:
+        return self._store.get(self._VERSIONS, f"{model_name}:{version}")
+
+    def list_model_versions(self, model_name: str) -> list[ModelVersion]:
+        return self._store.list_by_group(self._VERSIONS, model_name)
+
+    # -- model cards ------------------------------------------------------
+
+    def save_model_card(self, model_card: ModelCard) -> ModelCard:
+        self._store.put(
+            self._CARDS,
+            f"{model_card.model_name}:{model_card.model_version}",
+            model_card,
+            group_key=model_card.model_name,
+        )
+        return model_card
+
+    def get_model_card(self, model_name: str, version: str) -> ModelCard | None:
+        return self._store.get(self._CARDS, f"{model_name}:{version}")
+
+    # -- validation runs --------------------------------------------------
+
+    def save_validation_run(self, validation_run: ValidationRun) -> ValidationRun:
+        self._store.put(
+            self._VALIDATIONS, validation_run.validation_run_id, validation_run
+        )
+        return validation_run
+
+    def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
+        return self._store.get(self._VALIDATIONS, validation_run_id)
+
+    # -- aliases ----------------------------------------------------------
+
+    def _alias_doc_id(self, model_name: str, alias: ModelAlias) -> str:
+        return f"{model_name}:{alias.value}"
+
+    def _get_alias_pointer(self, model_name: str, alias: ModelAlias) -> str | None:
+        return self._store.get(self._ALIASES, self._alias_doc_id(model_name, alias))
+
+    def _set_alias_pointer(
+        self, model_name: str, alias: ModelAlias, version: str | None
+    ) -> None:
+        self._store.put(
+            self._ALIASES,
+            self._alias_doc_id(model_name, alias),
+            version,
+            group_key=model_name,
+        )
+
+    def set_alias(self, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
+        model_version = self.get_model_version(model_name, version)
+        if model_version is None:
+            raise ModelRegistryError(f"unknown model version {model_name}:{version}")
+
+        previous_version = self._get_alias_pointer(model_name, alias)
+        if previous_version:
+            previous = self.get_model_version(model_name, previous_version)
+            if previous is not None:
+                self.save_model_version(previous.with_aliases(previous.aliases - {alias}))
+
+        self._set_alias_pointer(model_name, alias, version)
+        updated = model_version.with_aliases(model_version.aliases | {alias})
+        self.save_model_version(updated)
+        return updated
+
+    def clear_alias(self, model_name: str, alias: ModelAlias) -> None:
+        version = self._get_alias_pointer(model_name, alias)
+        if version is None:
+            return
+        self._set_alias_pointer(model_name, alias, None)
+        model_version = self.get_model_version(model_name, version)
+        if model_version is not None:
+            self.save_model_version(model_version.with_aliases(model_version.aliases - {alias}))
+
+    def get_alias(self, model_name: str, alias: ModelAlias) -> ModelVersion | None:
+        version = self._get_alias_pointer(model_name, alias)
+        if version is None:
+            return None
+        return self.get_model_version(model_name, version)
+
+    # -- release decisions ------------------------------------------------
+
+    def save_release_decision(
+        self, decision: ReleaseDecisionRecord
+    ) -> ReleaseDecisionRecord:
+        self._store.put(self._RELEASES, decision.release_id, decision)
+        return decision
+
+    def get_release_decision(self, release_id: str) -> object | None:
+        return self._store.get(self._RELEASES, release_id)
+
+    def list_release_decisions(self) -> list[object]:
+        return self._store.list_all(self._RELEASES)
+
+
+class DurableArtifactStore:
+    """Durable mirror of ``InMemoryArtifactStore``.
+
+    Content-addressed: blobs are deduplicated by SHA-256 digest in one
+    collection, record metadata in another (grouped by ``model_name``). Both
+    survive a process restart, so ``ModelVersion.artifact_uri`` references real,
+    re-hashable bytes and the registry evidence stays tamper-evident.
+    """
+
+    _RECORDS = "model_registry.artifacts"
+    _BLOBS = "model_registry.artifact_blobs"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def put_artifact(
+        self,
+        *,
+        model_name: str,
+        version: str,
+        kind: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ArtifactRecord:
+        digest = compute_content_digest(data)
+        self._store.put(self._BLOBS, digest, bytes(data))
+        record = ArtifactRecord(
+            artifact_id=make_artifact_id(model_name, version, kind),
+            model_name=model_name,
+            version=version,
+            kind=kind,
+            content_digest=digest,
+            size_bytes=len(data),
+            content_type=content_type,
+            uri=artifact_uri(digest),
+            metadata=dict(metadata or {}),
+        )
+        self._store.put(
+            self._RECORDS, record.artifact_id, record, group_key=model_name
+        )
+        return record
+
+    def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
+        return self._store.get(self._RECORDS, artifact_id)
+
+    def open_artifact(self, artifact_id: str) -> bytes | None:
+        record = self.get_artifact(artifact_id)
+        if record is None:
+            return None
+        return self._store.get(self._BLOBS, record.content_digest)
+
+    def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
+        return self._store.list_by_group(self._RECORDS, model_name)
+
+    def list_artifacts_for_version(
+        self, model_name: str, version: str
+    ) -> list[ArtifactRecord]:
+        return [
+            record
+            for record in self.list_artifacts(model_name)
+            if record.version == version
+        ]
+
+    def verify(self, artifact_id: str) -> bool:
+        record = self.get_artifact(artifact_id)
+        if record is None:
+            return False
+        blob = self._store.get(self._BLOBS, record.content_digest)
+        if blob is None:
+            return False
+        return compute_content_digest(blob) == record.content_digest
+
+
 __all__ = [
     "DurableAVMRepository",
     "DurableAdLiftRepository",
+    "DurableArtifactStore",
     "DurableForecastOpsRepository",
     "DurableInterventionRepository",
     "DurableLabelRegistry",
+    "DurableLearningHubRepository",
     "DurableSiteScoreRepository",
 ]

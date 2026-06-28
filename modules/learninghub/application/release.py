@@ -16,7 +16,11 @@ from models.shared_ml.validation import (
     validate_model_candidate,
 )
 from modules.learninghub.domain import DatasetSnapshot, build_dataset_snapshot
-from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
+from modules.learninghub.infrastructure import (
+    InMemoryLearningHubRepository,
+    LearningHubRepository,
+    MlflowRegistryAdapter,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 
@@ -75,7 +79,7 @@ class LearningHubService:
     def __init__(
         self,
         *,
-        repository: InMemoryLearningHubRepository | None = None,
+        repository: LearningHubRepository | None = None,
         registry: MlflowRegistryAdapter | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> None:

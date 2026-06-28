@@ -20,10 +20,12 @@ from shared.infrastructure.persistence.factory import (
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.infrastructure.persistence.repositories import (
     DurableAdLiftRepository,
+    DurableArtifactStore,
     DurableAVMRepository,
     DurableForecastOpsRepository,
     DurableInterventionRepository,
     DurableLabelRegistry,
+    DurableLearningHubRepository,
     DurableSiteScoreRepository,
 )
 
@@ -31,11 +33,13 @@ __all__ = [
     "DEFAULT_DB_PATH",
     "DurableAVMRepository",
     "DurableAdLiftRepository",
+    "DurableArtifactStore",
     "DurableAuditLog",
     "DurableForecastOpsRepository",
     "DurableInterventionRepository",
     "DurableJobQueue",
     "DurableLabelRegistry",
+    "DurableLearningHubRepository",
     "DurableSiteScoreRepository",
     "PersistenceBundle",
     "SqliteDocumentStore",
