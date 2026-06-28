@@ -1,9 +1,9 @@
 import { LearningHubWorkspace } from "../../../../../features/learninghub/LearningHubWorkspace.tsx";
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function AiModelsPage({ searchParams }: PageProps) {
-  return <LearningHubWorkspace view="models" searchParams={searchParams} />;
+export default async function AiModelsPage({ searchParams }: PageProps) {
+  return <LearningHubWorkspace view="models" searchParams={await searchParams} />;
 }
