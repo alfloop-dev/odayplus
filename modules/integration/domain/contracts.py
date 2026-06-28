@@ -135,6 +135,7 @@ class SourceContract:
     fields: tuple[FieldSpec, ...]
     acquisition_method: str = ""
     doc_ref: str = ""
+    schema_version: str = ""
     allow_unknown: bool = True
     invariants: tuple[Invariant, ...] = ()
 
@@ -172,6 +173,7 @@ class SourceContract:
             fields=fields,
             acquisition_method=acquisition,
             doc_ref=data.get("doc_ref", ""),
+            schema_version=str(data.get("schema_version", "")),
             allow_unknown=bool(data.get("allow_unknown", True)),
             invariants=invariants,
         )
