@@ -1,5 +1,8 @@
 import Link from "next/link";
+import type { AvmCase } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   AVM_POLICY_VERSION,
   caseStatusTone,
@@ -21,12 +24,72 @@ type AvmWorkspaceProps = {
   view?: AvmRouteKey;
   caseId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /avm/cases` binding; omitted on fixture-only routes. */
+  liveCases?: ApiBinding<AvmCase>;
 };
 
-export function AvmWorkspace({ view = "overview", caseId, searchParams = {} }: AvmWorkspaceProps) {
-  if (view === "cases") return <CasesListPage searchParams={searchParams} />;
+export function AvmWorkspace({ view = "overview", caseId, searchParams = {}, liveCases }: AvmWorkspaceProps) {
+  if (view === "cases") return <CasesListPage searchParams={searchParams} liveCases={liveCases} />;
   if (view === "caseDetail") return <CaseDetailPage caseId={caseId} />;
   return <AvmOverview />;
+}
+
+function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
+  return (
+    <section className={styles.reportSection} data-testid="avm-live-cases" aria-label="API-bound valuation cases">
+      <div className={styles.badgeRow}>
+        <h2>估值案件（API live）</h2>
+        <DataSourceBadge binding={binding} testId="avm-data-source" />
+      </div>
+      <p>
+        本區直接讀取後端 <code>GET /avm/cases</code>，證明後端狀態變更會出現在 UI；下方固定樣本為
+        documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="avm-live-cases-table">
+            <caption>Live valuation cases served by the backend ({binding.items.length})</caption>
+            <thead>
+              <tr>
+                <th>case_id</th>
+                <th>store_id</th>
+                <th>status</th>
+                <th>created_by</th>
+                <th>created_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((item) => (
+                <tr key={item.case_id} data-testid="avm-live-case-row">
+                  <td>{item.case_id}</td>
+                  <td>{item.store_id}</td>
+                  <td>
+                    <Badge label={item.status} tone={caseStatusTone(item.status as ValuationCase["status"])} marker="◆" />
+                  </td>
+                  <td>{item.created_by}</td>
+                  <td>{item.created_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="avm-live-cases-empty" className={styles.riskNotice}>
+          {liveCasesFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveCasesFallbackMessage(binding: ApiBinding<AvmCase>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無估值案件（cold store）；顯示固定樣本作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
 }
 
 function Header({
@@ -115,7 +178,7 @@ function AvmOverview() {
   );
 }
 
-function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
+function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams; liveCases?: ApiBinding<AvmCase> }) {
   const selected = selectedFromQuery(searchParams.selected) ?? valuationCases[0].caseId;
   const drawerCase = valuationCases.find((c) => c.caseId === selected) ?? valuationCases[0];
   return (
@@ -126,6 +189,7 @@ function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
       />
       <main className="odp-content" data-testid="avm-cases-page">
         <WorkspaceNav active="cases" />
+        {liveCases ? <LiveCasesPanel binding={liveCases} /> : null}
         <FilterBar />
         <div className={styles.tableWrap}>
           <table className={styles.table}>
