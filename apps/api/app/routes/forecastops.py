@@ -40,6 +40,16 @@ else:
                 self._idempotency_index[idempotency_key] = result.job_id
             return result, True
 
+        def get_by_idempotency_key(
+            self, idempotency_key: str | None
+        ) -> ForecastOpsBatchResult | None:
+            if not idempotency_key:
+                return None
+            job_id = self._idempotency_index.get(idempotency_key)
+            if job_id is None:
+                return None
+            return self._jobs[job_id]
+
         def get(self, job_id: str) -> ForecastOpsBatchResult | None:
             return self._jobs.get(job_id)
 
@@ -76,14 +86,17 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            result, created = jobs.put(
-                run_forecastops_batch_forecast(
-                    inputs=body.inputs,
-                    prediction_origin_time=body.prediction_origin_time,
-                    repository=forecast_repository,
-                ),
-                idempotency_key=effective_key,
-            )
+            result = jobs.get_by_idempotency_key(effective_key)
+            created = result is None
+            if result is None:
+                result, created = jobs.put(
+                    run_forecastops_batch_forecast(
+                        inputs=body.inputs,
+                        prediction_origin_time=body.prediction_origin_time,
+                        repository=forecast_repository,
+                    ),
+                    idempotency_key=effective_key,
+                )
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="forecastops.forecasted.v1",

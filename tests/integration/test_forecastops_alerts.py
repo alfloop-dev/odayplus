@@ -157,7 +157,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
     replay = client.post(
         "/forecastops/forecast-jobs",
-        json={"inputs": []},
+        json=payload,
         headers={"x-correlation-id": "corr-forecast-1", "Idempotency-Key": "fo-idem-1"},
     )
     assert replay.json()["created"] is False
@@ -166,6 +166,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
     forecasts = client.get("/forecastops/forecasts")
     assert forecasts.json()["count"] == 1
+    assert forecasts.json()["items"][0]["forecast_version"] == 1
     alerts = client.get("/forecastops/alerts", params={"level": "orange"})
     assert alerts.json()["count"] == 1
     handoffs = client.get("/forecastops/intervention-handoffs")
