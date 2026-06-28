@@ -1,0 +1,39 @@
+{
+  "contract_id": "geocode_result_snapshot",
+  "cases": [
+    {
+      "label": "missing required latitude and longitude",
+      "record": {
+        "source_geocode_id": "GC-901",
+        "address_raw": "台北市信義區市府路1號",
+        "geocode_precision": "rooftop",
+        "snapshot_id": "geocode-2026-06-01"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped geocode_precision enum",
+      "record": {
+        "source_geocode_id": "GC-902",
+        "address_raw": "台北市大安區和平東路二段1號",
+        "latitude": 25.026,
+        "longitude": 121.543,
+        "geocode_precision": "interpolated",
+        "snapshot_id": "geocode-2026-06-01"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "wrong type for longitude reported as invalid time-free type mismatch",
+      "record": {
+        "source_geocode_id": "GC-903",
+        "address_raw": "台北市中山區南京東路三段1號",
+        "latitude": 25.052,
+        "longitude": "121.53E",
+        "geocode_precision": "street",
+        "snapshot_id": "geocode-2026-06-01"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}

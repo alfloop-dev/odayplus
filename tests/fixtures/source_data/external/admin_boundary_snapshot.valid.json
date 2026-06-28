@@ -1,0 +1,26 @@
+{
+  "contract_id": "admin_boundary_snapshot",
+  "records": [
+    {
+      "source_boundary_id": "TW-TPE-XINYI",
+      "admin_level": "district",
+      "admin_code": "63000050",
+      "admin_name": "信義區",
+      "parent_admin_code": "63000000",
+      "centroid_latitude": 25.033,
+      "centroid_longitude": 121.5625,
+      "area_km2": 11.2077,
+      "effective_date": "2026-01-01",
+      "snapshot_id": "admin-2026-01-01"
+    },
+    {
+      "source_boundary_id": "TW-TPE",
+      "admin_level": "city",
+      "admin_code": "63000000",
+      "admin_name": "台北市",
+      "centroid_latitude": 25.0375,
+      "centroid_longitude": 121.5637,
+      "snapshot_id": "admin-2026-01-01"
+    }
+  ]
+}
