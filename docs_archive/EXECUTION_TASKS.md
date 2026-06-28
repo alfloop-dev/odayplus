@@ -12,6 +12,7 @@ Artifacts:
 
 - `docs/evidence/BRANCH_TRUTH_TABLE.md`
 - `docs/evidence/CURRENT_STATE_PRODUCT_GAP_AUDIT.md`
+- `docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md`
 - `docs_archive/EXECUTION_TASKS.md`
 
 ## Follow-On Task Seeds
