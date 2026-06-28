@@ -84,13 +84,17 @@ Covered by `tests/integration/test_audit_evidence_persistence.py`:
    export's `audit_event_id`, `bundle_checksum`, and `correlation_id`; the
    `audit.evidence_export.v1` event now also records `retention_class` and
    `retain_until`.
+6. **Sensitive export denial is audited** —
+   `test_sensitive_export_denial_is_audited`: a rejected sensitive export
+   records an `audit.evidence_export.v1` event with `outcome="denied"` (durable
+   when the audit log is) and persists no evidence bundle.
 
 ## Verification
 
 ```bash
 python3 -m pytest tests/integration/test_audit_evidence_persistence.py -q          # 6 passed
-python3 -m pytest tests/integration tests/contract -p no:warnings -q               # 193 passed
-python3 -m pytest tests -p no:warnings -q                                          # 268 passed
+python3 -m pytest tests/integration tests/contract -p no:warnings -q               # 194 passed
+python3 -m pytest tests -p no:warnings -q                                          # 269 passed
 python3 -m ruff check shared/audit modules/opsboard/audit apps/api \
   shared/infrastructure/persistence tests/integration/test_audit_evidence_persistence.py   # clean
 ```

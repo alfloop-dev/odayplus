@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.opsboard.audit import (
+    AuditEvidenceExportError,
     AuditEvidenceExportService,
     DecisionCard,
     EvidenceExportRequest,
@@ -98,6 +99,42 @@ def test_retention_policy_resolves_from_privacy_scope() -> None:
     standard = resolve_retention_policy("internal", sensitive=False)
     assert standard.retention_class == RETENTION_STANDARD
     assert standard.retain_until(NOW) == NOW + timedelta(days=standard.retention_days)
+
+
+# -- sensitive export denial is audited ---------------------------------------
+
+
+def test_sensitive_export_denial_is_audited() -> None:
+    bundle_persistence = build_persistence()  # memory mode
+    service = AuditEvidenceExportService(
+        audit_log=bundle_persistence.audit_log,
+        evidence_store=bundle_persistence.evidence_store,
+    )
+    # Sensitive request with an empty export_scope is denied.
+    bad_request = EvidenceExportRequest(
+        program_id="subsidy-program-2026-q2",
+        purpose="quarterly subsidy review",
+        requested_by="reviewer-a",
+        from_time=NOW - timedelta(days=1),
+        to_time=NOW + timedelta(days=1),
+        correlation_ids=("corr-denied-1",),
+        export_scope="   ",
+        data_classification="restricted",
+        sensitive=True,
+    )
+    with pytest.raises(AuditEvidenceExportError):
+        service.export(bad_request, decision_cards=(_ready_card("evt-x"),))
+
+    denials = [
+        event
+        for event in service.audit_log.list_events(correlation_id="corr-denied-1")
+        if event.event_type == "audit.evidence_export.v1" and event.outcome == "denied"
+    ]
+    assert len(denials) == 1
+    assert denials[0].metadata["sensitive"] is True
+    assert "export_scope" in denials[0].metadata["reason"]
+    # Nothing was persisted for a denied export.
+    assert bundle_persistence.evidence_store.list_all() == []
 
 
 # -- service persists with hash / actor / privacy scope / retention -----------

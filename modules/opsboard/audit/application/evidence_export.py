@@ -47,9 +47,18 @@ class AuditEvidenceExportService:
         decision_cards: Sequence[DecisionCard],
         generated_at: datetime | None = None,
     ) -> AuditEvidenceBundle:
-        self._validate_request(request)
-        if not decision_cards:
-            raise AuditEvidenceExportError("export requires at least one decision card")
+        try:
+            self._validate_request(request)
+            if not decision_cards:
+                raise AuditEvidenceExportError(
+                    "export requires at least one decision card"
+                )
+        except AuditEvidenceExportError as exc:
+            # A rejected sensitive export must leave an audit trail (the denial
+            # itself is auditable, not just successful exports).
+            if request.sensitive:
+                self._record_denial(request, reason=str(exc))
+            raise
 
         normalized_generated_at = generated_at or datetime.now(UTC)
         events = tuple(
@@ -141,6 +150,27 @@ class AuditEvidenceExportService:
                 if from_time <= event.occurred_at <= to_time:
                     seen.add(event.event_id)
                     yield event
+
+    def _record_denial(self, request: EvidenceExportRequest, *, reason: str) -> None:
+        """Audit a denied sensitive export request (durable when the log is)."""
+
+        correlation_id = request.correlation_ids[0] if request.correlation_ids else "unknown"
+        self.audit_log.record(
+            AuditEvent(
+                event_type="audit.evidence_export.v1",
+                actor=request.requested_by or "unknown",
+                action="export",
+                resource=f"audit-evidence/{request.program_id or 'unknown'}",
+                outcome="denied",
+                correlation_id=correlation_id,
+                metadata={
+                    "reason": reason,
+                    "sensitive": True,
+                    "data_classification": request.data_classification,
+                    "export_scope": request.export_scope,
+                },
+            )
+        )
 
     def _validate_request(self, request: EvidenceExportRequest) -> None:
         if not request.program_id.strip():
