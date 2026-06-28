@@ -96,6 +96,26 @@ Status row:
 
 No status may be color-only; each uses text and icon/pattern.
 
+### 6.1 DecisionStatus Mapping
+
+UI `DecisionStatus` is a presentation vocabulary over the backend `Decision`
+and `Approval` records. Do not persist UI-only status strings back to the
+domain model.
+
+| UI DecisionStatus | Backend source | Mapping rule |
+|---|---|---|
+| `DRAFT` | no persisted `Decision` yet, or local draft only | Report exists but no system decision record is ready for review. |
+| `SYSTEM_RECOMMENDED` | `Decision.decision_status=proposed`, no `Approval` yet | System created `Decision.recommendation=go|wait|reject|investigate`; human review has not started. |
+| `PENDING_REVIEW` | `Decision.decision_status=proposed` + latest `Approval.approval_status=pending|escalated` | Approval workflow is active and waiting for the required role. |
+| `APPROVED` | `Decision.decision_status=approved` + latest `Approval.approval_status=approved` | Human approval accepted the recommended or selected action. |
+| `REJECTED` | `Decision.decision_status=rejected` or latest `Approval.approval_status=rejected` | Review rejected the decision; show reason code/comment and close or appeal path. |
+| `OVERRIDDEN` | `Decision.decision_status=overridden` + approval trail | Human decision differs from the system recommendation; show original recommendation, override decision, reason, risk acknowledgement, and approval id. |
+| `CLOSED` | `Decision.decision_status=executed|cancelled|expired` or terminal workflow policy | Decision is no longer reviewable; execution/result timeline explains the terminal reason. |
+
+Returned approval is not a terminal UI status: `Approval.approval_status=returned`
+renders as `PENDING_REVIEW` with a revision-required banner and requested
+fields/tasks.
+
 ## 7. Evidence Section
 
 Use `EvidencePanel` with these blocks:
