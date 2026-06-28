@@ -44,6 +44,7 @@ else:
         forecastops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
+        adlift_repository: Any = None,
     ) -> FastAPI:
         audit_log = audit_log or InMemoryAuditLog()
         job_queue = job_queue or InMemoryJobQueue()
@@ -123,9 +124,11 @@ else:
                 ]
             }
 
+        from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
+        from modules.adlift.infrastructure import InMemoryAdLiftRepository
         from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
@@ -133,6 +136,7 @@ else:
         forecast_repository = forecastops_repository or InMemoryForecastOpsRepository()
         site_repository = sitescore_repository or InMemorySiteScoreRepository()
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        adlift_repo = adlift_repository or InMemoryAdLiftRepository()
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
         api.include_router(listings_router)
@@ -146,6 +150,7 @@ else:
                 audit_log=audit_log,
             )
         )
+        api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
 
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
@@ -153,6 +158,7 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.adlift_repository = adlift_repo
         return api
 
     app = create_app()
