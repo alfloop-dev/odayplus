@@ -127,20 +127,14 @@ else:
                 ]
             }
 
-<<<<<<< HEAD
         from apps.api.app.routes.adlift import create_adlift_router
-=======
         from apps.api.app.routes.avm import create_avm_router
->>>>>>> origin/dev
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
-<<<<<<< HEAD
         from modules.adlift.infrastructure import InMemoryAdLiftRepository
-=======
         from modules.avm.infrastructure import InMemoryAVMRepository
->>>>>>> origin/dev
         from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.intervention.application.workflow import InterventionWorkflow
         from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
