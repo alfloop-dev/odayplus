@@ -1,0 +1,39 @@
+{
+  "$schema": "https://oday.plus/schemas/monitoring/slo.v1.json",
+  "source_baseline": "ODP-SD-10 §10 (RPO/RTO 與備援), ODP-OPS-05 §9 (RPO/RTO)",
+  "description": "Service-level objectives and recovery objectives. RPO/RTO drive the backup and disaster-recovery runbooks.",
+  "slos": [
+    {
+      "service": "core-api-opsboard",
+      "sli": "availability",
+      "objective": 0.995,
+      "window": "30d",
+      "indicator_metric": "api_error_count",
+      "note": "Baseline 99.5%; contractual SLA may require an ADR for higher."
+    },
+    {
+      "service": "core-api-opsboard",
+      "sli": "latency_p95_ms",
+      "objective": 800,
+      "window": "30d",
+      "indicator_metric": "api_latency_ms"
+    },
+    {
+      "service": "forecast-batch-score",
+      "sli": "daily_completion_before_cutoff",
+      "objective": 0.99,
+      "window": "30d",
+      "indicator_metric": "job_duration_seconds"
+    }
+  ],
+  "recovery_objectives": [
+    {"system": "core-api-opsboard", "rpo": "1h", "rto": "4h", "method": "PITR / automated backup"},
+    {"system": "cloud-sql", "rpo": "1h", "rto": "4h", "method": "PITR + automated backup; periodic restore drill"},
+    {"system": "bigquery-canonical", "rpo": "24h", "rto": "8h", "method": "table snapshots / exports"},
+    {"system": "audit-logs", "rpo": "~0", "rto": "4h", "method": "append-only + continuous export"},
+    {"system": "model-artifacts", "rpo": "0", "rto": "2h", "method": "immutable storage; alias rollback"},
+    {"system": "reports-data-room", "rpo": "24h", "rto": "8h", "method": "versioned GCS / rebuildable"},
+    {"system": "feature-marts", "rpo": "rebuildable", "rto": "8h", "method": "reproducible via dbt"},
+    {"system": "pubsub-dlq", "rpo": "per-event", "rto": "per-runbook", "method": "DLQ replay drill for critical topics"}
+  ]
+}
