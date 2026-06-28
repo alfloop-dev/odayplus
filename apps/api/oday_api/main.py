@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
@@ -39,9 +40,11 @@ else:
         *,
         audit_log: InMemoryAuditLog | None = None,
         job_queue: InMemoryJobQueue | None = None,
+        heatzone_store: HeatZoneResultStore | None = None,
     ) -> FastAPI:
         audit_log = audit_log or InMemoryAuditLog()
         job_queue = job_queue or InMemoryJobQueue()
+        heatzone_store = heatzone_store or HeatZoneResultStore()
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
@@ -117,8 +120,11 @@ else:
                 ]
             }
 
+        api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
+
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
+        api.state.heatzone_store = heatzone_store
         return api
 
     app = create_app()
