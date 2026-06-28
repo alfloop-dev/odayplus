@@ -12,7 +12,8 @@ test("HeatZone map renders nonblank MapLibre canvas with deck layers and local f
 
   await expect.poll(async () => page.locator(".maplibregl-canvas").count()).toBeGreaterThan(0);
   await expect.poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas")).toBe(true);
-  await expect.poll(async () => page.locator("canvas.deck-canvas").count()).toBeGreaterThan(0);
+  await expect(page.getByTestId("heat-zone-deck-overlay")).toBeVisible();
+  await expect.poll(async () => page.getByTestId("heat-zone-map-canvas").locator("canvas").count()).toBeGreaterThan(1);
 });
 
 test("HeatZone map selection stays synchronized with ranked list and drawer", async ({ page }) => {

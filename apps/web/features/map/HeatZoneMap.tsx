@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Deck } from "@deck.gl/core";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
+import DeckGL from "@deck.gl/react";
 import { cellToBoundary } from "h3-js";
 import maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "../expansion/data.ts";
@@ -50,7 +50,13 @@ export function HeatZoneMap({
 }: HeatZoneMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const deckRef = useRef<Deck<any> | null>(null);
+  const [viewState, setViewState] = useState({
+    longitude: 121.48,
+    latitude: 25.0,
+    zoom: 9.1,
+    pitch: 0,
+    bearing: 0,
+  });
   const [layers, setLayers] = useState({
     h3: true,
     listings: true,
@@ -60,6 +66,17 @@ export function HeatZoneMap({
   });
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
+  const deckLayers = useMemo(
+    () => buildDeckLayers({
+      zones,
+      zoneFeatures,
+      listings,
+      candidates,
+      selectedZoneId,
+      visible: layers,
+    }),
+    [candidates, layers, listings, selectedZoneId, zoneFeatures, zones],
+  );
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -80,30 +97,14 @@ export function HeatZoneMap({
       map.resize();
     });
 
-    const deck = new Deck({
-      parent: mapContainerRef.current,
-      controller: false,
-      initialViewState: {
-        longitude: 121.48,
-        latitude: 25.0,
-        zoom: 9.1,
-        pitch: 0,
-        bearing: 0,
-      },
-      layers: [],
-    });
-    deckRef.current = deck;
-
     const syncDeckView = () => {
       const center = map.getCenter();
-      deck.setProps({
-        viewState: {
-          longitude: center.lng,
-          latitude: center.lat,
-          zoom: map.getZoom(),
-          pitch: map.getPitch(),
-          bearing: map.getBearing(),
-        },
+      setViewState({
+        longitude: center.lng,
+        latitude: center.lat,
+        zoom: map.getZoom(),
+        pitch: map.getPitch(),
+        bearing: map.getBearing(),
       });
     };
     map.on("move", syncDeckView);
@@ -111,25 +112,10 @@ export function HeatZoneMap({
 
     return () => {
       map.off("move", syncDeckView);
-      deck.finalize();
-      deckRef.current = null;
       map.remove();
       mapRef.current = null;
     };
   }, [zones]);
-
-  useEffect(() => {
-    deckRef.current?.setProps({
-      layers: buildDeckLayers({
-        zones,
-        zoneFeatures,
-        listings,
-        candidates,
-        selectedZoneId,
-        visible: layers,
-      }),
-    });
-  }, [candidates, layers, listings, selectedZoneId, zoneFeatures, zones]);
 
   return (
     <section
@@ -146,6 +132,18 @@ export function HeatZoneMap({
         <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => setLayers({ ...layers, freshness: checked })} />
       </div>
       <div className={styles.mapCanvas} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
+        <DeckGL
+          controller={false}
+          layers={deckLayers}
+          style={{ pointerEvents: "none" }}
+          viewState={viewState}
+        >
+          <div
+            aria-label="deck.gl HeatZone overlay"
+            className={styles.deckOverlay}
+            data-testid="heat-zone-deck-overlay"
+          />
+        </DeckGL>
         <p className={styles.mapStatus} data-testid="heat-zone-map-status">
           local MapLibre style · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
         </p>

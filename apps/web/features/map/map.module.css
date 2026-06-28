@@ -44,8 +44,15 @@
   min-height: 380px;
 }
 
+.deckOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .mapCanvas :global(.maplibregl-canvas),
-.mapCanvas :global(.deck-canvas) {
+.deckOverlay canvas {
   outline: none;
 }
 
