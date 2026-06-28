@@ -1,0 +1,6 @@
+project_id        = "oday-staging"
+environment       = "staging"
+region            = "asia-east1"
+api_image         = "asia-east1-docker.pkg.dev/oday-staging/oday/api:REPLACE_WITH_SHA"
+cloud_sql_tier    = "db-custom-2-7680"
+cloud_sql_disk_gb = 50

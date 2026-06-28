@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ODAY_ENV=prod
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+COPY modules ./modules
+COPY shared ./shared
+COPY packages ./packages
+COPY infra/db ./infra/db
+
+RUN pip install --no-cache-dir fastapi uvicorn sqlalchemy alembic psycopg[binary]
+
+EXPOSE 8080
+
+CMD ["uvicorn", "apps.api.oday_api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
