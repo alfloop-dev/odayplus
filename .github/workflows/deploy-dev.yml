@@ -1,28 +1,88 @@
 name: Deploy Dev
 
 # Ladder step: dev branch -> dev environment.
-# Auto-deploys on every push to dev (after the CI workflow gates merges into dev).
+# On every push to dev (after CI gates the merge), build the API + web container
+# images from the actual source and publish them to GitHub Container Registry.
+# These are the real, runnable artifacts the dev environment deploys.
 on:
   push:
     branches: [dev]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-dev
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  deploy-dev:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ vars.ODP_DEV_DEPLOY_URL }}
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: infra/docker/api.Dockerfile
+          - name: web
+            dockerfile: infra/docker/web.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          tags: |
+            type=raw,value=dev
+            type=sha,format=long
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: build-and-publish
     runs-on: ubuntu-latest
     environment:
       name: dev
       url: ${{ vars.ODP_DEV_DEPLOY_URL }}
     steps:
-      - uses: actions/checkout@v4
-
-      # TODO(infra): wire the real dev deployment here.
-      # The dev environment / ODP_DEV_DEPLOY_URL target does not exist yet,
-      # so this is a placeholder that documents the ladder rule.
-      - name: Deploy to dev environment
+      # Images are published to ghcr.io/<owner>/odayplus-{api,web}:dev.
+      # When a dev host exists, wire the rollout here: pull the :dev images and
+      # `docker compose up -d`. Until ODP_DEV_HOST is configured the publish above
+      # is the real, verifiable artifact step and this just reports next steps.
+      - name: Roll out to dev host
+        if: ${{ vars.ODP_DEV_HOST != '' }}
         run: |
-          echo "Deploying commit ${GITHUB_SHA} (branch dev) to the DEV environment."
-          echo "TODO: replace with real deploy to ${{ vars.ODP_DEV_DEPLOY_URL }}"
+          echo "Deploy target: ${{ vars.ODP_DEV_HOST }}"
+          echo "Pull ghcr.io/${{ github.repository }}-{api,web}:dev and restart the stack."
+          echo "Add ODP_DEV_HOST + SSH secrets to enable the actual rollout."
+
+      - name: No rollout target configured
+        if: ${{ vars.ODP_DEV_HOST == '' }}
+        run: |
+          echo "Images published to GHCR (tags: dev, sha-<commit>)."
+          echo "No ODP_DEV_HOST set -> no remote rollout. Run locally with: docker compose up --build"
