@@ -1,4 +1,4 @@
-import { AuditWorkspace } from "../../../../../../features/audit/AuditWorkspace.tsx";
+import { AuditWorkspace } from "../../../../../features/audit/AuditWorkspace.tsx";
 
 type PageProps = {
   searchParams?: Record<string, string | string[] | undefined>;

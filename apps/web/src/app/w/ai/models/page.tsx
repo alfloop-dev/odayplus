@@ -1,4 +1,4 @@
-import { LearningHubWorkspace } from "../../../../../../features/learninghub/LearningHubWorkspace.tsx";
+import { LearningHubWorkspace } from "../../../../../features/learninghub/LearningHubWorkspace.tsx";
 
 type PageProps = {
   searchParams?: Record<string, string | string[] | undefined>;
