@@ -1,14 +1,9 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import { PriceOpsWorkspace } from "../../../features/priceops/PriceOpsWorkspace.tsx";
 
-export default function PricingPage() {
-  return (
-    <ModulePlaceholder
-      routeKey="pricing"
-      scope={[
-        "PricingPlanComparison：現行價與候選價並陳",
-        "硬限制（hard constraint）違反明顯標示",
-        "僅支援人工核准與 rollback 計畫，不自動執行",
-      ]}
-    />
-  );
+type PageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+export default function PricingPage({ searchParams }: PageProps) {
+  return <PriceOpsWorkspace searchParams={searchParams} />;
 }
