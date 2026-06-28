@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+from uuid import uuid4
+
+from modules.avm.domain import (
+    ApprovalDecision,
+    DataRoom,
+    NormalizedMargin,
+    ValuationCase,
+    ValuationCaseStatus,
+    ValuationInput,
+    ValuationReport,
+    build_valuation_view,
+    generate_data_room,
+    normalize_margin,
+    value_store,
+)
+from modules.avm.infrastructure import InMemoryAVMRepository
+
+
+class AVMError(ValueError):
+    pass
+
+
+class AVMService:
+    def __init__(self, *, repository: InMemoryAVMRepository | None = None) -> None:
+        self.repository = repository or InMemoryAVMRepository()
+
+    def create_case(
+        self,
+        data: ValuationInput | Mapping[str, Any],
+        *,
+        created_by: str,
+        correlation_id: str,
+    ) -> ValuationCase:
+        valuation_input = data if isinstance(data, ValuationInput) else build_valuation_view(data)
+        case = ValuationCase.create(
+            valuation_input, created_by=created_by, correlation_id=correlation_id
+        )
+        return self.repository.save_case(case)
+
+    def get_case(self, case_id: str) -> ValuationCase | None:
+        return self.repository.get_case(case_id)
+
+    def normalize(self, case_id: str, *, actor: str, correlation_id: str) -> NormalizedMargin:
+        case = self._case(case_id)
+        active = self.repository.save_case(
+            case.transition(
+                ValuationCaseStatus.NORMALIZING,
+                actor=actor,
+                reason="normalization started",
+                correlation_id=correlation_id,
+            )
+        )
+        margin = self.repository.save_margin(normalize_margin(active))
+        self.repository.save_case(
+            active.transition(
+                ValuationCaseStatus.DATA_READY,
+                actor=actor,
+                reason="normalization completed",
+                correlation_id=correlation_id,
+            )
+        )
+        return margin
+
+    def value(self, case_id: str, *, actor: str, correlation_id: str) -> ValuationReport:
+        case = self._case(case_id)
+        margin = self.repository.get_margin(case_id)
+        if margin is None:
+            margin = self.normalize(case_id, actor=actor, correlation_id=correlation_id)
+            case = self._case(case_id)
+        valuing = self.repository.save_case(
+            case.transition(
+                ValuationCaseStatus.VALUING,
+                actor=actor,
+                reason="valuation started",
+                correlation_id=correlation_id,
+            )
+        )
+        report = self.repository.save_report(value_store(valuing, margin))
+        self.repository.save_case(
+            valuing.transition(
+                ValuationCaseStatus.REVIEW_REQUIRED,
+                actor=actor,
+                reason="valuation completed; finance approval required",
+                correlation_id=correlation_id,
+            )
+        )
+        return report
+
+    def approve_finance(
+        self,
+        case_id: str,
+        *,
+        actor: str,
+        reason: str,
+        correlation_id: str,
+        reserve_price: float | None = None,
+    ) -> ValuationReport:
+        if not reason.strip():
+            raise AVMError("finance approval requires a reason")
+        report = self.repository.latest_report(case_id)
+        if report is None:
+            raise AVMError("valuation report required before finance approval")
+        approval = ApprovalDecision(
+            decision_id=f"avm-decision-{uuid4()}",
+            actor_id=actor,
+            approved_at=report.valued_at,
+            decision_reason=reason,
+            reserve_price=round(float(reserve_price if reserve_price is not None else report.reserve_price), 2),
+        )
+        approved_report = self.repository.replace_latest_report(report.with_approval(approval))
+        case = self._case(case_id)
+        self.repository.save_case(
+            case.transition(
+                ValuationCaseStatus.APPROVED,
+                actor=actor,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        )
+        return approved_report
+
+    def build_dataroom(self, case_id: str, *, actor: str, correlation_id: str) -> DataRoom:
+        report = self.repository.latest_report(case_id)
+        if report is None:
+            raise AVMError("valuation report required before data room")
+        dataroom = self.repository.save_dataroom(generate_data_room(report))
+        case = self._case(case_id)
+        self.repository.save_case(
+            case.transition(
+                ValuationCaseStatus.DATAROOM_READY,
+                actor=actor,
+                reason="data room checklist generated",
+                correlation_id=correlation_id,
+            )
+        )
+        return dataroom
+
+    def export_dataroom(
+        self,
+        case_id: str,
+        *,
+        actor: str,
+        reason: str,
+        correlation_id: str,
+    ) -> DataRoom:
+        if not reason.strip():
+            raise AVMError("data room export requires a reason")
+        dataroom = self.repository.get_dataroom(case_id)
+        if dataroom is None:
+            dataroom = self.build_dataroom(case_id, actor=actor, correlation_id=correlation_id)
+        return self.repository.save_dataroom(
+            dataroom.with_export(actor=actor, reason=reason, correlation_id=correlation_id)
+        )
+
+    def latest_report(self, case_id: str) -> ValuationReport | None:
+        return self.repository.latest_report(case_id)
+
+    def dataroom(self, case_id: str) -> DataRoom | None:
+        return self.repository.get_dataroom(case_id)
+
+    def _case(self, case_id: str) -> ValuationCase:
+        case = self.repository.get_case(case_id)
+        if case is None:
+            raise AVMError("valuation case not found")
+        return case

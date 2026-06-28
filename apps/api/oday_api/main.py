@@ -41,6 +41,7 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_queue: InMemoryJobQueue | None = None,
         heatzone_store: HeatZoneResultStore | None = None,
+        avm_repository: Any = None,
         forecastops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
@@ -125,10 +126,12 @@ else:
                 ]
             }
 
+        from apps.api.app.routes.avm import create_avm_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
+        from modules.avm.infrastructure import InMemoryAVMRepository
         from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
         from modules.intervention.application.workflow import InterventionWorkflow
         from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
@@ -136,6 +139,7 @@ else:
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         forecast_repository = forecastops_repository or InMemoryForecastOpsRepository()
+        avm_repo = avm_repository or InMemoryAVMRepository()
         site_repository = sitescore_repository or InMemorySiteScoreRepository()
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
         label_registry = intervention_label_registry or InMemoryLabelRegistry()
@@ -145,6 +149,7 @@ else:
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
         api.include_router(listings_router)
+        api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
             create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
         )
@@ -165,6 +170,7 @@ else:
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
         api.state.heatzone_store = heatzone_store
+        api.state.avm_repository = avm_repo
         api.state.forecastops_repository = forecast_repository
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
