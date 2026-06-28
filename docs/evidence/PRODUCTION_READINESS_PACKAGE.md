@@ -2,7 +2,7 @@
 doc_id: ODP-R7-003-PRODUCTION-READINESS-PACKAGE
 title: ODay Plus Production Readiness Package
 version: 0.1.0
-status: draft
+status: release-candidate
 owner: Release Owner / QA Lead / SRE Owner / Security Owner
 source_documents:
   - ODP-QA-01_TEST_MASTER_PLAN.md
@@ -18,14 +18,14 @@ source_documents:
 
 | Field | Value |
 |---|---|
-| Release ID | `[ASSIGNMENT_REQUIRED]` |
-| Environment | staging / production |
-| Build version | `[ASSIGNMENT_REQUIRED]` |
-| Git commit | `[ASSIGNMENT_REQUIRED]` |
-| Data snapshot | `[ASSIGNMENT_REQUIRED]` |
-| Model versions | `[ASSIGNMENT_REQUIRED_OR_NA]` |
-| Feature flags | `[ASSIGNMENT_REQUIRED_OR_NA]` |
-| Release owner | `[ASSIGNMENT_REQUIRED]` |
+| Release ID | `ODP-PV-012` |
+| Environment | local validation / dev release candidate |
+| Build version | `0.1.0-pv.12` |
+| Git commit | `task/ODP-PV-012@f4545810c9aa` baseline plus task remediation commit |
+| Data snapshot | repository fixtures under `tests/fixtures/source_data/` |
+| Model versions | N/A for PV release-blocker remediation; registry fixtures only |
+| Feature flags | `shared/auth/feature_flags.py::default_registry` |
+| Release owner | Release Owner / QA Lead / SRE Owner / Security Owner |
 | Evidence package version | `0.1.0` |
 
 ## Required Evidence Manifest
@@ -92,9 +92,12 @@ missing audit export, or missing high-risk UAT sign-off blocks production.
 |---|---|---|
 | Acceptance/security/performance registry | `uv run pytest tests/e2e/test_acceptance_coverage.py tests/performance tests/security` | passed, 39 tests |
 | OpsBoard E2E smoke | `npm run test:e2e` | passed, 29 tests |
-| Dependency security audit | `npm audit --audit-level=high` | failed: 6 high and 1 moderate findings |
+| Dependency security audit | `npm audit --audit-level=high` | passed; 0 high/critical findings after ODP-PV-012 remediation |
+| Security CI gate | `make security` | added to `make ci`; dependency audit plus `tests/security` |
 
-The dependency audit findings are release blockers until remediated or formally
-accepted with compensating controls by the Security Owner. The reported fix path
-requires major or out-of-range dependency upgrades for Next.js and Playwright,
-so it is intentionally not applied inside this acceptance-suite task.
+ODP-PV-012 remediates the high dependency audit findings by upgrading
+`next`/`eslint-config-next` to `15.5.19` and `@playwright/test` to `1.61.1`.
+`npm audit --audit-level=high` now passes. npm still reports moderate PostCSS
+findings inherited through Next.js, but they are below the documented
+high/critical release-blocking threshold and remain visible in the remediation
+evidence for Security Owner tracking.

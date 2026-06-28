@@ -28,5 +28,5 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Run CI baseline
+      - name: Run CI baseline with security gates
         run: make ci

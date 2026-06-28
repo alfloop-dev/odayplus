@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "audit:security": "npm audit --audit-level=high",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -15,7 +16,7 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "1.48.2"
+    "@playwright/test": "1.61.1"
   },
   "engines": {
     "node": ">=20"
