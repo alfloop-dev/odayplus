@@ -6,16 +6,16 @@ Create Date: 2026-06-27 11:10:15.000000
 
 """
 import os
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '0001'
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -23,7 +23,7 @@ def upgrade() -> None:
     dir_path = os.path.dirname(os.path.realpath(__file__))
     sql_file_path = os.path.join(dir_path, '../000001_baseline_canonical_schema.sql')
     
-    with open(sql_file_path, 'r', encoding='utf-8') as f:
+    with open(sql_file_path, encoding='utf-8') as f:
         sql_content = f.read()
 
     # Split by semicolon to execute individual statements, or execute as a single block

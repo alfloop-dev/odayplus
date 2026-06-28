@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
 import uuid
-
-import pytest
+from datetime import date, datetime, time
 
 from shared.domain import (
     AddressLocation,
@@ -16,24 +14,12 @@ from shared.domain import (
     DataSnapshot,
     Decision,
     ForecastOutput,
-    GeoCell,
-    HeatZoneScore,
-    Intervention,
-    InterventionOutcome,
     Listing,
     Machine,
-    MachineCycle,
-    MachineStatusEvent,
-    NetworkPlan,
-    NetworkPlanAction,
     Poi,
-    Prediction,
-    PredictionRun,
-    SiteScoreRun,
     Store,
     Tenant,
     Transaction,
-    ValuationRun,
     WorkOrder,
 )
 
