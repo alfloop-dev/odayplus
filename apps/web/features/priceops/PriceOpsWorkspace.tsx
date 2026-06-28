@@ -25,22 +25,24 @@ export function PriceOpsWorkspace({ searchParams = {} }: { searchParams?: Search
           </div>
         }
       />
-      <main className="odp-content" data-testid="priceops-page">
-        <nav className={styles.workspaceNav} aria-label="Pricing module navigation">
-          <Link aria-current="page" href="/pricing">PriceOps Plans</Link>
-          <Link href="/adlift">AdLift Reports</Link>
-          <Link href="/interventions">Intervention handoff</Link>
-        </nav>
-        <section className={styles.overviewGrid} aria-label="PriceOps overview">
-          <Summary title="Pending approval" value="2" copy="manual approval only; no auto execution" />
-          <Summary title="Hard constraint failures" value="1" copy="blocked plan cannot be approved" />
-          <Summary title="Rollback ready" value="2" copy="publish requires rollback plan and audit" />
-        </section>
-        <FilterBar />
-        <section className={styles.grid}>
-          <PlanTable selected={selected.id} />
-          <PlanDrawer plan={selected} />
-        </section>
+      <main className="odp-content" data-testid="module-pricing">
+        <div data-testid="priceops-page">
+          <nav className={styles.workspaceNav} aria-label="Pricing module navigation">
+            <Link aria-current="page" href="/pricing">PriceOps Plans</Link>
+            <Link href="/adlift">AdLift Reports</Link>
+            <Link href="/interventions">Intervention handoff</Link>
+          </nav>
+          <section className={styles.overviewGrid} aria-label="PriceOps overview">
+            <Summary title="Pending approval" value="2" copy="manual approval only; no auto execution" />
+            <Summary title="Hard constraint failures" value="1" copy="blocked plan cannot be approved" />
+            <Summary title="Rollback ready" value="2" copy="publish requires rollback plan and audit" />
+          </section>
+          <FilterBar />
+          <section className={styles.grid}>
+            <PlanTable selected={selected.id} />
+            <PlanDrawer plan={selected} />
+          </section>
+        </div>
       </main>
     </>
   );
