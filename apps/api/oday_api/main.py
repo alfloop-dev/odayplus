@@ -44,6 +44,8 @@ else:
         forecastops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
+        intervention_workflow: Any = None,
+        intervention_label_registry: Any = None,
     ) -> FastAPI:
         audit_log = audit_log or InMemoryAuditLog()
         job_queue = job_queue or InMemoryJobQueue()
@@ -124,15 +126,22 @@ else:
             }
 
         from apps.api.app.routes.forecastops import create_forecastops_router
+        from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
+        from modules.intervention.application.workflow import InterventionWorkflow
+        from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
         from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         forecast_repository = forecastops_repository or InMemoryForecastOpsRepository()
         site_repository = sitescore_repository or InMemorySiteScoreRepository()
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        label_registry = intervention_label_registry or InMemoryLabelRegistry()
+        interventions_workflow = intervention_workflow or InterventionWorkflow(
+            audit_log=audit_log, label_hooks=[label_registry]
+        )
 
         api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
         api.include_router(listings_router)
@@ -146,6 +155,12 @@ else:
                 audit_log=audit_log,
             )
         )
+        api.include_router(
+            create_interventions_router(
+                workflow=interventions_workflow,
+                label_registry=label_registry,
+            )
+        )
 
         api.state.audit_log = audit_log
         api.state.job_queue = job_queue
@@ -153,6 +168,8 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.intervention_workflow = interventions_workflow
+        api.state.intervention_label_registry = label_registry
         return api
 
     app = create_app()
