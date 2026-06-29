@@ -20,6 +20,7 @@ MARKDOWN = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 BRIEF_INDEX = BRIEF_DIR / "README.md"
+DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
 
 EXPECTED_ALIASES = {
     "ODP-EXT-001",
@@ -178,6 +179,47 @@ def write_briefs(packet: dict[str, Any]) -> None:
         brief_path(task["id"]).write_text(render_task_brief(packet, task["id"]), encoding="utf-8")
 
 
+def render_dispatch_queue(packet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "release_target": packet["release_target"],
+        "status": "ready_for_fleet_pickup",
+        "updated": packet["updated"],
+        "dispatch_rule": (
+            "Each queue entry is ready for an implementation fleet to pick up. "
+            "Do not mark complete until implementation and verification evidence are attached."
+        ),
+        "queue": [
+            {
+                "task_id": task["id"],
+                "parent": task["parent"],
+                "dispatch_status": "ready_for_fleet",
+                "scope_boundary": task["scope_boundary"],
+                "owner_lane": task["owner_lane"],
+                "reviewer_lane": task["reviewer_lane"],
+                "brief_path": str(brief_path(task["id"]).relative_to(ROOT)),
+                "suggested_branch": task["suggested_branch"],
+                "dispatch_command": (
+                    f"python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task {task['id']}"
+                ),
+                "minimum_completion_signal": {
+                    "implementation_evidence": task["implementation_evidence"],
+                    "verification_evidence": task["verification_evidence"],
+                    "acceptance_criteria": task["acceptance_criteria"],
+                    "handoff_artifacts": task["handoff_artifacts"],
+                },
+            }
+            for task in packet["tasks"]
+        ],
+    }
+
+
+def write_dispatch_queue(packet: dict[str, Any]) -> None:
+    DISPATCH_QUEUE.write_text(
+        json.dumps(render_dispatch_queue(packet), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
 def validate_packet(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     markdown_text = MARKDOWN.read_text(encoding="utf-8") if MARKDOWN.exists() else ""
@@ -282,6 +324,24 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
     elif BRIEF_INDEX.read_text(encoding="utf-8") != expected_index:
         errors.append(f"generated fleet dispatch index is stale: {BRIEF_INDEX.relative_to(ROOT)}")
 
+    expected_queue = render_dispatch_queue(packet)
+    if not DISPATCH_QUEUE.exists():
+        errors.append(f"missing generated fleet dispatch queue: {DISPATCH_QUEUE.relative_to(ROOT)}")
+    else:
+        queue = json.loads(DISPATCH_QUEUE.read_text(encoding="utf-8"))
+        if queue != expected_queue:
+            errors.append(f"generated fleet dispatch queue is stale: {DISPATCH_QUEUE.relative_to(ROOT)}")
+        for entry in queue.get("queue", []):
+            task_id = entry.get("task_id")
+            if entry.get("dispatch_status") != "ready_for_fleet":
+                errors.append(f"{task_id} dispatch_status must be ready_for_fleet")
+            if not non_empty_string(entry.get("dispatch_command")):
+                errors.append(f"{task_id} missing dispatch_command")
+            if not non_empty_string(entry.get("brief_path")):
+                errors.append(f"{task_id} missing brief_path")
+            elif not (ROOT / entry["brief_path"]).exists():
+                errors.append(f"{task_id} brief_path does not exist: {entry['brief_path']}")
+
     return errors
 
 
@@ -290,6 +350,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", action="store_true", help="print a fleet dispatch summary report")
     parser.add_argument("--task", help="print a single fleet execution brief by task id")
     parser.add_argument("--write-briefs", action="store_true", help="write generated fleet brief artifacts")
+    parser.add_argument("--write-queue", action="store_true", help="write generated fleet dispatch queue")
     return parser.parse_args()
 
 
@@ -304,6 +365,11 @@ def main() -> int:
     if args.write_briefs:
         write_briefs(packet)
         print(f"Wrote fleet dispatch briefs to {BRIEF_DIR.relative_to(ROOT)}.")
+        return 0
+
+    if args.write_queue:
+        write_dispatch_queue(packet)
+        print(f"Wrote fleet dispatch queue to {DISPATCH_QUEUE.relative_to(ROOT)}.")
         return 0
 
     errors = validate_packet(packet)
