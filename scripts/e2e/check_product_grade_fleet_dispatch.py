@@ -117,6 +117,14 @@ def main() -> int:
             errors.append(f"{task_id} missing implementation_evidence")
         if not non_empty_string_list(task.get("verification_evidence")):
             errors.append(f"{task_id} missing verification_evidence")
+        if not non_empty_string_list(task.get("acceptance_criteria")):
+            errors.append(f"{task_id} missing acceptance_criteria")
+        if not non_empty_string(task.get("suggested_branch")):
+            errors.append(f"{task_id} missing suggested_branch")
+        elif not str(task.get("suggested_branch")).startswith(f"task/{task_id}"):
+            errors.append(f"{task_id} suggested_branch must start with task/{task_id}")
+        if not non_empty_string_list(task.get("handoff_artifacts")):
+            errors.append(f"{task_id} missing handoff_artifacts")
         if task_id not in markdown_text:
             errors.append(f"{task_id} missing from markdown dispatch")
         if task_id not in gap_text:

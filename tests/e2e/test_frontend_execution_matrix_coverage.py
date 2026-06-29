@@ -407,6 +407,9 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
         assert task["reviewer_lane"]
         assert task["implementation_evidence"]
         assert task["verification_evidence"]
+        assert task["acceptance_criteria"]
+        assert task["suggested_branch"].startswith(f"task/{task['id']}")
+        assert task["handoff_artifacts"]
 
 
 def test_product_grade_fleet_dispatch_checker_runs() -> None:
