@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -322,6 +324,31 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     assert "ai-status.json" in queue_check_text
     assert "waiting_for_" in queue_check_text
     assert "waiting_for_review_after_handoff" in CLOSEOUT_QUEUE.read_text(encoding="utf-8")
+    assert "--report" in queue_check_text
+    assert "Product Release Closeout Queue Report" in queue_check_text
+
+
+def test_closeout_queue_report_runs_without_live_ai_status() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_queue.py", "--report"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = result.stdout
+
+    assert "# Product Release Closeout Queue Report" in report
+    assert "PR: #82" in report
+    assert "ai-status.json loaded: false" in report
+    assert "| Task | Queue Status | Live Status | Actor | Action | Blocking Type | State |" in report
+    assert "ODP-PV-008" in report
+    assert "queued_no_live_status" in report
+    assert "external_data_sources" in report
+    assert "provider credential/OAuth wiring" in report
+    assert "maps" in report
+    assert "full keyboard accessibility" in report
+    assert "remote_staging" in report
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
