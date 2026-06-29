@@ -31,6 +31,12 @@ REQUIRED_FILES = {
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
     "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
     "product grade e2e fleet dispatch packet": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json",
+    "product grade e2e fleet assignment ledger": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md",
+    "external provider foundation worker evidence": "docs/evidence/fleet_dispatch/ODP-EXT-001-003_WORKER_EVIDENCE.md",
+    "external source operations worker evidence": "docs/evidence/fleet_dispatch/ODP-EXT-004-008_WORKER_EVIDENCE.md",
+    "live map provider gate worker evidence": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
+    "remote staging worker evidence": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001-002_WORKER_EVIDENCE.md",
+    "remote staging missing env report": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001_MISSING_ENV_REPORT.json",
     "listing source fixture": "tests/fixtures/source_data/external/listing_raw_snapshot.valid.json",
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
@@ -72,6 +78,20 @@ def main() -> int:
         path = ROOT / relative_path
         if not path.exists():
             errors.append(f"missing {label}: {relative_path}")
+
+    assignment_ledger = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+    assignment_text = assignment_ledger.read_text(encoding="utf-8") if assignment_ledger.exists() else ""
+    for required_token in (
+        "External provider foundation",
+        "External source operations",
+        "Live map provider gate",
+        "Remote staging rollout",
+        "handback received",
+        "rejected handback",
+        "externally blocked",
+    ):
+        if required_token not in assignment_text:
+            errors.append(f"fleet assignment ledger missing token: {required_token}")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
