@@ -3,8 +3,8 @@
 Task: ODP-PV-008  
 Status: release-gate candidate  
 Generated: 2026-06-29  
-Build baseline: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4`
-Latest CI evidence: GitHub `CI` run `28344187527` and `Deploy Dev` run `28344187522` both passed on 2026-06-29.
+Reference verification baseline: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` passed GitHub `CI` and `Deploy Dev`; evidence refresh PR #80 passed GitHub `CI` and `product-e2e-gate` on 2026-06-29.
+Final release verification must use the GitHub checks attached to the target release commit, because every evidence-only merge creates a newer commit hash.
 
 ## Gate Result
 
