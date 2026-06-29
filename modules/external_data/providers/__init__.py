@@ -1,6 +1,13 @@
 """Live and replay external data provider adapters."""
 
 from modules.external_data.providers.live import (
+    GeocodeClient,
+    GeocodeFixtureReplayClient,
+    GeocodeProviderAuthError,
+    GeocodeProviderError,
+    GeocodeProviderRateLimitError,
+    GeocodeProviderTimeoutError,
+    HttpGeocodeClient,
     HttpListingFeedClient,
     ListingFeedClient,
     ListingFeedIngestionResult,
@@ -9,11 +16,19 @@ from modules.external_data.providers.live import (
     ListingProviderAuthError,
     ListingProviderError,
     ListingProviderTimeoutError,
+    PrimaryGeocodeProvider,
     record_idempotency_key,
 )
 
 __all__ = [
+    "GeocodeClient",
+    "GeocodeFixtureReplayClient",
+    "GeocodeProviderAuthError",
+    "GeocodeProviderError",
+    "GeocodeProviderRateLimitError",
+    "GeocodeProviderTimeoutError",
     "HttpListingFeedClient",
+    "HttpGeocodeClient",
     "ListingFeedClient",
     "ListingFeedIngestionResult",
     "ListingFixtureReplayClient",
@@ -21,5 +36,6 @@ __all__ = [
     "ListingProviderAuthError",
     "ListingProviderError",
     "ListingProviderTimeoutError",
+    "PrimaryGeocodeProvider",
     "record_idempotency_key",
 ]
