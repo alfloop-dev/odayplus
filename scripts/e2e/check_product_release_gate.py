@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
+    "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
     "listing source fixture": "tests/fixtures/source_data/external/listing_raw_snapshot.valid.json",
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
