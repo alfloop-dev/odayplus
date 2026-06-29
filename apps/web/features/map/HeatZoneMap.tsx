@@ -91,12 +91,18 @@ export function HeatZoneMap({
   });
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
   const [runtimeError, setRuntimeError] = useState("");
+  const [evidenceZoneId, setEvidenceZoneId] = useState(selectedZoneId);
+  const previousSelectedZoneId = useRef(selectedZoneId);
   const boundaryConfig = useMemo(readMapBoundaryConfig, []);
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
   const visibleZones = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zones;
   const visibleZoneFeatures = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zoneFeatures;
   const visibleListings = boundaryConfig.stateFixture === "partial" ? [] : listings;
+  const evidenceZone = useMemo(
+    () => zones.find((zone) => zone.id === evidenceZoneId) ?? zones.find((zone) => zone.id === selectedZoneId) ?? zones[0],
+    [evidenceZoneId, selectedZoneId, zones],
+  );
   const deckLayers = useMemo(
     () => buildDeckLayers({
       zones: visibleZones,
@@ -212,6 +218,12 @@ export function HeatZoneMap({
     setLayers(readLayerStateFromUrl());
   }, []);
 
+  useEffect(() => {
+    if (previousSelectedZoneId.current === selectedZoneId) return;
+    previousSelectedZoneId.current = selectedZoneId;
+    setEvidenceZoneId(selectedZoneId);
+  }, [selectedZoneId]);
+
   const updateLayer = (layer: LayerKey, checked: boolean) => {
     setLayers((current) => {
       const next = { ...current, [layer]: checked };
@@ -270,6 +282,36 @@ export function HeatZoneMap({
           <strong>{mapStateTitle(boundaryConfig.stateFixture)}</strong>
           <span>{mapStateBody(boundaryConfig.stateFixture, boundaryConfig.correlationId)}</span>
           <span>Ranking, list fallback, and detail drawers remain authoritative.</span>
+        </div>
+      ) : null}
+      {evidenceZone ? (
+        <div className={styles.evidencePanel} data-testid="map-evidence-fallback">
+          <div className={styles.evidenceTriggers} aria-label="HeatZone evidence targets">
+            {zones.map((zone) => (
+              <button
+                aria-describedby="map-evidence-tooltip"
+                aria-pressed={zone.id === evidenceZone.id}
+                className={styles.evidenceTrigger}
+                data-testid={`map-evidence-trigger-${zone.id}`}
+                key={zone.id}
+                onClick={() => setEvidenceZoneId(zone.id)}
+                onFocus={() => setEvidenceZoneId(zone.id)}
+                onMouseEnter={() => setEvidenceZoneId(zone.id)}
+                type="button"
+              >
+                {zone.id}
+              </button>
+            ))}
+          </div>
+          <div
+            className={styles.evidenceTooltip}
+            data-testid="map-evidence-tooltip"
+            id="map-evidence-tooltip"
+            role="tooltip"
+          >
+            <strong>{evidenceZone.id} evidence</strong>
+            <EvidenceDefinitionList freshness={freshness} zone={evidenceZone} />
+          </div>
         </div>
       ) : null}
       <div className={styles.mapCanvas} onClickCapture={handleCanvasClick} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
@@ -381,6 +423,43 @@ function LegendItem({ swatch, label }: { swatch: string; label: string }) {
       <span className={`${styles.swatch} ${swatch}`} aria-hidden="true" />
       {label}
     </span>
+  );
+}
+
+function EvidenceDefinitionList({ freshness, zone }: { freshness: Freshness; zone: HeatZone }) {
+  return (
+    <dl className={styles.evidenceGrid}>
+      <div>
+        <dt>Score</dt>
+        <dd>{zone.score}</dd>
+      </div>
+      <div>
+        <dt>State</dt>
+        <dd>{zone.state}</dd>
+      </div>
+      <div>
+        <dt>Confidence</dt>
+        <dd>{zone.confidence.toFixed(2)}</dd>
+      </div>
+      <div>
+        <dt>Warnings</dt>
+        <dd>{zone.warnings.join(" / ") || "none"}</dd>
+      </div>
+      <div>
+        <dt>Freshness</dt>
+        <dd>
+          {freshness.status} · {freshness.sourceSnapshotId}
+        </dd>
+      </div>
+      <div>
+        <dt>Model version</dt>
+        <dd>{zone.modelVersion}</dd>
+      </div>
+      <div>
+        <dt>Feature snapshot</dt>
+        <dd>{zone.featureSnapshotTime}</dd>
+      </div>
+    </dl>
   );
 }
 
