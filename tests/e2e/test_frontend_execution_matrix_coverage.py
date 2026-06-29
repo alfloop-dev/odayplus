@@ -150,7 +150,15 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
         assert lane in audit_text
         assert evidence_ref in audit_text
     assert "evidence-ready" in audit_text
-    assert "partial-evidence-ready" in audit_text
+    for xcut_evidence in [
+        "tests/contract/test_frontend_domain_type_coverage.py",
+        "tests/contract/test_ui_core_component_exports.py",
+        "packages/ui-domain",
+        "PR #87",
+        "PR #88",
+        "PR #89",
+    ]:
+        assert xcut_evidence in audit_text
     assert "ODP-PV-008" in audit_text
 
 

@@ -57,7 +57,7 @@ runtime code, canonical architecture policy, task ownership, or release status.
 
 Updated: 2026-06-29
 Source matrix: `docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md`
-Release candidate carrying this addendum: `dev@0bfc29b1050f2281f31179e60f60d51a7fc18509`
+Release candidate carrying this addendum: `dev@d9d637a351cdacfa98184a91b64a403098aabfa6`
 
 This addendum turns the completed UXD specifications and execution matrix into
 durable frontend implementation lanes. It complements the runtime `ai-status`
@@ -73,7 +73,7 @@ assignments and keeps the fleet handoff reviewable in repository evidence.
 | `ODP-FE-PRICE-001` PriceOps and AdLift workbenches (`FE-PRICE-001`, `FE-AD-001`) | Codex2 | Claude2 | `ODAY_PLUS_PRICING_AND_ADLIFT_UI_SPEC.md` | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts`; pricing constraints/rollback and AdLift controls/pre-trend/iROMI proof |
 | `ODP-FE-ASSET-001` Asset valuation and NetPlan workbenches (`FE-AVM-001`, `FE-NET-001`) | Claude | Codex2 | `ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md` | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`; AVM ranges/DataRoom, NetPlan feasible/infeasible solver, approval evidence |
 | `ODP-FE-LEARN-001` Learning Hub and Audit Evidence surfaces (`FE-LEARN-001`, `FE-AUDIT-001`) | Codex | Claude2 | `ODAY_PLUS_LEARNING_HUB_UI_SPEC.md`, `ODAY_PLUS_AUDIT_EVIDENCE_UI_SPEC.md` | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`; model release/rollback gates and audit evidence export |
-| `ODP-FE-XCUT-001` Cross-cutting UI contracts and product E2E gate expansion (`FE-XCUT-001`, `FE-XCUT-002`, `FE-XCUT-003`, `FE-XCUT-004`, `FE-XCUT-005`, `FE-XCUT-006`) | Claude2 | Codex | `ODAY_PLUS_VISUAL_DESIGN_SYSTEM.md`, `ODAY_PLUS_DESIGN_TOKENS.md`, `ODAY_PLUS_COMPONENT_CONTRACTS.md`, execution matrix | `tests/e2e/test_frontend_execution_matrix_coverage.py`, `scripts/e2e/check_product_release_gate.py`; matrix-to-runner-to-release-gate drift guard |
+| `ODP-FE-XCUT-001` Cross-cutting UI contracts and product E2E gate expansion (`FE-XCUT-001`, `FE-XCUT-002`, `FE-XCUT-003`, `FE-XCUT-004`, `FE-XCUT-005`, `FE-XCUT-006`) | Claude2 | Codex | `ODAY_PLUS_VISUAL_DESIGN_SYSTEM.md`, `ODAY_PLUS_DESIGN_TOKENS.md`, `ODAY_PLUS_COMPONENT_CONTRACTS.md`, execution matrix | `tests/e2e/test_frontend_execution_matrix_coverage.py`, `tests/contract/test_frontend_domain_type_coverage.py`, `tests/contract/test_ui_core_component_exports.py`, `scripts/e2e/check_product_release_gate.py`; matrix-to-runner-to-release-gate drift guard plus shared domain type, ui-domain, and core UI export coverage |
 
 ### Dispatch Rules
 

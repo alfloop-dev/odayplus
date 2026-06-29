@@ -3,7 +3,7 @@
 Task family: ODP-FE
 Generated: 2026-06-29
 Reviewer: Human/Ops
-Release candidate: `dev@22c802ebc9b4e22b0914b8f3047c858a1a20faeb`
+Release candidate: `dev@d9d637a351cdacfa98184a91b64a403098aabfa6`
 
 ## Purpose
 
@@ -38,7 +38,7 @@ review/closeout.
 | `ODP-FE-PRICE-001` PriceOps and AdLift workbenches | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` covers PriceOps optimizer, submit/approve/activate/observation/evaluate, rollback recommendation, rollback plan, correlation id, label registration, AdLift incrementality job, controls, pre-trend, causal-claim guard, UI hard constraint disabled approval, and rollback panel. | `evidence-ready` | Reviewer may verify the PriceOps/AdLift specs and confirm whether additional UI affordance polish is required before closeout. |
 | `ODP-FE-ASSET-001` Asset valuation and NetPlan workbenches | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` covers AVM case creation/normalize/value/finance approval/DataRoom/export, NetPlan scenario create/solve/submit/approve/execute/outcome, retained audit evidence, UI valuation range chart, approval panels, DataRoom, NetPlan binding constraints, execution variance, and never-optimistic approval copy. | `evidence-ready` | Reviewer may verify AVM and NetPlan UI spec coverage, including infeasible solver coverage from `tests/e2e/e2e-avm-netplan.spec.ts`. |
 | `ODP-FE-LEARN-001` Learning Hub and Audit Evidence surfaces | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` covers dataset/model registration, model release to CANARY/FULL/ROLLBACK, alias rollback, artifact digest, model UI validation/release/rollback/audit panels, audit decision detail, override comparison, evidence export panel, retained bundle checksum, and missing requirement checks. | `evidence-ready` | Reviewer may verify Learning Hub and Audit Evidence specs and decide whether route-level manual review is enough to close. |
-| `ODP-FE-XCUT-001` Cross-cutting UI contracts and product E2E gate expansion | `tests/e2e/test_frontend_execution_matrix_coverage.py` verifies the dispatch evidence, design matrix, product E2E runner, and static release gate stay aligned. `make ci` and PR #85 prove the drift guard is active in CI. `packages/design-tokens`, `packages/ui`, and `packages/domain-types` typecheck/build in `make ci`. | `partial-evidence-ready` | Drift guard and token/package checks are done. Broader component contract completeness still needs reviewer closeout before marking the whole lane complete. |
+| `ODP-FE-XCUT-001` Cross-cutting UI contracts and product E2E gate expansion | `tests/e2e/test_frontend_execution_matrix_coverage.py` verifies dispatch evidence, design matrix, product E2E runner, and static release gate alignment. PR #87 added `packages/domain-types/src/frontend-contracts.ts` plus `tests/contract/test_frontend_domain_type_coverage.py` for Candidate/SiteScore/Forecast/Intervention/Pricing/AdLift/AVM/NetPlan/ModelRelease/Audit UI contracts. PR #88 added `packages/ui-domain` reusable scaffolds for all 13 documented domain components. PR #89 added core `packages/ui` scaffolds and `tests/contract/test_ui_core_component_exports.py` for Toolbar/FilterBar, Drawer, Button, Card, Table, Form, Modal, Tabs, Timeline, Toast, Tooltip, CommandPalette, EmptyState, DataStatusBadge, ModelVersionBadge, ApprovalPanel, AuditMetadata, AlertChip, and EvidencePanel. `make ci`, GitHub `ci`, and `product-e2e-gate` passed for all three follow-up PRs and for draft release PR #82 at `dev@d9d637a351cdacfa98184a91b64a403098aabfa6`. | `evidence-ready` | Reviewer may verify shared UI/domain/type coverage against `ODAY_PLUS_COMPONENT_CONTRACTS.md`. Parent lane closeout still requires assigned owner/reviewer status updates in `ai-status.json`; no remaining code/evidence gap is known for the shared contract slice. |
 
 ## Remaining Non-Code Gates
 
@@ -48,16 +48,18 @@ review/closeout.
 - Remote staging rollout remains conditional on rollout target configuration.
 - Worker runtime dispatch had prior supervisor failures in local task briefs;
   durable repository evidence now supersedes those transient startup failures
-  for review, but individual lanes still need owner/reviewer status updates in
-  `ai-status.json`.
+  for review, but individual lanes still need owner/reviewer closeout status
+  updates in `ai-status.json`.
 
 ## Closeout Recommendation
 
 - Move `ODP-FE-EXP-001`, `ODP-FE-PRICE-001`, and `ODP-FE-LEARN-001` to review
   after owners confirm no additional implementation scope beyond the cited E2E
   evidence is required.
-- Ask Claude/Claude2 owners to review `ODP-FE-R0-001`, `ODP-FE-OPS-001`,
-  `ODP-FE-ASSET-001`, and `ODP-FE-XCUT-001` against this audit before final
-  task closeout.
+- Ask assigned owners/reviewers to finish closeout for lanes already in review
+  or review-approved in `ai-status.json`, including `ODP-FE-R0-001`,
+  `ODP-FE-OPS-001`, `ODP-FE-ASSET-001`, `ODP-FE-XCUT-UI-001`,
+  `ODP-FE-XCUT-DOMAIN-001`, `ODP-FE-XCUT-TYPES-001`, and parent
+  `ODP-FE-XCUT-001`.
 - Keep #82 draft until Human/Ops accepts the product E2E evidence and rollout
   limitation.
