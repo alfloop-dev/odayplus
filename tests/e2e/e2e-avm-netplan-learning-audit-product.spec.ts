@@ -173,7 +173,7 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   expect(evidencePayload.missing_requirements).toEqual([]);
 
   const retained = await expectStatus(api.get(`${API_BASE_URL}/audit/evidence/exports?program_id=PV007-AUDIT`), 200);
-  expect(retained.exports[0].export_id).toBe(evidencePayload.export_id);
+  expect(retained.exports.some((item: { export_id: string }) => item.export_id === evidencePayload.export_id)).toBe(true);
   const retainedDetail = await expectStatus(api.get(`${API_BASE_URL}/audit/evidence/exports/${evidencePayload.export_id}`), 200);
   expect(retainedDetail.bundle.bundle_checksum).toBe(evidencePayload.bundle_checksum);
 

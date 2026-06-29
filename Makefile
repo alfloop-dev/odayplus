@@ -5,7 +5,7 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap lint test smoke dependency-audit security node-check ci clean
+.PHONY: help bootstrap lint test smoke dependency-audit security node-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
@@ -15,6 +15,7 @@ help:
 	@printf "  make smoke       Run fast foundation smoke tests\n"
 	@printf "  make security    Run dependency audit and security acceptance tests\n"
 	@printf "  make node-check  Run Node workspace checks when a lockfile exists\n"
+	@printf "  make product-e2e-gate  Run product E2E release gate checks\n"
 	@printf "  make ci          Run the full CI baseline\n"
 	@printf "  make clean       Remove local test and lint caches\n"
 
@@ -55,6 +56,12 @@ node-check:
 	else \
 		printf "Skipping Node workspace checks: package-lock.json is not present yet.\n"; \
 	fi
+
+product-e2e-gate:
+	python3 scripts/e2e/check_product_release_gate.py
+
+product-release-gate: product-e2e-gate
+	scripts/e2e/run_product_e2e.sh
 
 ci: bootstrap lint security test smoke node-check
 
