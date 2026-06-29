@@ -214,19 +214,18 @@
     },
     {
       "task_id": "ODP-FE-XCUT-DOMAIN-001",
-      "status": "review",
-      "actor": "Codex2",
-      "action_type": "reviewer_approve_or_reopen",
+      "status": "review_approved",
+      "actor": "Claude",
+      "action_type": "owner_done",
       "allowed_commands": [
-        "AI_NAME=Codex2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-DOMAIN-001 \"<approval message>\"",
-        "AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-XCUT-DOMAIN-001 \"<missing evidence>\""
+        "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-XCUT-DOMAIN-001 \"<finalization message>\""
       ],
       "evidence_refs": [
         "packages/ui-domain",
         "tests/contract/test_frontend_domain_type_coverage.py",
         "docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md"
       ],
-      "blocking_type": "reviewer_status_closeout"
+      "blocking_type": "owner_status_closeout"
     },
     {
       "task_id": "ODP-FE-XCUT-TYPES-001",
