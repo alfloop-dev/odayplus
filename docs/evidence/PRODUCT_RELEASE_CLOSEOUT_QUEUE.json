@@ -21,26 +21,19 @@
   "scope_boundaries": [
     {
       "topic": "external_data_sources",
-      "current_proof": "deterministic source-stub, external fixtures, connector contract tests, and product-e2e-env spec",
+      "current_proof": "deterministic source-stub, external fixtures, connector contract tests, live-provider adapter tests, scheduled external fetch worker tests, quota/rate-limit handling, freshness/licensing gates, and product E2E mock proof",
       "not_proven": [
-        "live provider ingestion",
         "provider credential/OAuth wiring",
-        "scheduled external fetch",
-        "quota/rate-limit handling",
-        "provider-specific freshness",
-        "production licensing"
+        "provider-specific production credential rotation",
+        "provider-specific production licensing approval"
       ]
     },
     {
       "topic": "maps",
-      "current_proof": "deterministic local MapLibre/deck/H3 E2E with map/list/drawer sync",
+      "current_proof": "deterministic local MapLibre/deck/H3 E2E with map/list/drawer sync, live tile/geocoder boundary gate, layer-toggle behavior, direct map picking, deck.gl pixel content, tooltip/evidence detail, resilience states, and full keyboard accessibility",
       "not_proven": [
-        "live tile rollout",
-        "live geocoder rollout",
-        "full keyboard accessibility",
-        "layer-toggle behavior",
-        "direct map picking",
-        "deck.gl pixel content"
+        "live tile rollout against remote staging",
+        "live geocoder rollout against remote staging"
       ]
     },
     {
@@ -48,7 +41,9 @@
       "current_proof": "deterministic deployment, backup, restore, rollback evidence",
       "not_proven": [
         "remote staging host/url/secret configuration",
-        "live staging rollout"
+        "live staging rollout",
+        "staging health/version proof matching PR #82 headRefOid",
+        "staging product smoke and backup/restore/rollback drill"
       ]
     }
   ],

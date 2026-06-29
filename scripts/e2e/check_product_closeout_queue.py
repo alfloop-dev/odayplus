@@ -199,11 +199,16 @@ def render_report(payload: dict[str, Any], errors: list[str]) -> str:
         [
             "## Operator Notes",
             "",
-            "- External data source proof remains deterministic fixtures/source-stub coverage until live "
-            "provider credentials, scheduled fetches, quotas, freshness, and licensing are wired.",
-            "- Map proof remains deterministic local MapLibre/deck/H3 E2E until live tiles/geocoding, "
-            "full keyboard accessibility, layer toggles, and direct map picking are proven.",
-            "- Remote staging rollout remains conditional until host, URL, and secret configuration are present.",
+            "- External data source proof includes deterministic fixtures/source-stub coverage, live-provider "
+            "adapter tests, scheduled external fetch worker proof, quota/rate-limit handling, freshness "
+            "gates, licensing gates, and product E2E mock proof. Provider-specific production credential "
+            "rotation and licensing approval remain outside this proof.",
+            "- Map proof includes deterministic local MapLibre/deck/H3 E2E, live tile/geocoder boundary "
+            "checks, full keyboard accessibility, layer toggles, direct map picking, semantic pixel checks, "
+            "resilience states, and tooltip/evidence detail. Remote-staging live tile/geocoder rollout "
+            "remains conditional.",
+            "- Remote staging rollout remains conditional until host, URL, secret owner configuration, "
+            "health/version smoke, and staging drill evidence are present.",
         ]
     )
 

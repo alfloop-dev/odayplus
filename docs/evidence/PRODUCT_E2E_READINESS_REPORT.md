@@ -34,7 +34,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 |---|---|---|---|
 | Deterministic environment | `tests/e2e/product-e2e-env.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, `infra/docker/docker-compose.e2e.yml` | API health, retained audit evidence, source stub state, `seed-summary.json` |
 | Web/API binding | `tests/e2e/e2e-api-bound-ui.spec.ts` | API-created AVM case and audit events | UI renders live backend state, not edited fixtures |
-| Map | `tests/e2e/e2e-map.spec.ts` | seeded HeatZone/H3 data | MapLibre canvas nonblank pixel check, deck overlay check, list/drawer synchronization |
+| Map | `tests/e2e/e2e-map.spec.ts`, `tests/e2e/e2e-map-live-boundary.spec.ts`, `tests/e2e/e2e-map-resilience.spec.ts`, `tests/e2e/e2e-map-tooltip-evidence.spec.ts`, `tests/e2e/e2e-map-a11y.spec.ts` | seeded HeatZone/H3 data | MapLibre canvas nonblank and semantic pixel checks, live tile/geocoder boundary config, URL layer persistence, direct picking, resilience states, tooltip/evidence detail, axe scan, keyboard-only selection/layer/drawer proof |
 | Expansion | `tests/e2e/e2e-expansion-product.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, and deterministic API seed | HeatZone/listing/site-score product path, screenshot/trace attachment |
 | Ops, intervention, price, AdLift | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` | generated forecast/intervention/price/adlift payloads | correlation id `corr-pv006-ops-intervention-price-ad`, audit events, screenshot attachment |
 | AVM, NetPlan, Learning Hub, Audit | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` | generated AVM/NetPlan/Learning payloads and model artifact bytes | correlation id `corr-pv007-avm-netplan-learning-audit`, audit evidence export, retained bundle checksum, screenshot attachment |
@@ -63,6 +63,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 The `product-e2e-gate` CI job fails if:
 
 - the MapLibre/deck.gl map spec is removed from `scripts/e2e/run_product_e2e.sh`;
+- map follow-up specs for live boundary, resilience, tooltip/evidence, or a11y are removed from the product-grade follow-up evidence packet;
 - the deterministic product environment or source stub fixture is missing;
 - PV-005/PV-006/PV-007 product specs or evidence documents are missing;
 - this readiness report omits the required P0 scenario or audit correlation IDs;
@@ -70,7 +71,7 @@ The `product-e2e-gate` CI job fails if:
 
 ## Residual Release Risk
 
-- Remote staging rollout is still a deployment environment configuration item because staging host/url variables are placeholders.
+- Remote staging rollout is still a deployment environment configuration item because staging host/url/secret owner variables are not configured. The API now exposes `/platform/version`, and `scripts/e2e/check_remote_staging_proof.py` is the required smoke/version checker once staging exists.
 - Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - Moderate dependency audit findings remain below the existing high/critical release-blocking threshold and are tracked by the security gate output.

@@ -35,9 +35,9 @@ The authoritative release target is draft release PR #82. Use PR #82
 
 | Topic | Current proof | Boundary |
 |---|---|---|
-| External data sources | Source fixtures under `tests/fixtures/source_data/external/`, source-stub service in the E2E stack, connector contract tests, and `tests/e2e/product-e2e-env.spec.ts` prove deterministic listing/POI/competitor source behavior | This is not live provider ingestion, provider credential/OAuth wiring, scheduled external fetch, quota/rate-limit handling, provider-specific freshness, or production licensing proof |
-| Maps | `tests/e2e/e2e-map.spec.ts` proves MapLibre canvas pixels, deck overlay presence, HeatZone/H3 seeded data, and map/list/drawer synchronization | This is not a live production tile/geocoder rollout proof; deeper keyboard-only accessibility, layer toggle behavior, direct pan/zoom/picking, and deck.gl pixel content remain outside the current deterministic release gate |
-| Deployment/rollback | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md` and GitHub `Deploy Dev` prove deterministic E2E deployment, backup, restore, and rollback evidence | Remote staging remains conditional on target configuration |
+| External data sources | Source fixtures, source-stub service, connector contract tests, live-provider adapter tests, scheduled fetch worker tests, quota/rate-limit/freshness/licensing gates, and `tests/e2e/test_external_source_product_e2e.py` prove deterministic and mock-live source behavior | This is not provider-specific production credential rotation or provider-specific production licensing approval |
+| Maps | `tests/e2e/e2e-map.spec.ts`, `tests/e2e/e2e-map-live-boundary.spec.ts`, `tests/e2e/e2e-map-resilience.spec.ts`, `tests/e2e/e2e-map-tooltip-evidence.spec.ts`, and `tests/e2e/e2e-map-a11y.spec.ts` prove MapLibre/deck/H3 rendering, live boundary config, URL layer persistence, direct picking, semantic pixels, resilience states, tooltip/evidence detail, and full keyboard accessibility | This is not a remote-staging rollout against actual live tile/geocoder endpoints |
+| Deployment/rollback | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md` and GitHub `Deploy Dev` prove deterministic E2E deployment, backup, restore, and rollback evidence | Remote staging remains conditional on target configuration and `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` |
 
 ## Remaining Closeout Actions
 
@@ -60,10 +60,16 @@ The authoritative release target is draft release PR #82. Use PR #82
 ## Closeout Invariants
 
 - Do not mark the release complete while PR #82 is draft.
-- Do not claim live external provider integration from deterministic source
-  fixtures or source-stub coverage.
+- Do not claim live external provider integration from deterministic/mock-live
+  source proof.
+- Do not claim provider-specific production credential rotation or production
+  licensing approval from deterministic/mock-live source proof.
+- Remaining external-source terms must stay explicit in the release packet:
+  provider credential/OAuth, scheduled external fetch, quota/rate-limit, and
+  production licensing.
 - Do not claim live remote staging rollout until staging host/url/secret
-  configuration is provided and verified.
+  configuration is provided and verified with
+  `scripts/e2e/check_remote_staging_proof.py`.
 - Do not close reviewer-owned lanes by changing `ai-status.json` from an
   unassigned actor; use the named owner/reviewer lifecycle.
 - Do not run final `done` closeout from a thin or stale `main` checkout. Owner

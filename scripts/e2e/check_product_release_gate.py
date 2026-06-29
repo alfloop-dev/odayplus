@@ -27,6 +27,7 @@ REQUIRED_FILES = {
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
+    "remote staging runbook": "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
     "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
     "product grade e2e fleet dispatch packet": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json",
@@ -34,6 +35,7 @@ REQUIRED_FILES = {
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
+    "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
 }
 
 REQUIRED_RUNNER_SPECS = (
