@@ -176,3 +176,33 @@ staging proof until the tasks below are implemented and verified.
   checks as the release candidate authority.
 - Deterministic fixture/source-stub tests must remain as CI defaults even after
   live-provider paths are added.
+
+## Fleet Task Aliases
+
+The umbrella ODP-PV tasks above may be split into these narrower fleet tasks
+when parallel execution is useful.
+
+### External Source Aliases
+
+| Alias | Parent | Scope | Required proof |
+|---|---|---|---|
+| `ODP-EXT-001` | `ODP-PV-LIVE-SRC-001` | Provider registry and secrets for listing, POI, geocode, admin boundary, and competitor/manual sources | Secret names, auth modes, startup validation, no committed secrets |
+| `ODP-EXT-002` | `ODP-PV-LIVE-SRC-001` | Live listing feed adapter | Contract validation, raw landing, idempotency, fixture-compatible replay |
+| `ODP-EXT-003` | `ODP-PV-LIVE-SRC-001` | Live geocoder adapter | Credential handling, rate-limit retry, confidence mapping, deterministic recorded-response tests |
+| `ODP-EXT-004` | `ODP-PV-LIVE-SRC-002` | Scheduled external fetch worker | Last-success watermark, backfill window, idempotency key, durable source snapshot ids |
+| `ODP-EXT-005` | `ODP-PV-LIVE-SRC-003` | Quota/rate-limit resilience | 401/403/429/5xx/timeout simulation, retry budget, circuit breaker, alert/audit event |
+| `ODP-EXT-006` | `ODP-PV-LIVE-SRC-002` | Freshness and data-quality gate | Per-source freshness SLA, stale blocking/warning behavior, UI/API freshness status |
+| `ODP-EXT-007` | `ODP-PV-LIVE-SRC-003` | Licensing and allowed-use gate | License metadata, expiry, attribution, downstream-use flags, `license_blocked` quarantine |
+| `ODP-EXT-008` | `ODP-PV-LIVE-SRC-001` | External source product E2E | Provider-mock service with auth/quota/freshness/license scenarios and persisted lineage |
+
+### Map Aliases
+
+| Alias | Parent | Scope | Required proof |
+|---|---|---|---|
+| `ODP-MAP-E2E-001` | `ODP-PV-LIVE-MAP-001` | Live tile/geocoder boundary gate | Configured staging tile/geocoder smoke or explicit conditional proof |
+| `ODP-MAP-E2E-002` | `ODP-PV-LIVE-MAP-003` | Layer toggle URL persistence | Toggle H3/listing/candidate/confidence/freshness layers, reload restore, visible layer state |
+| `ODP-MAP-E2E-003` | `ODP-PV-LIVE-MAP-003` | Direct map picking | H3, listing, and candidate map pick opens the same drawer state as list selection |
+| `ODP-MAP-E2E-004` | `ODP-PV-LIVE-MAP-003` | Deck pixel content proof | H3 polygon, listing point, candidate point, and selected highlight pixel/content checks |
+| `ODP-MAP-A11Y-001` | `ODP-PV-LIVE-MAP-002` | Keyboard map/list/drawer accessibility | Tab/Enter/Escape/focus-return flow and axe/focus-visible checks |
+| `ODP-MAP-E2E-005` | `ODP-PV-LIVE-MAP-002` | Map state resilience | Loading, empty, error with correlation id, partial failed layer, and no-geometry fallback |
+| `ODP-MAP-E2E-006` | `ODP-PV-LIVE-MAP-003` | Tooltip and evidence detail | Hover plus keyboard reachable tooltip proof for score, state, confidence, warnings, and version fields |
