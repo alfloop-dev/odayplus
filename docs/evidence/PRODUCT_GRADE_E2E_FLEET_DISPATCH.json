@@ -46,31 +46,53 @@
       "lane": "External provider foundation",
       "owner_lane": "integration / source ingestion",
       "reviewer_lane": "governance / product validation",
-      "aliases": ["ODP-EXT-001", "ODP-EXT-002", "ODP-EXT-003"]
+      "aliases": [
+        "ODP-EXT-001",
+        "ODP-EXT-002",
+        "ODP-EXT-003"
+      ]
     },
     {
       "lane": "External source operations",
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
-      "aliases": ["ODP-EXT-004", "ODP-EXT-005", "ODP-EXT-006", "ODP-EXT-007", "ODP-EXT-008"]
+      "aliases": [
+        "ODP-EXT-004",
+        "ODP-EXT-005",
+        "ODP-EXT-006",
+        "ODP-EXT-007",
+        "ODP-EXT-008"
+      ]
     },
     {
       "lane": "Live map provider gate",
       "owner_lane": "maps / frontend infrastructure",
       "reviewer_lane": "frontend accessibility / product validation",
-      "aliases": ["ODP-MAP-E2E-001", "ODP-MAP-E2E-002", "ODP-MAP-E2E-003", "ODP-MAP-E2E-004"]
+      "aliases": [
+        "ODP-MAP-E2E-001",
+        "ODP-MAP-E2E-002",
+        "ODP-MAP-E2E-003",
+        "ODP-MAP-E2E-004"
+      ]
     },
     {
       "lane": "Map accessibility and resilience",
       "owner_lane": "frontend accessibility / maps",
       "reviewer_lane": "product validation",
-      "aliases": ["ODP-MAP-A11Y-001", "ODP-MAP-E2E-005", "ODP-MAP-E2E-006"]
+      "aliases": [
+        "ODP-MAP-A11Y-001",
+        "ODP-MAP-E2E-005",
+        "ODP-MAP-E2E-006"
+      ]
     },
     {
       "lane": "Remote staging rollout",
       "owner_lane": "platform / deployment",
       "reviewer_lane": "operations / product validation",
-      "aliases": ["ODP-PV-STAGE-001", "ODP-PV-STAGE-002"]
+      "aliases": [
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002"
+      ]
     }
   ],
   "tasks": [
@@ -82,11 +104,37 @@
       "owner_lane": "integration / source ingestion",
       "reviewer_lane": "governance / product validation",
       "objective": "Provider registry and secrets for listing, POI, geocode, admin boundary, and competitor/manual sources",
-      "implementation_evidence": ["secret names", "auth modes", "startup validation", "provider class metadata", "no committed secrets"],
-      "verification_evidence": ["missing credentials fail closed", "expired or unauthorized credentials include correlation id"],
-      "acceptance_criteria": ["provider classes are registered", "startup validation fails closed without secrets", "release evidence contains no secret values"],
+      "implementation_evidence": [
+        "secret names",
+        "auth modes",
+        "startup validation",
+        "provider class metadata",
+        "no committed secrets"
+      ],
+      "verification_evidence": [
+        "missing credentials fail closed",
+        "expired or unauthorized credentials include correlation id"
+      ],
+      "acceptance_criteria": [
+        "provider classes are registered",
+        "startup validation fails closed without secrets",
+        "release evidence contains no secret values"
+      ],
       "suggested_branch": "task/ODP-EXT-001-provider-registry-secrets",
-      "handoff_artifacts": ["provider registry diff", "secret inventory with names only", "startup validation test output"]
+      "handoff_artifacts": [
+        "provider registry diff",
+        "secret inventory with names only",
+        "startup validation test output"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"license_gate_and_fixture_default\" -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-002",
@@ -96,11 +144,41 @@
       "owner_lane": "integration / source ingestion",
       "reviewer_lane": "governance / product validation",
       "objective": "Live listing feed adapter",
-      "implementation_evidence": ["authenticated provider client", "raw landing snapshot", "idempotency key", "canonical transform", "quarantine path"],
-      "verification_evidence": ["success contract test", "duplicate contract test", "malformed payload contract test", "unauthorized contract test", "timeout contract test", "fixture-compatible replay"],
-      "acceptance_criteria": ["listing adapter persists raw and canonical snapshots", "bad records enter quarantine", "fixture replay remains CI default"],
+      "implementation_evidence": [
+        "authenticated provider client",
+        "raw landing snapshot",
+        "idempotency key",
+        "canonical transform",
+        "quarantine path"
+      ],
+      "verification_evidence": [
+        "success contract test",
+        "duplicate contract test",
+        "malformed payload contract test",
+        "unauthorized contract test",
+        "timeout contract test",
+        "fixture-compatible replay"
+      ],
+      "acceptance_criteria": [
+        "listing adapter persists raw and canonical snapshots",
+        "bad records enter quarantine",
+        "fixture replay remains CI default"
+      ],
       "suggested_branch": "task/ODP-EXT-002-live-listing-feed",
-      "handoff_artifacts": ["adapter contract test output", "source snapshot sample", "quarantine event evidence"]
+      "handoff_artifacts": [
+        "adapter contract test output",
+        "source snapshot sample",
+        "quarantine event evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"live_provider_mode_product_e2e\" -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-003",
@@ -110,11 +188,40 @@
       "owner_lane": "integration / source ingestion",
       "reviewer_lane": "governance / product validation",
       "objective": "Live geocoder adapter",
-      "implementation_evidence": ["credential handling", "geocode confidence mapping", "provider request id", "provider observed time", "retry budget"],
-      "verification_evidence": ["recorded response success test", "low confidence test", "rate-limit retry test", "timeout test", "unauthorized test"],
-      "acceptance_criteria": ["geocoder outputs confidence and lineage", "rate limits use retry budget", "unauthorized mode fails closed"],
+      "implementation_evidence": [
+        "credential handling",
+        "geocode confidence mapping",
+        "provider request id",
+        "provider observed time",
+        "retry budget"
+      ],
+      "verification_evidence": [
+        "recorded response success test",
+        "low confidence test",
+        "rate-limit retry test",
+        "timeout test",
+        "unauthorized test"
+      ],
+      "acceptance_criteria": [
+        "geocoder outputs confidence and lineage",
+        "rate limits use retry budget",
+        "unauthorized mode fails closed"
+      ],
       "suggested_branch": "task/ODP-EXT-003-live-geocoder",
-      "handoff_artifacts": ["recorded-response fixtures", "geocode contract test output", "confidence mapping evidence"]
+      "handoff_artifacts": [
+        "recorded-response fixtures",
+        "geocode contract test output",
+        "confidence mapping evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/data/test_geo_pipeline.py tests/e2e/test_external_source_product_e2e.py -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-004",
@@ -124,11 +231,38 @@
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
       "objective": "Scheduled external fetch worker",
-      "implementation_evidence": ["scheduler/job definition", "last-success watermark", "backfill command", "durable source snapshot ids"],
-      "verification_evidence": ["idempotent replay test", "stale-source clock E2E", "STALE or BLOCKED UI/data status"],
-      "acceptance_criteria": ["scheduled fetch creates durable batch ids", "backfill is idempotent", "stale sources are visible as STALE or BLOCKED"],
+      "implementation_evidence": [
+        "scheduler/job definition",
+        "last-success watermark",
+        "backfill command",
+        "durable source snapshot ids"
+      ],
+      "verification_evidence": [
+        "idempotent replay test",
+        "stale-source clock E2E",
+        "STALE or BLOCKED UI/data status"
+      ],
+      "acceptance_criteria": [
+        "scheduled fetch creates durable batch ids",
+        "backfill is idempotent",
+        "stale sources are visible as STALE or BLOCKED"
+      ],
       "suggested_branch": "task/ODP-EXT-004-scheduled-fetch",
-      "handoff_artifacts": ["scheduler definition", "backfill command output", "freshness E2E evidence"]
+      "handoff_artifacts": [
+        "scheduler definition",
+        "backfill command output",
+        "freshness E2E evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"live_provider_mode_product_e2e\" -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-005",
@@ -138,11 +272,37 @@
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
       "objective": "Quota and rate-limit resilience",
-      "implementation_evidence": ["401/403/429/5xx/timeout handling", "backoff policy", "circuit breaker", "alert/audit event"],
-      "verification_evidence": ["quota exhaustion simulation", "rate-limit simulation", "clear stale/blocked degraded state"],
-      "acceptance_criteria": ["provider failures do not fabricate freshness", "quota exhaustion emits alert/audit evidence", "degraded mode is explicit"],
+      "implementation_evidence": [
+        "401/403/429/5xx/timeout handling",
+        "backoff policy",
+        "circuit breaker",
+        "alert/audit event"
+      ],
+      "verification_evidence": [
+        "quota exhaustion simulation",
+        "rate-limit simulation",
+        "clear stale/blocked degraded state"
+      ],
+      "acceptance_criteria": [
+        "provider failures do not fabricate freshness",
+        "quota exhaustion emits alert/audit evidence",
+        "degraded mode is explicit"
+      ],
       "suggested_branch": "task/ODP-EXT-005-quota-rate-limit",
-      "handoff_artifacts": ["failure simulation output", "circuit breaker evidence", "alert/audit event sample"]
+      "handoff_artifacts": [
+        "failure simulation output",
+        "circuit breaker evidence",
+        "alert/audit event sample"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"auth_quota_and_freshness\" -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-006",
@@ -152,11 +312,38 @@
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
       "objective": "Freshness and data-quality gate",
-      "implementation_evidence": ["per-source freshness SLA", "provider observed time", "ingestion time", "source snapshot id", "correlation id"],
-      "verification_evidence": ["API freshness state E2E", "UI freshness state E2E", "source lineage appears in evidence"],
-      "acceptance_criteria": ["freshness SLA is source-specific", "API and UI expose the same freshness status", "lineage contains correlation id"],
+      "implementation_evidence": [
+        "per-source freshness SLA",
+        "provider observed time",
+        "ingestion time",
+        "source snapshot id",
+        "correlation id"
+      ],
+      "verification_evidence": [
+        "API freshness state E2E",
+        "UI freshness state E2E",
+        "source lineage appears in evidence"
+      ],
+      "acceptance_criteria": [
+        "freshness SLA is source-specific",
+        "API and UI expose the same freshness status",
+        "lineage contains correlation id"
+      ],
       "suggested_branch": "task/ODP-EXT-006-freshness-quality-gate",
-      "handoff_artifacts": ["freshness policy diff", "API/UI E2E output", "lineage evidence sample"]
+      "handoff_artifacts": [
+        "freshness policy diff",
+        "API/UI E2E output",
+        "lineage evidence sample"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py tests/data/test_geo_pipeline.py -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-007",
@@ -166,11 +353,37 @@
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
       "objective": "Licensing and allowed-use gate",
-      "implementation_evidence": ["license metadata", "attribution", "expiry", "downstream-use flags", "export restrictions"],
-      "verification_evidence": ["license-blocked provider quarantine", "production mode cannot use blocked provider"],
-      "acceptance_criteria": ["license metadata controls production use", "blocked providers enter quarantine", "exports respect downstream-use flags"],
+      "implementation_evidence": [
+        "license metadata",
+        "attribution",
+        "expiry",
+        "downstream-use flags",
+        "export restrictions"
+      ],
+      "verification_evidence": [
+        "license-blocked provider quarantine",
+        "production mode cannot use blocked provider"
+      ],
+      "acceptance_criteria": [
+        "license metadata controls production use",
+        "blocked providers enter quarantine",
+        "exports respect downstream-use flags"
+      ],
       "suggested_branch": "task/ODP-EXT-007-licensing-gate",
-      "handoff_artifacts": ["license registry diff", "blocked-provider test output", "export restriction evidence"]
+      "handoff_artifacts": [
+        "license registry diff",
+        "blocked-provider test output",
+        "export restriction evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"license_gate_and_fixture_default\" -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-EXT-008",
@@ -180,11 +393,38 @@
       "owner_lane": "data platform / source ingestion",
       "reviewer_lane": "product validation / governance",
       "objective": "External source product E2E",
-      "implementation_evidence": ["provider-mock service", "auth scenario", "quota scenario", "freshness scenario", "license scenario", "persisted lineage"],
-      "verification_evidence": ["live-provider mode product E2E", "CI fixture mode remains default"],
-      "acceptance_criteria": ["provider mock covers auth quota freshness and license scenarios", "live-provider mode has product E2E proof", "default CI still uses deterministic fixtures"],
+      "implementation_evidence": [
+        "provider-mock service",
+        "auth scenario",
+        "quota scenario",
+        "freshness scenario",
+        "license scenario",
+        "persisted lineage"
+      ],
+      "verification_evidence": [
+        "live-provider mode product E2E",
+        "CI fixture mode remains default"
+      ],
+      "acceptance_criteria": [
+        "provider mock covers auth quota freshness and license scenarios",
+        "live-provider mode has product E2E proof",
+        "default CI still uses deterministic fixtures"
+      ],
       "suggested_branch": "task/ODP-EXT-008-external-source-product-e2e",
-      "handoff_artifacts": ["provider mock service evidence", "product E2E output", "CI fixture mode proof"]
+      "handoff_artifacts": [
+        "provider mock service evidence",
+        "product E2E output",
+        "CI fixture mode proof"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -q"
+      ],
+      "blocking_dependencies": [
+        "Provider secrets and live credentials are supplied by environment or approved mock service, never committed",
+        "Deterministic fixture/source-stub mode remains the CI default when live credentials are absent",
+        "Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-001",
@@ -194,11 +434,39 @@
       "owner_lane": "maps / frontend infrastructure",
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Live tile/geocoder boundary gate",
-      "implementation_evidence": ["MAP_TILE_URL or equivalent", "geocoder configuration", "source attribution", "terms display", "list fallback"],
-      "verification_evidence": ["staging tile/geocoder smoke", "tile outage E2E", "geocoder outage E2E", "list/ranking/detail still usable"],
-      "acceptance_criteria": ["runtime displays attribution and terms", "tile/geocoder outage does not block list workflow", "staging smoke proves configured endpoints"],
+      "implementation_evidence": [
+        "MAP_TILE_URL or equivalent",
+        "geocoder configuration",
+        "source attribution",
+        "terms display",
+        "list fallback"
+      ],
+      "verification_evidence": [
+        "staging tile/geocoder smoke",
+        "tile outage E2E",
+        "geocoder outage E2E",
+        "list/ranking/detail still usable"
+      ],
+      "acceptance_criteria": [
+        "runtime displays attribution and terms",
+        "tile/geocoder outage does not block list workflow",
+        "staging smoke proves configured endpoints"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-001-live-tile-geocoder",
-      "handoff_artifacts": ["map endpoint config diff", "outage E2E output", "staging smoke evidence"]
+      "handoff_artifacts": [
+        "map endpoint config diff",
+        "outage E2E output",
+        "staging smoke evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-002",
@@ -208,11 +476,39 @@
       "owner_lane": "maps / frontend infrastructure",
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Layer toggle URL persistence",
-      "implementation_evidence": ["H3 layer state", "listing layer state", "candidate layer state", "confidence layer state", "freshness layer state", "risk layer state"],
-      "verification_evidence": ["toggle E2E", "reload restore E2E", "share-state E2E"],
-      "acceptance_criteria": ["layer toggles update URL or persisted state", "reload restores visible layers", "shared URL preserves layer state"],
+      "implementation_evidence": [
+        "H3 layer state",
+        "listing layer state",
+        "candidate layer state",
+        "confidence layer state",
+        "freshness layer state",
+        "risk layer state"
+      ],
+      "verification_evidence": [
+        "toggle E2E",
+        "reload restore E2E",
+        "share-state E2E"
+      ],
+      "acceptance_criteria": [
+        "layer toggles update URL or persisted state",
+        "reload restores visible layers",
+        "shared URL preserves layer state"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-002-layer-url-persistence",
-      "handoff_artifacts": ["toggle E2E output", "reload/share evidence", "URL state examples"]
+      "handoff_artifacts": [
+        "toggle E2E output",
+        "reload/share evidence",
+        "URL state examples"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map.spec.ts --project=chromium -g \"layer toggles\" --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-003",
@@ -222,11 +518,38 @@
       "owner_lane": "maps / frontend infrastructure",
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Direct map picking",
-      "implementation_evidence": ["H3 pick handler", "listing pick handler", "candidate pick handler", "shared drawer state with list selection"],
-      "verification_evidence": ["direct map pick E2E", "drawer identity proof", "selected state proof", "list fallback alignment"],
-      "acceptance_criteria": ["map pick and list click open identical drawer state", "selected map state is visible", "list fallback remains authoritative"],
+      "implementation_evidence": [
+        "H3 pick handler",
+        "listing pick handler",
+        "candidate pick handler",
+        "shared drawer state with list selection"
+      ],
+      "verification_evidence": [
+        "direct map pick E2E",
+        "drawer identity proof",
+        "selected state proof",
+        "list fallback alignment"
+      ],
+      "acceptance_criteria": [
+        "map pick and list click open identical drawer state",
+        "selected map state is visible",
+        "list fallback remains authoritative"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-003-direct-map-picking",
-      "handoff_artifacts": ["direct pick E2E output", "drawer identity evidence", "list fallback comparison"]
+      "handoff_artifacts": [
+        "direct pick E2E output",
+        "drawer identity evidence",
+        "list fallback comparison"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map.spec.ts --project=chromium -g \"direct picking\" --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-004",
@@ -236,11 +559,37 @@
       "owner_lane": "maps / frontend infrastructure",
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Deck pixel content proof",
-      "implementation_evidence": ["H3 polygon pixel check", "listing point pixel check", "candidate point pixel check", "selected highlight pixel check", "confidence/stale pattern check"],
-      "verification_evidence": ["E2E fails when rendered deck layer state stops changing", "not only canvas nonblank"],
-      "acceptance_criteria": ["pixel checks prove semantic layers not just nonblank canvas", "selected highlight is distinguishable", "confidence/stale pattern is test-visible"],
+      "implementation_evidence": [
+        "H3 polygon pixel check",
+        "listing point pixel check",
+        "candidate point pixel check",
+        "selected highlight pixel check",
+        "confidence/stale pattern check"
+      ],
+      "verification_evidence": [
+        "E2E fails when rendered deck layer state stops changing",
+        "not only canvas nonblank"
+      ],
+      "acceptance_criteria": [
+        "pixel checks prove semantic layers not just nonblank canvas",
+        "selected highlight is distinguishable",
+        "confidence/stale pattern is test-visible"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-004-deck-pixel-proof",
-      "handoff_artifacts": ["pixel check screenshots", "Playwright output", "negative/failure-mode proof"]
+      "handoff_artifacts": [
+        "pixel check screenshots",
+        "Playwright output",
+        "negative/failure-mode proof"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map.spec.ts --project=chromium --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-A11Y-001",
@@ -250,11 +599,37 @@
       "owner_lane": "frontend accessibility / maps",
       "reviewer_lane": "product validation",
       "objective": "Keyboard map/list/drawer accessibility",
-      "implementation_evidence": ["keyboard layer controls", "list fallback selection", "drawer open/close", "focus return", "focus-visible styling"],
-      "verification_evidence": ["Tab/Enter/Escape E2E", "axe scan for HeatZone map route"],
-      "acceptance_criteria": ["HeatZone selection can be completed without pointer input", "focus returns after drawer close", "axe scan passes for map route"],
+      "implementation_evidence": [
+        "keyboard layer controls",
+        "list fallback selection",
+        "drawer open/close",
+        "focus return",
+        "focus-visible styling"
+      ],
+      "verification_evidence": [
+        "Tab/Enter/Escape E2E",
+        "axe scan for HeatZone map route"
+      ],
+      "acceptance_criteria": [
+        "HeatZone selection can be completed without pointer input",
+        "focus returns after drawer close",
+        "axe scan passes for map route"
+      ],
       "suggested_branch": "task/ODP-MAP-A11Y-001-keyboard-map",
-      "handoff_artifacts": ["keyboard-only E2E output", "axe report", "focus-order evidence"]
+      "handoff_artifacts": [
+        "keyboard-only E2E output",
+        "axe report",
+        "focus-order evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map-a11y.spec.ts --project=chromium --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-005",
@@ -264,11 +639,37 @@
       "owner_lane": "frontend accessibility / maps",
       "reviewer_lane": "product validation",
       "objective": "Map state resilience",
-      "implementation_evidence": ["loading state", "empty state", "error with correlation id", "partial failed layer", "no-geometry fallback"],
-      "verification_evidence": ["map failure E2E", "ranking/list/detail workflow remains usable"],
-      "acceptance_criteria": ["map loading empty and error states are explicit", "correlation id is visible on errors", "list/detail workflow survives map failure"],
+      "implementation_evidence": [
+        "loading state",
+        "empty state",
+        "error with correlation id",
+        "partial failed layer",
+        "no-geometry fallback"
+      ],
+      "verification_evidence": [
+        "map failure E2E",
+        "ranking/list/detail workflow remains usable"
+      ],
+      "acceptance_criteria": [
+        "map loading empty and error states are explicit",
+        "correlation id is visible on errors",
+        "list/detail workflow survives map failure"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-005-map-resilience",
-      "handoff_artifacts": ["state fixture screenshots", "failure E2E output", "correlation id evidence"]
+      "handoff_artifacts": [
+        "state fixture screenshots",
+        "failure E2E output",
+        "correlation id evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map-resilience.spec.ts --project=chromium --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-MAP-E2E-006",
@@ -278,11 +679,35 @@
       "owner_lane": "frontend accessibility / maps",
       "reviewer_lane": "product validation",
       "objective": "Tooltip and evidence detail",
-      "implementation_evidence": ["hover tooltip", "keyboard reachable tooltip", "score/state/confidence/warnings/freshness/model version fields"],
-      "verification_evidence": ["tooltip/evidence E2E", "accessible fallback text"],
-      "acceptance_criteria": ["tooltip includes score state confidence warnings freshness and version", "tooltip is keyboard reachable", "fallback text exposes same evidence"],
+      "implementation_evidence": [
+        "hover tooltip",
+        "keyboard reachable tooltip",
+        "score/state/confidence/warnings/freshness/model version fields"
+      ],
+      "verification_evidence": [
+        "tooltip/evidence E2E",
+        "accessible fallback text"
+      ],
+      "acceptance_criteria": [
+        "tooltip includes score state confidence warnings freshness and version",
+        "tooltip is keyboard reachable",
+        "fallback text exposes same evidence"
+      ],
       "suggested_branch": "task/ODP-MAP-E2E-006-tooltip-evidence",
-      "handoff_artifacts": ["tooltip E2E output", "keyboard tooltip proof", "fallback text evidence"]
+      "handoff_artifacts": [
+        "tooltip E2E output",
+        "keyboard tooltip proof",
+        "fallback text evidence"
+      ],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "npx playwright test tests/e2e/e2e-map-tooltip-evidence.spec.ts --project=chromium --retries=1"
+      ],
+      "blocking_dependencies": [
+        "Playwright Chromium dependencies are installed for local or CI execution",
+        "Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration",
+        "Remote-staging live map proof remains separate from deterministic local map proof"
+      ]
     },
     {
       "id": "ODP-PV-STAGE-001",
@@ -292,8 +717,17 @@
       "owner_lane": "platform / deployment",
       "reviewer_lane": "operations / product validation",
       "objective": "Remote staging configuration",
-      "implementation_evidence": ["remote staging host/url/secret configuration", "documented environment variables", "secret owner", "health endpoint", "version endpoint"],
-      "verification_evidence": ["staging smoke check", "version matches PR #82 headRefOid"],
+      "implementation_evidence": [
+        "remote staging host/url/secret configuration",
+        "documented environment variables",
+        "secret owner",
+        "health endpoint",
+        "version endpoint"
+      ],
+      "verification_evidence": [
+        "staging smoke check",
+        "version matches PR #82 headRefOid"
+      ],
       "execution_commands": [
         "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
         "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
@@ -303,9 +737,17 @@
         "The deployed API receives ODAY_RELEASE_SHA equal to PR #82 headRefOid or the promoted SHA",
         ".github/workflows/deploy-staging.yml is replaced or supplemented by a real staging deployment path"
       ],
-      "acceptance_criteria": ["staging host and secrets are documented", "health endpoint is reachable", "version endpoint matches PR #82 headRefOid"],
+      "acceptance_criteria": [
+        "staging host and secrets are documented",
+        "health endpoint is reachable",
+        "version endpoint matches PR #82 headRefOid"
+      ],
       "suggested_branch": "task/ODP-PV-STAGE-001-remote-staging-config",
-      "handoff_artifacts": ["staging env inventory", "health/version smoke output", "secret owner record"]
+      "handoff_artifacts": [
+        "staging env inventory",
+        "health/version smoke output",
+        "secret owner record"
+      ]
     },
     {
       "id": "ODP-PV-STAGE-002",
@@ -315,8 +757,16 @@
       "owner_lane": "platform / deployment",
       "reviewer_lane": "operations / product validation",
       "objective": "Remote staging drill",
-      "implementation_evidence": ["staging runbook log", "backup/restore evidence", "rollback result", "correlation id"],
-      "verification_evidence": ["product E2E smoke against staging", "backup/restore/rollback command against staging or approved equivalent"],
+      "implementation_evidence": [
+        "staging runbook log",
+        "backup/restore evidence",
+        "rollback result",
+        "correlation id"
+      ],
+      "verification_evidence": [
+        "product E2E smoke against staging",
+        "backup/restore/rollback command against staging or approved equivalent"
+      ],
       "execution_commands": [
         "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
         "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" \\\nODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" \\\nnpx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
@@ -328,9 +778,17 @@
         "Staging product URL, API URL, and backing store credentials are available without committing secrets",
         "Backup/restore/rollback commands target staging or an approved staging-equivalent environment"
       ],
-      "acceptance_criteria": ["staging runbook has timestamped execution log", "backup restore and rollback evidence is linked", "product E2E smoke runs against staging URL"],
+      "acceptance_criteria": [
+        "staging runbook has timestamped execution log",
+        "backup restore and rollback evidence is linked",
+        "product E2E smoke runs against staging URL"
+      ],
       "suggested_branch": "task/ODP-PV-STAGE-002-remote-staging-drill",
-      "handoff_artifacts": ["staging runbook log", "backup/restore/rollback output", "staging E2E smoke evidence"]
+      "handoff_artifacts": [
+        "staging runbook log",
+        "backup/restore/rollback output",
+        "staging E2E smoke evidence"
+      ]
     }
   ],
   "completion_rules": [

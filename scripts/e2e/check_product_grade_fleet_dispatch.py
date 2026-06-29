@@ -387,8 +387,13 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
         if not non_empty_string_list(task.get("handoff_artifacts")):
             errors.append(f"{task_id} missing handoff_artifacts")
         execution_commands = task.get("execution_commands", [])
-        if execution_commands and not non_empty_string_list(execution_commands):
-            errors.append(f"{task_id} execution_commands must be non-empty strings")
+        if not non_empty_string_list(execution_commands):
+            errors.append(f"{task_id} missing execution_commands")
+        else:
+            joined_commands = "\n".join(execution_commands)
+            for required_phrase in ("gh pr view 82", "headRefOid"):
+                if required_phrase not in joined_commands:
+                    errors.append(f"{task_id} execution_commands missing phrase: {required_phrase}")
         blocking_dependencies = task.get("blocking_dependencies", [])
         if blocking_dependencies and not non_empty_string_list(blocking_dependencies):
             errors.append(f"{task_id} blocking_dependencies must be non-empty strings")

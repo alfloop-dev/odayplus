@@ -39,6 +39,22 @@ External source product E2E
 - live-provider mode product E2E
 - CI fixture mode remains default
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+uv run pytest tests/e2e/test_external_source_product_e2e.py -q
+```
+
+## Blocking Dependencies
+
+- Provider secrets and live credentials are supplied by environment or approved mock service, never committed
+- Deterministic fixture/source-stub mode remains the CI default when live credentials are absent
+- Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof
+
 ## Acceptance Criteria
 
 - provider mock covers auth quota freshness and license scenarios
