@@ -17,6 +17,16 @@ type Freshness = {
   sourceSnapshotId: string;
 };
 
+type MapBoundaryConfig = {
+  tileUrl: string;
+  geocoderUrl: string;
+  attribution: string;
+  termsUrl: string;
+  tileFault: boolean;
+  geocoderFault: boolean;
+  correlationId: string;
+};
+
 type HeatZoneMapProps = {
   zones: HeatZone[];
   listings: Listing[];
@@ -77,6 +87,8 @@ export function HeatZoneMap({
     bearing: 0,
   });
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
+  const [runtimeError, setRuntimeError] = useState("");
+  const boundaryConfig = useMemo(readMapBoundaryConfig, []);
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
   const deckLayers = useMemo(
@@ -96,7 +108,7 @@ export function HeatZoneMap({
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: localMapStyle,
+      style: mapStyleForBoundary(boundaryConfig),
       center: [121.48, 25.0],
       zoom: 9.1,
       attributionControl: false,
@@ -108,6 +120,13 @@ export function HeatZoneMap({
     });
 
     mapRef.current = map;
+    map.on("error", (event) => {
+      setRuntimeError(
+        `Map tile boundary error · correlation_id ${boundaryConfig.correlationId} · ${
+          event.error?.message ?? "unknown tile error"
+        }`,
+      );
+    });
     map.on("load", () => {
       map.addSource("odp-local-heatzones", {
         type: "geojson",
@@ -181,7 +200,7 @@ export function HeatZoneMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [selectedZoneId, zoneFeatures, zones]);
+  }, [boundaryConfig, selectedZoneId, zoneFeatures, zones]);
 
   useEffect(() => {
     setLayers(readLayerStateFromUrl());
@@ -226,6 +245,20 @@ export function HeatZoneMap({
         <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => updateLayer("freshness", checked)} />
         <LayerToggle checked={layers.risk} label="Risk" onChange={(checked) => updateLayer("risk", checked)} />
       </div>
+      <div className={styles.boundaryBar} data-testid="map-boundary-config">
+        <span>Tiles: {boundaryConfig.tileUrl ? "configured" : "local fallback"}</span>
+        <span>Geocoder: {boundaryConfig.geocoderUrl ? "configured" : "local fallback"}</span>
+        <span>Attribution: {boundaryConfig.attribution}</span>
+        {boundaryConfig.termsUrl ? <a href={boundaryConfig.termsUrl}>Terms</a> : <span>Terms: local fixture</span>}
+      </div>
+      {boundaryConfig.tileFault || boundaryConfig.geocoderFault || runtimeError ? (
+        <div className={styles.boundaryAlert} data-testid="map-boundary-alert" role="status">
+          {boundaryConfig.tileFault ? <span>Tile outage · correlation_id {boundaryConfig.correlationId}</span> : null}
+          {boundaryConfig.geocoderFault ? <span>Geocoder outage · correlation_id {boundaryConfig.correlationId}</span> : null}
+          {runtimeError ? <span>{runtimeError}</span> : null}
+          <span>List and ranking fallback remain available.</span>
+        </div>
+      ) : null}
       <div className={styles.mapCanvas} onClickCapture={handleCanvasClick} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
         <DeckGL
           controller={false}
@@ -242,7 +275,7 @@ export function HeatZoneMap({
           />
         </DeckGL>
         <p className={styles.mapStatus} data-testid="heat-zone-map-status">
-          local MapLibre style · layers {encodeLayerState(layers)} · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
+          {boundaryConfig.tileUrl && !boundaryConfig.tileFault ? "live tile endpoint configured" : "local MapLibre style"} · layers {encodeLayerState(layers)} · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
         </p>
       </div>
       <div className={styles.legend} aria-label="Map legend">
@@ -255,6 +288,30 @@ export function HeatZoneMap({
       </div>
     </section>
   );
+}
+
+function readMapBoundaryConfig(): MapBoundaryConfig {
+  if (typeof window === "undefined") {
+    return {
+      tileUrl: process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL ?? "",
+      geocoderUrl: process.env.NEXT_PUBLIC_ODP_GEOCODER_URL ?? "",
+      attribution: process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? "ODay Plus local fixture",
+      termsUrl: process.env.NEXT_PUBLIC_ODP_MAP_TERMS_URL ?? "",
+      tileFault: false,
+      geocoderFault: false,
+      correlationId: "corr-map-boundary-server",
+    };
+  }
+  const query = new URLSearchParams(window.location.search);
+  return {
+    tileUrl: query.get("mapTileUrl") ?? process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL ?? "",
+    geocoderUrl: query.get("geocoderUrl") ?? process.env.NEXT_PUBLIC_ODP_GEOCODER_URL ?? "",
+    attribution: query.get("mapAttribution") ?? process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? "ODay Plus local fixture",
+    termsUrl: query.get("mapTermsUrl") ?? process.env.NEXT_PUBLIC_ODP_MAP_TERMS_URL ?? "",
+    tileFault: query.get("mapFault") === "tile",
+    geocoderFault: query.get("geocoderFault") === "1",
+    correlationId: query.get("mapCorrelationId") ?? "corr-map-boundary-local",
+  };
 }
 
 function LayerToggle({
@@ -531,6 +588,35 @@ function fitToZones(map: maplibregl.Map, zones: HeatZone[]) {
   if (!bounds.isEmpty()) {
     map.fitBounds(bounds, { padding: 80, maxZoom: 11, duration: 0 });
   }
+}
+
+function mapStyleForBoundary(config: MapBoundaryConfig): maplibregl.StyleSpecification {
+  if (!config.tileUrl || config.tileFault || config.tileUrl.startsWith("mock://")) return localMapStyle;
+  return {
+    version: 8,
+    name: "ODay Plus live tile boundary",
+    sources: {
+      "odp-live-tiles": {
+        type: "raster",
+        tiles: [config.tileUrl],
+        tileSize: 256,
+        attribution: config.attribution,
+      },
+    },
+    layers: [
+      {
+        id: "odp-live-tile-background",
+        type: "background",
+        paint: { "background-color": "#eef4f7" },
+      },
+      {
+        id: "odp-live-tile-layer",
+        type: "raster",
+        source: "odp-live-tiles",
+        paint: { "raster-opacity": 0.72 },
+      },
+    ],
+  };
 }
 
 const localMapStyle: maplibregl.StyleSpecification = {

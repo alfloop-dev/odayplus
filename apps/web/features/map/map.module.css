@@ -9,6 +9,7 @@
 }
 
 .mapToolbar,
+.boundaryBar,
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -22,6 +23,31 @@
 .legend {
   border-top: 1px solid var(--odp-color-border-default);
   border-bottom: 0;
+}
+
+.boundaryBar {
+  gap: var(--odp-space-3);
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.boundaryBar a {
+  color: var(--odp-color-text-link);
+}
+
+.boundaryAlert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-warning);
+  background: var(--odp-color-bg-warning-soft);
+  color: var(--odp-color-text-warning);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
 }
 
 .mapToolbar label {
