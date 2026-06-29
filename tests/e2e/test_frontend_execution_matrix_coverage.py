@@ -23,6 +23,7 @@ READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
 CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -260,6 +261,42 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "Do not mark the active objective complete",
     ):
         assert boundary in playbook_text
+
+
+def test_product_grade_gap_execution_tasks_are_actionable() -> None:
+    gap_text = PRODUCT_GRADE_GAP_TASKS.read_text(encoding="utf-8")
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+
+    assert "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md" in release_gate_text
+    assert "PR #82" in gap_text
+    assert "headRefOid" in gap_text
+    assert "attached checks" in gap_text
+
+    for task_id in (
+        "ODP-PV-LIVE-SRC-001",
+        "ODP-PV-LIVE-SRC-002",
+        "ODP-PV-LIVE-SRC-003",
+        "ODP-PV-LIVE-MAP-001",
+        "ODP-PV-LIVE-MAP-002",
+        "ODP-PV-LIVE-MAP-003",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert task_id in gap_text
+
+    for boundary in (
+        "provider credential/OAuth",
+        "scheduled external fetch",
+        "quota/rate-limit",
+        "production licensing",
+        "live tile rollout",
+        "live geocoder rollout",
+        "full keyboard accessibility",
+        "direct map picking",
+        "remote staging host/url/secret",
+        "Deterministic fixture/source-stub tests must remain as CI defaults",
+    ):
+        assert boundary in gap_text
 
 
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
