@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / "docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md"
 FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md"
+COMPLETION_AUDIT = ROOT / "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 
@@ -130,6 +131,27 @@ def test_product_validation_dispatch_names_odp_frontend_lanes() -> None:
             assert matrix_task_id in dispatch_text
         for e2e_spec in e2e_specs:
             assert e2e_spec in dispatch_text
+
+
+def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
+    audit_text = COMPLETION_AUDIT.read_text(encoding="utf-8")
+
+    required_evidence = {
+        "ODP-FE-R0-001": "tests/e2e/opsboard-shell.spec.ts",
+        "ODP-FE-EXP-001": "tests/e2e/e2e-expansion-product.spec.ts",
+        "ODP-FE-OPS-001": "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+        "ODP-FE-PRICE-001": "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+        "ODP-FE-ASSET-001": "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "ODP-FE-LEARN-001": "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "ODP-FE-XCUT-001": "tests/e2e/test_frontend_execution_matrix_coverage.py",
+    }
+
+    for lane, evidence_ref in required_evidence.items():
+        assert lane in audit_text
+        assert evidence_ref in audit_text
+    assert "evidence-ready" in audit_text
+    assert "partial-evidence-ready" in audit_text
+    assert "ODP-PV-008" in audit_text
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
