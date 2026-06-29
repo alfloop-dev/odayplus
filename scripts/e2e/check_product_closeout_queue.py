@@ -13,7 +13,9 @@ The queue is intentionally usable in two environments:
 
 from __future__ import annotations
 
+import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +77,137 @@ def expected_actor_from_status(task: dict[str, Any], action_type: str) -> str | 
         return None
     value = task.get(field)
     return str(value) if value else None
+
+
+def live_entry_state(entry: dict[str, Any], status_task: dict[str, Any] | None) -> str:
+    """Return a report-only lifecycle state for a closeout queue entry."""
+    if not status_task:
+        return "queued_no_live_status"
+
+    queue_status = str(entry.get("status"))
+    live_status = str(status_task.get("status"))
+    action_type = str(entry.get("action_type"))
+
+    if action_type == "owner_done" and live_status == "done":
+        return "completed"
+    if action_type == "reviewer_approve_or_reopen" and live_status in {"review_approved", "done"}:
+        return "completed"
+    if action_type == "owner_handoff" and live_status in {"review", "review_approved", "done"}:
+        return "completed"
+    if action_type == "go_no_go" and live_status in {"review_approved", "done"}:
+        return "completed"
+
+    if queue_status.startswith("waiting_for_"):
+        if live_status == "review":
+            return "active"
+        if live_status == "in_progress":
+            return "waiting_for_handoff"
+        return "stale"
+
+    if queue_status == live_status:
+        return "active"
+    return "stale"
+
+
+def render_report(payload: dict[str, Any], errors: list[str]) -> str:
+    status_index = status_task_index()
+    has_live_status = bool(status_index)
+    release_target = payload.get("release_target", {})
+    entries = payload.get("queue", [])
+
+    rows: list[dict[str, str]] = []
+    for entry in entries:
+        task_id = str(entry.get("task_id"))
+        live_task = status_index.get(task_id)
+        rows.append(
+            {
+                "task_id": task_id,
+                "queue_status": str(entry.get("status")),
+                "live_status": str(live_task.get("status")) if live_task else "not_loaded",
+                "actor": str(entry.get("actor")),
+                "action_type": str(entry.get("action_type")),
+                "blocking_type": str(entry.get("blocking_type")),
+                "state": live_entry_state(entry, live_task),
+            }
+        )
+
+    actor_counts = Counter(row["actor"] for row in rows if row["state"] != "completed")
+    blocking_counts = Counter(row["blocking_type"] for row in rows if row["state"] != "completed")
+
+    lines = [
+        "# Product Release Closeout Queue Report",
+        "",
+        "## Release Target",
+        "",
+        f"- PR: #{release_target.get('pr')}",
+        f"- Authority: {release_target.get('authority')}",
+        f"- Must not hardcode dev hash: {release_target.get('must_not_hardcode_dev_hash')}",
+        "",
+        "## Validation",
+        "",
+        f"- ai-status.json loaded: {str(has_live_status).lower()}",
+        f"- Queue validation: {'failed' if errors else 'passed'}",
+    ]
+    if errors:
+        lines.extend(["", "### Validation Errors", ""])
+        lines.extend(f"- {error}" for error in errors)
+
+    lines.extend(
+        [
+            "",
+            "## Active Counts By Actor",
+            "",
+        ]
+    )
+    if actor_counts:
+        lines.extend(f"- {actor}: {count}" for actor, count in sorted(actor_counts.items()))
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Active Counts By Blocking Type", ""])
+    if blocking_counts:
+        lines.extend(f"- {blocking_type}: {count}" for blocking_type, count in sorted(blocking_counts.items()))
+    else:
+        lines.append("- none")
+
+    lines.extend(
+        [
+            "",
+            "## Queue Entries",
+            "",
+            "| Task | Queue Status | Live Status | Actor | Action | Blocking Type | State |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            "| {task_id} | {queue_status} | {live_status} | {actor} | {action_type} | "
+            "{blocking_type} | {state} |".format(**row)
+        )
+
+    lines.extend(["", "## Scope Boundaries", ""])
+    for boundary in payload.get("scope_boundaries", []):
+        lines.append(f"### {boundary.get('topic')}")
+        lines.append("")
+        lines.append(f"- Current proof: {boundary.get('current_proof')}")
+        lines.append("- Not proven:")
+        for item in boundary.get("not_proven", []):
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Operator Notes",
+            "",
+            "- External data source proof remains deterministic fixtures/source-stub coverage until live "
+            "provider credentials, scheduled fetches, quotas, freshness, and licensing are wired.",
+            "- Map proof remains deterministic local MapLibre/deck/H3 E2E until live tiles/geocoding, "
+            "full keyboard accessibility, layer toggles, and direct map picking are proven.",
+            "- Remote staging rollout remains conditional until host, URL, and secret configuration are present.",
+        ]
+    )
+
+    return "\n".join(lines) + "\n"
 
 
 def validate_queue(payload: dict[str, Any]) -> list[str]:
@@ -151,8 +284,20 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="print a Markdown closeout report in addition to validating the queue",
+    )
+    args = parser.parse_args()
+
     payload = load_json(QUEUE_PATH)
     errors = validate_queue(payload)
+    if args.report:
+        print(render_report(payload, errors), end="")
+        return 1 if errors else 0
+
     if errors:
         print("Product closeout queue check failed:")
         for error in errors:
