@@ -33,6 +33,18 @@ from modules.forecastops.domain.forecasting import (
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import DatasetSnapshot
 from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
+from modules.priceops.domain.pricing import (
+    ApprovalRecord,
+    InterventionTreatmentHandoff,
+    LabelRegistryEntry,
+    ObservationWindow,
+    PlanOptimization,
+    PlanSimulation,
+    PricingEffectEvaluation,
+    PricingExecution,
+    PricingPlan,
+    RollbackPlan,
+)
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
@@ -249,6 +261,101 @@ class DurableInterventionRepository:
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
         return self._store.list_by_group(self._C, store_id)
+
+
+class DurablePriceOpsRepository:
+    """Durable mirror of ``InMemoryPriceOpsRepository``."""
+
+    _PLANS = "priceops.plans"
+    _SIMULATIONS = "priceops.simulations"
+    _OPTIMIZATIONS = "priceops.optimizations"
+    _APPROVALS = "priceops.approvals"
+    _WINDOWS = "priceops.windows"
+    _EXECUTIONS = "priceops.executions"
+    _ROLLBACKS = "priceops.rollback_plans"
+    _HANDOFFS = "priceops.handoffs"
+    _LABELS = "priceops.label_entries"
+    _EVALUATIONS = "priceops.evaluations"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def save_plan(self, plan: PricingPlan) -> PricingPlan:
+        self._store.put(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id)
+        return plan
+
+    def get_plan(self, plan_id: str) -> PricingPlan | None:
+        return self._store.get(self._PLANS, plan_id)
+
+    def list_plans(self) -> list[PricingPlan]:
+        return self._store.list_all(self._PLANS)
+
+    def save_simulation(self, simulation: PlanSimulation) -> PlanSimulation:
+        self._store.put(self._SIMULATIONS, simulation.plan_id, simulation)
+        return simulation
+
+    def get_simulation(self, plan_id: str) -> PlanSimulation | None:
+        return self._store.get(self._SIMULATIONS, plan_id)
+
+    def save_optimization(self, optimization: PlanOptimization) -> PlanOptimization:
+        self._store.put(self._OPTIMIZATIONS, optimization.plan_id, optimization)
+        return optimization
+
+    def get_optimization(self, plan_id: str) -> PlanOptimization | None:
+        return self._store.get(self._OPTIMIZATIONS, plan_id)
+
+    def save_approval(self, approval: ApprovalRecord) -> ApprovalRecord:
+        self._store.put(self._APPROVALS, approval.decision_id, approval, group_key=approval.plan_id)
+        return approval
+
+    def list_approvals(self, plan_id: str) -> list[ApprovalRecord]:
+        return self._store.list_by_group(self._APPROVALS, plan_id)
+
+    def save_window(self, window: ObservationWindow) -> ObservationWindow:
+        self._store.put(self._WINDOWS, window.window_id, window, group_key=window.plan_id)
+        return window
+
+    def get_window(self, plan_id: str) -> ObservationWindow | None:
+        windows = self._store.list_by_group(self._WINDOWS, plan_id)
+        return windows[-1] if windows else None
+
+    def save_rollback_plan(self, rollback_plan: RollbackPlan) -> RollbackPlan:
+        self._store.put(self._ROLLBACKS, rollback_plan.plan_id, rollback_plan)
+        return rollback_plan
+
+    def get_rollback_plan(self, plan_id: str) -> RollbackPlan | None:
+        return self._store.get(self._ROLLBACKS, plan_id)
+
+    def save_execution(self, execution: PricingExecution) -> PricingExecution:
+        self._store.put(
+            self._EXECUTIONS, execution.execution_id, execution, group_key=execution.plan_id
+        )
+        return execution
+
+    def get_execution(self, plan_id: str) -> PricingExecution | None:
+        executions = self._store.list_by_group(self._EXECUTIONS, plan_id)
+        return executions[-1] if executions else None
+
+    def save_handoff(self, handoff: InterventionTreatmentHandoff) -> InterventionTreatmentHandoff:
+        self._store.put(self._HANDOFFS, handoff.handoff_id, handoff, group_key=handoff.plan_id)
+        return handoff
+
+    def list_handoffs(self, plan_id: str) -> list[InterventionTreatmentHandoff]:
+        return self._store.list_by_group(self._HANDOFFS, plan_id)
+
+    def save_label_entry(self, entry: LabelRegistryEntry) -> LabelRegistryEntry:
+        self._store.put(self._LABELS, entry.entry_id, entry, group_key=entry.plan_id)
+        return entry
+
+    def list_label_entries(self, plan_id: str) -> list[LabelRegistryEntry]:
+        return self._store.list_by_group(self._LABELS, plan_id)
+
+    def save_evaluation(self, evaluation: PricingEffectEvaluation) -> PricingEffectEvaluation:
+        self._store.put(self._EVALUATIONS, evaluation.plan_id, evaluation)
+        return evaluation
+
+    def get_evaluation(self, plan_id: str) -> PricingEffectEvaluation | None:
+        return self._store.get(self._EVALUATIONS, plan_id)
 
 
 class DurableLabelRegistry:
@@ -496,5 +603,6 @@ __all__ = [
     "DurableInterventionRepository",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
+    "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
 ]
