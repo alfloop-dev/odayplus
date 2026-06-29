@@ -1,0 +1,601 @@
+{
+  "release_target": {
+    "pr": 82,
+    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "must_not_hardcode_dev_hash": true
+  },
+  "status": "ready_for_fleet_pickup",
+  "updated": "2026-06-29",
+  "dispatch_rule": "Each queue entry is ready for an implementation fleet to pick up. Do not mark complete until implementation and verification evidence are attached.",
+  "queue": [
+    {
+      "task_id": "ODP-EXT-001",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-001.md",
+      "suggested_branch": "task/ODP-EXT-001-provider-registry-secrets",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-001",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "secret names",
+          "auth modes",
+          "startup validation",
+          "provider class metadata",
+          "no committed secrets"
+        ],
+        "verification_evidence": [
+          "missing credentials fail closed",
+          "expired or unauthorized credentials include correlation id"
+        ],
+        "acceptance_criteria": [
+          "provider classes are registered",
+          "startup validation fails closed without secrets",
+          "release evidence contains no secret values"
+        ],
+        "handoff_artifacts": [
+          "provider registry diff",
+          "secret inventory with names only",
+          "startup validation test output"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-002",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-002.md",
+      "suggested_branch": "task/ODP-EXT-002-live-listing-feed",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "authenticated provider client",
+          "raw landing snapshot",
+          "idempotency key",
+          "canonical transform",
+          "quarantine path"
+        ],
+        "verification_evidence": [
+          "success contract test",
+          "duplicate contract test",
+          "malformed payload contract test",
+          "unauthorized contract test",
+          "timeout contract test",
+          "fixture-compatible replay"
+        ],
+        "acceptance_criteria": [
+          "listing adapter persists raw and canonical snapshots",
+          "bad records enter quarantine",
+          "fixture replay remains CI default"
+        ],
+        "handoff_artifacts": [
+          "adapter contract test output",
+          "source snapshot sample",
+          "quarantine event evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-003",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-003.md",
+      "suggested_branch": "task/ODP-EXT-003-live-geocoder",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-003",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "credential handling",
+          "geocode confidence mapping",
+          "provider request id",
+          "provider observed time",
+          "retry budget"
+        ],
+        "verification_evidence": [
+          "recorded response success test",
+          "low confidence test",
+          "rate-limit retry test",
+          "timeout test",
+          "unauthorized test"
+        ],
+        "acceptance_criteria": [
+          "geocoder outputs confidence and lineage",
+          "rate limits use retry budget",
+          "unauthorized mode fails closed"
+        ],
+        "handoff_artifacts": [
+          "recorded-response fixtures",
+          "geocode contract test output",
+          "confidence mapping evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-004",
+      "parent": "ODP-PV-LIVE-SRC-002",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-004.md",
+      "suggested_branch": "task/ODP-EXT-004-scheduled-fetch",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-004",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "scheduler/job definition",
+          "last-success watermark",
+          "backfill command",
+          "durable source snapshot ids"
+        ],
+        "verification_evidence": [
+          "idempotent replay test",
+          "stale-source clock E2E",
+          "STALE or BLOCKED UI/data status"
+        ],
+        "acceptance_criteria": [
+          "scheduled fetch creates durable batch ids",
+          "backfill is idempotent",
+          "stale sources are visible as STALE or BLOCKED"
+        ],
+        "handoff_artifacts": [
+          "scheduler definition",
+          "backfill command output",
+          "freshness E2E evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-005",
+      "parent": "ODP-PV-LIVE-SRC-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-005.md",
+      "suggested_branch": "task/ODP-EXT-005-quota-rate-limit",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-005",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "401/403/429/5xx/timeout handling",
+          "backoff policy",
+          "circuit breaker",
+          "alert/audit event"
+        ],
+        "verification_evidence": [
+          "quota exhaustion simulation",
+          "rate-limit simulation",
+          "clear stale/blocked degraded state"
+        ],
+        "acceptance_criteria": [
+          "provider failures do not fabricate freshness",
+          "quota exhaustion emits alert/audit evidence",
+          "degraded mode is explicit"
+        ],
+        "handoff_artifacts": [
+          "failure simulation output",
+          "circuit breaker evidence",
+          "alert/audit event sample"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-006",
+      "parent": "ODP-PV-LIVE-SRC-002",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-006.md",
+      "suggested_branch": "task/ODP-EXT-006-freshness-quality-gate",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-006",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "per-source freshness SLA",
+          "provider observed time",
+          "ingestion time",
+          "source snapshot id",
+          "correlation id"
+        ],
+        "verification_evidence": [
+          "API freshness state E2E",
+          "UI freshness state E2E",
+          "source lineage appears in evidence"
+        ],
+        "acceptance_criteria": [
+          "freshness SLA is source-specific",
+          "API and UI expose the same freshness status",
+          "lineage contains correlation id"
+        ],
+        "handoff_artifacts": [
+          "freshness policy diff",
+          "API/UI E2E output",
+          "lineage evidence sample"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-007",
+      "parent": "ODP-PV-LIVE-SRC-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-007.md",
+      "suggested_branch": "task/ODP-EXT-007-licensing-gate",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-007",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "license metadata",
+          "attribution",
+          "expiry",
+          "downstream-use flags",
+          "export restrictions"
+        ],
+        "verification_evidence": [
+          "license-blocked provider quarantine",
+          "production mode cannot use blocked provider"
+        ],
+        "acceptance_criteria": [
+          "license metadata controls production use",
+          "blocked providers enter quarantine",
+          "exports respect downstream-use flags"
+        ],
+        "handoff_artifacts": [
+          "license registry diff",
+          "blocked-provider test output",
+          "export restriction evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-EXT-008",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-008.md",
+      "suggested_branch": "task/ODP-EXT-008-external-source-product-e2e",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-008",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "provider-mock service",
+          "auth scenario",
+          "quota scenario",
+          "freshness scenario",
+          "license scenario",
+          "persisted lineage"
+        ],
+        "verification_evidence": [
+          "live-provider mode product E2E",
+          "CI fixture mode remains default"
+        ],
+        "acceptance_criteria": [
+          "provider mock covers auth quota freshness and license scenarios",
+          "live-provider mode has product E2E proof",
+          "default CI still uses deterministic fixtures"
+        ],
+        "handoff_artifacts": [
+          "provider mock service evidence",
+          "product E2E output",
+          "CI fixture mode proof"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-001",
+      "parent": "ODP-PV-LIVE-MAP-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001.md",
+      "suggested_branch": "task/ODP-MAP-E2E-001-live-tile-geocoder",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-001",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "MAP_TILE_URL or equivalent",
+          "geocoder configuration",
+          "source attribution",
+          "terms display",
+          "list fallback"
+        ],
+        "verification_evidence": [
+          "staging tile/geocoder smoke",
+          "tile outage E2E",
+          "geocoder outage E2E",
+          "list/ranking/detail still usable"
+        ],
+        "acceptance_criteria": [
+          "runtime displays attribution and terms",
+          "tile/geocoder outage does not block list workflow",
+          "staging smoke proves configured endpoints"
+        ],
+        "handoff_artifacts": [
+          "map endpoint config diff",
+          "outage E2E output",
+          "staging smoke evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-002",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-002.md",
+      "suggested_branch": "task/ODP-MAP-E2E-002-layer-url-persistence",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-002",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "H3 layer state",
+          "listing layer state",
+          "candidate layer state",
+          "confidence layer state",
+          "freshness layer state",
+          "risk layer state"
+        ],
+        "verification_evidence": [
+          "toggle E2E",
+          "reload restore E2E",
+          "share-state E2E"
+        ],
+        "acceptance_criteria": [
+          "layer toggles update URL or persisted state",
+          "reload restores visible layers",
+          "shared URL preserves layer state"
+        ],
+        "handoff_artifacts": [
+          "toggle E2E output",
+          "reload/share evidence",
+          "URL state examples"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-003",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-003.md",
+      "suggested_branch": "task/ODP-MAP-E2E-003-direct-map-picking",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-003",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "H3 pick handler",
+          "listing pick handler",
+          "candidate pick handler",
+          "shared drawer state with list selection"
+        ],
+        "verification_evidence": [
+          "direct map pick E2E",
+          "drawer identity proof",
+          "selected state proof",
+          "list fallback alignment"
+        ],
+        "acceptance_criteria": [
+          "map pick and list click open identical drawer state",
+          "selected map state is visible",
+          "list fallback remains authoritative"
+        ],
+        "handoff_artifacts": [
+          "direct pick E2E output",
+          "drawer identity evidence",
+          "list fallback comparison"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-004",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-004.md",
+      "suggested_branch": "task/ODP-MAP-E2E-004-deck-pixel-proof",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-004",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "H3 polygon pixel check",
+          "listing point pixel check",
+          "candidate point pixel check",
+          "selected highlight pixel check",
+          "confidence/stale pattern check"
+        ],
+        "verification_evidence": [
+          "E2E fails when rendered deck layer state stops changing",
+          "not only canvas nonblank"
+        ],
+        "acceptance_criteria": [
+          "pixel checks prove semantic layers not just nonblank canvas",
+          "selected highlight is distinguishable",
+          "confidence/stale pattern is test-visible"
+        ],
+        "handoff_artifacts": [
+          "pixel check screenshots",
+          "Playwright output",
+          "negative/failure-mode proof"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-A11Y-001",
+      "parent": "ODP-PV-LIVE-MAP-002",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-A11Y-001.md",
+      "suggested_branch": "task/ODP-MAP-A11Y-001-keyboard-map",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-A11Y-001",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "keyboard layer controls",
+          "list fallback selection",
+          "drawer open/close",
+          "focus return",
+          "focus-visible styling"
+        ],
+        "verification_evidence": [
+          "Tab/Enter/Escape E2E",
+          "axe scan for HeatZone map route"
+        ],
+        "acceptance_criteria": [
+          "HeatZone selection can be completed without pointer input",
+          "focus returns after drawer close",
+          "axe scan passes for map route"
+        ],
+        "handoff_artifacts": [
+          "keyboard-only E2E output",
+          "axe report",
+          "focus-order evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-005",
+      "parent": "ODP-PV-LIVE-MAP-002",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-005.md",
+      "suggested_branch": "task/ODP-MAP-E2E-005-map-resilience",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-005",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "loading state",
+          "empty state",
+          "error with correlation id",
+          "partial failed layer",
+          "no-geometry fallback"
+        ],
+        "verification_evidence": [
+          "map failure E2E",
+          "ranking/list/detail workflow remains usable"
+        ],
+        "acceptance_criteria": [
+          "map loading empty and error states are explicit",
+          "correlation id is visible on errors",
+          "list/detail workflow survives map failure"
+        ],
+        "handoff_artifacts": [
+          "state fixture screenshots",
+          "failure E2E output",
+          "correlation id evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MAP-E2E-006",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-006.md",
+      "suggested_branch": "task/ODP-MAP-E2E-006-tooltip-evidence",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-006",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "hover tooltip",
+          "keyboard reachable tooltip",
+          "score/state/confidence/warnings/freshness/model version fields"
+        ],
+        "verification_evidence": [
+          "tooltip/evidence E2E",
+          "accessible fallback text"
+        ],
+        "acceptance_criteria": [
+          "tooltip includes score state confidence warnings freshness and version",
+          "tooltip is keyboard reachable",
+          "fallback text exposes same evidence"
+        ],
+        "handoff_artifacts": [
+          "tooltip E2E output",
+          "keyboard tooltip proof",
+          "fallback text evidence"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-PV-STAGE-001",
+      "parent": "ODP-PV-STAGE-001",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "remote_staging",
+      "owner_lane": "platform / deployment",
+      "reviewer_lane": "operations / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md",
+      "suggested_branch": "task/ODP-PV-STAGE-001-remote-staging-config",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-001",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "remote staging host/url/secret configuration",
+          "documented environment variables",
+          "secret owner",
+          "health endpoint",
+          "version endpoint"
+        ],
+        "verification_evidence": [
+          "staging smoke check",
+          "version matches PR #82 headRefOid"
+        ],
+        "acceptance_criteria": [
+          "staging host and secrets are documented",
+          "health endpoint is reachable",
+          "version endpoint matches PR #82 headRefOid"
+        ],
+        "handoff_artifacts": [
+          "staging env inventory",
+          "health/version smoke output",
+          "secret owner record"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-PV-STAGE-002",
+      "parent": "ODP-PV-STAGE-002",
+      "dispatch_status": "ready_for_fleet",
+      "scope_boundary": "remote_staging",
+      "owner_lane": "platform / deployment",
+      "reviewer_lane": "operations / product validation",
+      "brief_path": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md",
+      "suggested_branch": "task/ODP-PV-STAGE-002-remote-staging-drill",
+      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-002",
+      "minimum_completion_signal": {
+        "implementation_evidence": [
+          "staging runbook log",
+          "backup/restore evidence",
+          "rollback result",
+          "correlation id"
+        ],
+        "verification_evidence": [
+          "product E2E smoke against staging",
+          "backup/restore/rollback command against staging or approved equivalent"
+        ],
+        "acceptance_criteria": [
+          "staging runbook has timestamped execution log",
+          "backup restore and rollback evidence is linked",
+          "product E2E smoke runs against staging URL"
+        ],
+        "handoff_artifacts": [
+          "staging runbook log",
+          "backup/restore/rollback output",
+          "staging E2E smoke evidence"
+        ]
+      }
+    }
+  ]
+}
