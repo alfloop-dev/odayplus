@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from shared.observability import new_correlation_id
@@ -47,6 +48,24 @@ class ProviderCredential:
 
 
 @dataclass(frozen=True)
+class ProviderLicense:
+    attribution: str
+    expires_on: date | None = None
+    allowed_in_production: bool = True
+    downstream_use_flags: tuple[str, ...] = ("internal_decisioning",)
+    export_allowed: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "attribution": self.attribution,
+            "expires_on": self.expires_on.isoformat() if self.expires_on else None,
+            "allowed_in_production": self.allowed_in_production,
+            "downstream_use_flags": list(self.downstream_use_flags),
+            "export_allowed": self.export_allowed,
+        }
+
+
+@dataclass(frozen=True)
 class ExternalProviderDefinition:
     provider_id: str
     category: ProviderCategory
@@ -54,6 +73,7 @@ class ExternalProviderDefinition:
     connector_class: str
     provider_class: str
     credentials: tuple[ProviderCredential, ...]
+    license: ProviderLicense
     enabled_in_fixture: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
@@ -104,6 +124,7 @@ class ProviderValidationResult:
                 "provider_class": provider.provider_class,
                 "auth_modes": [mode.value for mode in provider.auth_modes],
                 "env_vars": list(provider.required_env_vars),
+                "license": provider.license.to_dict(),
             }
             for provider in self.providers
         }
@@ -148,6 +169,11 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_LISTING_PROVIDER_AUTH_STATUS",
             ),
         ),
+        license=ProviderLicense(
+            attribution="Listing partner feed; internal expansion decisioning only",
+            downstream_use_flags=("internal_decisioning", "derived_features"),
+            export_allowed=False,
+        ),
     ),
     ExternalProviderDefinition(
         provider_id="poi.commercial_api",
@@ -161,6 +187,11 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 auth_mode=ProviderAuthMode.API_KEY,
                 status_env_var="ODP_POI_PROVIDER_AUTH_STATUS",
             ),
+        ),
+        license=ProviderLicense(
+            attribution="Commercial POI provider",
+            downstream_use_flags=("internal_decisioning", "map_visualization"),
+            export_allowed=False,
         ),
     ),
     ExternalProviderDefinition(
@@ -176,6 +207,11 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_GEOCODE_PROVIDER_AUTH_STATUS",
             ),
         ),
+        license=ProviderLicense(
+            attribution="Primary geocode API",
+            downstream_use_flags=("internal_decisioning", "geocode_enrichment"),
+            export_allowed=False,
+        ),
     ),
     ExternalProviderDefinition(
         provider_id="admin_boundary.official_dataset",
@@ -190,6 +226,11 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
             ),
         ),
+        license=ProviderLicense(
+            attribution="Official admin boundary dataset",
+            downstream_use_flags=("internal_decisioning", "map_visualization", "audit_evidence"),
+            export_allowed=True,
+        ),
     ),
     ExternalProviderDefinition(
         provider_id="competitor.manual_source",
@@ -203,6 +244,12 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 auth_mode=ProviderAuthMode.MANUAL_ATTESTATION,
                 status_env_var="ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
             ),
+        ),
+        license=ProviderLicense(
+            attribution="Manual competitor observation; no production automated use",
+            allowed_in_production=False,
+            downstream_use_flags=("manual_review",),
+            export_allowed=False,
         ),
         metadata={"source_type": "manual"},
     ),
@@ -249,9 +296,32 @@ def validate_external_providers(
     )
     corr = correlation_id or new_correlation_id()
     errors: list[ProviderValidationError] = []
+    deploy_env = source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
+    production_like = deploy_env in {"prod", "production"}
+    now = _today_utc(source_env)
 
     if resolved_mode is ExternalProviderMode.LIVE:
         for provider in PROVIDER_REGISTRY:
+            if production_like and not provider.license.allowed_in_production:
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider.provider_id,
+                        category=provider.category,
+                        env_var="ODP_DEPLOY_ENV",
+                        code="license_blocked",
+                        message="Provider license does not allow production automated use.",
+                    )
+                )
+            if provider.license.expires_on is not None and provider.license.expires_on < now:
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider.provider_id,
+                        category=provider.category,
+                        env_var="provider_license",
+                        code="license_expired",
+                        message="Provider license is expired; renew before live use.",
+                    )
+                )
             for credential in provider.credentials:
                 if not credential.required_in_live:
                     continue
@@ -309,3 +379,25 @@ def validate_external_providers_or_raise(
 def _is_missing_or_placeholder(value: str) -> bool:
     normalized = value.strip()
     return normalized.lower() in PLACEHOLDER_VALUES
+
+
+def provider_export_allowed(provider_id: str) -> bool:
+    return _provider_by_id(provider_id).license.export_allowed
+
+
+def provider_downstream_use_flags(provider_id: str) -> tuple[str, ...]:
+    return _provider_by_id(provider_id).license.downstream_use_flags
+
+
+def _provider_by_id(provider_id: str) -> ExternalProviderDefinition:
+    for provider in PROVIDER_REGISTRY:
+        if provider.provider_id == provider_id:
+            return provider
+    raise ValueError(f"unknown external provider {provider_id}")
+
+
+def _today_utc(env: Mapping[str, str]) -> date:
+    override = env.get("ODP_PROVIDER_LICENSE_TODAY")
+    if override:
+        return datetime.fromisoformat(override.replace("Z", "+00:00")).date()
+    return datetime.now(UTC).date()

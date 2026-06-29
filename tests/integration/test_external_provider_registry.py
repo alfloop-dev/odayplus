@@ -7,6 +7,8 @@ from modules.external_data.connectors import (
     ExternalProviderConfigError,
     ExternalProviderMode,
     ProviderCategory,
+    provider_downstream_use_flags,
+    provider_export_allowed,
     provider_registry,
     provider_secret_inventory,
     validate_external_providers,
@@ -44,6 +46,8 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
     }
     assert all(provider.connector_class.startswith("modules.external_data.") for provider in providers)
     assert all(provider.provider_class.startswith("modules.external_data.providers.") for provider in providers)
+    assert all(provider.license.attribution for provider in providers)
+    assert all(provider.license.downstream_use_flags for provider in providers)
 
 
 def test_secret_inventory_contains_names_and_auth_modes_without_values() -> None:
@@ -60,6 +64,8 @@ def test_secret_inventory_contains_names_and_auth_modes_without_values() -> None
         assert provider["auth_modes"]
         assert provider["provider_class"]
         assert provider["connector_class"]
+        assert provider["license"]["attribution"]
+        assert "export_allowed" in provider["license"]
 
 
 def test_fixture_mode_validates_without_provider_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,3 +133,31 @@ def test_live_mode_flags_expired_or_unauthorized_credentials_with_correlation() 
     }
     assert "listing-token" not in repr(result)
     assert "geocode-token" not in repr(result)
+
+
+def test_production_live_mode_blocks_providers_without_allowed_use_license() -> None:
+    env = {
+        LIVE_MODE_ENV_VAR: "live",
+        "ODP_DEPLOY_ENV": "production",
+        "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
+        "ODP_POI_PROVIDER_API_KEY": "poi-token",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN": "admin-token",
+        "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION": "manual-attested",
+    }
+
+    result = validate_external_providers(env=env, correlation_id="corr-license-block")
+
+    assert not result.ok
+    assert {
+        (error.provider_id, error.code)
+        for error in result.errors
+        if error.code == "license_blocked"
+    } == {("competitor.manual_source", "license_blocked")}
+
+
+def test_downstream_export_flags_are_enforced_by_provider_license_metadata() -> None:
+    assert provider_export_allowed("admin_boundary.official_dataset") is True
+    assert provider_export_allowed("listing.partner_feed") is False
+    assert "audit_evidence" in provider_downstream_use_flags("admin_boundary.official_dataset")
+    assert "manual_review" in provider_downstream_use_flags("competitor.manual_source")
