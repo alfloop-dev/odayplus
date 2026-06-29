@@ -3,7 +3,8 @@
 Task: ODP-PV-008  
 Status: release-gate candidate  
 Generated: 2026-06-29  
-Build baseline: `dev@acf50ddad0e188087e32db58e38a3092897c2a7f`
+Build baseline: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4`
+Latest CI evidence: GitHub `CI` run `28344187527` and `Deploy Dev` run `28344187522` both passed on 2026-06-29.
 
 ## Gate Result
 
@@ -20,7 +21,7 @@ It runs:
 - `python3 scripts/e2e/check_product_release_gate.py`
 - `scripts/e2e/run_product_e2e.sh`
 
-The runner builds the Docker product stack, seeds deterministic API/source data, runs the live API-bound UI checks, MapLibre/deck.gl map checks, PV-006, PV-007, and product environment checks, then writes diagnostics to `.odp_data/e2e-diagnostics`.
+The runner builds the Docker product stack, seeds deterministic API/source data, runs the live API-bound UI checks, MapLibre/deck.gl map checks, expansion, PV-006, PV-007, and product environment checks, then writes diagnostics to `.odp_data/e2e-diagnostics`.
 
 ## Required Runtime Evidence
 
