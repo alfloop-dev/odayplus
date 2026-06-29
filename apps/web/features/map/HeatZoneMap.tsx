@@ -25,6 +25,18 @@ type HeatZoneMapProps = {
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
+type LayerKey = "h3" | "listings" | "candidates" | "confidence" | "freshness" | "risk";
+type LayerState = Record<LayerKey, boolean>;
+
+const layerKeys: LayerKey[] = ["h3", "listings", "candidates", "confidence", "freshness", "risk"];
+const defaultLayers: LayerState = {
+  h3: true,
+  listings: true,
+  candidates: true,
+  confidence: true,
+  freshness: true,
+  risk: true,
+};
 
 const stateFill: Record<HeatZone["state"], [number, number, number, number]> = {
   UNTOUCHED: [49, 130, 206, 72],
@@ -57,13 +69,7 @@ export function HeatZoneMap({
     pitch: 0,
     bearing: 0,
   });
-  const [layers, setLayers] = useState({
-    h3: true,
-    listings: true,
-    candidates: true,
-    confidence: true,
-    freshness: true,
-  });
+  const [layers, setLayers] = useState<LayerState>(defaultLayers);
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
   const deckLayers = useMemo(
@@ -165,6 +171,18 @@ export function HeatZoneMap({
     };
   }, [selectedZoneId, zoneFeatures, zones]);
 
+  useEffect(() => {
+    setLayers(readLayerStateFromUrl());
+  }, []);
+
+  const updateLayer = (layer: LayerKey, checked: boolean) => {
+    setLayers((current) => {
+      const next = { ...current, [layer]: checked };
+      writeLayerStateToUrl(next);
+      return next;
+    });
+  };
+
   return (
     <section
       aria-label="Interactive HeatZone map"
@@ -173,11 +191,12 @@ export function HeatZoneMap({
       data-testid="heat-zone-map"
     >
       <div className={styles.mapToolbar} aria-label="Map layer controls">
-        <LayerToggle checked={layers.h3} label="H3 HeatZones" onChange={(checked) => setLayers({ ...layers, h3: checked })} />
-        <LayerToggle checked={layers.listings} label="Listings" onChange={(checked) => setLayers({ ...layers, listings: checked })} />
-        <LayerToggle checked={layers.candidates} label="Candidate sites" onChange={(checked) => setLayers({ ...layers, candidates: checked })} />
-        <LayerToggle checked={layers.confidence} label="Confidence" onChange={(checked) => setLayers({ ...layers, confidence: checked })} />
-        <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => setLayers({ ...layers, freshness: checked })} />
+        <LayerToggle checked={layers.h3} label="H3 HeatZones" onChange={(checked) => updateLayer("h3", checked)} />
+        <LayerToggle checked={layers.listings} label="Listings" onChange={(checked) => updateLayer("listings", checked)} />
+        <LayerToggle checked={layers.candidates} label="Candidate sites" onChange={(checked) => updateLayer("candidates", checked)} />
+        <LayerToggle checked={layers.confidence} label="Confidence" onChange={(checked) => updateLayer("confidence", checked)} />
+        <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => updateLayer("freshness", checked)} />
+        <LayerToggle checked={layers.risk} label="Risk" onChange={(checked) => updateLayer("risk", checked)} />
       </div>
       <div className={styles.mapCanvas} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
         <DeckGL
@@ -193,13 +212,14 @@ export function HeatZoneMap({
           />
         </DeckGL>
         <p className={styles.mapStatus} data-testid="heat-zone-map-status">
-          local MapLibre style · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
+          local MapLibre style · layers {encodeLayerState(layers)} · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
         </p>
       </div>
       <div className={styles.legend} aria-label="Map legend">
         <LegendItem swatch={styles.swatchGreen} label="expandable H3" />
         <LegendItem swatch={styles.swatchYellow} label="under-realized" />
         <LegendItem swatch={styles.swatchOrange} label="low confidence" />
+        <LegendItem swatch={styles.swatchOrange} label="risk boundary" />
         <LegendItem swatch={styles.swatchBlue} label="listing point" />
         <LegendItem swatch={styles.swatchPurple} label="candidate site" />
       </div>
@@ -246,7 +266,7 @@ function buildDeckLayers({
   listings: Listing[];
   candidates: CandidateSite[];
   selectedZoneId: string;
-  visible: Record<"h3" | "listings" | "candidates" | "confidence" | "freshness", boolean>;
+  visible: LayerState;
 }) {
   return [
     new GeoJsonLayer<ZoneFeature["properties"]>({
@@ -269,6 +289,18 @@ function buildDeckLayers({
       stroked: false,
       filled: true,
       getFillColor: (feature) => confidenceFill[confidenceBand(feature.properties.confidence)],
+      pickable: false,
+    }),
+    new GeoJsonLayer<ZoneFeature["properties"]>({
+      id: "odp-heatzone-risk",
+      data: zoneFeatures,
+      visible: visible.risk,
+      stroked: true,
+      filled: false,
+      getLineColor: (feature) => riskStroke(feature.properties),
+      getLineWidth: 4,
+      lineWidthMinPixels: 2,
+      lineWidthMaxPixels: 8,
       pickable: false,
     }),
     new ScatterplotLayer<Listing>({
@@ -315,6 +347,38 @@ function buildDeckLayers({
       pickable: false,
     }),
   ];
+}
+
+function readLayerStateFromUrl(): LayerState {
+  if (typeof window === "undefined") return defaultLayers;
+  const query = new URLSearchParams(window.location.search);
+  const encoded = query.get("layers");
+  if (!encoded) return defaultLayers;
+  const enabled = new Set(encoded.split(",").filter(Boolean));
+  return Object.fromEntries(layerKeys.map((key) => [key, enabled.has(key)])) as LayerState;
+}
+
+function writeLayerStateToUrl(layers: LayerState) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const encoded = encodeLayerState(layers);
+  if (encoded === encodeLayerState(defaultLayers)) {
+    url.searchParams.delete("layers");
+  } else {
+    url.searchParams.set("layers", encoded);
+  }
+  window.history.replaceState(window.history.state, "", url);
+}
+
+function encodeLayerState(layers: LayerState): string {
+  return layerKeys.filter((key) => layers[key]).join(",");
+}
+
+function riskStroke(zone: HeatZone): [number, number, number, number] {
+  if (zone.state === "SUPPRESSED_LOW_CONFIDENCE" || zone.confidence < 0.7) return [192, 86, 33, 245];
+  if (zone.state === "UNDER_REALIZED") return [183, 121, 31, 230];
+  if (zone.state === "SATURATED") return [113, 128, 150, 210];
+  return [47, 133, 90, 210];
 }
 
 function zoneToFeature(zone: HeatZone): ZoneFeature {

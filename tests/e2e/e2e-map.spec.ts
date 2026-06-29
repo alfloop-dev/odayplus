@@ -27,6 +27,35 @@ test("HeatZone map selection stays synchronized with ranked list and drawer", as
   await expect(page.getByTestId("heatzone-drawer")).toContainText("低信心 guard");
 });
 
+test("HeatZone map layer toggles persist through URL reload and sharing", async ({ page }) => {
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone");
+
+  await page.getByRole("checkbox", { name: "Listings" }).uncheck();
+  await page.getByRole("checkbox", { name: "Freshness" }).uncheck();
+  await page.getByRole("checkbox", { name: "Risk" }).uncheck();
+
+  await expect(page).toHaveURL(/layers=h3%2Ccandidates%2Cconfidence/);
+  await expect(page.getByTestId("heat-zone-map-status")).toContainText("layers h3,candidates,confidence");
+
+  await page.reload();
+
+  await expect(page.getByRole("checkbox", { name: "Listings" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Freshness" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Risk" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "H3 HeatZones" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Candidate sites" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Confidence" })).toBeChecked();
+
+  const shareUrl = page.url();
+  const sharedPage = await page.context().newPage();
+  await sharedPage.goto(shareUrl);
+  await expect(sharedPage.getByRole("checkbox", { name: "Listings" })).not.toBeChecked();
+  await expect(sharedPage.getByRole("checkbox", { name: "Freshness" })).not.toBeChecked();
+  await expect(sharedPage.getByRole("checkbox", { name: "Risk" })).not.toBeChecked();
+  await expect(sharedPage.getByTestId("heat-zone-map-status")).toContainText("layers h3,candidates,confidence");
+  await sharedPage.close();
+});
+
 async function canvasHasVisiblePixels(page: import("@playwright/test").Page, selector: string) {
   return page.locator(selector).first().evaluate((canvas) => {
     const source = canvas as HTMLCanvasElement;

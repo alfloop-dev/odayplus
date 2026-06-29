@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
+from modules.external_data.connectors import validate_external_providers_or_raise
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
@@ -55,6 +56,7 @@ else:
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
         persistence: Any = None,
+        external_provider_validation: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
@@ -62,6 +64,7 @@ else:
         # tests can inject hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
 
+        provider_validation = external_provider_validation or validate_external_providers_or_raise()
         bundle = persistence or build_persistence()
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
@@ -222,6 +225,7 @@ else:
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
         api.state.persistence = bundle
+        api.state.external_provider_validation = provider_validation
         return api
 
     app = create_app()
