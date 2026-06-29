@@ -298,6 +298,25 @@ def test_product_grade_gap_execution_tasks_are_actionable() -> None:
     ):
         assert boundary in gap_text
 
+    for alias in (
+        "ODP-EXT-001",
+        "ODP-EXT-002",
+        "ODP-EXT-003",
+        "ODP-EXT-004",
+        "ODP-EXT-005",
+        "ODP-EXT-006",
+        "ODP-EXT-007",
+        "ODP-EXT-008",
+        "ODP-MAP-E2E-001",
+        "ODP-MAP-E2E-002",
+        "ODP-MAP-E2E-003",
+        "ODP-MAP-E2E-004",
+        "ODP-MAP-A11Y-001",
+        "ODP-MAP-E2E-005",
+        "ODP-MAP-E2E-006",
+    ):
+        assert alias in gap_text
+
 
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
     queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
