@@ -44,6 +44,7 @@ else:
         heatzone_store: HeatZoneResultStore | None = None,
         avm_repository: Any = None,
         forecastops_repository: Any = None,
+        priceops_repository: Any = None,
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
         adlift_repository: Any = None,
@@ -144,11 +145,13 @@ else:
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.listings import router as listings_router
+        from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         forecast_repository = forecastops_repository or bundle.forecastops_repository
+        price_repo = priceops_repository or bundle.priceops_repository
         avm_repo = avm_repository or bundle.avm_repository
         site_repository = sitescore_repository or bundle.sitescore_repository
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
@@ -170,6 +173,7 @@ else:
         api.include_router(
             create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
         )
+        api.include_router(create_priceops_router(repository=price_repo, audit_log=audit_log))
         api.include_router(
             create_sitescore_router(
                 repository=site_repository,
@@ -191,6 +195,7 @@ else:
         api.state.heatzone_store = heatzone_store
         api.state.avm_repository = avm_repo
         api.state.forecastops_repository = forecast_repository
+        api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
         api.state.adlift_repository = adlift_repo

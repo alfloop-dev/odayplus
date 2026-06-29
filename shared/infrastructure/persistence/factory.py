@@ -35,6 +35,7 @@ class PersistenceBundle:
     job_queue: Any
     avm_repository: Any
     forecastops_repository: Any
+    priceops_repository: Any
     sitescore_repository: Any
     adlift_repository: Any
     intervention_repository: Any
@@ -54,6 +55,7 @@ def _memory_bundle() -> PersistenceBundle:
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
     )
+    from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
@@ -66,6 +68,7 @@ def _memory_bundle() -> PersistenceBundle:
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
+        priceops_repository=InMemoryPriceOpsRepository(),
         sitescore_repository=InMemorySiteScoreRepository(),
         adlift_repository=InMemoryAdLiftRepository(),
         intervention_repository=InMemoryInterventionRepository(),
@@ -85,6 +88,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         DurableForecastOpsRepository,
         DurableInterventionRepository,
         DurableLabelRegistry,
+        DurablePriceOpsRepository,
         DurableSiteScoreRepository,
     )
 
@@ -97,6 +101,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
         intervention_repository=DurableInterventionRepository(store),
