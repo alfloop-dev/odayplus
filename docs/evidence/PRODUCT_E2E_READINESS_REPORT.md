@@ -7,7 +7,7 @@ Build baseline: `dev@acf50ddad0e188087e32db58e38a3092897c2a7f`
 
 ## Gate Result
 
-Product E2E readiness is **passed for the deterministic product-E2E environment** and remains **not a production deployment approval** until ODP-PV-014 supplies deployment, health, backup, restore, and rollback evidence.
+Product E2E readiness is **passed for the deterministic product-E2E environment**. Deployment, health, backup, restore, and data rollback evidence is linked in `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`; live remote staging rollout remains conditional on staging host/url configuration.
 
 The release-blocking command is:
 
@@ -26,7 +26,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 
 | Evidence area | Required executable proof | Source data / fixture | Runtime evidence |
 |---|---|---|---|
-| Deterministic environment | `tests/e2e/product-e2e-env.spec.ts` | `tests/fixtures/source_data/provider_sample.json`, `infra/docker/docker-compose.e2e.yml` | API health, retained audit evidence, source stub state, `seed-summary.json` |
+| Deterministic environment | `tests/e2e/product-e2e-env.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, `infra/docker/docker-compose.e2e.yml` | API health, retained audit evidence, source stub state, `seed-summary.json` |
 | Web/API binding | `tests/e2e/e2e-api-bound-ui.spec.ts` | API-created AVM case and audit events | UI renders live backend state, not edited fixtures |
 | Map | `tests/e2e/e2e-map.spec.ts` | seeded HeatZone/H3 data | MapLibre canvas nonblank pixel check, deck overlay check, list/drawer synchronization |
 | Expansion | `tests/e2e/e2e-expansion-product.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, and deterministic API seed | HeatZone/listing/site-score product path, screenshot/trace attachment |
@@ -63,6 +63,7 @@ The `product-e2e-gate` CI job fails if:
 
 ## Residual Release Risk
 
-- ODP-PV-014 is still required for deployment, health, backup, restore, and rollback evidence.
+- Remote staging rollout is still a deployment environment configuration item because staging host/url variables are placeholders.
+- Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - Moderate dependency audit findings remain below the existing high/critical release-blocking threshold and are tracked by the security gate output.
