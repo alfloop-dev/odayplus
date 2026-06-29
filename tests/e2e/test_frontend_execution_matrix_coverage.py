@@ -24,6 +24,7 @@ CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
+PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -268,6 +269,7 @@ def test_product_grade_gap_execution_tasks_are_actionable() -> None:
     release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md" in release_gate_text
+    assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md" in release_gate_text
     assert "PR #82" in gap_text
     assert "headRefOid" in gap_text
     assert "attached checks" in gap_text
@@ -316,6 +318,58 @@ def test_product_grade_gap_execution_tasks_are_actionable() -> None:
         "ODP-MAP-E2E-006",
     ):
         assert alias in gap_text
+
+
+def test_product_grade_fleet_dispatch_names_all_live_gap_aliases() -> None:
+    gap_text = PRODUCT_GRADE_GAP_TASKS.read_text(encoding="utf-8")
+    dispatch_text = PRODUCT_GRADE_FLEET_DISPATCH.read_text(encoding="utf-8")
+
+    assert "PR #82" in dispatch_text
+    assert "headRefOid" in dispatch_text
+    assert "attached checks" in dispatch_text
+    assert "deterministic product E2E proof" in dispatch_text
+    assert "document-only PR must not close" in dispatch_text
+
+    for alias in (
+        "ODP-EXT-001",
+        "ODP-EXT-002",
+        "ODP-EXT-003",
+        "ODP-EXT-004",
+        "ODP-EXT-005",
+        "ODP-EXT-006",
+        "ODP-EXT-007",
+        "ODP-EXT-008",
+        "ODP-MAP-E2E-001",
+        "ODP-MAP-E2E-002",
+        "ODP-MAP-E2E-003",
+        "ODP-MAP-E2E-004",
+        "ODP-MAP-A11Y-001",
+        "ODP-MAP-E2E-005",
+        "ODP-MAP-E2E-006",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert alias in gap_text
+        assert alias in dispatch_text
+
+    for lane in (
+        "External provider foundation",
+        "External source operations",
+        "Live map provider gate",
+        "Map accessibility and resilience",
+        "Remote staging rollout",
+    ):
+        assert lane in dispatch_text
+
+    for proof_boundary in (
+        "live-provider proof",
+        "live-map proof",
+        "remote-staging proof",
+        "Deterministic fixture/source-stub tests",
+        "provider secrets",
+        "staging version matches PR #82 `headRefOid`",
+    ):
+        assert proof_boundary in dispatch_text
 
 
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
