@@ -62,6 +62,10 @@ def bullet_list(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def code_block(items: list[str]) -> str:
+    return "\n\n".join(f"```bash\n{item}\n```" for item in items)
+
+
 def render_task_brief(packet: dict[str, Any], task_id: str) -> str:
     tasks = packet.get("tasks") or []
     task = next((item for item in tasks if item.get("id") == task_id), None)
@@ -100,6 +104,26 @@ def render_task_brief(packet: dict[str, Any], task_id: str) -> str:
             "",
             bullet_list(task["verification_evidence"]),
             "",
+            *(
+                [
+                    "## Execution Commands",
+                    "",
+                    code_block(task["execution_commands"]),
+                    "",
+                ]
+                if non_empty_string_list(task.get("execution_commands"))
+                else []
+            ),
+            *(
+                [
+                    "## Blocking Dependencies",
+                    "",
+                    bullet_list(task["blocking_dependencies"]),
+                    "",
+                ]
+                if non_empty_string_list(task.get("blocking_dependencies"))
+                else []
+            ),
             "## Acceptance Criteria",
             "",
             bullet_list(task["acceptance_criteria"]),
@@ -205,6 +229,8 @@ def render_dispatch_queue(packet: dict[str, Any]) -> dict[str, Any]:
                 "minimum_completion_signal": {
                     "implementation_evidence": task["implementation_evidence"],
                     "verification_evidence": task["verification_evidence"],
+                    "execution_commands": task.get("execution_commands", []),
+                    "blocking_dependencies": task.get("blocking_dependencies", []),
                     "acceptance_criteria": task["acceptance_criteria"],
                     "handoff_artifacts": task["handoff_artifacts"],
                 },
@@ -243,10 +269,11 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
         "- Confirm PR #82 `headRefOid` and attached checks before starting work.",
         "- Do not claim live-provider, live-map, or remote-staging proof until the relevant task evidence is attached.",
         "- Keep deterministic fixture/source-stub tests as CI defaults.",
-        "- Use each task's suggested branch and brief file as the handoff contract.",
-        "",
-        "## Fleet Pickup Sequence",
-        "",
+            "- Use each task's suggested branch and brief file as the handoff contract.",
+            "- Execute any task-specific `execution_commands` before requesting review.",
+            "",
+            "## Fleet Pickup Sequence",
+            "",
     ]
     for lane in packet["dispatch_lanes"]:
         lines.extend(
@@ -359,6 +386,23 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             errors.append(f"{task_id} suggested_branch must start with task/{task_id}")
         if not non_empty_string_list(task.get("handoff_artifacts")):
             errors.append(f"{task_id} missing handoff_artifacts")
+        execution_commands = task.get("execution_commands", [])
+        if execution_commands and not non_empty_string_list(execution_commands):
+            errors.append(f"{task_id} execution_commands must be non-empty strings")
+        blocking_dependencies = task.get("blocking_dependencies", [])
+        if blocking_dependencies and not non_empty_string_list(blocking_dependencies):
+            errors.append(f"{task_id} blocking_dependencies must be non-empty strings")
+        if task_id in {"ODP-PV-STAGE-001", "ODP-PV-STAGE-002"}:
+            joined_commands = "\n".join(execution_commands)
+            for required_phrase in (
+                "scripts/e2e/check_remote_staging_proof.py",
+                "gh pr view 82",
+                "headRefOid",
+            ):
+                if required_phrase not in joined_commands:
+                    errors.append(f"{task_id} execution_commands missing phrase: {required_phrase}")
+            if task_id == "ODP-PV-STAGE-002" and "npx playwright test" not in joined_commands:
+                errors.append(f"{task_id} execution_commands missing staging product E2E smoke command")
         if task_id not in markdown_text:
             errors.append(f"{task_id} missing from markdown dispatch")
         if task_id not in gap_text:

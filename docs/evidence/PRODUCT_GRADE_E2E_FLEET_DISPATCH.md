@@ -63,8 +63,8 @@ data source proof, live map provider proof, or remote-staging proof.
 
 | Alias | Dispatch objective | Required implementation evidence | Required verification |
 |---|---|---|---|
-| `ODP-PV-STAGE-001` | Remote staging configuration | Remote staging host/url/secret configuration, documented env vars, secret owner, health and version endpoint | Smoke check proves staging version matches PR #82 `headRefOid` |
-| `ODP-PV-STAGE-002` | Remote staging drill | Staging runbook log, backup/restore evidence, rollback result, correlation id | Product E2E smoke plus backup/restore/rollback command against staging or approved staging-equivalent resources |
+| `ODP-PV-STAGE-001` | Remote staging configuration | Remote staging host/url/secret configuration, documented env vars, secret owner, health and version endpoint, `ODAY_RELEASE_SHA` injection | `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` plus `python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` proves staging version matches PR #82 `headRefOid` |
+| `ODP-PV-STAGE-002` | Remote staging drill | Staging runbook log, backup/restore evidence, rollback result, correlation id | Staging product smoke via `PLAYWRIGHT_BASE_URL` / `ODP_API_BASE_URL`, backup/restore/rollback command, and post-drill `check_remote_staging_proof.py` version proof |
 
 ## Handoff Rules
 

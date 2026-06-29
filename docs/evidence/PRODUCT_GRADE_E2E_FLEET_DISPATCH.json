@@ -294,6 +294,15 @@
       "objective": "Remote staging configuration",
       "implementation_evidence": ["remote staging host/url/secret configuration", "documented environment variables", "secret owner", "health endpoint", "version endpoint"],
       "verification_evidence": ["staging smoke check", "version matches PR #82 headRefOid"],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
+      ],
+      "blocking_dependencies": [
+        "GitHub staging environment variables/secrets are configured outside the repository",
+        "The deployed API receives ODAY_RELEASE_SHA equal to PR #82 headRefOid or the promoted SHA",
+        ".github/workflows/deploy-staging.yml is replaced or supplemented by a real staging deployment path"
+      ],
       "acceptance_criteria": ["staging host and secrets are documented", "health endpoint is reachable", "version endpoint matches PR #82 headRefOid"],
       "suggested_branch": "task/ODP-PV-STAGE-001-remote-staging-config",
       "handoff_artifacts": ["staging env inventory", "health/version smoke output", "secret owner record"]
@@ -308,6 +317,17 @@
       "objective": "Remote staging drill",
       "implementation_evidence": ["staging runbook log", "backup/restore evidence", "rollback result", "correlation id"],
       "verification_evidence": ["product E2E smoke against staging", "backup/restore/rollback command against staging or approved equivalent"],
+      "execution_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" \\\nODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" \\\nnpx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
+        "python3 scripts/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
+        "python3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
+      ],
+      "blocking_dependencies": [
+        "ODP-PV-STAGE-001 has passed against the same staging target",
+        "Staging product URL, API URL, and backing store credentials are available without committing secrets",
+        "Backup/restore/rollback commands target staging or an approved staging-equivalent environment"
+      ],
       "acceptance_criteria": ["staging runbook has timestamped execution log", "backup restore and rollback evidence is linked", "product E2E smoke runs against staging URL"],
       "suggested_branch": "task/ODP-PV-STAGE-002-remote-staging-drill",
       "handoff_artifacts": ["staging runbook log", "backup/restore/rollback output", "staging E2E smoke evidence"]

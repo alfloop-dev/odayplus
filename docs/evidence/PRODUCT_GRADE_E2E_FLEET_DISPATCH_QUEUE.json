@@ -30,6 +30,8 @@
           "missing credentials fail closed",
           "expired or unauthorized credentials include correlation id"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "provider classes are registered",
           "startup validation fails closed without secrets",
@@ -68,6 +70,8 @@
           "timeout contract test",
           "fixture-compatible replay"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "listing adapter persists raw and canonical snapshots",
           "bad records enter quarantine",
@@ -105,6 +109,8 @@
           "timeout test",
           "unauthorized test"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "geocoder outputs confidence and lineage",
           "rate limits use retry budget",
@@ -139,6 +145,8 @@
           "stale-source clock E2E",
           "STALE or BLOCKED UI/data status"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "scheduled fetch creates durable batch ids",
           "backfill is idempotent",
@@ -173,6 +181,8 @@
           "rate-limit simulation",
           "clear stale/blocked degraded state"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "provider failures do not fabricate freshness",
           "quota exhaustion emits alert/audit evidence",
@@ -208,6 +218,8 @@
           "UI freshness state E2E",
           "source lineage appears in evidence"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "freshness SLA is source-specific",
           "API and UI expose the same freshness status",
@@ -242,6 +254,8 @@
           "license-blocked provider quarantine",
           "production mode cannot use blocked provider"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "license metadata controls production use",
           "blocked providers enter quarantine",
@@ -277,6 +291,8 @@
           "live-provider mode product E2E",
           "CI fixture mode remains default"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "provider mock covers auth quota freshness and license scenarios",
           "live-provider mode has product E2E proof",
@@ -313,6 +329,8 @@
           "geocoder outage E2E",
           "list/ranking/detail still usable"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "runtime displays attribution and terms",
           "tile/geocoder outage does not block list workflow",
@@ -349,6 +367,8 @@
           "reload restore E2E",
           "share-state E2E"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "layer toggles update URL or persisted state",
           "reload restores visible layers",
@@ -384,6 +404,8 @@
           "selected state proof",
           "list fallback alignment"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "map pick and list click open identical drawer state",
           "selected map state is visible",
@@ -418,6 +440,8 @@
           "E2E fails when rendered deck layer state stops changing",
           "not only canvas nonblank"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "pixel checks prove semantic layers not just nonblank canvas",
           "selected highlight is distinguishable",
@@ -452,6 +476,8 @@
           "Tab/Enter/Escape E2E",
           "axe scan for HeatZone map route"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "HeatZone selection can be completed without pointer input",
           "focus returns after drawer close",
@@ -486,6 +512,8 @@
           "map failure E2E",
           "ranking/list/detail workflow remains usable"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "map loading empty and error states are explicit",
           "correlation id is visible on errors",
@@ -518,6 +546,8 @@
           "tooltip/evidence E2E",
           "accessible fallback text"
         ],
+        "execution_commands": [],
+        "blocking_dependencies": [],
         "acceptance_criteria": [
           "tooltip includes score state confidence warnings freshness and version",
           "tooltip is keyboard reachable",
@@ -552,6 +582,15 @@
           "staging smoke check",
           "version matches PR #82 headRefOid"
         ],
+        "execution_commands": [
+          "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+          "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
+        ],
+        "blocking_dependencies": [
+          "GitHub staging environment variables/secrets are configured outside the repository",
+          "The deployed API receives ODAY_RELEASE_SHA equal to PR #82 headRefOid or the promoted SHA",
+          ".github/workflows/deploy-staging.yml is replaced or supplemented by a real staging deployment path"
+        ],
         "acceptance_criteria": [
           "staging host and secrets are documented",
           "health endpoint is reachable",
@@ -584,6 +623,17 @@
         "verification_evidence": [
           "product E2E smoke against staging",
           "backup/restore/rollback command against staging or approved equivalent"
+        ],
+        "execution_commands": [
+          "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+          "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" \\\nODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" \\\nnpx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
+          "python3 scripts/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
+          "python3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
+        ],
+        "blocking_dependencies": [
+          "ODP-PV-STAGE-001 has passed against the same staging target",
+          "Staging product URL, API URL, and backing store credentials are available without committing secrets",
+          "Backup/restore/rollback commands target staging or an approved staging-equivalent environment"
         ],
         "acceptance_criteria": [
           "staging runbook has timestamped execution log",
