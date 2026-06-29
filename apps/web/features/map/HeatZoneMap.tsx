@@ -36,6 +36,7 @@ type HeatZoneMapProps = {
   candidates: CandidateSite[];
   selectedZoneId: string;
   freshness: Freshness;
+  layerQuery?: string;
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
@@ -79,6 +80,7 @@ export function HeatZoneMap({
   candidates,
   selectedZoneId,
   freshness,
+  layerQuery,
 }: HeatZoneMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -89,7 +91,7 @@ export function HeatZoneMap({
     pitch: 0,
     bearing: 0,
   });
-  const [layers, setLayers] = useState<LayerState>(defaultLayers);
+  const [layers, setLayers] = useState<LayerState>(() => layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
   const [runtimeError, setRuntimeError] = useState("");
   const [evidenceZoneId, setEvidenceZoneId] = useState(selectedZoneId);
   const previousSelectedZoneId = useRef(selectedZoneId);
@@ -215,8 +217,8 @@ export function HeatZoneMap({
   }, [boundaryConfig, selectedZoneId, visibleZoneFeatures, visibleZones, zones]);
 
   useEffect(() => {
-    setLayers(readLayerStateFromUrl());
-  }, []);
+    setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
+  }, [layerQuery]);
 
   useEffect(() => {
     if (previousSelectedZoneId.current === selectedZoneId) return;
@@ -256,12 +258,12 @@ export function HeatZoneMap({
       data-testid="heat-zone-map"
     >
       <div className={styles.mapToolbar} aria-label="Map layer controls">
-        <LayerToggle checked={layers.h3} label="H3 HeatZones" onChange={(checked) => updateLayer("h3", checked)} />
-        <LayerToggle checked={layers.listings} label="Listings" onChange={(checked) => updateLayer("listings", checked)} />
-        <LayerToggle checked={layers.candidates} label="Candidate sites" onChange={(checked) => updateLayer("candidates", checked)} />
-        <LayerToggle checked={layers.confidence} label="Confidence" onChange={(checked) => updateLayer("confidence", checked)} />
-        <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => updateLayer("freshness", checked)} />
-        <LayerToggle checked={layers.risk} label="Risk" onChange={(checked) => updateLayer("risk", checked)} />
+        <LayerToggle checked={layers.h3} href={layerToggleHref("h3", layers, selectedZoneId)} label="H3 HeatZones" onChange={(checked) => updateLayer("h3", checked)} />
+        <LayerToggle checked={layers.listings} href={layerToggleHref("listings", layers, selectedZoneId)} label="Listings" onChange={(checked) => updateLayer("listings", checked)} />
+        <LayerToggle checked={layers.candidates} href={layerToggleHref("candidates", layers, selectedZoneId)} label="Candidate sites" onChange={(checked) => updateLayer("candidates", checked)} />
+        <LayerToggle checked={layers.confidence} href={layerToggleHref("confidence", layers, selectedZoneId)} label="Confidence" onChange={(checked) => updateLayer("confidence", checked)} />
+        <LayerToggle checked={layers.freshness} href={layerToggleHref("freshness", layers, selectedZoneId)} label="Freshness" onChange={(checked) => updateLayer("freshness", checked)} />
+        <LayerToggle checked={layers.risk} href={layerToggleHref("risk", layers, selectedZoneId)} label="Risk" onChange={(checked) => updateLayer("risk", checked)} />
       </div>
       <div className={styles.boundaryBar} data-testid="map-boundary-config">
         <span>Tiles: {boundaryConfig.tileUrl ? "configured" : "local fallback"}</span>
@@ -324,7 +326,7 @@ export function HeatZoneMap({
           viewState={viewState}
         >
           <div
-            aria-label="deck.gl HeatZone overlay"
+            aria-hidden="true"
             className={styles.deckOverlay}
             data-testid="heat-zone-deck-overlay"
           />
@@ -402,18 +404,71 @@ function mapStateBody(state: MapStateFixture, correlationId: string): string {
 
 function LayerToggle({
   checked,
+  href,
   label,
   onChange,
 }: {
   checked: boolean;
+  href: string;
   label: string;
   onChange: (checked: boolean) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const testId = `map-layer-keyboard-${label.toLowerCase().replaceAll(" ", "-")}`;
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    const syncChecked = () => onChange(input.checked);
+    const syncSpace = (event: KeyboardEvent) => {
+      if (event.key === " " || event.key === "Spacebar") syncChecked();
+    };
+    input.addEventListener("change", syncChecked);
+    input.addEventListener("click", syncChecked);
+    input.addEventListener("keyup", syncSpace);
+    return () => {
+      input.removeEventListener("change", syncChecked);
+      input.removeEventListener("click", syncChecked);
+      input.removeEventListener("keyup", syncSpace);
+    };
+  }, [onChange]);
+
   return (
-    <label>
-      <input checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} type="checkbox" />
+    <>
+      <label>
+      <input
+        ref={inputRef}
+        checked={checked}
+        onClick={(event) => onChange(event.currentTarget.checked)}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          onChange(!checked);
+        }}
+        onKeyUp={(event) => {
+          if (event.key !== " " && event.key !== "Spacebar") return;
+          onChange(event.currentTarget.checked);
+        }}
+        type="checkbox"
+      />
       {label}
-    </label>
+      </label>
+      <a
+        aria-label={`Toggle ${label} layer`}
+        aria-pressed={checked}
+        className={styles.layerKeyboardButton}
+        data-testid={testId}
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          onChange(!checked);
+        }}
+        role="button"
+      >
+        Enter
+      </a>
+    </>
   );
 }
 
@@ -562,7 +617,10 @@ function buildDeckLayers({
 function readLayerStateFromUrl(): LayerState {
   if (typeof window === "undefined") return defaultLayers;
   const query = new URLSearchParams(window.location.search);
-  const encoded = query.get("layers");
+  return parseLayerState(query.get("layers"));
+}
+
+function parseLayerState(encoded: string | null | undefined): LayerState {
   if (!encoded) return defaultLayers;
   const enabled = new Set(encoded.split(",").filter(Boolean));
   return Object.fromEntries(layerKeys.map((key) => [key, enabled.has(key)])) as LayerState;
@@ -578,6 +636,20 @@ function writeLayerStateToUrl(layers: LayerState) {
     url.searchParams.set("layers", encoded);
   }
   window.history.replaceState(window.history.state, "", url);
+}
+
+function layerToggleHref(layer: LayerKey, layers: LayerState, selectedZoneId: string): string {
+  const url = new URL("http://oday.local/w/expansion/heatzone");
+  const next = { ...layers, [layer]: !layers[layer] };
+  const encoded = encodeLayerState(next);
+  url.searchParams.set("selected", selectedZoneId);
+  url.searchParams.set("drawer", "zone");
+  if (encoded === encodeLayerState(defaultLayers)) {
+    url.searchParams.delete("layers");
+  } else {
+    url.searchParams.set("layers", encoded);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 function encodeLayerState(layers: LayerState): string {
