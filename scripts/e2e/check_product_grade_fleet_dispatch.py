@@ -9,6 +9,7 @@ missing ownership, evidence, or boundary fields.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -49,14 +50,123 @@ def non_empty_string_list(value: Any) -> bool:
     return isinstance(value, list) and all(non_empty_string(item) for item in value) and bool(value)
 
 
-def main() -> int:
+def load_packet() -> dict[str, Any]:
+    return json.loads(PACKET.read_text(encoding="utf-8"))
+
+
+def bullet_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items)
+
+
+def render_task_brief(packet: dict[str, Any], task_id: str) -> str:
+    tasks = packet.get("tasks") or []
+    task = next((item for item in tasks if item.get("id") == task_id), None)
+    if task is None:
+        known = ", ".join(sorted(item.get("id", "") for item in tasks))
+        raise SystemExit(f"Unknown dispatch task {task_id}. Known tasks: {known}")
+
+    boundary = packet["scope_boundaries"][task["scope_boundary"]]
+    return "\n".join(
+        [
+            f"# Fleet Execution Brief: {task['id']}",
+            "",
+            f"- Parent: {task['parent']}",
+            f"- Status: {task['status']}",
+            f"- Scope boundary: {task['scope_boundary']}",
+            f"- Owner lane: {task['owner_lane']}",
+            f"- Reviewer lane: {task['reviewer_lane']}",
+            f"- Suggested branch: `{task['suggested_branch']}`",
+            f"- Release authority: PR #{packet['release_target']['pr']} headRefOid and attached checks",
+            "",
+            "## Objective",
+            "",
+            task["objective"],
+            "",
+            "## Current Proof Boundary",
+            "",
+            f"- Current proof: {boundary['current_proof']}",
+            "- Live claim requires:",
+            bullet_list(boundary["live_claim_requires"]),
+            "",
+            "## Implementation Evidence Required",
+            "",
+            bullet_list(task["implementation_evidence"]),
+            "",
+            "## Verification Evidence Required",
+            "",
+            bullet_list(task["verification_evidence"]),
+            "",
+            "## Acceptance Criteria",
+            "",
+            bullet_list(task["acceptance_criteria"]),
+            "",
+            "## Handoff Artifacts",
+            "",
+            bullet_list(task["handoff_artifacts"]),
+            "",
+            "## Completion Rules",
+            "",
+            bullet_list(packet["completion_rules"]),
+            "",
+        ]
+    )
+
+
+def render_report(packet: dict[str, Any]) -> str:
+    lines = [
+        "# Product-Grade E2E Fleet Dispatch Report",
+        "",
+        f"- PR: #{packet['release_target']['pr']}",
+        f"- Authority: {packet['release_target']['authority']}",
+        f"- Status: {packet['status']}",
+        f"- Updated: {packet['updated']}",
+        "",
+        "## Dispatch Lanes",
+        "",
+        "| Lane | Owner Lane | Reviewer Lane | Task Count | Aliases |",
+        "|---|---|---|---:|---|",
+    ]
+    for lane in packet["dispatch_lanes"]:
+        aliases = lane["aliases"]
+        lines.append(
+            f"| {lane['lane']} | {lane['owner_lane']} | {lane['reviewer_lane']} | {len(aliases)} | "
+            f"{', '.join(aliases)} |"
+        )
+
+    lines.extend(["", "## Scope Boundaries", ""])
+    for boundary_id, boundary in packet["scope_boundaries"].items():
+        lines.extend(
+            [
+                f"### {boundary_id}",
+                "",
+                f"- Current proof: {boundary['current_proof']}",
+                "- Live claim requires:",
+                bullet_list(boundary["live_claim_requires"]),
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Task Brief Commands",
+            "",
+            "Run `python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task <task-id>` for one fleet task.",
+            "",
+            "| Task | Suggested Branch | Acceptance Count | Handoff Artifact Count |",
+            "|---|---|---:|---:|",
+        ]
+    )
+    for task in packet["tasks"]:
+        lines.append(
+            f"| {task['id']} | `{task['suggested_branch']}` | "
+            f"{len(task['acceptance_criteria'])} | {len(task['handoff_artifacts'])} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def validate_packet(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-
-    if not PACKET.exists():
-        print(f"missing product-grade fleet dispatch packet: {PACKET.relative_to(ROOT)}")
-        return 1
-
-    packet = json.loads(PACKET.read_text(encoding="utf-8"))
     markdown_text = MARKDOWN.read_text(encoding="utf-8") if MARKDOWN.exists() else ""
     gap_text = GAP_TASKS.read_text(encoding="utf-8") if GAP_TASKS.exists() else ""
 
@@ -147,11 +257,38 @@ def main() -> int:
             if required_phrase not in joined_rules:
                 errors.append(f"completion_rules missing phrase: {required_phrase}")
 
+    return errors
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", action="store_true", help="print a fleet dispatch summary report")
+    parser.add_argument("--task", help="print a single fleet execution brief by task id")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if not PACKET.exists():
+        print(f"missing product-grade fleet dispatch packet: {PACKET.relative_to(ROOT)}")
+        return 1
+
+    packet = load_packet()
+    errors = validate_packet(packet)
     if errors:
         print("Product-grade fleet dispatch validation failed:")
         for error in errors:
             print(f"- {error}")
         return 1
+
+    if args.task:
+        print(render_task_brief(packet, args.task))
+        return 0
+
+    if args.report:
+        print(render_report(packet))
+        return 0
 
     print("Product-grade fleet dispatch checks passed.")
     return 0

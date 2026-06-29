@@ -423,6 +423,39 @@ def test_product_grade_fleet_dispatch_checker_runs() -> None:
     assert "Product-grade fleet dispatch checks passed." in result.stdout
 
 
+def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
+    report_result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--report"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = report_result.stdout
+    assert "# Product-Grade E2E Fleet Dispatch Report" in report
+    assert "Dispatch Lanes" in report
+    assert "Task Brief Commands" in report
+    assert "ODP-EXT-001" in report
+    assert "ODP-MAP-E2E-001" in report
+    assert "ODP-PV-STAGE-001" in report
+
+    brief_result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--task", "ODP-MAP-E2E-003"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    brief = brief_result.stdout
+    assert "# Fleet Execution Brief: ODP-MAP-E2E-003" in brief
+    assert "Suggested branch: `task/ODP-MAP-E2E-003-direct-map-picking`" in brief
+    assert "Direct map picking" in brief
+    assert "Implementation Evidence Required" in brief
+    assert "Verification Evidence Required" in brief
+    assert "Acceptance Criteria" in brief
+    assert "Handoff Artifacts" in brief
+
+
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
     queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
     queue_entries = queue_payload["queue"]
