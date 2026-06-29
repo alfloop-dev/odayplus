@@ -10,6 +10,8 @@ product environment smoke.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +79,21 @@ def main() -> int:
     for token in REQUIRED_REPORT_TOKENS:
         if token not in readiness_text:
             errors.append(f"readiness report does not mention {token}")
+
+    closeout_queue_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if closeout_queue_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (closeout_queue_check.stdout + closeout_queue_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"closeout queue check failed: {output}")
 
     if errors:
         print("Product release gate failed:")
