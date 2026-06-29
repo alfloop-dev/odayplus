@@ -31,6 +31,37 @@ class ExternalFetchJobSpec:
 
 
 @dataclass(frozen=True)
+class ExternalFetchResiliencePolicy:
+    max_consecutive_failures: int = 2
+    circuit_cooldown: timedelta = timedelta(minutes=15)
+    backoff_base: timedelta = timedelta(seconds=30)
+
+
+@dataclass(frozen=True)
+class ExternalFetchAlert:
+    event_id: str
+    event_type: str
+    provider_id: str
+    severity: str
+    reason_code: str
+    occurred_at: datetime
+    correlation_id: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "provider_id": self.provider_id,
+            "severity": self.severity,
+            "reason_code": self.reason_code,
+            "occurred_at": self.occurred_at.isoformat(),
+            "correlation_id": self.correlation_id,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
 class ExternalFetchRun:
     job_id: str
     provider_id: str
@@ -49,6 +80,9 @@ class ExternalFetchRun:
     last_success_watermark_after: datetime | None
     correlation_id: str
     message: str = ""
+    retry_after: datetime | None = None
+    alerts: tuple[ExternalFetchAlert, ...] = ()
+    audit_events: tuple[ExternalFetchAlert, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +107,9 @@ class ExternalFetchRun:
             else None,
             "correlation_id": self.correlation_id,
             "message": self.message,
+            "retry_after": self.retry_after.isoformat() if self.retry_after else None,
+            "alerts": [alert.to_dict() for alert in self.alerts],
+            "audit_events": [event.to_dict() for event in self.audit_events],
         }
 
 
@@ -82,6 +119,8 @@ class InMemoryExternalFetchStateStore:
     def __init__(self) -> None:
         self._runs_by_key: dict[str, ExternalFetchRun] = {}
         self._last_success: dict[str, datetime] = {}
+        self._consecutive_failures: dict[str, int] = {}
+        self._circuit_open_until: dict[str, datetime] = {}
 
     def get_run(self, idempotency_key: str) -> ExternalFetchRun | None:
         return self._runs_by_key.get(idempotency_key)
@@ -93,10 +132,34 @@ class InMemoryExternalFetchStateStore:
         self._runs_by_key[run.idempotency_key] = run
         if run.status == "SUCCEEDED" and run.last_success_watermark_after is not None:
             self._last_success[run.provider_id] = run.last_success_watermark_after
+            self._consecutive_failures[run.provider_id] = 0
         return run
 
     def last_success_watermark(self, provider_id: str) -> datetime | None:
         return self._last_success.get(provider_id)
+
+    def record_failure(
+        self,
+        provider_id: str,
+        *,
+        at: datetime,
+        policy: ExternalFetchResiliencePolicy,
+    ) -> tuple[int, datetime | None]:
+        failures = self._consecutive_failures.get(provider_id, 0) + 1
+        self._consecutive_failures[provider_id] = failures
+        if failures >= policy.max_consecutive_failures:
+            open_until = at + policy.circuit_cooldown
+            self._circuit_open_until[provider_id] = open_until
+            return failures, open_until
+        return failures, None
+
+    def circuit_open_until(self, provider_id: str, at: datetime) -> datetime | None:
+        open_until = self._circuit_open_until.get(provider_id)
+        if open_until is not None and open_until > at:
+            return open_until
+        if open_until is not None:
+            self._circuit_open_until.pop(provider_id, None)
+        return None
 
 
 class ExternalFetchScheduler:
@@ -105,9 +168,11 @@ class ExternalFetchScheduler:
         *,
         state_store: InMemoryExternalFetchStateStore | None = None,
         provider_factories: Mapping[str, ProviderFactory] | None = None,
+        resilience_policy: ExternalFetchResiliencePolicy | None = None,
     ) -> None:
         self.state_store = state_store or InMemoryExternalFetchStateStore()
         self.provider_factories = dict(provider_factories or {})
+        self.resilience_policy = resilience_policy or ExternalFetchResiliencePolicy()
 
     def run_once(
         self,
@@ -128,6 +193,31 @@ class ExternalFetchScheduler:
 
         corr = correlation_id or new_correlation_id()
         started_at = effective_end
+        circuit_open_until = self.state_store.circuit_open_until(spec.provider_id, effective_end)
+        if circuit_open_until is not None:
+            alert = _alert(
+                provider_id=spec.provider_id,
+                reason_code="circuit_open",
+                occurred_at=effective_end,
+                correlation_id=corr,
+                message=f"provider circuit open until {circuit_open_until.isoformat()}",
+            )
+            return self.state_store.save_run(
+                self._blocked_run(
+                    spec,
+                    effective_start=effective_start,
+                    effective_end=effective_end,
+                    started_at=started_at,
+                    watermark_before=watermark_before,
+                    correlation_id=corr,
+                    idempotency_key=idempotency_key,
+                    reason_code="circuit_open",
+                    message=alert.message,
+                    retry_after=circuit_open_until,
+                    alert=alert,
+                )
+            )
+
         try:
             provider = self._provider_for(spec.provider_id)
             result = provider.fetch_and_ingest(ingestion_time=effective_end, correlation_id=corr)
@@ -157,26 +247,78 @@ class ExternalFetchScheduler:
                 message=f"latest provider observation {observed_at.isoformat()}",
             )
         except Exception as exc:
-            run = ExternalFetchRun(
-                job_id=f"external-fetch:{spec.provider_id}:blocked:{effective_end.strftime('%Y%m%d%H%M%S')}",
+            failures, circuit_until = self.state_store.record_failure(
+                spec.provider_id,
+                at=effective_end,
+                policy=self.resilience_policy,
+            )
+            reason_code = _provider_failure_code(exc)
+            retry_after = circuit_until or (
+                effective_end + self.resilience_policy.backoff_base * max(1, failures)
+            )
+            alert = _alert(
                 provider_id=spec.provider_id,
-                schedule_id=spec.schedule_id,
-                idempotency_key=idempotency_key,
-                status="FAILED",
-                data_status="BLOCKED",
-                window_start=effective_start,
-                window_end=effective_end,
-                started_at=started_at,
-                completed_at=effective_end,
-                source_snapshot_ids=(),
-                raw_snapshot_id="",
-                canonical_snapshot_id="",
-                last_success_watermark_before=watermark_before,
-                last_success_watermark_after=watermark_before,
+                reason_code=reason_code,
+                occurred_at=effective_end,
                 correlation_id=corr,
-                message=f"{type(exc).__name__}: {exc}",
+                message=(
+                    f"{type(exc).__name__}: {exc}; consecutive_failures={failures}; "
+                    f"retry_after={retry_after.isoformat()}"
+                ),
+            )
+            run = self._blocked_run(
+                spec,
+                effective_start=effective_start,
+                effective_end=effective_end,
+                started_at=started_at,
+                watermark_before=watermark_before,
+                correlation_id=corr,
+                idempotency_key=idempotency_key,
+                reason_code=reason_code,
+                message=alert.message,
+                retry_after=retry_after,
+                alert=alert,
             )
         return self.state_store.save_run(run)
+
+    def _blocked_run(
+        self,
+        spec: ExternalFetchJobSpec,
+        *,
+        effective_start: datetime,
+        effective_end: datetime,
+        started_at: datetime,
+        watermark_before: datetime | None,
+        correlation_id: str,
+        idempotency_key: str,
+        reason_code: str,
+        message: str,
+        retry_after: datetime,
+        alert: ExternalFetchAlert,
+    ) -> ExternalFetchRun:
+        del reason_code
+        return ExternalFetchRun(
+            job_id=f"external-fetch:{spec.provider_id}:blocked:{effective_end.strftime('%Y%m%d%H%M%S')}",
+            provider_id=spec.provider_id,
+            schedule_id=spec.schedule_id,
+            idempotency_key=idempotency_key,
+            status="FAILED",
+            data_status="BLOCKED",
+            window_start=effective_start,
+            window_end=effective_end,
+            started_at=started_at,
+            completed_at=effective_end,
+            source_snapshot_ids=(),
+            raw_snapshot_id="",
+            canonical_snapshot_id="",
+            last_success_watermark_before=watermark_before,
+            last_success_watermark_after=watermark_before,
+            correlation_id=correlation_id,
+            message=message,
+            retry_after=retry_after,
+            alerts=(alert,),
+            audit_events=(alert,),
+        )
 
     def backfill(
         self,
@@ -235,6 +377,42 @@ def _idempotency_key(spec: ExternalFetchJobSpec, window_start: datetime, window_
     return f"{spec.provider_id}:{spec.schedule_id}:{window_start.isoformat()}:{window_end.isoformat()}"
 
 
+def _provider_failure_code(exc: Exception) -> str:
+    code = str(getattr(exc, "code", "") or "").lower()
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    if "rate" in code or "quota" in code or "rate" in name or "quota" in message:
+        return "rate_limited"
+    if "unauthorized" in code or "auth" in name or "401" in message or "403" in message:
+        return "unauthorized"
+    if "timeout" in code or "timeout" in name or "timed out" in message:
+        return "timeout"
+    if "server" in code or "5xx" in message:
+        return "server_error"
+    return "provider_failure"
+
+
+def _alert(
+    *,
+    provider_id: str,
+    reason_code: str,
+    occurred_at: datetime,
+    correlation_id: str,
+    message: str,
+) -> ExternalFetchAlert:
+    severity = "P1" if reason_code in {"rate_limited", "circuit_open"} else "P2"
+    return ExternalFetchAlert(
+        event_id=f"external-fetch-alert:{provider_id}:{reason_code}:{correlation_id}",
+        event_type="external_data.provider_degraded.v1",
+        provider_id=provider_id,
+        severity=severity,
+        reason_code=reason_code,
+        occurred_at=occurred_at,
+        correlation_id=correlation_id,
+        message=message,
+    )
+
+
 def _latest_observed_at(records: Iterable[Mapping[str, Any]]) -> datetime | None:
     timestamps = tuple(
         timestamp
@@ -266,6 +444,8 @@ def _ensure_utc(value: datetime) -> datetime:
 
 __all__ = [
     "ExternalFetchJobSpec",
+    "ExternalFetchAlert",
+    "ExternalFetchResiliencePolicy",
     "ExternalFetchRun",
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
