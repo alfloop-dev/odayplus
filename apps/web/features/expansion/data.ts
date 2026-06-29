@@ -115,7 +115,7 @@ export const heatZones: HeatZone[] = [
   {
     id: "hz-1049",
     district: "台北市信義區",
-    h3: "8930e1d8b0fffff",
+    h3: "894ba0a4e23ffff",
     centroid: [121.5638, 25.033],
     score: 91,
     confidence: 0.86,
@@ -130,7 +130,7 @@ export const heatZones: HeatZone[] = [
   {
     id: "hz-0881",
     district: "新北市板橋區",
-    h3: "8930e1d9157ffff",
+    h3: "894ba0a5413ffff",
     centroid: [121.4629, 25.0116],
     score: 84,
     confidence: 0.74,
@@ -145,7 +145,7 @@ export const heatZones: HeatZone[] = [
   {
     id: "hz-0773",
     district: "桃園市中壢區",
-    h3: "8930e36a237ffff",
+    h3: "894ba0b817bffff",
     centroid: [121.2248, 24.9566],
     score: 69,
     confidence: 0.62,
