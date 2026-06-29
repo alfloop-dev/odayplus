@@ -76,6 +76,9 @@ class ExternalFetchRun:
     source_snapshot_ids: tuple[str, ...]
     raw_snapshot_id: str
     canonical_snapshot_id: str
+    source_snapshot_id: str
+    provider_observed_at: datetime | None
+    ingested_at: datetime | None
     last_success_watermark_before: datetime | None
     last_success_watermark_after: datetime | None
     correlation_id: str
@@ -99,6 +102,9 @@ class ExternalFetchRun:
             "source_snapshot_ids": list(self.source_snapshot_ids),
             "raw_snapshot_id": self.raw_snapshot_id,
             "canonical_snapshot_id": self.canonical_snapshot_id,
+            "source_snapshot_id": self.source_snapshot_id,
+            "provider_observed_at": self.provider_observed_at.isoformat() if self.provider_observed_at else None,
+            "ingested_at": self.ingested_at.isoformat() if self.ingested_at else None,
             "last_success_watermark_before": self.last_success_watermark_before.isoformat()
             if self.last_success_watermark_before
             else None,
@@ -110,6 +116,30 @@ class ExternalFetchRun:
             "retry_after": self.retry_after.isoformat() if self.retry_after else None,
             "alerts": [alert.to_dict() for alert in self.alerts],
             "audit_events": [event.to_dict() for event in self.audit_events],
+        }
+
+
+@dataclass(frozen=True)
+class SourceFreshnessEvidence:
+    provider_id: str
+    source_snapshot_id: str
+    data_status: str
+    provider_observed_at: datetime | None
+    ingested_at: datetime | None
+    freshness_sla_seconds: int
+    correlation_id: str
+    quality_flags: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "source_snapshot_id": self.source_snapshot_id,
+            "data_status": self.data_status,
+            "provider_observed_at": self.provider_observed_at.isoformat() if self.provider_observed_at else None,
+            "ingested_at": self.ingested_at.isoformat() if self.ingested_at else None,
+            "freshness_sla_seconds": self.freshness_sla_seconds,
+            "correlation_id": self.correlation_id,
+            "quality_flags": list(self.quality_flags),
         }
 
 
@@ -241,6 +271,9 @@ class ExternalFetchScheduler:
                 ),
                 raw_snapshot_id=raw_snapshot_id,
                 canonical_snapshot_id=canonical_snapshot_id,
+                source_snapshot_id=raw_snapshot_id,
+                provider_observed_at=observed_at,
+                ingested_at=effective_end,
                 last_success_watermark_before=watermark_before,
                 last_success_watermark_after=effective_end,
                 correlation_id=corr,
@@ -311,6 +344,9 @@ class ExternalFetchScheduler:
             source_snapshot_ids=(),
             raw_snapshot_id="",
             canonical_snapshot_id="",
+            source_snapshot_id="",
+            provider_observed_at=None,
+            ingested_at=effective_end,
             last_success_watermark_before=watermark_before,
             last_success_watermark_after=watermark_before,
             correlation_id=correlation_id,
@@ -371,6 +407,26 @@ def run_external_fetch_backfill(
         freshness_sla=freshness_sla,
     )
     return ExternalFetchScheduler().backfill(spec, start=start, end=end, step=interval)
+
+
+def freshness_evidence_from_run(
+    run: ExternalFetchRun,
+    *,
+    freshness_sla: timedelta,
+) -> SourceFreshnessEvidence:
+    quality_flags: list[str] = []
+    if run.data_status in {"STALE", "BLOCKED"}:
+        quality_flags.append(run.data_status.lower())
+    return SourceFreshnessEvidence(
+        provider_id=run.provider_id,
+        source_snapshot_id=run.source_snapshot_id or run.raw_snapshot_id,
+        data_status=run.data_status,
+        provider_observed_at=run.provider_observed_at,
+        ingested_at=run.ingested_at,
+        freshness_sla_seconds=int(freshness_sla.total_seconds()),
+        correlation_id=run.correlation_id,
+        quality_flags=tuple(quality_flags),
+    )
 
 
 def _idempotency_key(spec: ExternalFetchJobSpec, window_start: datetime, window_end: datetime) -> str:
@@ -449,5 +505,7 @@ __all__ = [
     "ExternalFetchRun",
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
+    "SourceFreshnessEvidence",
+    "freshness_evidence_from_run",
     "run_external_fetch_backfill",
 ]

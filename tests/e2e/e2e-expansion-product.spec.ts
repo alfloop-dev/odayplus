@@ -14,6 +14,15 @@ test.setTimeout(90_000);
 test("E2E-PV-005 Expansion product flow writes API state and verifies map/list/evidence/final decision", async ({ page }, testInfo) => {
   const api = await playwrightRequest.newContext({ extraHTTPHeaders: headers });
 
+  const freshness = await api.get(`${API_BASE_URL}/external-data/freshness`);
+  expect(freshness.status()).toBe(200);
+  const freshnessPayload = await freshness.json();
+  expect(freshnessPayload.freshness[0]).toMatchObject({
+    data_status: "FRESH",
+    source_snapshot_id: "snap-expansion-20260628-0100",
+    correlation_id: CORRELATION_ID,
+  });
+
   const heatzone = await api.post(`${API_BASE_URL}/heatzones/score-jobs`, {
     data: {
       idempotency_key: "pv005-heatzone-score",

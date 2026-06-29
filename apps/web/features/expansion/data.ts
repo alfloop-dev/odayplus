@@ -106,9 +106,12 @@ export type SiteScoreReport = {
 export const freshness = {
   status: "FRESH" as DataStatus,
   updatedAt: "2026-06-28 09:12",
+  providerObservedAt: "2026-06-28T09:00:00Z",
+  ingestedAt: "2026-06-28T09:12:00Z",
   modelVersion: "hz-score-v2.1.0",
   featureSnapshotTime: "2026-06-28T01:00:00Z",
   sourceSnapshotId: "snap-expansion-20260628-0100",
+  correlationId: "corr-expansion-freshness-001",
 };
 
 export const heatZones: HeatZone[] = [

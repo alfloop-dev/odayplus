@@ -71,3 +71,20 @@ def test_job_lookup_and_openapi_contract() -> None:
     assert "/jobs" in paths
     assert "/jobs/{job_id}" in paths
     assert "/audit/events" in paths
+
+
+def test_external_data_freshness_api_exposes_lineage_and_correlation() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/external-data/freshness", headers={"x-correlation-id": "corr-fresh-api"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["correlation_id"] == "corr-fresh-api"
+    freshness = body["freshness"][0]
+    assert freshness["provider_id"] == "listing.partner_feed"
+    assert freshness["data_status"] == "FRESH"
+    assert freshness["source_snapshot_id"] == "snap-expansion-20260628-0100"
+    assert freshness["provider_observed_at"] == "2026-06-28T09:00:00+00:00"
+    assert freshness["ingested_at"] == "2026-06-28T09:12:00+00:00"
+    assert freshness["correlation_id"] == "corr-fresh-api"
