@@ -8,6 +8,7 @@ the matrix still claims product-grade acceptance.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,10 +19,11 @@ GO_NO_GO = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
 READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
-CURRENT_RELEASE_CANDIDATE = "dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa"
+HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
 STALE_RELEASE_REFS = (
     "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
     "dev@d9d637a351cdacfa98184a91b64a403098aabfa6",
+    "dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa",
     "PR #80",
 )
 
@@ -170,7 +172,7 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
     assert "ODP-PV-008" in audit_text
 
 
-def test_release_evidence_documents_track_current_candidate_and_xcut_prs() -> None:
+def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -> None:
     evidence_docs = [
         FLEET_DISPATCH,
         COMPLETION_AUDIT,
@@ -180,10 +182,13 @@ def test_release_evidence_documents_track_current_candidate_and_xcut_prs() -> No
 
     for evidence_doc in evidence_docs:
         text = evidence_doc.read_text(encoding="utf-8")
-        assert CURRENT_RELEASE_CANDIDATE in text, evidence_doc
+        assert "PR #82" in text, evidence_doc
+        assert "headRefOid" in text, evidence_doc
+        assert "attached checks" in text, evidence_doc
+        assert not HARDCODED_DEV_RELEASE_REF.search(text), evidence_doc
         for stale_ref in STALE_RELEASE_REFS:
             assert stale_ref not in text, f"{evidence_doc} still cites stale release ref {stale_ref}"
-        for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90"):
+        for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90", "PR #91"):
             assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
 
 

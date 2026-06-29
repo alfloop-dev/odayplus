@@ -57,14 +57,16 @@ runtime code, canonical architecture policy, task ownership, or release status.
 
 Updated: 2026-06-29
 Source matrix: `docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md`
-Release candidate carrying this addendum: `dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa`
+Release target carrying this addendum: draft release PR #82 head commit; use
+GitHub PR #82 `headRefOid` and attached checks as the authoritative release
+candidate.
 
 This addendum turns the completed UXD specifications and execution matrix into
 durable frontend implementation lanes. It complements the runtime `ai-status`
 assignments and keeps the fleet handoff reviewable in repository evidence.
 Shared frontend contract evidence is current through PR #87, PR #88, PR #89,
-and PR #90, which added domain type contracts, `packages/ui-domain`,
-`packages/ui`, and this evidence refresh.
+PR #90, and PR #91, which added domain type contracts, `packages/ui-domain`,
+`packages/ui`, durable fleet evidence, and release-candidate evidence guards.
 
 ### Frontend Fleet Lanes
 
