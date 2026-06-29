@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
 import { cellToBoundary } from "h3-js";
@@ -25,6 +26,7 @@ type HeatZoneMapProps = {
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
+type PickInfo = { object?: unknown; layer?: { id?: string } | null };
 type LayerKey = "h3" | "listings" | "candidates" | "confidence" | "freshness" | "risk";
 type LayerState = Record<LayerKey, boolean>;
 
@@ -150,6 +152,10 @@ export function HeatZoneMap({
       fitToZones(map, zones);
       map.resize();
     });
+    window.__odpHeatZoneMapProject = (coordinates: [number, number]) => {
+      const projected = map.project(coordinates);
+      return { x: projected.x, y: projected.y };
+    };
 
     const syncDeckView = () => {
       const center = map.getCenter();
@@ -166,6 +172,7 @@ export function HeatZoneMap({
 
     return () => {
       map.off("move", syncDeckView);
+      delete window.__odpHeatZoneMapProject;
       map.remove();
       mapRef.current = null;
     };
@@ -183,6 +190,22 @@ export function HeatZoneMap({
     });
   };
 
+  const handlePick = (info: PickInfo) => {
+    const layerId = info.layer?.id;
+    if (!layerId || !info.object) return;
+    const href = pickHref(layerId, info.object, layers);
+    if (href) window.location.assign(href);
+  };
+
+  const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const href = nearestPickHref(point, { zones, listings, candidates, layers, map });
+    if (href) window.location.assign(href);
+  };
+
   return (
     <section
       aria-label="Interactive HeatZone map"
@@ -198,11 +221,13 @@ export function HeatZoneMap({
         <LayerToggle checked={layers.freshness} label="Freshness" onChange={(checked) => updateLayer("freshness", checked)} />
         <LayerToggle checked={layers.risk} label="Risk" onChange={(checked) => updateLayer("risk", checked)} />
       </div>
-      <div className={styles.mapCanvas} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
+      <div className={styles.mapCanvas} onClickCapture={handleCanvasClick} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
         <DeckGL
           controller={false}
           layers={deckLayers}
-          style={{ pointerEvents: "none" }}
+          onClick={handlePick}
+          pickingRadius={8}
+          style={{ cursor: "crosshair", inset: "0", pointerEvents: "auto", position: "absolute", zIndex: "1" }}
           viewState={viewState}
         >
           <div
@@ -280,7 +305,7 @@ function buildDeckLayers({
       getLineWidth: (feature) => feature.properties.id === selectedZoneId ? 5 : 2,
       lineWidthMinPixels: 1,
       lineWidthMaxPixels: 6,
-      pickable: false,
+      pickable: true,
     }),
     new GeoJsonLayer<ZoneFeature["properties"]>({
       id: "odp-heatzone-confidence",
@@ -315,7 +340,7 @@ function buildDeckLayers({
       lineWidthMinPixels: 1,
       stroked: true,
       filled: true,
-      pickable: false,
+      pickable: true,
     }),
     new ScatterplotLayer<CandidateSite>({
       id: "odp-candidate-sites",
@@ -329,7 +354,7 @@ function buildDeckLayers({
       lineWidthMinPixels: 1,
       stroked: true,
       filled: true,
-      pickable: false,
+      pickable: true,
     }),
     new TextLayer<HeatZone>({
       id: "odp-heatzone-labels",
@@ -379,6 +404,86 @@ function riskStroke(zone: HeatZone): [number, number, number, number] {
   if (zone.state === "UNDER_REALIZED") return [183, 121, 31, 230];
   if (zone.state === "SATURATED") return [113, 128, 150, 210];
   return [47, 133, 90, 210];
+}
+
+function pickHref(layerId: string, object: unknown, layers: LayerState): string {
+  if (layerId === "odp-heatzone-h3") {
+    const zone = (object as ZoneFeature).properties;
+    if (!zone?.id) return "";
+    const query = new URLSearchParams({ selected: zone.id, drawer: "zone" });
+    const encodedLayers = encodeLayerState(layers);
+    if (encodedLayers !== encodeLayerState(defaultLayers)) query.set("layers", encodedLayers);
+    return `/w/expansion/heatzone?${query.toString()}`;
+  }
+  if (layerId === "odp-listing-points") {
+    const listing = object as Listing;
+    if (!listing.id) return "";
+    return `/w/expansion/listings?selected=${encodeURIComponent(listing.id)}&drawer=listing`;
+  }
+  if (layerId === "odp-candidate-sites") {
+    const candidate = object as CandidateSite;
+    if (!candidate.id) return "";
+    return `/w/expansion/candidates?selected=${encodeURIComponent(candidate.id)}&drawer=candidate`;
+  }
+  return "";
+}
+
+function nearestPickHref(
+  point: { x: number; y: number },
+  context: {
+    zones: HeatZone[];
+    listings: Listing[];
+    candidates: CandidateSite[];
+    layers: LayerState;
+    map: maplibregl.Map;
+  },
+): string {
+  const { zones, listings, candidates, layers, map } = context;
+  const candidate = layers.candidates
+    ? nearestProjected(candidates, point, map, (item) => item.coordinates, 34)
+    : undefined;
+  if (candidate) return pickHref("odp-candidate-sites", candidate, layers);
+
+  const listing = layers.listings
+    ? nearestProjected(listings, point, map, (item) => item.coordinates, 30)
+    : undefined;
+  if (listing) return pickHref("odp-listing-points", listing, layers);
+
+  const zone = layers.h3
+    ? nearestProjected(zones, point, map, (item) => item.centroid, 90)
+    : undefined;
+  if (zone) {
+    return pickHref(
+      "odp-heatzone-h3",
+      { type: "Feature", properties: zone },
+      layers,
+    );
+  }
+  return "";
+}
+
+function nearestProjected<T>(
+  items: T[],
+  point: { x: number; y: number },
+  map: maplibregl.Map,
+  getCoordinates: (item: T) => [number, number],
+  maxDistance: number,
+): T | undefined {
+  let nearest: { item: T; distance: number } | undefined;
+  for (const item of items) {
+    const projected = map.project(getCoordinates(item));
+    const distance = Math.hypot(projected.x - point.x, projected.y - point.y);
+    if (distance <= maxDistance && (!nearest || distance < nearest.distance)) {
+      nearest = { item, distance };
+    }
+  }
+  return nearest?.item;
+}
+
+declare global {
+  interface Window {
+    __odpHeatZoneMapProject?: (coordinates: [number, number]) => { x: number; y: number };
+  }
 }
 
 function zoneToFeature(zone: HeatZone): ZoneFeature {
