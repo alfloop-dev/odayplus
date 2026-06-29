@@ -1,0 +1,274 @@
+{
+  "release_target": {
+    "pr": 82,
+    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "must_not_hardcode_dev_hash": true
+  },
+  "status": "open_execution_dispatch",
+  "updated": "2026-06-29",
+  "scope_boundaries": {
+    "external_data_sources": {
+      "current_proof": "deterministic fixtures, source-stub, connector contracts",
+      "live_claim_requires": [
+        "provider registry",
+        "credential or OAuth wiring",
+        "live adapters",
+        "scheduled fetch",
+        "quota and rate-limit handling",
+        "freshness and data-quality gate",
+        "licensing and allowed-use gate",
+        "product E2E in live-provider mode"
+      ]
+    },
+    "maps": {
+      "current_proof": "deterministic local MapLibre/deck/H3 E2E and canvas proof",
+      "live_claim_requires": [
+        "live tile and geocoder boundary gate",
+        "layer toggle URL persistence",
+        "direct map picking",
+        "semantic deck pixel checks",
+        "keyboard accessibility",
+        "map resilience states",
+        "tooltip and evidence detail"
+      ]
+    },
+    "remote_staging": {
+      "current_proof": "deterministic deploy, health, backup, restore, rollback evidence",
+      "live_claim_requires": [
+        "remote staging host/url/secret configuration",
+        "remote staging drill",
+        "version proof matching PR #82 headRefOid"
+      ]
+    }
+  },
+  "dispatch_lanes": [
+    {
+      "lane": "External provider foundation",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "aliases": ["ODP-EXT-001", "ODP-EXT-002", "ODP-EXT-003"]
+    },
+    {
+      "lane": "External source operations",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "aliases": ["ODP-EXT-004", "ODP-EXT-005", "ODP-EXT-006", "ODP-EXT-007", "ODP-EXT-008"]
+    },
+    {
+      "lane": "Live map provider gate",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "aliases": ["ODP-MAP-E2E-001", "ODP-MAP-E2E-002", "ODP-MAP-E2E-003", "ODP-MAP-E2E-004"]
+    },
+    {
+      "lane": "Map accessibility and resilience",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "aliases": ["ODP-MAP-A11Y-001", "ODP-MAP-E2E-005", "ODP-MAP-E2E-006"]
+    },
+    {
+      "lane": "Remote staging rollout",
+      "owner_lane": "platform / deployment",
+      "reviewer_lane": "operations / product validation",
+      "aliases": ["ODP-PV-STAGE-001", "ODP-PV-STAGE-002"]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "ODP-EXT-001",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "objective": "Provider registry and secrets for listing, POI, geocode, admin boundary, and competitor/manual sources",
+      "implementation_evidence": ["secret names", "auth modes", "startup validation", "provider class metadata", "no committed secrets"],
+      "verification_evidence": ["missing credentials fail closed", "expired or unauthorized credentials include correlation id"]
+    },
+    {
+      "id": "ODP-EXT-002",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "objective": "Live listing feed adapter",
+      "implementation_evidence": ["authenticated provider client", "raw landing snapshot", "idempotency key", "canonical transform", "quarantine path"],
+      "verification_evidence": ["success contract test", "duplicate contract test", "malformed payload contract test", "unauthorized contract test", "timeout contract test", "fixture-compatible replay"]
+    },
+    {
+      "id": "ODP-EXT-003",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "integration / source ingestion",
+      "reviewer_lane": "governance / product validation",
+      "objective": "Live geocoder adapter",
+      "implementation_evidence": ["credential handling", "geocode confidence mapping", "provider request id", "provider observed time", "retry budget"],
+      "verification_evidence": ["recorded response success test", "low confidence test", "rate-limit retry test", "timeout test", "unauthorized test"]
+    },
+    {
+      "id": "ODP-EXT-004",
+      "parent": "ODP-PV-LIVE-SRC-002",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "objective": "Scheduled external fetch worker",
+      "implementation_evidence": ["scheduler/job definition", "last-success watermark", "backfill command", "durable source snapshot ids"],
+      "verification_evidence": ["idempotent replay test", "stale-source clock E2E", "STALE or BLOCKED UI/data status"]
+    },
+    {
+      "id": "ODP-EXT-005",
+      "parent": "ODP-PV-LIVE-SRC-003",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "objective": "Quota and rate-limit resilience",
+      "implementation_evidence": ["401/403/429/5xx/timeout handling", "backoff policy", "circuit breaker", "alert/audit event"],
+      "verification_evidence": ["quota exhaustion simulation", "rate-limit simulation", "clear stale/blocked degraded state"]
+    },
+    {
+      "id": "ODP-EXT-006",
+      "parent": "ODP-PV-LIVE-SRC-002",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "objective": "Freshness and data-quality gate",
+      "implementation_evidence": ["per-source freshness SLA", "provider observed time", "ingestion time", "source snapshot id", "correlation id"],
+      "verification_evidence": ["API freshness state E2E", "UI freshness state E2E", "source lineage appears in evidence"]
+    },
+    {
+      "id": "ODP-EXT-007",
+      "parent": "ODP-PV-LIVE-SRC-003",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "objective": "Licensing and allowed-use gate",
+      "implementation_evidence": ["license metadata", "attribution", "expiry", "downstream-use flags", "export restrictions"],
+      "verification_evidence": ["license-blocked provider quarantine", "production mode cannot use blocked provider"]
+    },
+    {
+      "id": "ODP-EXT-008",
+      "parent": "ODP-PV-LIVE-SRC-001",
+      "status": "open",
+      "scope_boundary": "external_data_sources",
+      "owner_lane": "data platform / source ingestion",
+      "reviewer_lane": "product validation / governance",
+      "objective": "External source product E2E",
+      "implementation_evidence": ["provider-mock service", "auth scenario", "quota scenario", "freshness scenario", "license scenario", "persisted lineage"],
+      "verification_evidence": ["live-provider mode product E2E", "CI fixture mode remains default"]
+    },
+    {
+      "id": "ODP-MAP-E2E-001",
+      "parent": "ODP-PV-LIVE-MAP-001",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "objective": "Live tile/geocoder boundary gate",
+      "implementation_evidence": ["MAP_TILE_URL or equivalent", "geocoder configuration", "source attribution", "terms display", "list fallback"],
+      "verification_evidence": ["staging tile/geocoder smoke", "tile outage E2E", "geocoder outage E2E", "list/ranking/detail still usable"]
+    },
+    {
+      "id": "ODP-MAP-E2E-002",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "objective": "Layer toggle URL persistence",
+      "implementation_evidence": ["H3 layer state", "listing layer state", "candidate layer state", "confidence layer state", "freshness layer state", "risk layer state"],
+      "verification_evidence": ["toggle E2E", "reload restore E2E", "share-state E2E"]
+    },
+    {
+      "id": "ODP-MAP-E2E-003",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "objective": "Direct map picking",
+      "implementation_evidence": ["H3 pick handler", "listing pick handler", "candidate pick handler", "shared drawer state with list selection"],
+      "verification_evidence": ["direct map pick E2E", "drawer identity proof", "selected state proof", "list fallback alignment"]
+    },
+    {
+      "id": "ODP-MAP-E2E-004",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "maps / frontend infrastructure",
+      "reviewer_lane": "frontend accessibility / product validation",
+      "objective": "Deck pixel content proof",
+      "implementation_evidence": ["H3 polygon pixel check", "listing point pixel check", "candidate point pixel check", "selected highlight pixel check", "confidence/stale pattern check"],
+      "verification_evidence": ["E2E fails when rendered deck layer state stops changing", "not only canvas nonblank"]
+    },
+    {
+      "id": "ODP-MAP-A11Y-001",
+      "parent": "ODP-PV-LIVE-MAP-002",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "objective": "Keyboard map/list/drawer accessibility",
+      "implementation_evidence": ["keyboard layer controls", "list fallback selection", "drawer open/close", "focus return", "focus-visible styling"],
+      "verification_evidence": ["Tab/Enter/Escape E2E", "axe scan for HeatZone map route"]
+    },
+    {
+      "id": "ODP-MAP-E2E-005",
+      "parent": "ODP-PV-LIVE-MAP-002",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "objective": "Map state resilience",
+      "implementation_evidence": ["loading state", "empty state", "error with correlation id", "partial failed layer", "no-geometry fallback"],
+      "verification_evidence": ["map failure E2E", "ranking/list/detail workflow remains usable"]
+    },
+    {
+      "id": "ODP-MAP-E2E-006",
+      "parent": "ODP-PV-LIVE-MAP-003",
+      "status": "open",
+      "scope_boundary": "maps",
+      "owner_lane": "frontend accessibility / maps",
+      "reviewer_lane": "product validation",
+      "objective": "Tooltip and evidence detail",
+      "implementation_evidence": ["hover tooltip", "keyboard reachable tooltip", "score/state/confidence/warnings/freshness/model version fields"],
+      "verification_evidence": ["tooltip/evidence E2E", "accessible fallback text"]
+    },
+    {
+      "id": "ODP-PV-STAGE-001",
+      "parent": "ODP-PV-STAGE-001",
+      "status": "open",
+      "scope_boundary": "remote_staging",
+      "owner_lane": "platform / deployment",
+      "reviewer_lane": "operations / product validation",
+      "objective": "Remote staging configuration",
+      "implementation_evidence": ["remote staging host/url/secret configuration", "documented environment variables", "secret owner", "health endpoint", "version endpoint"],
+      "verification_evidence": ["staging smoke check", "version matches PR #82 headRefOid"]
+    },
+    {
+      "id": "ODP-PV-STAGE-002",
+      "parent": "ODP-PV-STAGE-002",
+      "status": "open",
+      "scope_boundary": "remote_staging",
+      "owner_lane": "platform / deployment",
+      "reviewer_lane": "operations / product validation",
+      "objective": "Remote staging drill",
+      "implementation_evidence": ["staging runbook log", "backup/restore evidence", "rollback result", "correlation id"],
+      "verification_evidence": ["product E2E smoke against staging", "backup/restore/rollback command against staging or approved equivalent"]
+    }
+  ],
+  "completion_rules": [
+    "document-only PRs must not close these tasks",
+    "deterministic fixture/source-stub tests must remain CI defaults",
+    "live-provider proof must be reported separately from deterministic PR #82 proof",
+    "live-map proof must be reported separately from deterministic PR #82 proof",
+    "remote-staging proof must be reported separately from deterministic PR #82 proof",
+    "provider secrets must never be committed",
+    "release evidence must use PR #82 headRefOid, not a hardcoded dev hash"
+  ]
+}

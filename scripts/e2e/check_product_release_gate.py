@@ -29,6 +29,7 @@ REQUIRED_FILES = {
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
     "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
+    "product grade e2e fleet dispatch packet": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json",
     "listing source fixture": "tests/fixtures/source_data/external/listing_raw_snapshot.valid.json",
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
@@ -96,6 +97,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"closeout queue check failed: {output}")
+
+    fleet_dispatch_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if fleet_dispatch_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (fleet_dispatch_check.stdout + fleet_dispatch_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"product-grade fleet dispatch check failed: {output}")
 
     if errors:
         print("Product release gate failed:")
