@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
 MARKDOWN = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
+BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
+BRIEF_INDEX = BRIEF_DIR / "README.md"
 
 EXPECTED_ALIASES = {
     "ODP-EXT-001",
@@ -165,6 +167,17 @@ def render_report(packet: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def brief_path(task_id: str) -> Path:
+    return BRIEF_DIR / f"{task_id}.md"
+
+
+def write_briefs(packet: dict[str, Any]) -> None:
+    BRIEF_DIR.mkdir(parents=True, exist_ok=True)
+    BRIEF_INDEX.write_text(render_report(packet), encoding="utf-8")
+    for task in packet["tasks"]:
+        brief_path(task["id"]).write_text(render_task_brief(packet, task["id"]), encoding="utf-8")
+
+
 def validate_packet(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     markdown_text = MARKDOWN.read_text(encoding="utf-8") if MARKDOWN.exists() else ""
@@ -239,6 +252,12 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             errors.append(f"{task_id} missing from markdown dispatch")
         if task_id not in gap_text:
             errors.append(f"{task_id} missing from gap execution tasks")
+        path = brief_path(str(task_id))
+        expected_brief = render_task_brief(packet, str(task_id))
+        if not path.exists():
+            errors.append(f"{task_id} missing generated fleet brief: {path.relative_to(ROOT)}")
+        elif path.read_text(encoding="utf-8") != expected_brief:
+            errors.append(f"{task_id} generated fleet brief is stale: {path.relative_to(ROOT)}")
 
     completion_rules = packet.get("completion_rules")
     if not non_empty_string_list(completion_rules):
@@ -257,6 +276,12 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             if required_phrase not in joined_rules:
                 errors.append(f"completion_rules missing phrase: {required_phrase}")
 
+    expected_index = render_report(packet)
+    if not BRIEF_INDEX.exists():
+        errors.append(f"missing generated fleet dispatch index: {BRIEF_INDEX.relative_to(ROOT)}")
+    elif BRIEF_INDEX.read_text(encoding="utf-8") != expected_index:
+        errors.append(f"generated fleet dispatch index is stale: {BRIEF_INDEX.relative_to(ROOT)}")
+
     return errors
 
 
@@ -264,6 +289,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="print a fleet dispatch summary report")
     parser.add_argument("--task", help="print a single fleet execution brief by task id")
+    parser.add_argument("--write-briefs", action="store_true", help="write generated fleet brief artifacts")
     return parser.parse_args()
 
 
@@ -275,6 +301,11 @@ def main() -> int:
         return 1
 
     packet = load_packet()
+    if args.write_briefs:
+        write_briefs(packet)
+        print(f"Wrote fleet dispatch briefs to {BRIEF_DIR.relative_to(ROOT)}.")
+        return 0
+
     errors = validate_packet(packet)
     if errors:
         print("Product-grade fleet dispatch validation failed:")
