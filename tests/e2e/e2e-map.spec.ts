@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+test.describe.configure({ mode: "serial" });
+
 test("HeatZone map renders nonblank MapLibre canvas with deck layers and local fallback", async ({ page }) => {
   await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone");
 
@@ -55,6 +57,48 @@ test("HeatZone map layer toggles persist through URL reload and sharing", async 
   await expect(sharedPage.getByTestId("heat-zone-map-status")).toContainText("layers h3,candidates,confidence");
   await sharedPage.close();
 });
+
+test("HeatZone map direct picking opens the same drawer state as list fallback", async ({ page }) => {
+  test.setTimeout(60_000);
+
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone");
+  await waitForMapProjection(page);
+
+  await page.getByRole("checkbox", { name: "Listings" }).uncheck();
+  await page.getByRole("checkbox", { name: "Candidate sites" }).uncheck();
+  await clickMapCoordinate(page, [121.4629, 25.0116]);
+
+  await expect(page).toHaveURL(/selected=hz-0881/);
+  await expect(page.getByTestId("heat-zone-map")).toHaveAttribute("data-selected-zone", "hz-0881");
+  await expect(page.getByTestId("heatzone-row-hz-0881")).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("heatzone-drawer")).toContainText("hz-0881");
+
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,listings,confidence,freshness,risk");
+  await waitForMapProjection(page);
+  await clickMapCoordinate(page, [121.4636, 25.0122]);
+
+  await expect(page).toHaveURL(/\/w\/expansion\/listings\?selected=lst-9002&drawer=listing/);
+  await expect(page.getByTestId("listing-drawer")).toContainText("lst-9002");
+  await expect(page.getByTestId("listing-drawer")).toContainText("duplicate_group dg-77");
+
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,candidates,confidence,freshness,risk");
+  await waitForMapProjection(page);
+  await clickMapCoordinate(page, [121.226, 24.957]);
+
+  await expect(page).toHaveURL(/\/w\/expansion\/candidates\?selected=cs-4109&drawer=candidate/);
+  await expect(page.getByTestId("candidate-drawer")).toContainText("cs-4109");
+  await expect(page.getByTestId("candidate-drawer")).toContainText("FAILED_HARD_RULE");
+});
+
+async function waitForMapProjection(page: import("@playwright/test").Page) {
+  await expect.poll(async () => page.evaluate(() => typeof window.__odpHeatZoneMapProject)).toBe("function");
+}
+
+async function clickMapCoordinate(page: import("@playwright/test").Page, coordinates: [number, number]) {
+  const point = await page.evaluate((coords) => window.__odpHeatZoneMapProject?.(coords), coordinates);
+  if (!point) throw new Error("HeatZone map projection helper is not available");
+  await page.getByTestId("heat-zone-map-canvas").click({ position: point });
+}
 
 async function canvasHasVisiblePixels(page: import("@playwright/test").Page, selector: string) {
   return page.locator(selector).first().evaluate((canvas) => {
