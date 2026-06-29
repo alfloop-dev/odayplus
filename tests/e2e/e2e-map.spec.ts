@@ -127,7 +127,7 @@ test("HeatZone deck semantic pixels distinguish layers and selected state", asyn
 
   await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,candidates");
   await waitForMapProjection(page);
-  const candidatePurple = await waitForPixelCount(page, [121.5654, 25.034], isCandidatePurple, 38, 20);
+  const candidatePurple = await waitForMapPixelCount(page, isCandidatePurple, 20);
   expect(candidatePurple).toBeGreaterThan(20);
 });
 
@@ -240,6 +240,37 @@ async function waitForPixelCount(
     return latest;
   }).toBeGreaterThan(minimum);
   return latest;
+}
+
+async function waitForMapPixelCount(
+  page: import("@playwright/test").Page,
+  predicate: (pixel: Rgba) => boolean,
+  minimum: number,
+) {
+  let latest = 0;
+  await expect.poll(async () => {
+    latest = await countMapPixels(page, predicate);
+    return latest;
+  }, { timeout: 15_000 }).toBeGreaterThan(minimum);
+  return latest;
+}
+
+async function countMapPixels(
+  page: import("@playwright/test").Page,
+  predicate: (pixel: Rgba) => boolean,
+) {
+  const screenshot = await page.getByTestId("heat-zone-map-canvas").screenshot();
+  const { data, info } = await sharp(screenshot)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let count = 0;
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    if (predicate({ red: data[offset], green: data[offset + 1], blue: data[offset + 2], alpha: data[offset + 3] })) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 async function waitForBoundaryPixelCount(

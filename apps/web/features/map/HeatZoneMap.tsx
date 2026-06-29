@@ -31,6 +31,11 @@ type LayerKey = "h3" | "listings" | "candidates" | "confidence" | "freshness" | 
 type LayerState = Record<LayerKey, boolean>;
 
 const layerKeys: LayerKey[] = ["h3", "listings", "candidates", "confidence", "freshness", "risk"];
+const directPickRadius = {
+  candidate: 80,
+  listing: 56,
+  zone: 90,
+};
 const defaultLayers: LayerState = {
   h3: true,
   listings: true,
@@ -440,17 +445,17 @@ function nearestPickHref(
 ): string {
   const { zones, listings, candidates, layers, map } = context;
   const candidate = layers.candidates
-    ? nearestProjected(candidates, point, map, (item) => item.coordinates, 34)
+    ? nearestProjected(candidates, point, map, (item) => item.coordinates, directPickRadius.candidate)
     : undefined;
   if (candidate) return pickHref("odp-candidate-sites", candidate, layers);
 
   const listing = layers.listings
-    ? nearestProjected(listings, point, map, (item) => item.coordinates, 30)
+    ? nearestProjected(listings, point, map, (item) => item.coordinates, directPickRadius.listing)
     : undefined;
   if (listing) return pickHref("odp-listing-points", listing, layers);
 
   const zone = layers.h3
-    ? nearestProjected(zones, point, map, (item) => item.centroid, 90)
+    ? nearestProjected(zones, point, map, (item) => item.centroid, directPickRadius.zone)
     : undefined;
   if (zone) {
     return pickHref(
