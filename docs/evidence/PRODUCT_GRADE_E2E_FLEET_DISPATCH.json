@@ -83,7 +83,10 @@
       "reviewer_lane": "governance / product validation",
       "objective": "Provider registry and secrets for listing, POI, geocode, admin boundary, and competitor/manual sources",
       "implementation_evidence": ["secret names", "auth modes", "startup validation", "provider class metadata", "no committed secrets"],
-      "verification_evidence": ["missing credentials fail closed", "expired or unauthorized credentials include correlation id"]
+      "verification_evidence": ["missing credentials fail closed", "expired or unauthorized credentials include correlation id"],
+      "acceptance_criteria": ["provider classes are registered", "startup validation fails closed without secrets", "release evidence contains no secret values"],
+      "suggested_branch": "task/ODP-EXT-001-provider-registry-secrets",
+      "handoff_artifacts": ["provider registry diff", "secret inventory with names only", "startup validation test output"]
     },
     {
       "id": "ODP-EXT-002",
@@ -94,7 +97,10 @@
       "reviewer_lane": "governance / product validation",
       "objective": "Live listing feed adapter",
       "implementation_evidence": ["authenticated provider client", "raw landing snapshot", "idempotency key", "canonical transform", "quarantine path"],
-      "verification_evidence": ["success contract test", "duplicate contract test", "malformed payload contract test", "unauthorized contract test", "timeout contract test", "fixture-compatible replay"]
+      "verification_evidence": ["success contract test", "duplicate contract test", "malformed payload contract test", "unauthorized contract test", "timeout contract test", "fixture-compatible replay"],
+      "acceptance_criteria": ["listing adapter persists raw and canonical snapshots", "bad records enter quarantine", "fixture replay remains CI default"],
+      "suggested_branch": "task/ODP-EXT-002-live-listing-feed",
+      "handoff_artifacts": ["adapter contract test output", "source snapshot sample", "quarantine event evidence"]
     },
     {
       "id": "ODP-EXT-003",
@@ -105,7 +111,10 @@
       "reviewer_lane": "governance / product validation",
       "objective": "Live geocoder adapter",
       "implementation_evidence": ["credential handling", "geocode confidence mapping", "provider request id", "provider observed time", "retry budget"],
-      "verification_evidence": ["recorded response success test", "low confidence test", "rate-limit retry test", "timeout test", "unauthorized test"]
+      "verification_evidence": ["recorded response success test", "low confidence test", "rate-limit retry test", "timeout test", "unauthorized test"],
+      "acceptance_criteria": ["geocoder outputs confidence and lineage", "rate limits use retry budget", "unauthorized mode fails closed"],
+      "suggested_branch": "task/ODP-EXT-003-live-geocoder",
+      "handoff_artifacts": ["recorded-response fixtures", "geocode contract test output", "confidence mapping evidence"]
     },
     {
       "id": "ODP-EXT-004",
@@ -116,7 +125,10 @@
       "reviewer_lane": "product validation / governance",
       "objective": "Scheduled external fetch worker",
       "implementation_evidence": ["scheduler/job definition", "last-success watermark", "backfill command", "durable source snapshot ids"],
-      "verification_evidence": ["idempotent replay test", "stale-source clock E2E", "STALE or BLOCKED UI/data status"]
+      "verification_evidence": ["idempotent replay test", "stale-source clock E2E", "STALE or BLOCKED UI/data status"],
+      "acceptance_criteria": ["scheduled fetch creates durable batch ids", "backfill is idempotent", "stale sources are visible as STALE or BLOCKED"],
+      "suggested_branch": "task/ODP-EXT-004-scheduled-fetch",
+      "handoff_artifacts": ["scheduler definition", "backfill command output", "freshness E2E evidence"]
     },
     {
       "id": "ODP-EXT-005",
@@ -127,7 +139,10 @@
       "reviewer_lane": "product validation / governance",
       "objective": "Quota and rate-limit resilience",
       "implementation_evidence": ["401/403/429/5xx/timeout handling", "backoff policy", "circuit breaker", "alert/audit event"],
-      "verification_evidence": ["quota exhaustion simulation", "rate-limit simulation", "clear stale/blocked degraded state"]
+      "verification_evidence": ["quota exhaustion simulation", "rate-limit simulation", "clear stale/blocked degraded state"],
+      "acceptance_criteria": ["provider failures do not fabricate freshness", "quota exhaustion emits alert/audit evidence", "degraded mode is explicit"],
+      "suggested_branch": "task/ODP-EXT-005-quota-rate-limit",
+      "handoff_artifacts": ["failure simulation output", "circuit breaker evidence", "alert/audit event sample"]
     },
     {
       "id": "ODP-EXT-006",
@@ -138,7 +153,10 @@
       "reviewer_lane": "product validation / governance",
       "objective": "Freshness and data-quality gate",
       "implementation_evidence": ["per-source freshness SLA", "provider observed time", "ingestion time", "source snapshot id", "correlation id"],
-      "verification_evidence": ["API freshness state E2E", "UI freshness state E2E", "source lineage appears in evidence"]
+      "verification_evidence": ["API freshness state E2E", "UI freshness state E2E", "source lineage appears in evidence"],
+      "acceptance_criteria": ["freshness SLA is source-specific", "API and UI expose the same freshness status", "lineage contains correlation id"],
+      "suggested_branch": "task/ODP-EXT-006-freshness-quality-gate",
+      "handoff_artifacts": ["freshness policy diff", "API/UI E2E output", "lineage evidence sample"]
     },
     {
       "id": "ODP-EXT-007",
@@ -149,7 +167,10 @@
       "reviewer_lane": "product validation / governance",
       "objective": "Licensing and allowed-use gate",
       "implementation_evidence": ["license metadata", "attribution", "expiry", "downstream-use flags", "export restrictions"],
-      "verification_evidence": ["license-blocked provider quarantine", "production mode cannot use blocked provider"]
+      "verification_evidence": ["license-blocked provider quarantine", "production mode cannot use blocked provider"],
+      "acceptance_criteria": ["license metadata controls production use", "blocked providers enter quarantine", "exports respect downstream-use flags"],
+      "suggested_branch": "task/ODP-EXT-007-licensing-gate",
+      "handoff_artifacts": ["license registry diff", "blocked-provider test output", "export restriction evidence"]
     },
     {
       "id": "ODP-EXT-008",
@@ -160,7 +181,10 @@
       "reviewer_lane": "product validation / governance",
       "objective": "External source product E2E",
       "implementation_evidence": ["provider-mock service", "auth scenario", "quota scenario", "freshness scenario", "license scenario", "persisted lineage"],
-      "verification_evidence": ["live-provider mode product E2E", "CI fixture mode remains default"]
+      "verification_evidence": ["live-provider mode product E2E", "CI fixture mode remains default"],
+      "acceptance_criteria": ["provider mock covers auth quota freshness and license scenarios", "live-provider mode has product E2E proof", "default CI still uses deterministic fixtures"],
+      "suggested_branch": "task/ODP-EXT-008-external-source-product-e2e",
+      "handoff_artifacts": ["provider mock service evidence", "product E2E output", "CI fixture mode proof"]
     },
     {
       "id": "ODP-MAP-E2E-001",
@@ -171,7 +195,10 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Live tile/geocoder boundary gate",
       "implementation_evidence": ["MAP_TILE_URL or equivalent", "geocoder configuration", "source attribution", "terms display", "list fallback"],
-      "verification_evidence": ["staging tile/geocoder smoke", "tile outage E2E", "geocoder outage E2E", "list/ranking/detail still usable"]
+      "verification_evidence": ["staging tile/geocoder smoke", "tile outage E2E", "geocoder outage E2E", "list/ranking/detail still usable"],
+      "acceptance_criteria": ["runtime displays attribution and terms", "tile/geocoder outage does not block list workflow", "staging smoke proves configured endpoints"],
+      "suggested_branch": "task/ODP-MAP-E2E-001-live-tile-geocoder",
+      "handoff_artifacts": ["map endpoint config diff", "outage E2E output", "staging smoke evidence"]
     },
     {
       "id": "ODP-MAP-E2E-002",
@@ -182,7 +209,10 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Layer toggle URL persistence",
       "implementation_evidence": ["H3 layer state", "listing layer state", "candidate layer state", "confidence layer state", "freshness layer state", "risk layer state"],
-      "verification_evidence": ["toggle E2E", "reload restore E2E", "share-state E2E"]
+      "verification_evidence": ["toggle E2E", "reload restore E2E", "share-state E2E"],
+      "acceptance_criteria": ["layer toggles update URL or persisted state", "reload restores visible layers", "shared URL preserves layer state"],
+      "suggested_branch": "task/ODP-MAP-E2E-002-layer-url-persistence",
+      "handoff_artifacts": ["toggle E2E output", "reload/share evidence", "URL state examples"]
     },
     {
       "id": "ODP-MAP-E2E-003",
@@ -193,7 +223,10 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Direct map picking",
       "implementation_evidence": ["H3 pick handler", "listing pick handler", "candidate pick handler", "shared drawer state with list selection"],
-      "verification_evidence": ["direct map pick E2E", "drawer identity proof", "selected state proof", "list fallback alignment"]
+      "verification_evidence": ["direct map pick E2E", "drawer identity proof", "selected state proof", "list fallback alignment"],
+      "acceptance_criteria": ["map pick and list click open identical drawer state", "selected map state is visible", "list fallback remains authoritative"],
+      "suggested_branch": "task/ODP-MAP-E2E-003-direct-map-picking",
+      "handoff_artifacts": ["direct pick E2E output", "drawer identity evidence", "list fallback comparison"]
     },
     {
       "id": "ODP-MAP-E2E-004",
@@ -204,7 +237,10 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "objective": "Deck pixel content proof",
       "implementation_evidence": ["H3 polygon pixel check", "listing point pixel check", "candidate point pixel check", "selected highlight pixel check", "confidence/stale pattern check"],
-      "verification_evidence": ["E2E fails when rendered deck layer state stops changing", "not only canvas nonblank"]
+      "verification_evidence": ["E2E fails when rendered deck layer state stops changing", "not only canvas nonblank"],
+      "acceptance_criteria": ["pixel checks prove semantic layers not just nonblank canvas", "selected highlight is distinguishable", "confidence/stale pattern is test-visible"],
+      "suggested_branch": "task/ODP-MAP-E2E-004-deck-pixel-proof",
+      "handoff_artifacts": ["pixel check screenshots", "Playwright output", "negative/failure-mode proof"]
     },
     {
       "id": "ODP-MAP-A11Y-001",
@@ -215,7 +251,10 @@
       "reviewer_lane": "product validation",
       "objective": "Keyboard map/list/drawer accessibility",
       "implementation_evidence": ["keyboard layer controls", "list fallback selection", "drawer open/close", "focus return", "focus-visible styling"],
-      "verification_evidence": ["Tab/Enter/Escape E2E", "axe scan for HeatZone map route"]
+      "verification_evidence": ["Tab/Enter/Escape E2E", "axe scan for HeatZone map route"],
+      "acceptance_criteria": ["HeatZone selection can be completed without pointer input", "focus returns after drawer close", "axe scan passes for map route"],
+      "suggested_branch": "task/ODP-MAP-A11Y-001-keyboard-map",
+      "handoff_artifacts": ["keyboard-only E2E output", "axe report", "focus-order evidence"]
     },
     {
       "id": "ODP-MAP-E2E-005",
@@ -226,7 +265,10 @@
       "reviewer_lane": "product validation",
       "objective": "Map state resilience",
       "implementation_evidence": ["loading state", "empty state", "error with correlation id", "partial failed layer", "no-geometry fallback"],
-      "verification_evidence": ["map failure E2E", "ranking/list/detail workflow remains usable"]
+      "verification_evidence": ["map failure E2E", "ranking/list/detail workflow remains usable"],
+      "acceptance_criteria": ["map loading empty and error states are explicit", "correlation id is visible on errors", "list/detail workflow survives map failure"],
+      "suggested_branch": "task/ODP-MAP-E2E-005-map-resilience",
+      "handoff_artifacts": ["state fixture screenshots", "failure E2E output", "correlation id evidence"]
     },
     {
       "id": "ODP-MAP-E2E-006",
@@ -237,7 +279,10 @@
       "reviewer_lane": "product validation",
       "objective": "Tooltip and evidence detail",
       "implementation_evidence": ["hover tooltip", "keyboard reachable tooltip", "score/state/confidence/warnings/freshness/model version fields"],
-      "verification_evidence": ["tooltip/evidence E2E", "accessible fallback text"]
+      "verification_evidence": ["tooltip/evidence E2E", "accessible fallback text"],
+      "acceptance_criteria": ["tooltip includes score state confidence warnings freshness and version", "tooltip is keyboard reachable", "fallback text exposes same evidence"],
+      "suggested_branch": "task/ODP-MAP-E2E-006-tooltip-evidence",
+      "handoff_artifacts": ["tooltip E2E output", "keyboard tooltip proof", "fallback text evidence"]
     },
     {
       "id": "ODP-PV-STAGE-001",
@@ -248,7 +293,10 @@
       "reviewer_lane": "operations / product validation",
       "objective": "Remote staging configuration",
       "implementation_evidence": ["remote staging host/url/secret configuration", "documented environment variables", "secret owner", "health endpoint", "version endpoint"],
-      "verification_evidence": ["staging smoke check", "version matches PR #82 headRefOid"]
+      "verification_evidence": ["staging smoke check", "version matches PR #82 headRefOid"],
+      "acceptance_criteria": ["staging host and secrets are documented", "health endpoint is reachable", "version endpoint matches PR #82 headRefOid"],
+      "suggested_branch": "task/ODP-PV-STAGE-001-remote-staging-config",
+      "handoff_artifacts": ["staging env inventory", "health/version smoke output", "secret owner record"]
     },
     {
       "id": "ODP-PV-STAGE-002",
@@ -259,7 +307,10 @@
       "reviewer_lane": "operations / product validation",
       "objective": "Remote staging drill",
       "implementation_evidence": ["staging runbook log", "backup/restore evidence", "rollback result", "correlation id"],
-      "verification_evidence": ["product E2E smoke against staging", "backup/restore/rollback command against staging or approved equivalent"]
+      "verification_evidence": ["product E2E smoke against staging", "backup/restore/rollback command against staging or approved equivalent"],
+      "acceptance_criteria": ["staging runbook has timestamped execution log", "backup restore and rollback evidence is linked", "product E2E smoke runs against staging URL"],
+      "suggested_branch": "task/ODP-PV-STAGE-002-remote-staging-drill",
+      "handoff_artifacts": ["staging runbook log", "backup/restore/rollback output", "staging E2E smoke evidence"]
     }
   ],
   "completion_rules": [
