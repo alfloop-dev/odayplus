@@ -3,7 +3,8 @@
 Task: ODP-PV-008  
 Status: release-gate candidate  
 Generated: 2026-06-29  
-Reference verification baseline: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` passed GitHub `CI` and `Deploy Dev`; evidence refresh PR #80 passed GitHub `CI` and `product-e2e-gate` on 2026-06-29.
+Current release candidate: `dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa` carried by draft release PR #82.
+Reference verification baseline: GitHub `ci`, `product-e2e-gate`, `e2e-operational-evidence`, API/web image builds, and `deploy` checks passed on 2026-06-29 after frontend evidence refresh PRs #87, #88, #89, and #90.
 Final release verification must use the GitHub checks attached to the target release commit, because every evidence-only merge creates a newer commit hash.
 
 ## Gate Result
@@ -33,6 +34,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 | Expansion | `tests/e2e/e2e-expansion-product.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, and deterministic API seed | HeatZone/listing/site-score product path, screenshot/trace attachment |
 | Ops, intervention, price, AdLift | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` | generated forecast/intervention/price/adlift payloads | correlation id `corr-pv006-ops-intervention-price-ad`, audit events, screenshot attachment |
 | AVM, NetPlan, Learning Hub, Audit | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` | generated AVM/NetPlan/Learning payloads and model artifact bytes | correlation id `corr-pv007-avm-netplan-learning-audit`, audit evidence export, retained bundle checksum, screenshot attachment |
+| Shared frontend UI contracts | `tests/contract/test_frontend_domain_type_coverage.py`, `tests/contract/test_ui_core_component_exports.py` | TypeScript domain contracts plus `packages/ui-domain` and `packages/ui` scaffolds | PR #87, PR #88, PR #89, and PR #90 evidence refresh protect documented component and domain UI coverage |
 
 ## P0 Scenario Traceability
 

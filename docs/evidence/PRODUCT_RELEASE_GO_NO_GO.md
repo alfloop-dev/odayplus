@@ -5,7 +5,7 @@ Decision status: conditional go for deterministic product E2E and E2E backup/res
 Decision date: 2026-06-29  
 Decision owner: Human/Ops  
 Prepared by: Codex2 manual implementation by Codex
-Reference verification evidence: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` passed GitHub `CI` and `Deploy Dev`; evidence refresh PR #80 passed GitHub `CI` and `product-e2e-gate` on 2026-06-29. Final Human/Ops sign-off must verify the GitHub checks attached to the target release commit.
+Current release candidate: `dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa` carried by draft release PR #82. Reference verification evidence: GitHub `ci`, `product-e2e-gate`, `e2e-operational-evidence`, API/web image builds, and `deploy` checks passed on 2026-06-29 after frontend evidence refresh PRs #87, #88, #89, and #90. Final Human/Ops sign-off must verify the GitHub checks attached to the target release commit before promoting the draft release.
 
 ## Decision
 
@@ -18,6 +18,7 @@ Reference verification evidence: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` 
 | External/source stub gate | passed for deterministic E2E | `tests/fixtures/source_data/external/*.valid.json`, source stub readiness in `product-e2e-env.spec.ts` |
 | Audit evidence gate | passed for deterministic E2E | retained bundle checksum and audit correlations in product specs |
 | Deployment/backup/rollback gate | passed for deterministic E2E reference baseline; must pass on target release commit | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`, `python3 scripts/e2e/verify_deployment_health_backup_rollback.py`, GitHub `Deploy Dev` |
+| Shared frontend contract gate | passed on current release candidate | PR #87 domain type contracts, PR #88 `packages/ui-domain`, PR #89 `packages/ui`, PR #90 evidence refresh, and contract tests under `tests/contract/` |
 
 ## Go Criteria
 
