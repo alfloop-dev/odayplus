@@ -25,9 +25,11 @@ CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
+PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
+GRADE_FLEET_DISPATCH_CHECK = ROOT / "scripts/e2e/check_product_grade_fleet_dispatch.py"
 HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
 STALE_RELEASE_REFS = (
     "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
@@ -323,6 +325,7 @@ def test_product_grade_gap_execution_tasks_are_actionable() -> None:
 def test_product_grade_fleet_dispatch_names_all_live_gap_aliases() -> None:
     gap_text = PRODUCT_GRADE_GAP_TASKS.read_text(encoding="utf-8")
     dispatch_text = PRODUCT_GRADE_FLEET_DISPATCH.read_text(encoding="utf-8")
+    dispatch_packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
 
     assert "PR #82" in dispatch_text
     assert "headRefOid" in dispatch_text
@@ -351,6 +354,7 @@ def test_product_grade_fleet_dispatch_names_all_live_gap_aliases() -> None:
     ):
         assert alias in gap_text
         assert alias in dispatch_text
+        assert alias in {task["id"] for task in dispatch_packet["tasks"]}
 
     for lane in (
         "External provider foundation",
@@ -370,6 +374,50 @@ def test_product_grade_fleet_dispatch_names_all_live_gap_aliases() -> None:
         "staging version matches PR #82 `headRefOid`",
     ):
         assert proof_boundary in dispatch_text
+
+
+def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    checker_text = GRADE_FLEET_DISPATCH_CHECK.read_text(encoding="utf-8")
+    packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
+
+    assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json" in release_gate_text
+    assert "scripts/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
+    assert "Product-grade fleet dispatch checks passed." in checker_text
+
+    assert packet["release_target"]["pr"] == 82
+    assert packet["release_target"]["must_not_hardcode_dev_hash"] is True
+    assert "headRefOid" in packet["release_target"]["authority"]
+
+    expected_boundaries = {"external_data_sources", "maps", "remote_staging"}
+    assert set(packet["scope_boundaries"]) == expected_boundaries
+
+    task_ids = {task["id"] for task in packet["tasks"]}
+    lane_aliases = {
+        alias
+        for lane in packet["dispatch_lanes"]
+        for alias in lane["aliases"]
+    }
+    assert task_ids == lane_aliases
+
+    for task in packet["tasks"]:
+        assert task["status"] == "open"
+        assert task["scope_boundary"] in expected_boundaries
+        assert task["owner_lane"]
+        assert task["reviewer_lane"]
+        assert task["implementation_evidence"]
+        assert task["verification_evidence"]
+
+
+def test_product_grade_fleet_dispatch_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product-grade fleet dispatch checks passed." in result.stdout
 
 
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
