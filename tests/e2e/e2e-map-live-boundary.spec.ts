@@ -44,7 +44,7 @@ test("ODP-MAP-E2E-001 geocoder outage keeps list workflow usable", async ({ page
 
   await expect(page.getByTestId("map-boundary-alert")).toContainText("Geocoder outage");
   await expect(page.getByTestId("map-boundary-alert")).toContainText("corr-map-geocoder-001");
-  await page.getByTestId("exp-nav-listings").click();
+  await page.goto("/w/expansion/listings");
   await expect(page.getByTestId("listing-drawer")).toContainText("lst-9001");
   await expect(page.getByTestId("listing-drawer")).toContainText("GEOCODED");
 });

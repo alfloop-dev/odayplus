@@ -25,7 +25,10 @@ type MapBoundaryConfig = {
   tileFault: boolean;
   geocoderFault: boolean;
   correlationId: string;
+  stateFixture: MapStateFixture;
 };
+
+type MapStateFixture = "normal" | "loading" | "empty" | "error" | "partial" | "no-geometry";
 
 type HeatZoneMapProps = {
   zones: HeatZone[];
@@ -91,16 +94,19 @@ export function HeatZoneMap({
   const boundaryConfig = useMemo(readMapBoundaryConfig, []);
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
+  const visibleZones = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zones;
+  const visibleZoneFeatures = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zoneFeatures;
+  const visibleListings = boundaryConfig.stateFixture === "partial" ? [] : listings;
   const deckLayers = useMemo(
     () => buildDeckLayers({
-      zones,
-      zoneFeatures,
-      listings,
+      zones: visibleZones,
+      zoneFeatures: visibleZoneFeatures,
+      listings: visibleListings,
       candidates,
       selectedZoneId,
       visible: layers,
     }),
-    [candidates, layers, listings, selectedZoneId, zoneFeatures, zones],
+    [candidates, layers, selectedZoneId, visibleListings, visibleZoneFeatures, visibleZones],
   );
 
   useEffect(() => {
@@ -132,7 +138,7 @@ export function HeatZoneMap({
         type: "geojson",
         data: {
           type: "FeatureCollection",
-          features: zoneFeatures,
+          features: visibleZoneFeatures,
         },
       });
       map.addLayer({
@@ -173,7 +179,7 @@ export function HeatZoneMap({
           ],
         },
       });
-      fitToZones(map, zones);
+      fitToZones(map, visibleZones.length ? visibleZones : zones);
       map.resize();
     });
     window.__odpHeatZoneMapProject = (coordinates: [number, number]) => {
@@ -200,7 +206,7 @@ export function HeatZoneMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [boundaryConfig, selectedZoneId, zoneFeatures, zones]);
+  }, [boundaryConfig, selectedZoneId, visibleZoneFeatures, visibleZones, zones]);
 
   useEffect(() => {
     setLayers(readLayerStateFromUrl());
@@ -259,6 +265,13 @@ export function HeatZoneMap({
           <span>List and ranking fallback remain available.</span>
         </div>
       ) : null}
+      {boundaryConfig.stateFixture !== "normal" ? (
+        <div className={styles.statePanel} data-testid="map-state-panel" role="status">
+          <strong>{mapStateTitle(boundaryConfig.stateFixture)}</strong>
+          <span>{mapStateBody(boundaryConfig.stateFixture, boundaryConfig.correlationId)}</span>
+          <span>Ranking, list fallback, and detail drawers remain authoritative.</span>
+        </div>
+      ) : null}
       <div className={styles.mapCanvas} onClickCapture={handleCanvasClick} ref={mapContainerRef} data-testid="heat-zone-map-canvas">
         <DeckGL
           controller={false}
@@ -300,9 +313,11 @@ function readMapBoundaryConfig(): MapBoundaryConfig {
       tileFault: false,
       geocoderFault: false,
       correlationId: "corr-map-boundary-server",
+      stateFixture: "normal",
     };
   }
   const query = new URLSearchParams(window.location.search);
+  const rawState = query.get("mapState") ?? "normal";
   return {
     tileUrl: query.get("mapTileUrl") ?? process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL ?? "",
     geocoderUrl: query.get("geocoderUrl") ?? process.env.NEXT_PUBLIC_ODP_GEOCODER_URL ?? "",
@@ -311,7 +326,36 @@ function readMapBoundaryConfig(): MapBoundaryConfig {
     tileFault: query.get("mapFault") === "tile",
     geocoderFault: query.get("geocoderFault") === "1",
     correlationId: query.get("mapCorrelationId") ?? "corr-map-boundary-local",
+    stateFixture: isMapStateFixture(rawState) ? rawState : "normal",
   };
+}
+
+function isMapStateFixture(value: string): value is MapStateFixture {
+  return ["normal", "loading", "empty", "error", "partial", "no-geometry"].includes(value);
+}
+
+function mapStateTitle(state: MapStateFixture): string {
+  const titles: Record<MapStateFixture, string> = {
+    normal: "Map ready",
+    loading: "Map loading",
+    empty: "No map data",
+    error: "Map error",
+    partial: "Partial map layer failure",
+    "no-geometry": "No geometry fallback",
+  };
+  return titles[state];
+}
+
+function mapStateBody(state: MapStateFixture, correlationId: string): string {
+  const bodies: Record<MapStateFixture, string> = {
+    normal: "Map layers are available.",
+    loading: "Map layers are loading; list fallback is already usable.",
+    empty: "No map layer records matched this state fixture.",
+    error: `Map rendering failed; correlation_id ${correlationId}.`,
+    partial: `Listings layer failed; correlation_id ${correlationId}.`,
+    "no-geometry": `No geometry available for selected records; correlation_id ${correlationId}.`,
+  };
+  return bodies[state];
 }
 
 function LayerToggle({
