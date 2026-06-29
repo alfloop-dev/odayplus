@@ -26,6 +26,7 @@ CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
+PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -454,6 +455,11 @@ def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
     assert "Verification Evidence Required" in brief
     assert "Acceptance Criteria" in brief
     assert "Handoff Artifacts" in brief
+
+    generated_index = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "README.md").read_text(encoding="utf-8")
+    generated_brief = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "ODP-MAP-E2E-003.md").read_text(encoding="utf-8")
+    assert report.strip() == generated_index.strip()
+    assert brief.strip() == generated_brief.strip()
 
 
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
