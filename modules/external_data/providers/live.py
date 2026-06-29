@@ -106,6 +106,10 @@ class ListingProviderTimeoutError(ListingProviderError):
     """Raised when the live provider request times out."""
 
 
+class ListingProviderRateLimitError(ListingProviderError):
+    """Raised when the live provider reports quota or rate-limit exhaustion."""
+
+
 class GeocodeProviderError(RuntimeError):
     """Fail-closed geocode provider error with redacted rendering."""
 
@@ -293,6 +297,20 @@ class HttpListingFeedClient:
                     provider_id=provider.provider_id,
                     correlation_id=correlation_id,
                     code="unauthorized",
+                ) from exc
+            if exc.code == 429:
+                raise ListingProviderRateLimitError(
+                    "live listing provider rate limit reached",
+                    provider_id=provider.provider_id,
+                    correlation_id=correlation_id,
+                    code="rate_limited",
+                ) from exc
+            if 500 <= exc.code <= 599:
+                raise ListingProviderError(
+                    f"live listing provider returned HTTP {exc.code}",
+                    provider_id=provider.provider_id,
+                    correlation_id=correlation_id,
+                    code="server_error",
                 ) from exc
             raise ListingProviderError(
                 f"live listing provider returned HTTP {exc.code}",
@@ -872,6 +890,7 @@ __all__ = [
     "ListingPartnerFeedProvider",
     "ListingProviderAuthError",
     "ListingProviderError",
+    "ListingProviderRateLimitError",
     "ListingProviderTimeoutError",
     "PrimaryGeocodeProvider",
     "normalize_listing_feed_payload",

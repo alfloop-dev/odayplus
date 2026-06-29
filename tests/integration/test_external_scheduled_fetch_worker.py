@@ -7,8 +7,10 @@ from typing import Any
 
 import pytest
 
+from modules.external_data.providers import ListingProviderRateLimitError
 from modules.external_data.workers import (
     ExternalFetchJobSpec,
+    ExternalFetchResiliencePolicy,
     ExternalFetchScheduler,
     InMemoryExternalFetchStateStore,
 )
@@ -20,9 +22,12 @@ class CountingProvider:
     observed_at: str = "2026-06-28T09:00:00Z"
     calls: int = 0
     fail: bool = False
+    exception: Exception | None = None
 
     def fetch_and_ingest(self, *, ingestion_time: datetime | None = None, correlation_id: str | None = None) -> Any:
         self.calls += 1
+        if self.exception is not None:
+            raise self.exception
         if self.fail:
             raise RuntimeError("provider unavailable")
         return SimpleNamespace(
@@ -119,6 +124,66 @@ def test_provider_failure_is_blocked_and_does_not_advance_watermark() -> None:
     assert run.source_snapshot_ids == ()
     assert store.last_success_watermark("listing.partner_feed") is None
     assert "provider unavailable" in run.message
+
+
+def test_rate_limit_failure_emits_alert_audit_and_backoff_without_freshness() -> None:
+    provider = CountingProvider(
+        exception=ListingProviderRateLimitError(
+            "quota exhausted",
+            provider_id="listing.partner_feed",
+            correlation_id="corr-rate",
+            code="rate_limited",
+        )
+    )
+    store = InMemoryExternalFetchStateStore()
+    scheduler = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: provider},
+        resilience_policy=ExternalFetchResiliencePolicy(
+            max_consecutive_failures=3,
+            backoff_base=timedelta(minutes=2),
+        ),
+    )
+    spec = ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing")
+    scheduled_at = datetime(2026, 6, 28, 10, tzinfo=UTC)
+
+    run = scheduler.run_once(spec, scheduled_at=scheduled_at, correlation_id="corr-rate")
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.last_success_watermark_after is None
+    assert run.retry_after == scheduled_at + timedelta(minutes=2)
+    assert run.alerts[0].reason_code == "rate_limited"
+    assert run.alerts[0].severity == "P1"
+    assert run.audit_events[0].event_type == "external_data.provider_degraded.v1"
+    assert "quota exhausted" in run.message
+    assert store.last_success_watermark("listing.partner_feed") is None
+
+
+def test_circuit_breaker_opens_after_consecutive_failures_and_skips_provider_call() -> None:
+    provider = CountingProvider(fail=True)
+    store = InMemoryExternalFetchStateStore()
+    scheduler = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: provider},
+        resilience_policy=ExternalFetchResiliencePolicy(
+            max_consecutive_failures=2,
+            circuit_cooldown=timedelta(minutes=20),
+        ),
+    )
+    spec = ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing")
+
+    first = scheduler.run_once(spec, scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC))
+    second = scheduler.run_once(spec, scheduled_at=datetime(2026, 6, 28, 11, tzinfo=UTC))
+    third = scheduler.run_once(spec, scheduled_at=datetime(2026, 6, 28, 11, 5, tzinfo=UTC))
+
+    assert first.data_status == "BLOCKED"
+    assert second.alerts[0].reason_code == "provider_failure"
+    assert second.retry_after == datetime(2026, 6, 28, 11, 20, tzinfo=UTC)
+    assert third.alerts[0].reason_code == "circuit_open"
+    assert third.retry_after == datetime(2026, 6, 28, 11, 20, tzinfo=UTC)
+    assert provider.calls == 2
+    assert store.last_success_watermark("listing.partner_feed") is None
 
 
 def test_unconfigured_provider_fails_closed_as_blocked() -> None:

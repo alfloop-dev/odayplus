@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import urllib.error
 from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -11,8 +12,11 @@ from modules.external_data.connectors import ExternalProviderConfigError, Extern
 from modules.external_data.connectors.provider_registry import LIVE_MODE_ENV_VAR
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
 from modules.external_data.providers import (
+    HttpListingFeedClient,
     ListingPartnerFeedProvider,
     ListingProviderAuthError,
+    ListingProviderError,
+    ListingProviderRateLimitError,
     ListingProviderTimeoutError,
     record_idempotency_key,
 )
@@ -266,6 +270,52 @@ def test_provider_timeout_from_live_client_fails_closed_without_secret_values() 
         provider.fetch_and_ingest(correlation_id="corr-client-timeout")
 
     assert "timeout" in str(exc_info.value)
+    assert "listing-live-secret" not in str(exc_info.value)
+
+
+def test_provider_rate_limit_from_live_client_fails_closed_without_secret_values() -> None:
+    client = FailingListingFeedClient(
+        ListingProviderRateLimitError(
+            "live listing provider rate limit reached",
+            provider_id="listing.partner_feed",
+            correlation_id="corr-client-rate",
+            code="rate_limited",
+        )
+    )
+    provider = ListingPartnerFeedProvider(
+        client=client,
+        env=_live_env(),
+        geo_pipeline=_geo_pipeline(),
+    )
+
+    with pytest.raises(ListingProviderRateLimitError) as exc_info:
+        provider.fetch_and_ingest(correlation_id="corr-client-rate")
+
+    assert "rate_limited" in str(exc_info.value)
+    assert "listing-live-secret" not in str(exc_info.value)
+
+
+def test_http_listing_client_classifies_5xx_without_secret_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_503(*_args: Any, **_kwargs: Any) -> None:
+        raise urllib.error.HTTPError(
+            url="https://listing.example.test/feed",
+            code=503,
+            msg="unavailable",
+            hdrs={},
+            fp=None,
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_503)
+    provider = ListingPartnerFeedProvider(
+        client=HttpListingFeedClient("https://listing.example.test/feed"),
+        env=_live_env(),
+        geo_pipeline=_geo_pipeline(),
+    )
+
+    with pytest.raises(ListingProviderError) as exc_info:
+        provider.fetch_and_ingest(correlation_id="corr-client-5xx")
+
+    assert exc_info.value.code == "server_error"
     assert "listing-live-secret" not in str(exc_info.value)
 
 
