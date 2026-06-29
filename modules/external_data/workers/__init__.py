@@ -10,6 +10,7 @@ from modules.external_data.workers.scheduled_fetch import (
     SourceFreshnessEvidence,
     freshness_evidence_from_run,
     run_external_fetch_backfill,
+    write_external_fetch_lineage_evidence,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "SourceFreshnessEvidence",
     "freshness_evidence_from_run",
     "run_external_fetch_backfill",
+    "write_external_fetch_lineage_evidence",
 ]

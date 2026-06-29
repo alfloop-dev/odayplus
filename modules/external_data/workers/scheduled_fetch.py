@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 
 from modules.external_data.providers import ListingPartnerFeedProvider
@@ -429,6 +431,15 @@ def freshness_evidence_from_run(
     )
 
 
+def write_external_fetch_lineage_evidence(run: ExternalFetchRun, path: Path | str) -> Path:
+    """Persist an audit-friendly fetch lineage snapshot for product E2E evidence."""
+
+    evidence_path = Path(path)
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(json.dumps(run.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return evidence_path
+
+
 def _idempotency_key(spec: ExternalFetchJobSpec, window_start: datetime, window_end: datetime) -> str:
     return f"{spec.provider_id}:{spec.schedule_id}:{window_start.isoformat()}:{window_end.isoformat()}"
 
@@ -508,4 +519,5 @@ __all__ = [
     "SourceFreshnessEvidence",
     "freshness_evidence_from_run",
     "run_external_fetch_backfill",
+    "write_external_fetch_lineage_evidence",
 ]
