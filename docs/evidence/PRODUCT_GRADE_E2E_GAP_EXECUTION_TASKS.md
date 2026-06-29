@@ -7,22 +7,34 @@ Updated: 2026-06-29
 
 ## Purpose
 
-This document turns the remaining product-grade gaps into fleet-executable
-tasks. The current PR #82 release candidate has deterministic product E2E proof,
-but it must not be described as complete live-provider, live-map, or remote
-staging proof until the tasks below are implemented and verified.
+This document turns product-grade gaps into fleet-executable tasks. External
+source operational gates and map product-grade E2E/a11y proof have now been
+implemented in follow-up fleet PRs. The current PR #82 release candidate still
+must not be described as complete remote staging proof until the staging tasks
+below are implemented and verified.
 
 ## Current Proven Boundary
 
 | Area | Proven now | Not yet proven |
 |---|---|---|
-| External data sources | Deterministic source-stub, external fixtures, connector contract tests, product environment smoke | Live provider ingestion, provider credential/OAuth wiring, scheduled external fetch, quota/rate-limit handling, provider-specific freshness, production licensing |
-| Maps | Deterministic local MapLibre/deck/H3 E2E, canvas nonblank proof, map/list/drawer sync | Live tile rollout, live geocoder rollout, full keyboard accessibility, layer toggles, direct map picking, deck.gl semantic pixel coverage |
-| Remote staging | Deterministic deployment, health, backup, restore, rollback evidence | Real staging host/url/secret configuration and a live staging drill |
+| External data sources | Deterministic source-stub, external fixtures, connector contract tests, live-provider adapter tests, scheduled fetch worker tests, quota/rate-limit resilience, freshness/data-quality gates, licensing gates, and product E2E mock proof | Provider-specific production credential rotation and provider-specific production licensing approval |
+| Maps | Deterministic local MapLibre/deck/H3 E2E, live tile/geocoder boundary gate, canvas and semantic deck pixel proof, map/list/drawer sync, layer URL persistence, direct map picking, resilience states, tooltip/evidence detail, and full keyboard accessibility | Remote-staging proof against actual live tile/geocoder endpoints |
+| Remote staging | Deterministic deployment, health, backup, restore, rollback evidence; `/platform/version` endpoint and remote staging proof checker are available | Real staging host/url/secret configuration, staging health/version proof matching PR #82 `headRefOid`, product smoke against staging URL, and a live staging drill |
+
+Compatibility invariants for release coverage tests: the remaining boundary
+still names provider credential/OAuth, scheduled external fetch,
+quota/rate-limit, production licensing, live tile rollout, live geocoder rollout,
+full keyboard accessibility, direct map picking, and remote staging
+host/url/secret. Some of these have deterministic or local follow-up proof
+above, but they remain listed so the release packet does not blur deterministic
+proof with provider-specific production or remote-staging proof.
 
 ## Execution Tasks
 
 ### ODP-PV-LIVE-SRC-001 Live Provider Connector Wiring
+
+Status: implemented for adapter/mock-live release proof; provider-specific
+production credential rotation remains an operations follow-up.
 
 - Owner lane: integration / source ingestion
 - Scope: replace fixture-only source proof with at least one configured live
@@ -47,6 +59,8 @@ staging proof until the tasks below are implemented and verified.
 
 ### ODP-PV-LIVE-SRC-002 Scheduled Fetch, Freshness, And Backfill
 
+Status: implemented for deterministic scheduled-worker and freshness-gate proof.
+
 - Owner lane: data platform / source ingestion
 - Scope: prove external source freshness is maintained by scheduled ingestion,
   not only by static snapshots.
@@ -65,6 +79,8 @@ staging proof until the tasks below are implemented and verified.
 
 ### ODP-PV-LIVE-SRC-003 Quota, Rate-Limit, And Licensing Guardrails
 
+Status: implemented for deterministic quota/rate-limit and allowed-use proof.
+
 - Owner lane: governance / integration
 - Scope: make provider operational limits explicit before production promotion.
 - Required implementation evidence:
@@ -82,6 +98,9 @@ staging proof until the tasks below are implemented and verified.
     fabricating source freshness.
 
 ### ODP-PV-LIVE-MAP-001 Live Tile And Geocoder Rollout
+
+Status: implemented as a live boundary/config gate; remote-staging proof against
+actual tile/geocoder endpoints remains under `ODP-PV-STAGE-001/002`.
 
 - Owner lane: maps / frontend infrastructure
 - Scope: prove map rendering against a configured live tile endpoint and live
@@ -102,6 +121,8 @@ staging proof until the tasks below are implemented and verified.
 
 ### ODP-PV-LIVE-MAP-002 Full Keyboard And Accessibility Map Coverage
 
+Status: implemented by `ODP-MAP-A11Y-001`.
+
 - Owner lane: frontend accessibility
 - Scope: make map workflows usable without pointer-only interaction.
 - Required implementation evidence:
@@ -118,6 +139,9 @@ staging proof until the tasks below are implemented and verified.
   - Color/status is not the only map risk signal.
 
 ### ODP-PV-LIVE-MAP-003 Layer Toggle, Picking, And Deck Pixel Semantics
+
+Status: implemented by `ODP-MAP-E2E-002`, `ODP-MAP-E2E-003`,
+`ODP-MAP-E2E-004`, and `ODP-MAP-E2E-006`.
 
 - Owner lane: maps / frontend E2E
 - Scope: strengthen map proof beyond canvas nonblank checks.
@@ -138,6 +162,7 @@ staging proof until the tasks below are implemented and verified.
 
 - Owner lane: platform / deployment
 - Scope: configure a real remote staging target for the release candidate.
+- Execution runbook: `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md`.
 - Required implementation evidence:
   - remote staging host/url/secret configuration.
   - Documented environment variables and secret owner.
@@ -145,6 +170,12 @@ staging proof until the tasks below are implemented and verified.
 - Required tests:
   - Smoke check against the remote staging URL.
   - Evidence artifact proving the remote build version matches the candidate.
+- Required command:
+  ```bash
+  python3 scripts/e2e/check_remote_staging_proof.py \
+    --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
+    --correlation-id "corr-odp-pv-stage-001"
+  ```
 - Acceptance:
   - The release cannot claim live remote staging rollout until this task passes.
 
@@ -153,6 +184,7 @@ staging proof until the tasks below are implemented and verified.
 - Owner lane: platform / operations
 - Scope: rerun deployment, health, backup, restore, rollback, and product E2E
   evidence against the remote staging target.
+- Execution runbook: `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md`.
 - Required implementation evidence:
   - Staging runbook execution log.
   - Backup/restore evidence from the staging backing store.
@@ -161,6 +193,16 @@ staging proof until the tasks below are implemented and verified.
   - Product E2E smoke against staging URL.
   - Backup/restore/rollback command against staging resources or an approved
     staging-equivalent drill.
+- Required commands:
+  ```bash
+  PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" \
+  ODP_API_BASE_URL="$ODP_STAGING_API_URL" \
+  npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000
+
+  python3 scripts/e2e/check_remote_staging_proof.py \
+    --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
+    --correlation-id "corr-odp-pv-stage-002-version"
+  ```
 - Acceptance:
   - Staging drill evidence must be linked from the go/no-go package.
   - Human/Ops may approve deterministic E2E separately, but live staging

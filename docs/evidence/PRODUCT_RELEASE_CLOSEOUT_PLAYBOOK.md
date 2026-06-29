@@ -100,14 +100,25 @@ python3 scripts/e2e/check_product_release_gate.py
 
 Human/Ops must also explicitly acknowledge these boundaries:
 
-- External data proof is deterministic source-stub/fixture coverage, not live
-  provider credential/OAuth, scheduled fetch, quota/rate-limit, freshness, or
-  production licensing proof.
-- Map proof is deterministic local MapLibre/deck/H3 coverage, not live tile,
-  geocoder, full keyboard accessibility, layer-toggle, or direct map-picking
-  rollout proof.
+- External data proof now includes deterministic source-stub/fixture coverage,
+  live-provider adapter tests, scheduled fetch worker tests, quota/rate-limit
+  handling, freshness/data-quality gates, licensing gates, and product E2E mock
+  proof. It still does not prove provider-specific production credential
+  rotation or provider-specific production licensing approval.
+- External data proof is deterministic source-stub/fixture coverage plus the
+  mock-live/source operational gates named above; it is not provider-specific
+  production credential proof.
+- Map proof now includes deterministic local MapLibre/deck/H3 coverage, live
+  tile/geocoder boundary checks, layer-toggle persistence, direct map picking,
+  semantic deck pixel checks, resilience states, tooltip/evidence detail, and
+  full keyboard accessibility. It still does not prove remote-staging rollout
+  against actual live tile/geocoder endpoints.
+- Map proof is deterministic local MapLibre/deck/H3 coverage plus the local
+  map follow-up gates named above; it is not remote-staging live map rollout.
 - Remote staging rollout remains conditional until target host/url/secret
-  configuration is provided and verified.
+  configuration is provided and verified with
+  `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` and
+  `python3 scripts/e2e/check_remote_staging_proof.py`.
 
 ## Completion Rule
 
