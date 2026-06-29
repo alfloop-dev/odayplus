@@ -38,6 +38,26 @@ Scheduled external fetch worker
 - stale-source clock E2E
 - STALE or BLOCKED UI/data status
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1
+```
+
+```bash
+uv run pytest tests/e2e/test_external_source_product_e2e.py -k "live_provider_mode_product_e2e" -q
+```
+
+## Blocking Dependencies
+
+- Provider secrets and live credentials are supplied by environment or approved mock service, never committed
+- Deterministic fixture/source-stub mode remains the CI default when live credentials are absent
+- Release evidence distinguishes provider-specific production proof from deterministic or mock-live proof
+
 ## Acceptance Criteria
 
 - scheduled fetch creates durable batch ids

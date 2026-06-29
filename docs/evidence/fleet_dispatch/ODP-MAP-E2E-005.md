@@ -37,6 +37,22 @@ Map state resilience
 - map failure E2E
 - ranking/list/detail workflow remains usable
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+npx playwright test tests/e2e/e2e-map-resilience.spec.ts --project=chromium --retries=1
+```
+
+## Blocking Dependencies
+
+- Playwright Chromium dependencies are installed for local or CI execution
+- Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration
+- Remote-staging live map proof remains separate from deterministic local map proof
+
 ## Acceptance Criteria
 
 - map loading empty and error states are explicit

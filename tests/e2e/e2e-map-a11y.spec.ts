@@ -23,8 +23,10 @@ test("ODP-MAP-A11Y-001 supports keyboard HeatZone selection, layer controls, and
   await expect(page).toHaveURL(/layers=h3%2Ccandidates%2Cconfidence%2Cfreshness%2Crisk/);
   await page.reload();
   await expect(page.getByTestId("heat-zone-map-status")).toContainText("layers h3,candidates,confidence,freshness,risk");
+  await expect(page.getByTestId("heatzone-drawer")).toContainText("SUPPRESSED_LOW_CONFIDENCE");
 
   await lowConfidenceRow.focus();
+  await expect(lowConfidenceRow).toBeFocused();
   await page.keyboard.press("Escape");
 
   await expect(page.getByTestId("heatzone-drawer")).toHaveCount(0);

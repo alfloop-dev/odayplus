@@ -35,6 +35,22 @@ Tooltip and evidence detail
 - tooltip/evidence E2E
 - accessible fallback text
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+npx playwright test tests/e2e/e2e-map-tooltip-evidence.spec.ts --project=chromium --retries=1
+```
+
+## Blocking Dependencies
+
+- Playwright Chromium dependencies are installed for local or CI execution
+- Live tile/geocoder credentials or approved mock endpoints are supplied through environment/query configuration
+- Remote-staging live map proof remains separate from deterministic local map proof
+
 ## Acceptance Criteria
 
 - tooltip includes score state confidence warnings freshness and version
