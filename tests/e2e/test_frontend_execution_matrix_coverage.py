@@ -23,6 +23,7 @@ CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
+CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
 HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
 STALE_RELEASE_REFS = (
     "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
@@ -310,6 +311,17 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
         "remote staging host/url/secret configuration",
     ):
         assert boundary in queue_text
+
+
+def test_release_gate_runs_closeout_queue_checker() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    queue_check_text = CLOSEOUT_QUEUE_CHECK.read_text(encoding="utf-8")
+
+    assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
+    assert "Product closeout queue checks passed." in queue_check_text
+    assert "ai-status.json" in queue_check_text
+    assert "waiting_for_" in queue_check_text
+    assert "waiting_for_review_after_handoff" in CLOSEOUT_QUEUE.read_text(encoding="utf-8")
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
