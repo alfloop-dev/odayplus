@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / "docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md"
+FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 
@@ -80,6 +81,35 @@ FE_TASKS = {
 }
 
 
+ODP_FE_TASKS = {
+    "ODP-FE-R0-001": (("FE-R0-001", "FE-R0-002"), ("tests/e2e/e2e-api-bound-ui.spec.ts",)),
+    "ODP-FE-EXP-001": (
+        ("FE-EXP-001", "FE-EXP-002", "FE-EXP-003"),
+        ("tests/e2e/e2e-map.spec.ts", "tests/e2e/e2e-expansion-product.spec.ts"),
+    ),
+    "ODP-FE-OPS-001": (
+        ("FE-OPS-001", "FE-INT-001"),
+        ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    ),
+    "ODP-FE-PRICE-001": (
+        ("FE-PRICE-001", "FE-AD-001"),
+        ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    ),
+    "ODP-FE-ASSET-001": (
+        ("FE-AVM-001", "FE-NET-001"),
+        ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    ),
+    "ODP-FE-LEARN-001": (
+        ("FE-LEARN-001", "FE-AUDIT-001"),
+        ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    ),
+    "ODP-FE-XCUT-001": (
+        ("FE-XCUT-001", "FE-XCUT-002", "FE-XCUT-003", "FE-XCUT-004", "FE-XCUT-005", "FE-XCUT-006"),
+        ("tests/e2e/test_frontend_execution_matrix_coverage.py",),
+    ),
+}
+
+
 def test_frontend_execution_matrix_names_all_fleet_tasks() -> None:
     matrix_text = MATRIX.read_text(encoding="utf-8")
 
@@ -87,6 +117,19 @@ def test_frontend_execution_matrix_names_all_fleet_tasks() -> None:
         assert task_id in matrix_text
         for keyword in expectation["keywords"]:
             assert keyword in matrix_text
+
+
+def test_product_validation_dispatch_names_odp_frontend_lanes() -> None:
+    dispatch_text = FLEET_DISPATCH.read_text(encoding="utf-8")
+    matrix_text = MATRIX.read_text(encoding="utf-8")
+
+    for odp_task_id, (matrix_task_ids, e2e_specs) in ODP_FE_TASKS.items():
+        assert odp_task_id in dispatch_text
+        for matrix_task_id in matrix_task_ids:
+            assert matrix_task_id in matrix_text
+            assert matrix_task_id in dispatch_text
+        for e2e_spec in e2e_specs:
+            assert e2e_spec in dispatch_text
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
