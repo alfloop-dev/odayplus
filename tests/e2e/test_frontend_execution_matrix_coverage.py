@@ -17,6 +17,7 @@ FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md"
 COMPLETION_AUDIT = ROOT / "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
 GO_NO_GO = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
 READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
+CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
@@ -178,6 +179,7 @@ def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -
         COMPLETION_AUDIT,
         GO_NO_GO,
         READINESS_REPORT,
+        CLOSEOUT_MANIFEST,
     ]
 
     for evidence_doc in evidence_docs:
@@ -190,6 +192,42 @@ def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -
             assert stale_ref not in text, f"{evidence_doc} still cites stale release ref {stale_ref}"
         for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90", "PR #91"):
             assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
+
+
+def test_closeout_manifest_names_remaining_workflow_gates() -> None:
+    manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
+
+    required_tasks = (
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+        "ODP-FE-XCUT-TYPES-001",
+    )
+    for task_id in required_tasks:
+        assert task_id in manifest_text
+
+    for invariant in (
+        "Do not mark the release complete while PR #82 is draft",
+        "Do not claim live external provider integration",
+        "Do not claim live remote staging rollout",
+        "provider credential/OAuth",
+        "scheduled external fetch",
+        "quota/rate-limit",
+        "production licensing",
+        "thin or stale `main` checkout",
+        "scripts/ai_status.py",
+        "Human/Ops",
+        "reviewer status closeout",
+        "owner status closeout",
+    ):
+        assert invariant in manifest_text
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
