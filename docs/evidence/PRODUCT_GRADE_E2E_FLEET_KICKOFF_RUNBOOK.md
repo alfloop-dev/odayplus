@@ -10,6 +10,7 @@
 - Do not claim live-provider, live-map, or remote-staging proof until the relevant task evidence is attached.
 - Keep deterministic fixture/source-stub tests as CI defaults.
 - Use each task's suggested branch and brief file as the handoff contract.
+- Execute any task-specific `execution_commands` before requesting review.
 
 ## Fleet Pickup Sequence
 

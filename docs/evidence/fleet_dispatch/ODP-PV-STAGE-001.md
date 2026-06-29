@@ -33,6 +33,27 @@ Remote staging configuration
 - staging smoke check
 - version matches PR #82 headRefOid
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+export ODP_STAGING_DEPLOY_URL="https://<staging-web-host>"
+export ODP_STAGING_API_URL="https://<staging-api-host>"
+export ODP_STAGING_SECRET_OWNER="<team-or-person>"
+python3 scripts/e2e/check_remote_staging_proof.py \
+  --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
+  --correlation-id "corr-odp-pv-stage-001"
+```
+
+## Blocking Dependencies
+
+- GitHub staging environment variables/secrets are configured outside the repository
+- The deployed API receives ODAY_RELEASE_SHA equal to PR #82 headRefOid or the promoted SHA
+- .github/workflows/deploy-staging.yml is replaced or supplemented by a real staging deployment path
+
 ## Acceptance Criteria
 
 - staging host and secrets are documented

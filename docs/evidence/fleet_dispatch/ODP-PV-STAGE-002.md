@@ -32,6 +32,35 @@ Remote staging drill
 - product E2E smoke against staging
 - backup/restore/rollback command against staging or approved equivalent
 
+## Execution Commands
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+```
+
+```bash
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" \
+ODP_API_BASE_URL="$ODP_STAGING_API_URL" \
+npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000
+```
+
+```bash
+python3 scripts/e2e/verify_deployment_health_backup_rollback.py \
+  --correlation-id "corr-odp-pv-stage-002"
+```
+
+```bash
+python3 scripts/e2e/check_remote_staging_proof.py \
+  --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
+  --correlation-id "corr-odp-pv-stage-002-version"
+```
+
+## Blocking Dependencies
+
+- ODP-PV-STAGE-001 has passed against the same staging target
+- Staging product URL, API URL, and backing store credentials are available without committing secrets
+- Backup/restore/rollback commands target staging or an approved staging-equivalent environment
+
 ## Acceptance Criteria
 
 - staging runbook has timestamped execution log
