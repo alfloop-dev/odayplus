@@ -26,6 +26,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableInterventionRepository,
     DurableLabelRegistry,
     DurableLearningHubRepository,
+    DurableNetPlanRepository,
     DurablePriceOpsRepository,
     DurableSiteScoreRepository,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "DurableJobQueue",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
+    "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
     "PersistenceBundle",

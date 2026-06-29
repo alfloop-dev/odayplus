@@ -48,6 +48,7 @@ npx playwright test \
   tests/e2e/e2e-api-bound-ui.spec.ts \
   tests/e2e/e2e-map.spec.ts \
   tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts \
+  tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts \
   tests/e2e/product-e2e-env.spec.ts \
   --project=chromium
 test_status=$?
