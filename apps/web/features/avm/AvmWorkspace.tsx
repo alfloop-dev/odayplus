@@ -20,6 +20,8 @@ import styles from "./avm.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+const SENSITIVE_PRICE_MASK = "MASKED_BY_PERMISSION";
+
 type AvmWorkspaceProps = {
   view?: AvmRouteKey;
   caseId?: string;
@@ -90,6 +92,18 @@ function liveCasesFallbackMessage(binding: ApiBinding<AvmCase>): string {
     return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
   }
   return "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
+}
+
+function canViewSensitivePrice(c: ValuationCase): boolean {
+  return c.sensitivePricePermission === "visible";
+}
+
+function formatSensitivePrice(c: ValuationCase, field: "reservePrice" | "askingPrice"): string {
+  return canViewSensitivePrice(c) ? c[field].toLocaleString() : SENSITIVE_PRICE_MASK;
+}
+
+function formatReserveAsking(c: ValuationCase): string {
+  return `${formatSensitivePrice(c, "reservePrice")} / ${formatSensitivePrice(c, "askingPrice")}`;
 }
 
 function Header({
@@ -221,7 +235,7 @@ function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams
                   <td>{c.fairPrice.p50.toLocaleString()}</td>
                   <td>
                     <span title="敏感欄位，依權限遮罩">
-                      {c.reservePrice.toLocaleString()} / {c.askingPrice.toLocaleString()}
+                      {formatReserveAsking(c)}
                     </span>
                   </td>
                   <td>
@@ -245,8 +259,7 @@ function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams
               <Metric label="Confidence" value={drawerCase.confidence} />
             </div>
             <p>
-              Reserve / Asking（敏感，依權限遮罩）：{drawerCase.reservePrice.toLocaleString()} /{" "}
-              {drawerCase.askingPrice.toLocaleString()}
+              Reserve / Asking（敏感，依權限遮罩）：{formatReserveAsking(drawerCase)}
             </p>
             <p>Finance approval：{financeApprovalLabel(drawerCase)} · DataRoom：{dataRoomLabel(drawerCase)}</p>
             <p className={styles.auditLine}>correlation_id {drawerCase.correlationId}</p>
@@ -411,9 +424,14 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
     <section className={styles.reportSection} id="valuation" data-testid="valuation-range-chart">
       <h2>Three-Lens Valuation</h2>
       <p>
-        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve {c.reservePrice.toLocaleString()}（P10·0.97）／
-        asking {c.askingPrice.toLocaleString()}（P90·1.05）為敏感欄位，依權限遮罩。
+        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve {formatSensitivePrice(c, "reservePrice")}
+        （P10·0.97）／asking {formatSensitivePrice(c, "askingPrice")}（P90·1.05）為敏感欄位，依權限遮罩。
       </p>
+      {!canViewSensitivePrice(c) ? (
+        <p className={styles.riskNotice} data-testid="avm-sensitive-price-mask-notice">
+          reserve/asking price 欄位目前為 MASKED_BY_PERMISSION；range chart 不渲染 reserve/asking marker。
+        </p>
+      ) : null}
       <div className={styles.rangeChart} role="img" aria-label="估值三鏡 P10/P50/P90 區間比較">
         {c.lenses.map((lens) => (
           <div className={styles.rangeRow} key={lens.lens}>
@@ -424,8 +442,22 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
                 style={{ left: `${pct(lens.p10)}%`, right: `${100 - pct(lens.p90)}%` }}
               />
               <span className={styles.rangeMid} style={{ left: `${pct(lens.p50)}%` }} />
-              <span className={styles.rangeReserve} style={{ left: `${pct(c.reservePrice)}%` }} aria-hidden="true" />
-              <span className={styles.rangeAsking} style={{ left: `${pct(c.askingPrice)}%` }} aria-hidden="true" />
+              {canViewSensitivePrice(c) ? (
+                <>
+                  <span
+                    className={styles.rangeReserve}
+                    data-testid="avm-reserve-marker"
+                    style={{ left: `${pct(c.reservePrice)}%` }}
+                    aria-hidden="true"
+                  />
+                  <span
+                    className={styles.rangeAsking}
+                    data-testid="avm-asking-marker"
+                    style={{ left: `${pct(c.askingPrice)}%` }}
+                    aria-hidden="true"
+                  />
+                </>
+              ) : null}
             </div>
           </div>
         ))}
@@ -495,7 +527,7 @@ function ApprovalPanel({ caseData: c }: { caseData: ValuationCase }) {
         <form>
           <label>
             系統 reserve_price（P10·0.97）
-            <input defaultValue={c.reservePrice.toLocaleString()} readOnly />
+            <input value={formatSensitivePrice(c, "reservePrice")} readOnly aria-label="masked reserve price" />
           </label>
           <label className={styles.checkboxLine}>
             <input type="checkbox" name="reserveOverride" /> reserve override（覆寫須填 reason，標示與原值差）
