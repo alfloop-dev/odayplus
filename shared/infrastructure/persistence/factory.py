@@ -35,6 +35,9 @@ class PersistenceBundle:
     job_queue: Any
     avm_repository: Any
     forecastops_repository: Any
+    netplan_repository: Any
+    learninghub_repository: Any
+    artifact_store: Any
     priceops_repository: Any
     sitescore_repository: Any
     adlift_repository: Any
@@ -48,6 +51,7 @@ class PersistenceBundle:
 
 
 def _memory_bundle() -> PersistenceBundle:
+    from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
@@ -55,6 +59,8 @@ def _memory_bundle() -> PersistenceBundle:
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
     )
+    from modules.learninghub.infrastructure import InMemoryLearningHubRepository
+    from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
@@ -68,6 +74,9 @@ def _memory_bundle() -> PersistenceBundle:
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
+        netplan_repository=InMemoryNetPlanRepository(),
+        learninghub_repository=InMemoryLearningHubRepository(),
+        artifact_store=InMemoryArtifactStore(),
         priceops_repository=InMemoryPriceOpsRepository(),
         sitescore_repository=InMemorySiteScoreRepository(),
         adlift_repository=InMemoryAdLiftRepository(),
@@ -84,10 +93,13 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
         DurableAdLiftRepository,
+        DurableArtifactStore,
         DurableAVMRepository,
         DurableForecastOpsRepository,
         DurableInterventionRepository,
         DurableLabelRegistry,
+        DurableLearningHubRepository,
+        DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableSiteScoreRepository,
     )
@@ -101,6 +113,9 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        netplan_repository=DurableNetPlanRepository(store),
+        learninghub_repository=DurableLearningHubRepository(store),
+        artifact_store=DurableArtifactStore(store),
         priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),

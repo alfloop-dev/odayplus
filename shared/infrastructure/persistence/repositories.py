@@ -33,6 +33,21 @@ from modules.forecastops.domain.forecasting import (
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import DatasetSnapshot
 from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
+from modules.netplan.domain import (
+    ApprovalRecord as NetPlanApprovalRecord,
+)
+from modules.netplan.domain import (
+    ExecutionRecord as NetPlanExecutionRecord,
+)
+from modules.netplan.domain import (
+    NetPlanScenario,
+)
+from modules.netplan.domain import (
+    OutcomeRecord as NetPlanOutcomeRecord,
+)
+from modules.netplan.domain import (
+    ScenarioSolveRecord as NetPlanScenarioSolveRecord,
+)
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
     InterventionTreatmentHandoff,
@@ -521,6 +536,62 @@ class DurableLearningHubRepository:
         return self._store.list_all(self._RELEASES)
 
 
+class DurableNetPlanRepository:
+    """Durable mirror of ``InMemoryNetPlanRepository``."""
+
+    _SCENARIOS = "netplan.scenarios"
+    _SOLVES = "netplan.solves"
+    _APPROVALS = "netplan.approvals"
+    _EXECUTIONS = "netplan.executions"
+    _OUTCOMES = "netplan.outcomes"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def save_scenario(self, scenario: NetPlanScenario) -> NetPlanScenario:
+        self._store.put(self._SCENARIOS, scenario.scenario_id, scenario)
+        return scenario
+
+    def get_scenario(self, scenario_id: str) -> NetPlanScenario | None:
+        return self._store.get(self._SCENARIOS, scenario_id)
+
+    def list_scenarios(self) -> list[NetPlanScenario]:
+        return self._store.list_all(self._SCENARIOS)
+
+    def save_solve(self, solve: NetPlanScenarioSolveRecord) -> NetPlanScenarioSolveRecord:
+        self._store.put(self._SOLVES, solve.scenario_id, solve)
+        return solve
+
+    def get_solve(self, scenario_id: str) -> NetPlanScenarioSolveRecord | None:
+        return self._store.get(self._SOLVES, scenario_id)
+
+    def save_approval(self, approval: NetPlanApprovalRecord) -> NetPlanApprovalRecord:
+        self._store.put(
+            self._APPROVALS,
+            approval.approval_id,
+            approval,
+            group_key=approval.scenario_id,
+        )
+        return approval
+
+    def list_approvals(self, scenario_id: str) -> list[NetPlanApprovalRecord]:
+        return self._store.list_by_group(self._APPROVALS, scenario_id)
+
+    def save_execution(self, execution: NetPlanExecutionRecord) -> NetPlanExecutionRecord:
+        self._store.put(self._EXECUTIONS, execution.scenario_id, execution)
+        return execution
+
+    def get_execution(self, scenario_id: str) -> NetPlanExecutionRecord | None:
+        return self._store.get(self._EXECUTIONS, scenario_id)
+
+    def save_outcome(self, outcome: NetPlanOutcomeRecord) -> NetPlanOutcomeRecord:
+        self._store.put(self._OUTCOMES, outcome.scenario_id, outcome)
+        return outcome
+
+    def get_outcome(self, scenario_id: str) -> NetPlanOutcomeRecord | None:
+        return self._store.get(self._OUTCOMES, scenario_id)
+
+
 class DurableArtifactStore:
     """Durable mirror of ``InMemoryArtifactStore``.
 
@@ -603,6 +674,7 @@ __all__ = [
     "DurableInterventionRepository",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
+    "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
 ]
