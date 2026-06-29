@@ -129,7 +129,7 @@
 }
 
 .evidenceGrid dt {
-  color: var(--odp-color-text-muted);
+  color: var(--odp-color-text-secondary);
   font-weight: var(--odp-font-weight-medium);
 }
 
@@ -153,6 +153,25 @@
 .mapToolbar input {
   width: 16px;
   height: 16px;
+}
+
+.layerKeyboardButton {
+  min-height: 28px;
+  padding: 0 var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+  cursor: pointer;
+}
+
+.layerKeyboardButton:focus-visible,
+.layerKeyboardButton[aria-pressed="true"] {
+  border-color: var(--odp-color-border-focus);
+  color: var(--odp-color-text-primary);
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 2px;
 }
 
 .mapCanvas {
