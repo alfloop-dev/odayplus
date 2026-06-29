@@ -8,6 +8,7 @@ the matrix still claims product-grade acceptance.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -19,6 +20,7 @@ GO_NO_GO = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
 READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
 CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
+CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
@@ -182,6 +184,7 @@ def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -
         READINESS_REPORT,
         CLOSEOUT_MANIFEST,
         CLOSEOUT_PLAYBOOK,
+        CLOSEOUT_QUEUE,
     ]
 
     for evidence_doc in evidence_docs:
@@ -254,6 +257,59 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "Do not mark the active objective complete",
     ):
         assert boundary in playbook_text
+
+
+def test_closeout_queue_is_machine_readable_and_complete() -> None:
+    queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    queue_entries = queue_payload["queue"]
+
+    assert queue_payload["release_target"]["pr"] == 82
+    assert queue_payload["release_target"]["must_not_hardcode_dev_hash"] is True
+    assert "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url" in queue_payload[
+        "global_preflight"
+    ]
+
+    required_task_ids = {
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+        "ODP-FE-XCUT-TYPES-001",
+    }
+    assert required_task_ids <= {entry["task_id"] for entry in queue_entries}
+
+    required_blocking_types = {
+        "human_signoff",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+    }
+    assert required_blocking_types <= {entry["blocking_type"] for entry in queue_entries}
+
+    for entry in queue_entries:
+        assert entry["actor"]
+        assert entry["action_type"]
+        assert entry["allowed_commands"]
+        assert entry["evidence_refs"]
+        for evidence_ref in entry["evidence_refs"]:
+            evidence_path = ROOT / evidence_ref
+            assert evidence_path.exists(), f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
+
+    queue_text = CLOSEOUT_QUEUE.read_text(encoding="utf-8")
+    for boundary in (
+        "provider credential/OAuth wiring",
+        "scheduled external fetch",
+        "quota/rate-limit handling",
+        "live tile rollout",
+        "full keyboard accessibility",
+        "remote staging host/url/secret configuration",
+    ):
+        assert boundary in queue_text
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
