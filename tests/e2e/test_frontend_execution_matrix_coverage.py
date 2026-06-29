@@ -14,8 +14,16 @@ ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / "docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md"
 FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md"
 COMPLETION_AUDIT = ROOT / "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+GO_NO_GO = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
+READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
+CURRENT_RELEASE_CANDIDATE = "dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa"
+STALE_RELEASE_REFS = (
+    "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
+    "dev@d9d637a351cdacfa98184a91b64a403098aabfa6",
+    "PR #80",
+)
 
 
 FE_TASKS = {
@@ -160,6 +168,23 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
     ]:
         assert xcut_evidence in audit_text
     assert "ODP-PV-008" in audit_text
+
+
+def test_release_evidence_documents_track_current_candidate_and_xcut_prs() -> None:
+    evidence_docs = [
+        FLEET_DISPATCH,
+        COMPLETION_AUDIT,
+        GO_NO_GO,
+        READINESS_REPORT,
+    ]
+
+    for evidence_doc in evidence_docs:
+        text = evidence_doc.read_text(encoding="utf-8")
+        assert CURRENT_RELEASE_CANDIDATE in text, evidence_doc
+        for stale_ref in STALE_RELEASE_REFS:
+            assert stale_ref not in text, f"{evidence_doc} still cites stale release ref {stale_ref}"
+        for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90"):
+            assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
 
 
 def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
