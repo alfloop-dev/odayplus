@@ -27,6 +27,7 @@ PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
 PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
+PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
 PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
@@ -383,6 +384,7 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     checker_text = GRADE_FLEET_DISPATCH_CHECK.read_text(encoding="utf-8")
     packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
     queue = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_QUEUE.read_text(encoding="utf-8"))
+    runbook_text = PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json" in release_gate_text
     assert "scripts/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
@@ -405,6 +407,9 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert task_ids == lane_aliases
     assert task_ids == queue_ids
     assert queue["status"] == "ready_for_fleet_pickup"
+    assert "Product-Grade E2E Fleet Kickoff Runbook" in runbook_text
+    assert "Fleet Pickup Sequence" in runbook_text
+    assert "Completion Handback" in runbook_text
 
     for task in packet["tasks"]:
         assert task["status"] == "open"
@@ -416,6 +421,8 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
         assert task["acceptance_criteria"]
         assert task["suggested_branch"].startswith(f"task/{task['id']}")
         assert task["handoff_artifacts"]
+        assert task["id"] in runbook_text
+        assert task["suggested_branch"] in runbook_text
 
     for entry in queue["queue"]:
         assert entry["dispatch_status"] == "ready_for_fleet"
@@ -427,6 +434,7 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
         assert entry["minimum_completion_signal"]["verification_evidence"]
         assert entry["minimum_completion_signal"]["acceptance_criteria"]
         assert entry["minimum_completion_signal"]["handoff_artifacts"]
+        assert entry["dispatch_command"] in runbook_text
 
 
 def test_product_grade_fleet_dispatch_checker_runs() -> None:
