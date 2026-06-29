@@ -148,6 +148,7 @@ else:
         from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.audit import create_audit_router
         from apps.api.app.routes.avm import create_avm_router
+        from apps.api.app.routes.external_data import router as external_data_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.learninghub import create_learninghub_router
@@ -179,6 +180,7 @@ else:
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
+        api.include_router(external_data_router)
         api.include_router(listings_router)
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(

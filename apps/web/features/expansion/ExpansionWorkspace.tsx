@@ -719,6 +719,16 @@ function StatusCard() {
         <Badge label="read-only permission" tone="blue" marker="▣" />
       </div>
       <p>Filter、sort、page、selected entity 與 drawer state 皆以 URL query 還原。</p>
+      <dl className={styles.metaGrid} data-testid="external-freshness-lineage">
+        <dt>source snapshot</dt>
+        <dd className={styles.mono}>{freshness.sourceSnapshotId}</dd>
+        <dt>provider observed</dt>
+        <dd className={styles.mono}>{freshness.providerObservedAt}</dd>
+        <dt>ingested at</dt>
+        <dd className={styles.mono}>{freshness.ingestedAt}</dd>
+        <dt>correlation_id</dt>
+        <dd className={styles.mono}>{freshness.correlationId}</dd>
+      </dl>
     </section>
   );
 }
