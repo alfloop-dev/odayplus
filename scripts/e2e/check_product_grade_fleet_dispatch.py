@@ -21,6 +21,7 @@ GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 BRIEF_INDEX = BRIEF_DIR / "README.md"
 DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
+KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
 
 EXPECTED_ALIASES = {
     "ODP-EXT-001",
@@ -220,6 +221,74 @@ def write_dispatch_queue(packet: dict[str, Any]) -> None:
     )
 
 
+def render_kickoff_runbook(packet: dict[str, Any]) -> str:
+    queue = render_dispatch_queue(packet)
+    entries_by_lane = {
+        lane["lane"]: [
+            entry
+            for entry in queue["queue"]
+            if entry["task_id"] in lane["aliases"]
+        ]
+        for lane in packet["dispatch_lanes"]
+    }
+    lines = [
+        "# Product-Grade E2E Fleet Kickoff Runbook",
+        "",
+        f"- PR authority: #{packet['release_target']['pr']} headRefOid and attached checks",
+        f"- Queue status: {queue['status']}",
+        f"- Updated: {queue['updated']}",
+        "",
+        "## Operator Preflight",
+        "",
+        "- Confirm PR #82 `headRefOid` and attached checks before starting work.",
+        "- Do not claim live-provider, live-map, or remote-staging proof until the relevant task evidence is attached.",
+        "- Keep deterministic fixture/source-stub tests as CI defaults.",
+        "- Use each task's suggested branch and brief file as the handoff contract.",
+        "",
+        "## Fleet Pickup Sequence",
+        "",
+    ]
+    for lane in packet["dispatch_lanes"]:
+        lines.extend(
+            [
+                f"### {lane['lane']}",
+                "",
+                f"- Owner lane: {lane['owner_lane']}",
+                f"- Reviewer lane: {lane['reviewer_lane']}",
+                "",
+                "| Task | Suggested Branch | Brief | Dispatch Command |",
+                "|---|---|---|---|",
+            ]
+        )
+        for entry in entries_by_lane[lane["lane"]]:
+            lines.append(
+                f"| {entry['task_id']} | `{entry['suggested_branch']}` | "
+                f"`{entry['brief_path']}` | `{entry['dispatch_command']}` |"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Completion Handback",
+            "",
+            "For every task, the implementation fleet must attach:",
+            "",
+            "- implementation evidence",
+            "- verification evidence",
+            "- acceptance criteria proof",
+            "- handoff artifacts",
+            "",
+            "A document-only PR must not close any `ready_for_fleet` queue entry.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_kickoff_runbook(packet: dict[str, Any]) -> None:
+    KICKOFF_RUNBOOK.write_text(render_kickoff_runbook(packet), encoding="utf-8")
+
+
 def validate_packet(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     markdown_text = MARKDOWN.read_text(encoding="utf-8") if MARKDOWN.exists() else ""
@@ -342,6 +411,12 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             elif not (ROOT / entry["brief_path"]).exists():
                 errors.append(f"{task_id} brief_path does not exist: {entry['brief_path']}")
 
+    expected_runbook = render_kickoff_runbook(packet)
+    if not KICKOFF_RUNBOOK.exists():
+        errors.append(f"missing generated fleet kickoff runbook: {KICKOFF_RUNBOOK.relative_to(ROOT)}")
+    elif KICKOFF_RUNBOOK.read_text(encoding="utf-8") != expected_runbook:
+        errors.append(f"generated fleet kickoff runbook is stale: {KICKOFF_RUNBOOK.relative_to(ROOT)}")
+
     return errors
 
 
@@ -351,6 +426,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", help="print a single fleet execution brief by task id")
     parser.add_argument("--write-briefs", action="store_true", help="write generated fleet brief artifacts")
     parser.add_argument("--write-queue", action="store_true", help="write generated fleet dispatch queue")
+    parser.add_argument("--write-runbook", action="store_true", help="write generated fleet kickoff runbook")
     return parser.parse_args()
 
 
@@ -370,6 +446,11 @@ def main() -> int:
     if args.write_queue:
         write_dispatch_queue(packet)
         print(f"Wrote fleet dispatch queue to {DISPATCH_QUEUE.relative_to(ROOT)}.")
+        return 0
+
+    if args.write_runbook:
+        write_kickoff_runbook(packet)
+        print(f"Wrote fleet kickoff runbook to {KICKOFF_RUNBOOK.relative_to(ROOT)}.")
         return 0
 
     errors = validate_packet(packet)
