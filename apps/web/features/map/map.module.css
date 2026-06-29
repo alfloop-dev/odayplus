@@ -50,6 +50,20 @@
   font-size: var(--odp-font-size-xs);
 }
 
+.statePanel {
+  display: grid;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.statePanel strong {
+  color: var(--odp-color-text-primary);
+}
+
 .mapToolbar label {
   display: inline-flex;
   align-items: center;
