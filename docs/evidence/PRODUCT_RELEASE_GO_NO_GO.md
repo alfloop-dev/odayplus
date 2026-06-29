@@ -1,7 +1,7 @@
 # Product Release Go/No-Go
 
 Task: ODP-PV-008  
-Decision status: conditional go for deterministic product E2E, no-go for production deployment until ODP-PV-014 closes  
+Decision status: conditional go for deterministic product E2E and E2E backup/restore proof; remote staging rollout remains conditional on environment configuration  
 Decision date: 2026-06-29  
 Decision owner: Human/Ops  
 Prepared by: Codex2 manual implementation by Codex
@@ -16,7 +16,7 @@ Prepared by: Codex2 manual implementation by Codex
 | Map gate | passed | `tests/e2e/e2e-map.spec.ts` nonblank MapLibre canvas and deck overlay assertions |
 | External/source stub gate | passed for deterministic E2E | `tests/fixtures/source_data/external/*.valid.json`, source stub readiness in `product-e2e-env.spec.ts` |
 | Audit evidence gate | passed for deterministic E2E | retained bundle checksum and audit correlations in product specs |
-| Deployment/backup/rollback gate | blocked | ODP-PV-014 remains blocked and is required before production deployment approval |
+| Deployment/backup/rollback gate | passed for deterministic E2E | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`, `python3 scripts/e2e/verify_deployment_health_backup_rollback.py` |
 
 ## Go Criteria
 
@@ -36,7 +36,7 @@ Release is blocked if any of these are true:
 - `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` fails to export retained audit evidence or loses `corr-pv007-avm-netplan-learning-audit`.
 - `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` loses `corr-pv006-ops-intervention-price-ad`.
 - Any P0 scenario in `tests/e2e/test_acceptance_coverage.py` lacks executable automation, deterministic data, or audit evidence.
-- ODP-PV-014 is required for production deployment and remains blocked.
+- remote staging host/url variables are required and still unset for live staging rollout.
 
 ## Human/Ops Checklist
 
@@ -45,9 +45,9 @@ Release is blocked if any of these are true:
 | Product E2E report reviewed | Confirm every P0 row in `PRODUCT_E2E_READINESS_REPORT.md` has a test, data source, screenshot/trace, and audit/evidence id | pending-human |
 | CI release gate reviewed | Confirm GitHub `product-e2e-gate` ran `make product-release-gate` | pending-human |
 | Deterministic environment accepted | Confirm deterministic source stub is acceptable for PV readiness | pending-human |
-| Production deployment excluded | Confirm ODP-PV-014 remains a production no-go blocker | pending-human |
+| Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url configuration | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 
 ## Current Recommendation
 
-Approve PV product-E2E readiness with an explicit action: keep production deployment blocked until ODP-PV-014 provides deployment, health, backup, restore, and rollback evidence.
+Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure a real staging target before claiming live remote staging rollout.
