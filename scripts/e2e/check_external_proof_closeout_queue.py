@@ -107,6 +107,7 @@ def validate(payload: dict[str, Any]) -> list[str]:
             "reviewer",
             "status",
             "blocking_type",
+            "tracking_issue",
             "required_evidence",
             "allowed_commands",
             "evidence_refs",
@@ -117,6 +118,10 @@ def validate(payload: dict[str, Any]) -> list[str]:
 
         if entry.get("status") != "external_blocked":
             errors.append(f"{prefix} status must be external_blocked")
+
+        tracking_issue = str(entry.get("tracking_issue", ""))
+        if not tracking_issue.startswith("https://github.com/alfloop-dev/odayplus/issues/"):
+            errors.append(f"{prefix} tracking_issue must link to a GitHub issue")
 
         if not entry.get("required_evidence"):
             errors.append(f"{prefix} required_evidence must be non-empty")
