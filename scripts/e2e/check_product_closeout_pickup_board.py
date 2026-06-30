@@ -25,6 +25,7 @@ REQUIRED_BOARD_TOKENS = (
     "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
     "python3 scripts/e2e/check_product_release_gate.py",
     "python3 scripts/e2e/check_product_closeout_queue.py --report",
+    "python3 scripts/e2e/check_product_closeout_action.py",
     "python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py",
     "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
     "python3 scripts/e2e/check_product_go_no_go.py",

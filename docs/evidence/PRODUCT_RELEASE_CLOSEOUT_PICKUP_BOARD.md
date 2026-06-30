@@ -27,6 +27,7 @@ Run these before any closeout action:
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 python3 scripts/e2e/check_product_release_gate.py
 python3 scripts/e2e/check_product_closeout_queue.py --report
+python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 ```
 
@@ -55,6 +56,13 @@ python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-fil
 | `ODP-FE-ASSET-001` | `in_progress` | Claude | `owner_handoff` | `owner_status_closeout` | `AI_NAME=Claude python3 scripts/ai_status.py handoff ODP-FE-ASSET-001 Codex2 "<handoff message>"` | `apps/web/features/avm/AvmWorkspace.tsx`, `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, `tests/e2e/e2e-avm-netplan.spec.ts`, `docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md` |
 | `ODP-FE-ASSET-001` | `waiting_for_review_after_handoff` | Codex2 | `reviewer_approve_or_reopen` | `reviewer_status_closeout` | `AI_NAME=Codex2 REVIEW_NOTES_ZH="<review summary>" python3 scripts/ai_status.py approve ODP-FE-ASSET-001 "<approval message>"` or `AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-ASSET-001 "<missing evidence>"` | `apps/web/features/avm/AvmWorkspace.tsx`, `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, `tests/e2e/e2e-avm-netplan.spec.ts`, `docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md` |
 | `ODP-FE-XCUT-DOMAIN-001` | `review_approved` | Claude | `owner_done` | `owner_status_closeout` | `AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-XCUT-DOMAIN-001 "<finalization message>"` | `packages/ui-domain`, `tests/contract/test_frontend_domain_type_coverage.py`, `docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md` |
+
+Before running any required command above, run the single-action preflight with
+the same task, actor, and action type:
+
+```bash
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task ODP-FE-XCUT-001 --actor Claude2 --action-type owner_handoff
+```
 
 ## Completed Closeouts
 
