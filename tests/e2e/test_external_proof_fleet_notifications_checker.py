@@ -32,7 +32,7 @@ def queue_payload() -> dict:
                     "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
                 ],
                 "handback_commands": [
-                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>",
+                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
                     "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
                 ],
                 "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
@@ -58,7 +58,7 @@ Task: `ODP-MAP-STAGE-001`
 
 ### Handback flow
 ```bash
-python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
+python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete

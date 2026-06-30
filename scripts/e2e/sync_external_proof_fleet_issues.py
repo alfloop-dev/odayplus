@@ -76,7 +76,7 @@ def render_issue_body(entry: dict[str, Any]) -> str:
             (
                 "- Generate a task-specific starter with "
                 f"`python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task {task_id} "
-                '--release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>`.'
+                "--release-sha-from-pr82 --output <handback.json>`."
             ),
             "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
             "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",

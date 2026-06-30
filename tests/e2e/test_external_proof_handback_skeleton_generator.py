@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,15 @@ def run_generator(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def load_generator_module():
+    spec = importlib.util.spec_from_file_location("generate_external_proof_handback_skeleton", GENERATOR)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_skeleton_generator_outputs_task_specific_handback_shape() -> None:
@@ -88,6 +98,31 @@ def test_skeleton_generator_writes_single_output_file(tmp_path) -> None:
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["task_id"] == "ODP-MAP-STAGE-001"
     assert payload["release_head_ref_oid"] == EXAMPLE_SHA
+
+
+def test_skeleton_generator_can_use_current_pr82_head(monkeypatch, tmp_path) -> None:
+    generator = load_generator_module()
+    current_sha = "2222222222222222222222222222222222222222"
+    output = tmp_path / "handbacks"
+
+    monkeypatch.setattr(generator, "current_pr82_head", lambda: current_sha)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_external_proof_handback_skeleton.py",
+            "--task",
+            "ALL",
+            "--output-dir",
+            str(output),
+            "--release-sha-from-pr82",
+        ],
+    )
+
+    assert generator.main() == 0
+    for path in output.glob("*.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["release_head_ref_oid"] == current_sha
 
 
 def test_generated_skeleton_is_not_accepted_closeout_artifact(tmp_path) -> None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +135,14 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
     }
 
 
+def current_pr82_head() -> str:
+    return subprocess.check_output(
+        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True, help="External proof task id, or ALL.")
@@ -141,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         "--release-sha",
         default=EXAMPLE_SHA,
         help="Release SHA to place in the skeleton. Use PR #82 headRefOid for real handbacks.",
+    )
+    parser.add_argument(
+        "--release-sha-from-pr82",
+        action="store_true",
+        help="Read PR #82 headRefOid from GitHub and use it as the skeleton release SHA.",
     )
     parser.add_argument("--output", type=Path, help="Write a single-task skeleton to this JSON file.")
     parser.add_argument("--output-dir", type=Path, help="Write skeleton file(s) into this directory.")
@@ -156,7 +170,8 @@ def main() -> int:
     if args.output and args.output_dir:
         raise SystemExit("--output and --output-dir are mutually exclusive")
 
-    skeletons = {task_id: build_skeleton(task_id, release_sha=args.release_sha) for task_id in task_ids}
+    release_sha = current_pr82_head() if args.release_sha_from_pr82 else args.release_sha
+    skeletons = {task_id: build_skeleton(task_id, release_sha=release_sha) for task_id in task_ids}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
