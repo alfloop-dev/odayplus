@@ -54,12 +54,7 @@ AI_NAME=<Reviewer> python3 scripts/ai_status.py reopen <task-id> "<specific miss
 | Task | Reviewer | Required evidence to inspect |
 |---|---|---|
 | `ODP-FE-EXP-001` | Claude | `tests/e2e/e2e-map.spec.ts`, `tests/e2e/e2e-expansion-product.spec.ts`, Expansion/HeatZone/SiteScore specs |
-| `ODP-FE-OPS-001` | Codex2 | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts`, Operations and Intervention specs |
-| `ODP-FE-PRICE-001` | Claude2 | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts`, Pricing and AdLift spec |
-| `ODP-FE-ASSET-001` | Codex2 | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, AVM/NetPlan specs |
-| `ODP-FE-LEARN-001` | Claude2 | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, Learning Hub and Audit Evidence specs |
-| `ODP-FE-XCUT-DOMAIN-001` | Codex2 | `packages/ui-domain`, `tests/contract/test_frontend_domain_type_coverage.py`, component contracts |
-| `ODP-FE-XCUT-TYPES-001` | Claude2 | `packages/domain-types/src/frontend-contracts.ts`, `tests/contract/test_frontend_domain_type_coverage.py`, component contracts |
+| `ODP-FE-ASSET-001` | Codex2 | Only after Claude owner hands off Asset/NetPlan lane; inspect `tests/e2e/e2e-avm-netplan.spec.ts`, `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, AVM/NetPlan specs |
 | `ODP-FE-XCUT-001` | Codex | Only after Claude2 owner hands off parent lane to review; inspect PR #87/#88/#89/#90/#91/#92/#93 evidence and cross-cutting acceptance |
 
 ## Owner Finalization Commands
@@ -79,8 +74,23 @@ Owner closeout currently applies to:
 | Task | Owner | Current closeout need |
 |---|---|---|
 | `ODP-FE-R0-001` | Claude | Finalize after existing review approval |
-| `ODP-FE-XCUT-UI-001` | Claude2 | Finalize after existing review approval |
+| `ODP-FE-XCUT-DOMAIN-001` | Claude | Finalize after existing review approval |
 | `ODP-FE-XCUT-001` | Claude2 | First hand off parent lane to Codex for review after accepting child-lane evidence |
+| `ODP-FE-ASSET-001` | Claude | Hand off Asset/NetPlan lane to Codex2 for review |
+
+## Completed Closeouts
+
+These lanes are no longer active closeout work. They remain on the manifest as
+completed evidence so release reviewers can verify lineage without reassigning
+finished tasks.
+
+| Task | Status | Evidence |
+|---|---|---|
+| `ODP-FE-XCUT-UI-001` | done | `docs/evidence/ODP_FE_XCUT_UI_001_CLOSEOUT.md`, `tests/contract/test_ui_core_component_exports.py` |
+| `ODP-FE-OPS-001` | done | `docs/evidence/ODP_FE_OPS_001_CLOSEOUT.md`, `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` |
+| `ODP-FE-PRICE-001` | done | `docs/evidence/ODP_FE_PRICE_001_CLOSEOUT.md`, `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` |
+| `ODP-FE-LEARN-001` | done | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md` |
+| `ODP-FE-XCUT-TYPES-001` | done | `packages/domain-types/src/frontend-contracts.ts`, `tests/contract/test_frontend_domain_type_coverage.py` |
 
 ## Human/Ops Go/No-Go
 

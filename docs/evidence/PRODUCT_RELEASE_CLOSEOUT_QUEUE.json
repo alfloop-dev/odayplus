@@ -1,243 +1,233 @@
 {
-  "schema_version": 1,
-  "generated": "2026-06-29",
-  "release_target": {
-    "pr": 82,
-    "authority": "GitHub PR #82 headRefOid and attached checks",
-    "must_not_hardcode_dev_hash": true
-  },
-  "global_preflight": [
-    "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
-    "python3 scripts/e2e/check_product_release_gate.py",
-    "python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py"
-  ],
-  "evidence_lineage_prs": [
-    "PR #87",
-    "PR #88",
-    "PR #89",
-    "PR #90",
-    "PR #91"
-  ],
-  "scope_boundaries": [
-    {
-      "topic": "external_data_sources",
-      "current_proof": "deterministic source-stub, external fixtures, connector contract tests, live-provider adapter tests, scheduled external fetch worker tests, quota/rate-limit handling, freshness/licensing gates, and product E2E mock proof",
-      "not_proven": [
-        "provider credential/OAuth wiring",
-        "provider-specific production credential rotation",
-        "provider-specific production licensing approval"
-      ]
+    "schema_version": 1,
+    "generated": "2026-06-29",
+    "release_target": {
+        "pr": 82,
+        "authority": "GitHub PR #82 headRefOid and attached checks",
+        "must_not_hardcode_dev_hash": true
     },
-    {
-      "topic": "maps",
-      "current_proof": "deterministic local MapLibre/deck/H3 E2E with map/list/drawer sync, live tile/geocoder boundary gate, layer-toggle behavior, direct map picking, deck.gl pixel content, tooltip/evidence detail, resilience states, and full keyboard accessibility",
-      "not_proven": [
-        "live tile rollout against remote staging",
-        "live geocoder rollout against remote staging"
-      ]
-    },
-    {
-      "topic": "remote_staging",
-      "current_proof": "deterministic deployment, backup, restore, rollback evidence",
-      "not_proven": [
-        "remote staging host/url/secret configuration",
-        "live staging rollout",
-        "staging health/version proof matching PR #82 headRefOid",
-        "staging product smoke and backup/restore/rollback drill"
-      ]
-    }
-  ],
-  "queue": [
-    {
-      "task_id": "ODP-PV-008",
-      "status": "review",
-      "actor": "Human/Ops",
-      "action_type": "go_no_go",
-      "allowed_commands": [
+    "global_preflight": [
         "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
-        "python3 scripts/e2e/check_product_release_gate.py"
-      ],
-      "evidence_refs": [
-        "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
-        "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
-        "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
-        "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
-      ],
-      "blocking_type": "human_signoff"
-    },
-    {
-      "task_id": "ODP-FE-XCUT-001",
-      "status": "in_progress",
-      "actor": "Claude2",
-      "action_type": "owner_handoff",
-      "allowed_commands": [
-        "AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Codex \"<handoff message>\""
-      ],
-      "evidence_refs": [
-        "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",
-        "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
-        "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
-      ],
-      "blocking_type": "owner_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-XCUT-001",
-      "status": "waiting_for_review_after_handoff",
-      "actor": "Codex",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Codex REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 \"<approval message>\"",
-        "AI_NAME=Codex python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",
-        "tests/e2e/test_frontend_execution_matrix_coverage.py",
-        "tests/contract/test_frontend_domain_type_coverage.py",
-        "tests/contract/test_ui_core_component_exports.py"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-R0-001",
-      "status": "review_approved",
-      "actor": "Claude",
-      "action_type": "owner_done",
-      "allowed_commands": [
-        "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-R0-001 \"<finalization message>\""
-      ],
-      "evidence_refs": [
-        "tests/e2e/opsboard-shell.spec.ts",
-        "tests/e2e/e2e-api-bound-ui.spec.ts",
-        "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
-      ],
-      "blocking_type": "owner_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-XCUT-UI-001",
-      "status": "review_approved",
-      "actor": "Claude2",
-      "action_type": "owner_done",
-      "allowed_commands": [
-        "AI_NAME=Claude2 python3 scripts/ai_status.py done ODP-FE-XCUT-UI-001 \"<finalization message>\""
-      ],
-      "evidence_refs": [
-        "packages/ui",
-        "tests/contract/test_ui_core_component_exports.py",
-        "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
-      ],
-      "blocking_type": "owner_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-EXP-001",
-      "status": "review",
-      "actor": "Claude",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Claude REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-EXP-001 \"<approval message>\"",
-        "AI_NAME=Claude python3 scripts/ai_status.py reopen ODP-FE-EXP-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "tests/e2e/e2e-map.spec.ts",
-        "tests/e2e/e2e-expansion-product.spec.ts",
-        "docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md",
-        "docs/design/ODAY_PLUS_HEATZONE_MAP_VISUAL_SPEC.md",
-        "docs/design/ODAY_PLUS_SITESCORE_REPORT_UI_SPEC.md"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-OPS-001",
-      "status": "review_approved",
-      "actor": "Claude2",
-      "action_type": "owner_done",
-      "allowed_commands": [
-        "AI_NAME=Claude2 python3 scripts/ai_status.py done ODP-FE-OPS-001 \"<finalization message>\""
-      ],
-      "evidence_refs": [
-        "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
-        "docs/design/ODAY_PLUS_OPERATIONS_ALERT_UI_SPEC.md",
-        "docs/design/ODAY_PLUS_INTERVENTION_WORKFLOW_UI_SPEC.md"
-      ],
-      "blocking_type": "owner_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-PRICE-001",
-      "status": "review",
-      "actor": "Claude2",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Claude2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-PRICE-001 \"<approval message>\"",
-        "AI_NAME=Claude2 python3 scripts/ai_status.py reopen ODP-FE-PRICE-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
-        "docs/design/ODAY_PLUS_PRICING_AND_ADLIFT_UI_SPEC.md"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-ASSET-001",
-      "status": "review",
-      "actor": "Codex2",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Codex2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-ASSET-001 \"<approval message>\"",
-        "AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-ASSET-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "apps/web/features/avm/AvmWorkspace.tsx",
-        "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
-        "tests/e2e/e2e-avm-netplan.spec.ts",
-        "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-LEARN-001",
-      "status": "review",
-      "actor": "Claude2",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Claude2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-LEARN-001 \"<approval message>\"",
-        "AI_NAME=Claude2 python3 scripts/ai_status.py reopen ODP-FE-LEARN-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
-        "docs/design/ODAY_PLUS_LEARNING_HUB_UI_SPEC.md",
-        "docs/design/ODAY_PLUS_AUDIT_EVIDENCE_UI_SPEC.md"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-XCUT-DOMAIN-001",
-      "status": "review_approved",
-      "actor": "Claude",
-      "action_type": "owner_done",
-      "allowed_commands": [
-        "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-XCUT-DOMAIN-001 \"<finalization message>\""
-      ],
-      "evidence_refs": [
-        "packages/ui-domain",
-        "tests/contract/test_frontend_domain_type_coverage.py",
-        "docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md"
-      ],
-      "blocking_type": "owner_status_closeout"
-    },
-    {
-      "task_id": "ODP-FE-XCUT-TYPES-001",
-      "status": "review",
-      "actor": "Claude2",
-      "action_type": "reviewer_approve_or_reopen",
-      "allowed_commands": [
-        "AI_NAME=Claude2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-TYPES-001 \"<approval message>\"",
-        "AI_NAME=Claude2 python3 scripts/ai_status.py reopen ODP-FE-XCUT-TYPES-001 \"<missing evidence>\""
-      ],
-      "evidence_refs": [
-        "packages/domain-types/src/frontend-contracts.ts",
-        "tests/contract/test_frontend_domain_type_coverage.py",
-        "docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md"
-      ],
-      "blocking_type": "reviewer_status_closeout"
-    }
-  ]
+        "python3 scripts/e2e/check_product_release_gate.py",
+        "python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py"
+    ],
+    "evidence_lineage_prs": [
+        "PR #87",
+        "PR #88",
+        "PR #89",
+        "PR #90",
+        "PR #91"
+    ],
+    "scope_boundaries": [
+        {
+            "topic": "external_data_sources",
+            "current_proof": "deterministic source-stub, external fixtures, connector contract tests, live-provider adapter tests, scheduled external fetch worker tests, quota/rate-limit handling, freshness/licensing gates, and product E2E mock proof",
+            "not_proven": [
+                "provider credential/OAuth wiring",
+                "provider-specific production credential rotation",
+                "provider-specific production licensing approval"
+            ]
+        },
+        {
+            "topic": "maps",
+            "current_proof": "deterministic local MapLibre/deck/H3 E2E with map/list/drawer sync, live tile/geocoder boundary gate, layer-toggle behavior, direct map picking, deck.gl pixel content, tooltip/evidence detail, resilience states, and full keyboard accessibility",
+            "not_proven": [
+                "live tile rollout against remote staging",
+                "live geocoder rollout against remote staging"
+            ]
+        },
+        {
+            "topic": "remote_staging",
+            "current_proof": "deterministic deployment, backup, restore, rollback evidence",
+            "not_proven": [
+                "remote staging host/url/secret configuration",
+                "live staging rollout",
+                "staging health/version proof matching PR #82 headRefOid",
+                "staging product smoke and backup/restore/rollback drill"
+            ]
+        }
+    ],
+    "queue": [
+        {
+            "task_id": "ODP-PV-008",
+            "status": "review",
+            "actor": "Human/Ops",
+            "action_type": "go_no_go",
+            "allowed_commands": [
+                "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
+                "python3 scripts/e2e/check_product_release_gate.py"
+            ],
+            "evidence_refs": [
+                "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
+                "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
+                "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
+                "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
+            ],
+            "blocking_type": "human_signoff"
+        },
+        {
+            "task_id": "ODP-FE-XCUT-001",
+            "status": "in_progress",
+            "actor": "Claude2",
+            "action_type": "owner_handoff",
+            "allowed_commands": [
+                "AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Codex \"<handoff message>\""
+            ],
+            "evidence_refs": [
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",
+                "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
+                "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
+            ],
+            "blocking_type": "owner_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-XCUT-001",
+            "status": "waiting_for_review_after_handoff",
+            "actor": "Codex",
+            "action_type": "reviewer_approve_or_reopen",
+            "allowed_commands": [
+                "AI_NAME=Codex REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 \"<approval message>\"",
+                "AI_NAME=Codex python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 \"<missing evidence>\""
+            ],
+            "evidence_refs": [
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",
+                "tests/e2e/test_frontend_execution_matrix_coverage.py",
+                "tests/contract/test_frontend_domain_type_coverage.py",
+                "tests/contract/test_ui_core_component_exports.py"
+            ],
+            "blocking_type": "reviewer_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-R0-001",
+            "status": "review_approved",
+            "actor": "Claude",
+            "action_type": "owner_done",
+            "allowed_commands": [
+                "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-R0-001 \"<finalization message>\""
+            ],
+            "evidence_refs": [
+                "tests/e2e/opsboard-shell.spec.ts",
+                "tests/e2e/e2e-api-bound-ui.spec.ts",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "blocking_type": "owner_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-EXP-001",
+            "status": "review",
+            "actor": "Claude",
+            "action_type": "reviewer_approve_or_reopen",
+            "allowed_commands": [
+                "AI_NAME=Claude REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-EXP-001 \"<approval message>\"",
+                "AI_NAME=Claude python3 scripts/ai_status.py reopen ODP-FE-EXP-001 \"<missing evidence>\""
+            ],
+            "evidence_refs": [
+                "tests/e2e/e2e-map.spec.ts",
+                "tests/e2e/e2e-expansion-product.spec.ts",
+                "docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md",
+                "docs/design/ODAY_PLUS_HEATZONE_MAP_VISUAL_SPEC.md",
+                "docs/design/ODAY_PLUS_SITESCORE_REPORT_UI_SPEC.md"
+            ],
+            "blocking_type": "reviewer_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-ASSET-001",
+            "status": "in_progress",
+            "actor": "Claude",
+            "action_type": "owner_handoff",
+            "allowed_commands": [
+                "AI_NAME=Claude python3 scripts/ai_status.py handoff ODP-FE-ASSET-001 Codex2 \"<handoff message>\""
+            ],
+            "evidence_refs": [
+                "apps/web/features/avm/AvmWorkspace.tsx",
+                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+                "tests/e2e/e2e-avm-netplan.spec.ts",
+                "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
+            ],
+            "blocking_type": "owner_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-ASSET-001",
+            "status": "waiting_for_review_after_handoff",
+            "actor": "Codex2",
+            "action_type": "reviewer_approve_or_reopen",
+            "allowed_commands": [
+                "AI_NAME=Codex2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-ASSET-001 \"<approval message>\"",
+                "AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-ASSET-001 \"<missing evidence>\""
+            ],
+            "evidence_refs": [
+                "apps/web/features/avm/AvmWorkspace.tsx",
+                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+                "tests/e2e/e2e-avm-netplan.spec.ts",
+                "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
+            ],
+            "blocking_type": "reviewer_status_closeout"
+        },
+        {
+            "task_id": "ODP-FE-XCUT-DOMAIN-001",
+            "status": "review_approved",
+            "actor": "Claude",
+            "action_type": "owner_done",
+            "allowed_commands": [
+                "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-XCUT-DOMAIN-001 \"<finalization message>\""
+            ],
+            "evidence_refs": [
+                "packages/ui-domain",
+                "tests/contract/test_frontend_domain_type_coverage.py",
+                "docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md"
+            ],
+            "blocking_type": "owner_status_closeout"
+        }
+    ],
+    "completed_closeouts": [
+        {
+            "task_id": "ODP-FE-XCUT-UI-001",
+            "status": "done",
+            "evidence_refs": [
+                "docs/evidence/ODP_FE_XCUT_UI_001_CLOSEOUT.md",
+                "tests/contract/test_ui_core_component_exports.py",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "completion_note": "Archived as done; closeout evidence merged via PR #144."
+        },
+        {
+            "task_id": "ODP-FE-OPS-001",
+            "status": "done",
+            "evidence_refs": [
+                "docs/evidence/ODP_FE_OPS_001_CLOSEOUT.md",
+                "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "completion_note": "Archived as done; closeout evidence merged via PR #143."
+        },
+        {
+            "task_id": "ODP-FE-PRICE-001",
+            "status": "done",
+            "evidence_refs": [
+                "docs/evidence/ODP_FE_PRICE_001_CLOSEOUT.md",
+                "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "completion_note": "Archived as done after Claude2 review approval and Codex2 owner finalization."
+        },
+        {
+            "task_id": "ODP-FE-LEARN-001",
+            "status": "done",
+            "evidence_refs": [
+                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "completion_note": "Archived as done; Learning/Audit surfaces verified through existing product E2E evidence."
+        },
+        {
+            "task_id": "ODP-FE-XCUT-TYPES-001",
+            "status": "done",
+            "evidence_refs": [
+                "packages/domain-types/src/frontend-contracts.ts",
+                "tests/contract/test_frontend_domain_type_coverage.py",
+                "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+            ],
+            "completion_note": "Archived as done; type contract evidence is merged on origin/dev."
+        }
+    ]
 }

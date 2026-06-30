@@ -56,16 +56,22 @@ The authoritative release target is draft release PR #82. Use PR #82
 | `ODP-FE-XCUT-001` | `in_progress` | Claude2 | Move parent lane to review after accepting PR #87/#88/#89/#90/#91/#92 evidence and no remaining XCUT repo gap | owner_status_closeout |
 | `ODP-FE-XCUT-001` | `waiting_for_review_after_handoff` | Codex | Approve after owner moves it to `review`; current reviewer check found no repository evidence gap | reviewer_status_closeout |
 | `ODP-FE-R0-001` | `review_approved` | Claude | Finalize owner closeout to `done` if no extra UX scope is requested | owner_status_closeout |
-| `ODP-FE-XCUT-UI-001` | `review_approved` | Claude2 | Finalize owner closeout to `done` if no extra UI contract scope is requested | owner_status_closeout |
 | `ODP-FE-EXP-001` | `review` | Claude | Review Expansion evidence against Expansion workflow, HeatZone map, and SiteScore specs | reviewer_status_closeout |
-| `ODP-FE-OPS-001` | `review_approved` | Claude2 | Finalize owner closeout to `done` after accepted Ops/Intervention evidence | owner_status_closeout |
-| `ODP-FE-PRICE-001` | `review` | Claude2 | Review PriceOps/AdLift evidence against Pricing and AdLift specs | reviewer_status_closeout |
-| `ODP-FE-ASSET-001` | `review` | Codex2 | Review Asset/NetPlan evidence now that AVM reserve/asking masking and non-leakage E2E assertions are present | reviewer_status_closeout |
-| `ODP-FE-LEARN-001` | `review` | Claude2 | Review Learning/Audit evidence against Learning Hub and Audit Evidence specs | reviewer_status_closeout |
+| `ODP-FE-ASSET-001` | `in_progress` | Claude | Hand off Asset/NetPlan evidence to Codex2 after accepting AVM reserve/asking masking and non-leakage E2E assertions | owner_status_closeout |
+| `ODP-FE-ASSET-001` | `waiting_for_review_after_handoff` | Codex2 | Review Asset/NetPlan evidence after Claude owner handoff | reviewer_status_closeout |
 | `ODP-FE-XCUT-DOMAIN-001` | `review_approved` | Claude | Finalize owner closeout to `done` after accepted `packages/ui-domain` export evidence | owner_status_closeout |
-| `ODP-FE-XCUT-TYPES-001` | `review` | Claude2 | Review `packages/domain-types` frontend contract coverage and type export evidence | reviewer_status_closeout |
 | PR #82 | draft/open | Human/Ops and release owner | Keep draft until Human/Ops signoff and rollout target decision are recorded | release workflow |
 | External proof queue | `external_blocked` | Platform/Ops, Data Partnerships, Legal, Product Validation | Complete `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` tasks with redacted runtime proof before claiming live provider, live map, or remote staging readiness | external proof closeout |
+
+## Completed Closeouts
+
+| Task | Final state | Evidence | Note |
+|---|---|---|---|
+| `ODP-FE-XCUT-UI-001` | `done` | `docs/evidence/ODP_FE_XCUT_UI_001_CLOSEOUT.md`, `tests/contract/test_ui_core_component_exports.py` | Archived as done after UI core closeout evidence merged. |
+| `ODP-FE-OPS-001` | `done` | `docs/evidence/ODP_FE_OPS_001_CLOSEOUT.md`, `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` | Archived as done after Ops/Intervention closeout evidence merged. |
+| `ODP-FE-PRICE-001` | `done` | `docs/evidence/ODP_FE_PRICE_001_CLOSEOUT.md`, `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` | Archived as done after PriceOps/AdLift review and owner finalization. |
+| `ODP-FE-LEARN-001` | `done` | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md` | Archived as done; Learning/Audit surfaces remain covered by product E2E evidence. |
+| `ODP-FE-XCUT-TYPES-001` | `done` | `packages/domain-types/src/frontend-contracts.ts`, `tests/contract/test_frontend_domain_type_coverage.py` | Archived as done after frontend type contract evidence merged. |
 
 Note: table blocking types use canonical queue values. The older prose labels
 "owner status closeout" and "reviewer status closeout" map to
