@@ -87,6 +87,7 @@ def synced_issue_payload() -> dict:
                     "- Generate a task-specific starter with `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"`.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before accepting or closing this issue.",
+                    "- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before release closeout.",
                     "Owner: `Platform/Ops`",
                     "Reviewer: `Product Validation`",
                     "Blocking type: `live_map_endpoint`",
