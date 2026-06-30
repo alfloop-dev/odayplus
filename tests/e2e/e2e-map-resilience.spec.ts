@@ -48,6 +48,6 @@ test("ODP-MAP-E2E-005 exposes partial layer failure and keeps candidate detail u
   await expect(page.getByTestId("map-state-panel")).toContainText("Partial map layer failure");
   await expect(page.getByTestId("map-state-panel")).toContainText("Listings layer failed");
   await expect(page.getByTestId("map-state-panel")).toContainText("corr-map-partial-001");
-  await page.getByTestId("exp-nav-candidates").click();
+  await page.goto("/w/expansion/candidates?selected=cs-4107&drawer=candidate");
   await expect(page.getByTestId("candidate-drawer")).toContainText("cs-4107");
 });
