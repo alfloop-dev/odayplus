@@ -48,7 +48,7 @@ def queue_payload() -> dict:
                     "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
                 ],
                 "handback_commands": [
-                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>",
                     "python3 scripts/e2e/check_external_proof_handback_template.py",
                     "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
                 ],
@@ -90,7 +90,7 @@ def synced_issue_payload() -> dict:
                     "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for attached runtime proof.",
                     "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` as a redacted shape example, not as live proof.",
                     "- Product Validation tracks intake status in `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.",
-                    "- Generate a task-specific starter with `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"`.",
+                    "- Generate a task-specific starter with `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>`.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
                     "- Run `python3 scripts/e2e/update_external_proof_handback_status_board.py --task ODP-MAP-STAGE-001 --status handback_submitted --handback <handback.json>` when Product Validation receives a handback.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_status_board.py` after updating intake status.",

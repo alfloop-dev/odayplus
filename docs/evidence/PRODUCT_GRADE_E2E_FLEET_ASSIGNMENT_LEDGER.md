@@ -38,7 +38,7 @@ Product Validation must not close those blockers from this ledger alone. Each
 runtime handback must use the external-proof handback flow:
 
 ```bash
-python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help

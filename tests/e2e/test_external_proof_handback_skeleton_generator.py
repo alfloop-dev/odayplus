@@ -71,6 +71,25 @@ def test_skeleton_generator_writes_all_external_proof_tasks(tmp_path) -> None:
             assert token in payload_text
 
 
+def test_skeleton_generator_writes_single_output_file(tmp_path) -> None:
+    output = tmp_path / "handbacks" / "map-stage-001.json"
+
+    result = run_generator(
+        "--task",
+        "ODP-MAP-STAGE-001",
+        "--release-sha",
+        EXAMPLE_SHA,
+        "--output",
+        str(output),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert str(output) in result.stdout
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["task_id"] == "ODP-MAP-STAGE-001"
+    assert payload["release_head_ref_oid"] == EXAMPLE_SHA
+
+
 def test_generated_skeleton_is_not_accepted_closeout_artifact(tmp_path) -> None:
     skeleton = tmp_path / "ODP-MAP-STAGE-001.handback.skeleton.json"
     result = run_generator("--task", "ODP-MAP-STAGE-001", "--output-dir", str(tmp_path), "--release-sha", EXAMPLE_SHA)
