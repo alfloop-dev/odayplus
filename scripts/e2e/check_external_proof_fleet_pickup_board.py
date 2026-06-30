@@ -22,6 +22,7 @@ REQUIRED_BOARD_TOKENS = (
     "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
     "python3 scripts/e2e/check_external_proof_closeout_queue.py",
     "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
+    "python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha",
     "python3 scripts/e2e/check_external_proof_handback_template.py",
     "python3 scripts/e2e/check_external_proof_handback_status_board.py",
     "python3 scripts/e2e/update_external_proof_handback_status_board.py",

@@ -159,6 +159,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   This verifies that every external proof task has exactly one accepted
   handback and that all handbacks cite the same PR #82 `headRefOid`.
 - External proof GitHub issue handoff must remain synced with queue routing.
+  If PR #82 changes `headRefOid`, first run
+  `python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`
+  to refresh #132-#138 issue bodies and pickup comments from
+  `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.
   Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   before Human/Ops go/no-go so #132-#138 cannot silently lose labels,
   release authority, pickup commands, or named assignees.

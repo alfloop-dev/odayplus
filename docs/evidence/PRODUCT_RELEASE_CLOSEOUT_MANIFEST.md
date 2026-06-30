@@ -31,6 +31,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | External proof handback status board | `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` tracks Product Validation intake status for #132-#138 handbacks as pending/submitted/needs-revision/accepted; `python3 scripts/e2e/update_external_proof_handback_status_board.py` safely updates entries and `python3 scripts/e2e/check_external_proof_handback_status_board.py` keeps it synchronized with the external proof queue | prepared, intake tracking guard |
 | External proof handback artifact validator | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` validates a completed fleet handback before Product Validation accepts it: task/issue mapping, release SHA, redaction, artifact types, required evidence results, required queue command fragments in `commands_run`, command exits, correlation ids, and accepted attestation | prepared, acceptance guard |
 | External proof handback bundle validator | `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` validates the full #132-#138 handback set: every task present, no duplicates, no mixed release SHAs, and every handback accepted by the artifact checker | prepared, set-level acceptance guard |
+| External proof issue/comment syncer | `python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply` refreshes #132-#138 issue bodies and pickup comments from `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` whenever PR #82 advances | prepared, live GitHub handoff updater |
 | External proof issue sync | `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` verifies live GitHub issues #132-#138 still carry the queue-defined fleet routing labels, pickup commands, release authority, completion boundaries, and named release-coordinator assignees | prepared, live GitHub check |
 | External proof live blocker sync | `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` compares live GitHub issue state with `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` so unaccepted #132-#138 handbacks must keep open, labeled, assigned release-blocker issues | prepared, live GitHub blocker check |
 | External proof fleet notification sync | `python3 scripts/e2e/check_external_proof_fleet_notifications.py` verifies #132-#138 each have a fleet pickup comment tied to the current PR #82 `headRefOid`, so assignees are notified whenever the release target changes | prepared, live GitHub notification check |
@@ -108,6 +109,9 @@ Note: table blocking types use canonical queue values. The older prose labels
   `external-proof`, `release-blocker`, and the owner-lane pickup label
   (`platform-ops` or `data-partnerships`) until Product Validation accepts the
   attached proof.
+- Run `python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`
+  after PR #82 receives a new `headRefOid`; this refreshes #132-#138 issue
+  bodies and pickup comments from the external proof queue before live checks.
 - Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`
   before external-proof closeout; an issue cannot be closed while its matching
   handback status is pending, submitted, or needs revision.
