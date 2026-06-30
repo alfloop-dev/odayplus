@@ -78,6 +78,7 @@ def validate_issue_sync(
 
         expected_body_tokens = [
             "## Fleet pickup routing",
+            "EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md",
             "## Runtime proof handback format",
             "EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
             "EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
