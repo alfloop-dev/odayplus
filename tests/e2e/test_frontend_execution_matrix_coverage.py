@@ -407,7 +407,11 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert task_ids == lane_aliases
     assert task_ids == queue_ids
     assert queue["status"] == "ready_for_fleet_pickup"
+    assert queue["queue_role"] == "historical_initial_dispatch"
+    assert queue["current_remaining_queue"] == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
     assert "Product-Grade E2E Fleet Kickoff Runbook" in runbook_text
+    assert "historical_initial_dispatch" in runbook_text
+    assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in runbook_text
     assert "Fleet Pickup Sequence" in runbook_text
     assert "Completion Handback" in runbook_text
 

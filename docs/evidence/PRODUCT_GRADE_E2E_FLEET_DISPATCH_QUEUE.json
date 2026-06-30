@@ -5,8 +5,10 @@
     "must_not_hardcode_dev_hash": true
   },
   "status": "ready_for_fleet_pickup",
+  "queue_role": "historical_initial_dispatch",
+  "current_remaining_queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
   "updated": "2026-06-29",
-  "dispatch_rule": "Each queue entry is ready for an implementation fleet to pick up. Do not mark complete until implementation and verification evidence are attached.",
+  "dispatch_rule": "This is the initial implementation fleet dispatch packet. Repo-side handbacks may already exist; current live-provider, live-map, and remote-staging blockers are routed through docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json.",
   "queue": [
     {
       "task_id": "ODP-EXT-001",

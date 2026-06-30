@@ -208,10 +208,13 @@ def render_dispatch_queue(packet: dict[str, Any]) -> dict[str, Any]:
     return {
         "release_target": packet["release_target"],
         "status": "ready_for_fleet_pickup",
+        "queue_role": "historical_initial_dispatch",
+        "current_remaining_queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
         "updated": packet["updated"],
         "dispatch_rule": (
-            "Each queue entry is ready for an implementation fleet to pick up. "
-            "Do not mark complete until implementation and verification evidence are attached."
+            "This is the initial implementation fleet dispatch packet. Repo-side handbacks may already "
+            "exist; current live-provider, live-map, and remote-staging blockers are routed through "
+            "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json."
         ),
         "queue": [
             {
@@ -262,6 +265,8 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
         "",
         f"- PR authority: #{packet['release_target']['pr']} headRefOid and attached checks",
         f"- Queue status: {queue['status']}",
+        f"- Queue role: {queue['queue_role']}",
+        f"- Current remaining queue: `{queue['current_remaining_queue']}`",
         f"- Updated: {queue['updated']}",
         "",
         "## Operator Preflight",
@@ -449,6 +454,10 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
         queue = json.loads(DISPATCH_QUEUE.read_text(encoding="utf-8"))
         if queue != expected_queue:
             errors.append(f"generated fleet dispatch queue is stale: {DISPATCH_QUEUE.relative_to(ROOT)}")
+        if queue.get("queue_role") != "historical_initial_dispatch":
+            errors.append("generated fleet dispatch queue must declare historical_initial_dispatch role")
+        if queue.get("current_remaining_queue") != "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json":
+            errors.append("generated fleet dispatch queue must point to current external proof queue")
         for entry in queue.get("queue", []):
             task_id = entry.get("task_id")
             if entry.get("dispatch_status") != "ready_for_fleet":

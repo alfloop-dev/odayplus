@@ -2,6 +2,8 @@
 
 - PR authority: #82 headRefOid and attached checks
 - Queue status: ready_for_fleet_pickup
+- Queue role: historical_initial_dispatch
+- Current remaining queue: `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
 - Updated: 2026-06-29
 
 ## Operator Preflight
