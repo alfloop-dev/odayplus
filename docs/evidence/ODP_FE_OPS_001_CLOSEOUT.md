@@ -27,10 +27,11 @@ with all 5 acceptance criteria met:
 - No causal claim is presented without an evidence level.
 - E2E covers Alert through Outcome.
 
-The reviewed implementation was already merged to `origin/dev` (review head
-`8b2d0b8`, now within `origin/dev`) through the Operations/Intervention
-implementation tasks. This file records the owner finalization evidence
-required before moving the task to `done`.
+The reviewed implementation was already merged to `origin/dev` through the
+Operations/Intervention implementation tasks. This historical closeout record
+is not release-candidate authority; current release evidence must use PR #82
+`headRefOid` and attached checks. This file records the owner finalization
+evidence required before moving the task to `done`.
 
 ## Artifact Mapping
 

@@ -18,7 +18,11 @@ Reviewer Claude2 approved the task with all 5 acceptance criteria met:
 - No automatic price execution is exposed.
 - E2E covers Pricing to rollback and AdLift continue/stop surfaces.
 
-The reviewed implementation was already merged to `origin/dev` through PR #82 before this closeout pass. This file records the owner finalization evidence required before moving the task to `done`.
+The reviewed implementation was already merged to `origin/dev` through PR #82
+before this closeout pass. This historical closeout record is not
+release-candidate authority; current release evidence must use PR #82
+`headRefOid` and attached checks. This file records the owner finalization
+evidence required before moving the task to `done`.
 
 ## Artifact Mapping
 

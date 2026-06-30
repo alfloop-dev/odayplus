@@ -242,6 +242,19 @@ def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -
             assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
 
 
+def test_frontend_closeout_evidence_does_not_use_stale_dev_release_refs() -> None:
+    closeout_docs = sorted((ROOT / "docs/evidence").glob("ODP_FE_*_CLOSEOUT.md"))
+    assert closeout_docs
+
+    for closeout_doc in closeout_docs:
+        text = closeout_doc.read_text(encoding="utf-8")
+        assert not HARDCODED_DEV_RELEASE_REF.search(text), closeout_doc
+        for stale_ref in STALE_RELEASE_REFS:
+            assert stale_ref not in text, f"{closeout_doc} still cites stale release ref {stale_ref}"
+        assert "PR #82" in text, f"{closeout_doc} must point release authority back to PR #82"
+        assert "headRefOid" in text, f"{closeout_doc} must point release authority back to PR #82 headRefOid"
+
+
 def test_closeout_manifest_names_remaining_workflow_gates() -> None:
     manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
 

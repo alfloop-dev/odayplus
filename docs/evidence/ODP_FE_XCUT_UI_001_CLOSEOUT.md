@@ -22,8 +22,8 @@ hard-coded colors.
 ## Review Approval
 
 Reviewer Codex approved the task (`review_approved`,
-2026-06-29T07:41:45Z) after verifying merged PR #89 on
-`origin/dev@d9d637a`. The reviewer checked `packages/ui` core export
+2026-06-29T07:41:45Z) after verifying merged PR #89 on the then-current
+`origin/dev` head. The reviewer checked `packages/ui` core export
 coverage, the ApprovalPanel/Table/StatusBadges/EvidencePanel
 audit/permission/data-quality hooks, and ran the npm workspace typechecks
 plus the UI core export and frontend domain type coverage contract tests.
@@ -35,9 +35,11 @@ All four acceptance criteria were confirmed:
   where applicable.
 - Typecheck and the relevant UI/component tests pass.
 
-The reviewed implementation was already merged to `origin/dev` (review head
-`d9d637a`, now within `origin/dev`) through PR #89. This file records the
-owner finalization evidence required before moving the task to `done`.
+The reviewed implementation was already merged to `origin/dev` through PR #89.
+This historical closeout record is not release-candidate authority; current
+release evidence must use PR #82 `headRefOid` and attached checks. This file
+records the owner finalization evidence required before moving the task to
+`done`.
 
 ## Artifact Mapping
 
