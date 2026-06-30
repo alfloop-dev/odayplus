@@ -289,7 +289,7 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "update_external_proof_handback_status_board.py",
         "check_external_proof_live_blockers.py --require-assignees",
         "check_external_proof_fleet_notifications.py",
-        "check_external_proof_issue_handback_scan.py --report",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
         "sync_external_proof_escalation_comments.py --apply",
         "--force --comment-dir",
         "sync_external_proof_fleet_issues.py",
@@ -325,7 +325,7 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "update_external_proof_handback_status_board.py",
         "check_external_proof_live_blockers.py --require-assignees",
         "check_external_proof_fleet_notifications.py",
-        "check_external_proof_issue_handback_scan.py --report",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
         "sync_external_proof_escalation_comments.py --apply",
         "--force --comment-dir",
         "sync_external_proof_fleet_issues.py",
@@ -382,7 +382,7 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     assert "update_external_proof_handback_status_board.py" in board_text
     assert "check_external_proof_live_blockers.py --require-assignees" in board_text
     assert "check_external_proof_fleet_notifications.py" in board_text
-    assert "check_external_proof_issue_handback_scan.py --report" in board_text
+    assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
     assert "sync_external_proof_escalation_comments.py --apply" in board_text
     assert "--force --comment-dir" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
@@ -677,7 +677,7 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     assert "update_external_proof_handback_status_board.py" in board_text
     assert "check_external_proof_live_blockers.py --require-assignees" in board_text
     assert "check_external_proof_fleet_notifications.py" in board_text
-    assert "check_external_proof_issue_handback_scan.py --report" in board_text
+    assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
     assert "sync_external_proof_escalation_comments.py --apply" in board_text
     assert "--force --comment-dir" in board_text
     assert "generate_external_proof_handback_skeleton.py" in board_text
@@ -880,6 +880,7 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     assert "scripts/e2e/check_external_proof_live_blockers.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_fleet_notifications.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_issue_handback_scan.py" in release_gate_text
+    assert "--fail-on-escalation" in release_gate_text
     assert "scripts/e2e/sync_external_proof_escalation_comments.py" in release_gate_text
     assert "scripts/e2e/sync_external_proof_fleet_issues.py" in release_gate_text
     assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text

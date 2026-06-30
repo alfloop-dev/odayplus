@@ -292,6 +292,7 @@ def main() -> int:
             "check_external_proof_live_blockers.py",
             "check_external_proof_fleet_notifications.py",
             "check_external_proof_issue_handback_scan.py",
+            "--fail-on-escalation",
             "sync_external_proof_escalation_comments.py",
             "check_product_go_no_go.py",
         ):
@@ -305,7 +306,7 @@ def main() -> int:
         "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
         "generate_external_proof_handback_skeleton.py",
         "check_external_proof_fleet_pickup_board.py",
-        "check_external_proof_issue_handback_scan.py --report",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
         "sync_external_proof_escalation_comments.py --apply",
         "--force --comment-dir",
         "ODP-EXT-PROD-001",

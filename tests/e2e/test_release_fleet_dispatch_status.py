@@ -61,7 +61,7 @@ def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> 
         },
         "issue_handback_scan": {
             "label": "external issue handback scan",
-            "command": "python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report",
+            "command": "python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
             "returncode": 0,
             "output": (
                 "# External Proof Issue Handback Scan\n\n"
@@ -108,6 +108,24 @@ def test_release_fleet_dispatch_status_rejects_failed_issue_handback_scan() -> N
     errors = checker.validate_report(payload)
 
     assert "external issue handback scan failed: missing_current_sha_pickup" in errors
+
+
+def test_release_fleet_dispatch_status_rejects_overdue_external_handback() -> None:
+    checker = load_checker_module()
+    payload = report_payload()
+    payload["issue_handback_scan"]["returncode"] = 1
+    payload["issue_handback_scan"]["output"] = (
+        "# External Proof Issue Handback Scan\n\n"
+        "| Task | Issue | Issue State | Latest Pickup | Age | Status | Candidate Comments | Escalation Due |\n"
+        "|---|---|---|---|---:|---|---:|---|\n"
+        "| `ODP-MAP-STAGE-001` | #135 | OPEN | 2026-06-29T12:00:00Z | 25.0h | "
+        "`no_handback_after_latest_pickup` | 0 | yes |"
+    )
+
+    errors = checker.validate_report(payload)
+
+    assert any("external issue handback scan failed" in error for error in errors)
+    assert any("Escalation Due" in error for error in errors)
 
 
 def test_release_fleet_dispatch_status_rejects_unclean_pr() -> None:

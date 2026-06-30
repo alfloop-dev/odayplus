@@ -35,7 +35,12 @@ LIVE_CHECKS = (
 )
 
 READINESS_REPORT_COMMAND = ["python3", "scripts/e2e/check_external_proof_acceptance_readiness.py", "--report"]
-ISSUE_HANDBACK_SCAN_COMMAND = ["python3", "scripts/e2e/check_external_proof_issue_handback_scan.py", "--report"]
+ISSUE_HANDBACK_SCAN_COMMAND = [
+    "python3",
+    "scripts/e2e/check_external_proof_issue_handback_scan.py",
+    "--report",
+    "--fail-on-escalation",
+]
 
 
 def current_pr82_payload() -> dict[str, Any]:

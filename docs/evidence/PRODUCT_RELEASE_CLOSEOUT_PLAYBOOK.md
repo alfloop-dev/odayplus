@@ -194,9 +194,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   PR #82 changes head so #132-#138 assignees have task-specific instructions
   for the active `headRefOid`.
 - External proof handback follow-up must be visible before go/no-go. Run
-  `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report`
+  `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation`
   to see whether #132-#138 have candidate handback comments after the latest
-  current-SHA pickup, plus age and escalation status.
+  current-SHA pickup, plus age and escalation status; once a row is overdue,
+  this command fails the release-owner dispatch gate.
 - External proof escalation comments should use the standard renderer. Run
   `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply`
   only when the scan marks rows `Escalation Due = yes`; use
@@ -235,6 +236,9 @@ Do not mark the active objective complete until:
   `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.
 - `python3 scripts/e2e/check_external_proof_fleet_notifications.py` passes
   against live GitHub issue comments for #132-#138.
+- `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation`
+  passes against live GitHub issue comments for #132-#138, so overdue
+  no-handback rows block release-owner dispatch until followed up.
 - `python3 scripts/e2e/check_product_closeout_fleet_notification.py` passes
   against live PR #82 comments for the current `headRefOid`.
 - `python3 scripts/e2e/check_release_fleet_dispatch_status.py` passes against

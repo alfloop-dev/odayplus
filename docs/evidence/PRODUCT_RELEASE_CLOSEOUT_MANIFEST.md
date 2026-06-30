@@ -36,7 +36,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | External proof issue sync | `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` verifies live GitHub issues #132-#138 still carry the queue-defined fleet routing labels, pickup commands, release authority, completion boundaries, and named release-coordinator assignees | prepared, live GitHub check |
 | External proof live blocker sync | `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` compares live GitHub issue state with `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` so unaccepted #132-#138 handbacks must keep open, labeled, assigned release-blocker issues | prepared, live GitHub blocker check |
 | External proof fleet notification sync | `python3 scripts/e2e/check_external_proof_fleet_notifications.py` verifies #132-#138 each have a fleet pickup comment tied to the current PR #82 `headRefOid`, so assignees are notified whenever the release target changes | prepared, live GitHub notification check |
-| External proof handback scan and escalation | `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report` scans #132-#138 for candidate handback comments after the latest current-SHA pickup and reports pickup age/escalation due; `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply` posts standardized escalation comments only for overdue handbacks, or `--force --comment-dir <dir>` renders manual escalation drafts | prepared, live GitHub follow-up guard |
+| External proof handback scan and escalation | `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation` scans #132-#138 for candidate handback comments after the latest current-SHA pickup and fails once pickup age passes the escalation threshold without a handback; `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply` posts standardized escalation comments only for overdue handbacks, or `--force --comment-dir <dir>` renders manual escalation drafts | prepared, live GitHub follow-up guard |
 | Product go/no-go external proof guard | `python3 scripts/e2e/check_product_go_no_go.py` verifies `PRODUCT_RELEASE_GO_NO_GO.md` remains conditional and keeps #132-#138 pending until accepted handbacks prove live provider, live map, and remote staging evidence | prepared, release wording guard |
 | Product closeout action preflight | `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>` verifies one owner/reviewer/Human-Ops lifecycle command against queue routing, live `ai-status.json`, evidence refs, and PR #82 checks | prepared, fleet action guard |
 | Product closeout action matrix | `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py` reports every active closeout action as `ready`, `waiting`, `blocked_by_pr_checks`, or `stale_or_invalid` before fleets run lifecycle commands | prepared, fleet readiness guard |
@@ -130,10 +130,11 @@ Note: table blocking types use canonical queue values. The older prose labels
 - Run `python3 scripts/e2e/check_external_proof_fleet_notifications.py` after
   PR #82 receives a new `headRefOid`; every #132-#138 issue must have a pickup
   comment for the current release target before fleet closeout.
-- Run `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report`
+- Run `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation`
   before go/no-go and during external-proof follow-up; it reports whether any
   fleet has commented a candidate handback after the latest current-SHA pickup
-  and whether the task is past the default 24h escalation threshold.
+  and fails the release-owner dispatch view when a task is past the default
+  24h escalation threshold without a handback.
 - Run `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply`
   only when the handback scan marks rows `Escalation Due = yes`; use
   `--force --comment-dir <dir>` to render manual escalation drafts without

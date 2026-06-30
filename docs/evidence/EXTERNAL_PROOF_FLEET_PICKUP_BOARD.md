@@ -266,7 +266,7 @@ Track whether fleets have returned candidate handbacks after the latest pickup,
 and whether follow-up has passed the default escalation threshold:
 
 ```bash
-python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report
+python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation
 ```
 
 Post standardized escalation comments only after the scan marks rows as due.
