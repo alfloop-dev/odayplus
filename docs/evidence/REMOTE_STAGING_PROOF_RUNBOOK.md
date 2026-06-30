@@ -15,8 +15,10 @@ tasks.
 
 The GitHub `staging` environment exists, but repository variables and secrets
 are not configured in the current external state. The workflow
-`.github/workflows/deploy-staging.yml` is still a placeholder that echoes a
-TODO instead of deploying a remote host.
+`.github/workflows/deploy-staging.yml` is a fail-closed verifier: it runs
+`scripts/e2e/check_remote_staging_proof.py` and uploads the redacted proof
+report. It does not contain provider secrets, and it does not fabricate a
+successful deployment when the staging host/API URL/secret owner are absent.
 
 Therefore:
 

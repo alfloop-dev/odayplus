@@ -105,11 +105,22 @@ total_count: 0
 names: []
 ```
 
-Staging deploy workflow status:
+Staging deploy workflow status at original handback time:
 
 - `.github/workflows/deploy-staging.yml` exists.
-- The workflow still contains a TODO placeholder and does not deploy a real staging host.
+- At original handback time, the workflow contained a TODO placeholder and did
+  not deploy a real staging host.
 - It references `${{ vars.ODP_STAGING_DEPLOY_URL }}`, but that variable is not configured.
+
+Current workflow guard:
+
+- `.github/workflows/deploy-staging.yml` is now a fail-closed
+  Deploy/Verify Staging workflow.
+- It resolves `ODAY_RELEASE_SHA`, runs
+  `scripts/e2e/check_remote_staging_proof.py`, and uploads a redacted proof
+  report artifact.
+- It still requires external staging variables/secrets and a real staging
+  target; it does not itself create the missing host/API URL/database.
 
 Secret values were not printed or accessed.
 
@@ -175,7 +186,8 @@ Missing external state:
 - Deployed API configured with `ODAY_RELEASE_SHA` equal to the current PR #82 `headRefOid` or the promoted SHA.
 - Reachable remote `/platform/health`.
 - Reachable remote `/platform/version` matching the release authority SHA.
-- Real staging deploy workflow or equivalent deployment path.
+- Real staging deployment target and backing services, or an approved
+  platform-native deployment path that feeds the fail-closed verifier.
 
 ## ODP-PV-STAGE-002 Status
 

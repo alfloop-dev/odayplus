@@ -42,6 +42,7 @@ REQUIRED_FILES = {
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
+    "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
 
 REQUIRED_RUNNER_SPECS = (
@@ -92,6 +93,23 @@ def main() -> int:
     ):
         if required_token not in assignment_text:
             errors.append(f"fleet assignment ledger missing token: {required_token}")
+
+    staging_workflow = ROOT / ".github/workflows/deploy-staging.yml"
+    staging_workflow_text = staging_workflow.read_text(encoding="utf-8") if staging_workflow.exists() else ""
+    for required_token in (
+        "Deploy/Verify Staging",
+        "workflow_dispatch",
+        "ODAY_RELEASE_SHA",
+        "ODP_STAGING_DEPLOY_URL",
+        "ODP_STAGING_API_URL",
+        "ODP_STAGING_SECRET_OWNER",
+        "scripts/e2e/check_remote_staging_proof.py",
+        "actions/upload-artifact@v4",
+    ):
+        if required_token not in staging_workflow_text:
+            errors.append(f"remote staging workflow missing token: {required_token}")
+    if "TODO: replace with real deploy" in staging_workflow_text:
+        errors.append("remote staging workflow still contains placeholder deploy TODO")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
