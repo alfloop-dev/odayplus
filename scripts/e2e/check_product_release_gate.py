@@ -44,6 +44,7 @@ REQUIRED_FILES = {
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
+    "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
 
@@ -169,6 +170,20 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"external proof closeout queue check failed: {output}")
+
+    for doc_label, relative_path in (
+        ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),
+        ("go/no-go packet", "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"),
+        ("closeout playbook", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"),
+    ):
+        doc_path = ROOT / relative_path
+        doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+        for required_token in (
+            "check_external_proof_issue_sync.py",
+            "--require-assignees",
+        ):
+            if required_token not in doc_text:
+                errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")
 
     if errors:
         print("Product release gate failed:")
