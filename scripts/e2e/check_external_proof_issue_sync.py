@@ -80,6 +80,7 @@ def validate_issue_sync(
             "## Fleet pickup routing",
             "## Runtime proof handback format",
             "EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
+            "EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
             "--expected-sha",
