@@ -19,6 +19,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup
 python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
+python3 scripts/e2e/check_external_proof_handback_status_board.py
 python3 scripts/e2e/check_external_proof_fleet_pickup_board.py
 python3 scripts/e2e/check_product_go_no_go.py
 ```
@@ -143,6 +144,16 @@ release closeout:
 
 ```bash
 python3 scripts/e2e/check_product_go_no_go.py
+```
+
+Track handback intake status in
+`docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`; it is not runtime
+proof, but it is the machine-readable board Product Validation uses to mark
+whether each #132-#138 handback is pending, submitted, needs revision, or
+accepted. Validate it before release closeout:
+
+```bash
+python3 scripts/e2e/check_external_proof_handback_status_board.py
 ```
 
 When all seven handbacks are ready, validate the complete set before release
