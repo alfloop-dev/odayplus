@@ -31,6 +31,7 @@ REQUIRED_FILES = {
     "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
     "closeout pickup board checker": "scripts/e2e/check_product_closeout_pickup_board.py",
     "closeout action checker": "scripts/e2e/check_product_closeout_action.py",
+    "closeout action matrix checker": "scripts/e2e/check_product_closeout_action_matrix.py",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback status board": "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",

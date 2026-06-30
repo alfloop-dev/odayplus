@@ -32,6 +32,7 @@ recording a meaningful review summary.
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 python3 scripts/e2e/check_product_release_gate.py
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <Reviewer> --action-type reviewer_approve_or_reopen
 python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_handback_template.py
@@ -67,6 +68,7 @@ checkout.
 ```bash
 git fetch origin dev
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <Owner> --action-type owner_done
 AI_NAME=<Owner> python3 scripts/ai_status.py done <task-id> "<finalization message>"
 ```

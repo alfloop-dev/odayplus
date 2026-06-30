@@ -27,6 +27,7 @@ Run these before any closeout action:
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 python3 scripts/e2e/check_product_release_gate.py
 python3 scripts/e2e/check_product_closeout_queue.py --report
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 ```
@@ -62,6 +63,12 @@ the same task, actor, and action type:
 
 ```bash
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task ODP-FE-XCUT-001 --actor Claude2 --action-type owner_handoff
+```
+
+Use the matrix report to see all currently ready and waiting lanes:
+
+```bash
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 ```
 
 ## Completed Closeouts
