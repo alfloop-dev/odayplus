@@ -59,6 +59,7 @@ Release is blocked if any of these are true:
 | External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` remains open for provider credential/license/geocoder, remote live map endpoint, and remote staging proof | pending-human |
 | External proof handback format reviewed | Confirm fleets use `EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for redacted runtime proof artifacts and that `check_external_proof_handback_template.py` passes | pending-human |
 | External proof handback artifacts validated | For each submitted #132-#138 handback, run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing the issue | pending-human |
+| External proof handback bundle validated | After all #132-#138 handbacks are submitted, run `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` to prove the complete set is present, unique, accepted, and tied to the same release head | pending-human |
 | External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 

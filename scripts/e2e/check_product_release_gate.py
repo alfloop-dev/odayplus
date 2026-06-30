@@ -51,6 +51,7 @@ REQUIRED_FILES = {
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
     "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
+    "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
     "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
@@ -222,6 +223,7 @@ def main() -> int:
             "check_external_proof_issue_sync.py",
             "--require-assignees",
             "check_external_proof_handback_artifact.py",
+            "check_external_proof_handback_bundle.py",
         ):
             if required_token not in doc_text:
                 errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")
@@ -249,6 +251,7 @@ def main() -> int:
         "mock://",
         "localhost",
         "127.0.0.1",
+        "check_external_proof_handback_bundle.py",
     ):
         if required_token not in pickup_text:
             errors.append(f"external proof fleet pickup board missing token: {required_token}")

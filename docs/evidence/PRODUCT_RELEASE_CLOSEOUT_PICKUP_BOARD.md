@@ -35,6 +35,7 @@ live and assigned:
 
 ```bash
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
+python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 ```
 
 ## Pickup Table
@@ -108,5 +109,7 @@ Completion still requires:
 - owner and reviewer closeouts are done or explicitly superseded by Human/Ops;
 - external proof issues #132-#138 have accepted handbacks that pass
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`;
+- the full external proof handback set passes
+  `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`;
 - `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   still passes.

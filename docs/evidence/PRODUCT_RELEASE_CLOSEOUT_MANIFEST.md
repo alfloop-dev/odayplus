@@ -29,6 +29,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | External proof closeout queue | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` enumerates provider credential/license/geocoder, remote live map endpoint, and remote staging proof tasks with owners, fleet routing, required pickup labels, commands, evidence refs, completion rules, and GitHub tracking issues #132-#138 | prepared, externally blocked |
 | External proof handback template | `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` defines the redacted runtime proof artifact fields fleets must attach for #132-#138, including PR #82 `headRefOid`, correlation ids, artifact refs, redaction summary, and Product Validation attestation; `python3 scripts/e2e/check_external_proof_handback_template.py` keeps the template synchronized with the external proof queue | prepared, handback contract |
 | External proof handback artifact validator | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` validates a completed fleet handback before Product Validation accepts it: task/issue mapping, release SHA, redaction, artifact types, required evidence results, command exits, correlation ids, and accepted attestation | prepared, acceptance guard |
+| External proof handback bundle validator | `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` validates the full #132-#138 handback set: every task present, no duplicates, no mixed release SHAs, and every handback accepted by the artifact checker | prepared, set-level acceptance guard |
 | External proof issue sync | `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` verifies live GitHub issues #132-#138 still carry the queue-defined fleet routing labels, pickup commands, release authority, completion boundaries, and named release-coordinator assignees | prepared, live GitHub check |
 | Static release gate | `python3 scripts/e2e/check_product_release_gate.py` validates required specs, evidence docs, runner coverage, deterministic source fixtures, and correlation ids | proven |
 | Product E2E runner | `scripts/e2e/run_product_e2e.sh` runs API-bound UI, map, expansion, PV-006, PV-007, and product environment Playwright specs | proven by PR #82 checks |
@@ -89,6 +90,10 @@ Note: table blocking types use canonical queue values. The older prose labels
 - Before closing any external-proof issue, Product Validation must run
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
   against the attached handback and reject proof that fails this checker.
+- Before treating external proof closeout as complete, Product Validation must
+  run `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
+  against the full #132-#138 handback set and reject missing, duplicate, or
+  mixed-release handbacks.
 - Keep every external proof GitHub issue routed with `product-e2e`,
   `external-proof`, `release-blocker`, and the owner-lane pickup label
   (`platform-ops` or `data-partnerships`) until Product Validation accepts the
