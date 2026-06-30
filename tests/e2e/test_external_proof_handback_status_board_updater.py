@@ -73,6 +73,76 @@ def test_update_external_proof_handback_status_board_marks_submitted(tmp_path) -
     assert entry["accepted_release_head_ref_oid"] is None
 
 
+def test_update_external_proof_handback_status_board_rejects_submitted_wrong_task(tmp_path) -> None:
+    status_board = copy_status_board(tmp_path)
+    handback = tmp_path / "handback.json"
+    write_valid_handback(handback, task_id="ODP-MAP-STAGE-002")
+
+    result = run_updater(
+        "--status-board",
+        status_board,
+        "--task",
+        "ODP-MAP-STAGE-001",
+        "--status",
+        "handback_submitted",
+        "--handback",
+        handback,
+    )
+
+    assert result.returncode == 1
+    assert "handback_submitted requires a task-matched handback artifact" in result.stdout
+    assert "does not match --task" in result.stdout
+    entry = task_entry(status_board, "ODP-MAP-STAGE-001")
+    assert entry["status"] == "pending_external_handback"
+
+
+def test_update_external_proof_handback_status_board_rejects_submitted_wrong_expected_sha(tmp_path) -> None:
+    status_board = copy_status_board(tmp_path)
+    handback = tmp_path / "handback.json"
+    write_valid_handback(handback)
+
+    result = run_updater(
+        "--status-board",
+        status_board,
+        "--task",
+        "ODP-MAP-STAGE-001",
+        "--status",
+        "handback_submitted",
+        "--handback",
+        handback,
+        "--expected-sha",
+        "0" * 40,
+    )
+
+    assert result.returncode == 1
+    assert "handback release_head_ref_oid must match --expected-sha" in result.stdout
+    entry = task_entry(status_board, "ODP-MAP-STAGE-001")
+    assert entry["status"] == "pending_external_handback"
+
+
+def test_update_external_proof_handback_status_board_rejects_submitted_invalid_json(tmp_path) -> None:
+    status_board = copy_status_board(tmp_path)
+    handback = tmp_path / "handback.json"
+    handback.write_text("{not-json", encoding="utf-8")
+
+    result = run_updater(
+        "--status-board",
+        status_board,
+        "--task",
+        "ODP-MAP-STAGE-001",
+        "--status",
+        "needs_revision",
+        "--handback",
+        handback,
+    )
+
+    assert result.returncode == 1
+    assert "needs_revision requires a task-matched handback artifact" in result.stdout
+    assert "unable to load handback JSON" in result.stdout
+    entry = task_entry(status_board, "ODP-MAP-STAGE-001")
+    assert entry["status"] == "pending_external_handback"
+
+
 def test_update_external_proof_handback_status_board_accepts_valid_handback(tmp_path) -> None:
     status_board = copy_status_board(tmp_path)
     handback = tmp_path / "handback.json"

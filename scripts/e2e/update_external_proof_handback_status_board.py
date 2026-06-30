@@ -66,6 +66,39 @@ def validate_handback_artifact(handback_path: Path, *, expected_sha: str | None)
     return handback, errors
 
 
+def validate_intake_handback_identity(
+    handback_path: Path,
+    *,
+    task_id: str,
+    expected_sha: str | None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    try:
+        handback = load_json(handback_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, [f"unable to load handback JSON: {exc}"]
+
+    queue = load_json(QUEUE_PATH)
+    queue_entries = {entry["task_id"]: entry for entry in queue.get("queue", [])}
+    queue_entry = queue_entries.get(task_id)
+    if queue_entry is None:
+        return handback, [f"task_id not found in external proof queue: {task_id}"]
+
+    if handback.get("task_id") != task_id:
+        errors.append(f"handback task_id {handback.get('task_id')!r} does not match --task {task_id!r}")
+    if handback.get("tracking_issue") != queue_entry.get("tracking_issue"):
+        errors.append(f"handback tracking_issue must match queue for {task_id}")
+
+    release_sha = handback.get("release_head_ref_oid")
+    artifact_checker = load_module(ARTIFACT_CHECKER_PATH, "check_external_proof_handback_artifact")
+    if not isinstance(release_sha, str) or not artifact_checker.SHA_RE.match(release_sha):
+        errors.append("handback release_head_ref_oid must be a 40-character lowercase git SHA")
+    if expected_sha and release_sha != expected_sha:
+        errors.append("handback release_head_ref_oid must match --expected-sha")
+
+    return handback, errors
+
+
 def apply_update(
     status_board: dict[str, Any],
     *,
@@ -104,17 +137,28 @@ def apply_update(
     if not handback_path.exists():
         return [f"handback file does not exist: {handback_path}"]
 
-    entry["status"] = status
-    entry["handback_artifact_path"] = str(handback_path)
-    if next_action:
-        entry["next_action"] = next_action
-
     if status in {"handback_submitted", "needs_revision"}:
+        _, intake_errors = validate_intake_handback_identity(
+            handback_path,
+            task_id=task_id,
+            expected_sha=expected_sha,
+        )
+        if intake_errors:
+            return [f"{status} requires a task-matched handback artifact: {error}" for error in intake_errors]
+        entry["status"] = status
+        entry["handback_artifact_path"] = str(handback_path)
+        if next_action:
+            entry["next_action"] = next_action
         entry["artifact_check_passed"] = False
         entry["accepted_release_head_ref_oid"] = None
         entry["accepted_at"] = None
         entry["accepted_by"] = None
         return errors
+
+    entry["status"] = status
+    entry["handback_artifact_path"] = str(handback_path)
+    if next_action:
+        entry["next_action"] = next_action
 
     handback, validation_errors = validate_handback_artifact(handback_path, expected_sha=expected_sha)
     if validation_errors:
