@@ -56,6 +56,7 @@ REQUIRED_FILES = {
     "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
     "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
     "external proof handback status board checker": "scripts/e2e/check_external_proof_handback_status_board.py",
+    "external proof handback status board updater": "scripts/e2e/update_external_proof_handback_status_board.py",
     "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
@@ -276,6 +277,7 @@ def main() -> int:
             "check_external_proof_handback_artifact.py",
             "check_external_proof_handback_bundle.py",
             "check_external_proof_handback_status_board.py",
+            "update_external_proof_handback_status_board.py",
             "check_product_go_no_go.py",
         ):
             if required_token not in doc_text:

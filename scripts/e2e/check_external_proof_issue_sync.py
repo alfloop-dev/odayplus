@@ -87,6 +87,7 @@ def validate_issue_sync(
             "generate_external_proof_handback_skeleton.py",
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_status_board.py",
+            "update_external_proof_handback_status_board.py",
             "check_external_proof_handback_artifact.py",
             "check_external_proof_handback_bundle.py",
             "check_product_go_no_go.py",
