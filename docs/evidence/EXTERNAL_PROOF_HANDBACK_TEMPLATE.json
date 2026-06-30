@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "generated": "2026-06-30",
+  "purpose": "Template for fleets to attach redacted external runtime proof for product-grade E2E closeout.",
+  "release_target": {
+    "pr": 82,
+    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "must_not_hardcode_dev_hash": true
+  },
+  "global_rules": [
+    "Do not include secret values, tokens, private keys, raw credentials, full connection strings, or unredacted provider payloads.",
+    "Every handback must cite the current PR #82 headRefOid fetched at execution time.",
+    "Every handback must include at least one correlation_id and at least one redacted artifact reference.",
+    "Every handback must state whether it is production, remote staging, or approved staging-equivalent evidence.",
+    "Every handback must keep deterministic/mock-live proof separate from live external runtime proof."
+  ],
+  "required_common_fields": [
+    "task_id",
+    "tracking_issue",
+    "release_head_ref_oid",
+    "executed_at",
+    "executed_by",
+    "environment",
+    "correlation_ids",
+    "redaction_summary",
+    "artifacts",
+    "commands_run",
+    "required_evidence_results",
+    "completion_attestation"
+  ],
+  "artifact_contract": {
+    "artifact_id": "stable external artifact id, log id, provider request id, workflow run id, or evidence document path",
+    "artifact_type": "redacted_log | provider_response | workflow_run | screenshot | report | license_attestation | backup_restore_record | other",
+    "location": "URL, GitHub artifact URL, issue attachment, or repo path if intentionally committed",
+    "redacted": true,
+    "contains_secret_values": false,
+    "observed_at": "ISO-8601 timestamp",
+    "notes": "short explanation of what the artifact proves"
+  },
+  "completion_attestation_contract": {
+    "accepted_by": "Product Validation reviewer or Human/Ops approver",
+    "accepted_at": "ISO-8601 timestamp",
+    "decision": "accepted | rejected | needs_revision",
+    "notes": "reason for acceptance or revision"
+  },
+  "tasks": [
+    {
+      "task_id": "ODP-EXT-PROD-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/132",
+      "owner": "Platform/Ops",
+      "handoff_environment": "production",
+      "minimum_artifact_types": [
+        "redacted_log",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "secret values",
+        "access tokens",
+        "private keys",
+        "full connection strings"
+      ],
+      "required_evidence_results": [
+        "secret inventory names configured in the deployment environment",
+        "secret owner and rotation policy recorded",
+        "live-mode startup validation passes without printing secret values",
+        "failure cases still fail closed for missing/placeholder/expired/revoked credentials"
+      ]
+    },
+    {
+      "task_id": "ODP-EXT-PROD-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/133",
+      "owner": "Data Partnerships / Legal",
+      "handoff_environment": "production",
+      "minimum_artifact_types": [
+        "license_attestation",
+        "provider_response",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "unredacted licensed raw payload",
+        "secret values",
+        "member/customer personal data"
+      ],
+      "required_evidence_results": [
+        "provider allowed-use/license attestation for production",
+        "redacted production listing raw snapshot id",
+        "canonical snapshot id and lineage",
+        "freshness SLA result",
+        "export restriction/watermark behavior for licensed data"
+      ]
+    },
+    {
+      "task_id": "ODP-EXT-PROD-003",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/134",
+      "owner": "Platform/Ops",
+      "handoff_environment": "production",
+      "minimum_artifact_types": [
+        "provider_response",
+        "redacted_log",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "geocoder credential",
+        "secret values",
+        "unredacted provider payload"
+      ],
+      "required_evidence_results": [
+        "redacted production geocoder request/response id",
+        "provider observed timestamp",
+        "confidence mapping",
+        "low-confidence flag proof",
+        "timeout/unauthorized/rate-limit fail-closed behavior remains covered"
+      ]
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/135",
+      "owner": "Platform/Ops",
+      "handoff_environment": "remote_staging",
+      "minimum_artifact_types": [
+        "workflow_run",
+        "screenshot",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "map provider token",
+        "secret values"
+      ],
+      "required_evidence_results": [
+        "staging map tile URL configured",
+        "provider attribution and terms URL visible",
+        "remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage",
+        "proof report references current PR #82 headRefOid"
+      ]
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/136",
+      "owner": "Platform/Ops",
+      "handoff_environment": "remote_staging",
+      "minimum_artifact_types": [
+        "workflow_run",
+        "screenshot",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "geocoder provider token",
+        "secret values"
+      ],
+      "required_evidence_results": [
+        "staging geocoder URL configured",
+        "geocoder outage fallback remains usable",
+        "attribution/terms approval is visible",
+        "proof report references current PR #82 headRefOid"
+      ]
+    },
+    {
+      "task_id": "ODP-PV-STAGE-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/137",
+      "owner": "Platform/Ops",
+      "handoff_environment": "remote_staging",
+      "minimum_artifact_types": [
+        "workflow_run",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "staging secret values",
+        "database connection string",
+        "private key"
+      ],
+      "required_evidence_results": [
+        "ODP_STAGING_DEPLOY_URL configured",
+        "ODP_STAGING_API_URL configured",
+        "ODP_STAGING_SECRET_OWNER configured",
+        "ODAY_RELEASE_SHA injected",
+        "/platform/health reachable",
+        "/platform/version.release_sha equals current PR #82 headRefOid",
+        "redacted remote staging proof report artifact"
+      ]
+    },
+    {
+      "task_id": "ODP-PV-STAGE-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/138",
+      "owner": "Platform/Ops",
+      "handoff_environment": "remote_staging",
+      "minimum_artifact_types": [
+        "workflow_run",
+        "backup_restore_record",
+        "report"
+      ],
+      "forbidden_artifact_content": [
+        "staging secret values",
+        "database connection string",
+        "private key"
+      ],
+      "required_evidence_results": [
+        "ODP-PV-STAGE-001 passed against the same target",
+        "product E2E smoke runs against ODP_STAGING_DEPLOY_URL",
+        "API smoke runs against ODP_STAGING_API_URL",
+        "backup artifact id and timestamp",
+        "restore target and timestamp",
+        "rollback command/result",
+        "post-drill health/version proof with correlation id"
+      ]
+    }
+  ]
+}
