@@ -106,6 +106,12 @@ def validate_notifications(
             if stable_fragment not in latest_match:
                 errors.append(f"{prefix} latest pickup comment missing command fragment: {stable_fragment}")
 
+        for command in entry.get("handback_commands", []):
+            command = str(command)
+            stable_fragment = command.split(" <")[0].split(' "<')[0]
+            if stable_fragment not in latest_match:
+                errors.append(f"{prefix} latest pickup comment missing handback command fragment: {stable_fragment}")
+
         completion_rule = str(entry.get("completion_rule", ""))
         if completion_rule and completion_rule not in latest_match:
             errors.append(f"{prefix} latest pickup comment missing completion rule")
