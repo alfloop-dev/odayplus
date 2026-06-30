@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+    "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
     "remote staging runbook": "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
     "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
@@ -44,6 +45,7 @@ REQUIRED_FILES = {
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
+    "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
@@ -170,6 +172,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"external proof closeout queue check failed: {output}")
+
+    external_handback_template_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_handback_template_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_handback_template_check.stdout + external_handback_template_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof handback template check failed: {output}")
 
     for doc_label, relative_path in (
         ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),

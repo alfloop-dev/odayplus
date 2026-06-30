@@ -62,6 +62,9 @@ def synced_issue_payload() -> dict:
                     "- Pickup command: `gh issue view 135 --json number,title,labels,body,url`",
                     "- Release authority: PR #82 headRefOid and attached checks",
                     "- Escalation: Product Validation reviews remote smoke and fallback proof before closure.",
+                    "## Runtime proof handback format",
+                    "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for attached runtime proof.",
+                    "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
                     "## Completion rule",
                     "Do not close until proof references PR #82 headRefOid.",
                 ]

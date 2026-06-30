@@ -232,6 +232,8 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "Do not mark the release complete while PR #82 is draft",
         "Do not claim live external provider integration",
         "Do not claim live remote staging rollout",
+        "EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
+        "check_external_proof_handback_template.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "provider credential/OAuth",
         "scheduled external fetch",
@@ -253,6 +255,7 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "scripts/ai_status.py approve",
         "scripts/ai_status.py reopen",
         "scripts/ai_status.py done",
+        "check_external_proof_handback_template.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "gh pr view 82",
         "check_product_release_gate.py",
@@ -551,6 +554,7 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
 
     assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
     assert "Product closeout queue checks passed." in queue_check_text
     assert "ai-status.json" in queue_check_text
     assert "waiting_for_" in queue_check_text

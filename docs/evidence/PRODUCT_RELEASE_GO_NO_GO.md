@@ -57,6 +57,7 @@ Release is blocked if any of these are true:
 | Deterministic environment accepted | Confirm deterministic source stub is acceptable for PV readiness | pending-human |
 | Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url/secret owner configuration and `check_remote_staging_proof.py` evidence | pending-human |
 | External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` remains open for provider credential/license/geocoder, remote live map endpoint, and remote staging proof | pending-human |
+| External proof handback format reviewed | Confirm fleets use `EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for redacted runtime proof artifacts and that `check_external_proof_handback_template.py` passes | pending-human |
 | External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 

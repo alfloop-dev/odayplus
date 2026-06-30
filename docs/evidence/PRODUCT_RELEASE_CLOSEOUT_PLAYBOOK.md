@@ -124,6 +124,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` tasks have
   redacted runtime evidence for provider credentials/licensing/geocoder,
   remote live map endpoints, and remote staging smoke/drill proof.
+- External proof handbacks must use
+  `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` and must pass
+  `python3 scripts/e2e/check_external_proof_handback_template.py` before
+  Product Validation accepts #132-#138 evidence.
 - External proof GitHub issue handoff must remain synced with queue routing.
   Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   before Human/Ops go/no-go so #132-#138 cannot silently lose labels,
@@ -141,4 +145,6 @@ Do not mark the active objective complete until:
   superseded by Human/Ops.
 - `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   passes against live GitHub issues #132-#138.
+- `python3 scripts/e2e/check_external_proof_handback_template.py` passes and
+  accepted external proof artifacts cite the template fields.
 - PR #82 attached checks are still successful at the decision head.
