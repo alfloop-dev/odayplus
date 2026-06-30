@@ -13,6 +13,7 @@ import argparse
 import json
 import subprocess
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -183,18 +184,32 @@ def run_gh_with_body(args: list[str], body: str) -> None:
         handle.write(body)
         body_path = Path(handle.name)
     try:
-        subprocess.run(args + ["--body-file", str(body_path)], cwd=ROOT, check=True)
+        run_gh(args + ["--body-file", str(body_path)])
     finally:
         body_path.unlink(missing_ok=True)
 
 
+def run_gh(args: list[str], *, attempts: int = 3) -> None:
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(args, cwd=ROOT, check=False)
+        if result.returncode == 0:
+            return
+        if attempt == attempts:
+            raise subprocess.CalledProcessError(result.returncode, args)
+        time.sleep(2 * attempt)
+
+
 def load_issue(issue_number: str) -> dict[str, Any]:
-    raw = subprocess.check_output(
-        ["gh", "issue", "view", issue_number, "--json", "number,comments"],
-        cwd=ROOT,
-        text=True,
-    )
-    return json.loads(raw)
+    args = ["gh", "issue", "view", issue_number, "--json", "number,comments"]
+    for attempt in range(1, 4):
+        result = subprocess.run(args, cwd=ROOT, check=False, capture_output=True, text=True)
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        if attempt == 3:
+            raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
+        time.sleep(2 * attempt)
+    raise RuntimeError("unreachable")
+
 
 
 def pickup_comment_already_posted(issue: dict[str, Any], *, task_id: str, release_sha: str) -> bool:
@@ -216,10 +231,8 @@ def apply_to_github(entries: list[dict[str, Any]], *, release_sha: str) -> None:
         title = render_issue_title(entry)
         issue_body = render_issue_body(entry)
         comment_body = render_pickup_comment(entry, release_sha)
-        subprocess.run(
+        run_gh(
             ["gh", "issue", "edit", issue_number, "--title", title, "--body", issue_body],
-            cwd=ROOT,
-            check=True,
         )
         issue = load_issue(issue_number)
         if pickup_comment_already_posted(issue, task_id=task_id, release_sha=release_sha):

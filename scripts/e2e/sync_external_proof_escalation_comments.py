@@ -15,6 +15,7 @@ import importlib.util
 import json
 import subprocess
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -133,9 +134,19 @@ def post_issue_comment(issue_number: str, body: str) -> None:
         handle.write(body)
         body_path = Path(handle.name)
     try:
-        subprocess.run(["gh", "issue", "comment", issue_number, "--body-file", str(body_path)], cwd=ROOT, check=True)
+        run_gh(["gh", "issue", "comment", issue_number, "--body-file", str(body_path)])
     finally:
         body_path.unlink(missing_ok=True)
+
+
+def run_gh(args: list[str], *, attempts: int = 3) -> None:
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(args, cwd=ROOT, check=False)
+        if result.returncode == 0:
+            return
+        if attempt == attempts:
+            raise subprocess.CalledProcessError(result.returncode, args)
+        time.sleep(2 * attempt)
 
 
 def escalation_comment_already_posted(issue: dict[str, Any], *, task_id: str, expected_sha: str) -> bool:

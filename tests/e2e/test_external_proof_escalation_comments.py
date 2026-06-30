@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -114,3 +115,19 @@ def test_escalation_comment_already_posted_is_release_sha_specific() -> None:
         task_id="ODP-MAP-STAGE-001",
         expected_sha="326bacdd6f43f945609604d0aa2e56c151f840bc",
     )
+
+
+def test_run_gh_retries_transient_failure(monkeypatch) -> None:
+    syncer = load_syncer_module()
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        return subprocess.CompletedProcess(args=args[0], returncode=1 if calls["count"] == 1 else 0)
+
+    monkeypatch.setattr(syncer.subprocess, "run", fake_run)
+    monkeypatch.setattr(syncer.time, "sleep", lambda _seconds: None)
+
+    syncer.run_gh(["gh", "issue", "comment", "135"], attempts=2)
+
+    assert calls["count"] == 2

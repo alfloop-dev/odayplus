@@ -116,6 +116,22 @@ def test_pickup_comment_already_posted_is_release_sha_specific() -> None:
     )
 
 
+def test_run_gh_retries_transient_failure(monkeypatch) -> None:
+    syncer = load_module(SYNCER, "sync_external_proof_fleet_issues")
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        return subprocess.CompletedProcess(args=args[0], returncode=1 if calls["count"] == 1 else 0)
+
+    monkeypatch.setattr(syncer.subprocess, "run", fake_run)
+    monkeypatch.setattr(syncer.time, "sleep", lambda _seconds: None)
+
+    syncer.run_gh(["gh", "issue", "edit", "132"], attempts=2)
+
+    assert calls["count"] == 2
+
+
 def test_syncer_writes_rendered_output_dirs(tmp_path: Path) -> None:
     issue_dir = tmp_path / "issues"
     comment_dir = tmp_path / "comments"
