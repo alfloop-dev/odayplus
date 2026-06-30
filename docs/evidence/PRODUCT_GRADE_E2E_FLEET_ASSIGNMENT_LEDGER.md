@@ -4,14 +4,18 @@ Generated: 2026-06-29
 Release authority: PR #82 `headRefOid` and attached checks.  
 Dispatch packet: `docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json`.
 
-Current authority refresh:
+Authority refresh procedure:
 
-- Refreshed: 2026-06-30
-- Current PR #82 headRefOid: `fca45b70ee7c0e58278bcf734f82e2d5e83e373a`
-- Attached checks were successful at refresh time: `ci`, `product-e2e-gate`,
-  `e2e-operational-evidence`, API/web image builds, and `deploy`.
-- Remote staging remains externally blocked; the refreshed fail-closed report is
+- Always fetch the live release authority with
+  `gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url`
+  before promotion or staging proof.
+- A sample refresh was recorded on 2026-06-30 before PR #128 merged; the sample
+  fail-closed report is
   `docs/evidence/fleet_dispatch/ODP-PV-STAGE-001_MISSING_ENV_REPORT.json`.
+- Evidence-only merges intentionally move PR #82 `headRefOid`; do not treat the
+  sample SHA inside historical worker evidence as the current release target.
+- Remote staging remains externally blocked until the staging URL/API
+  URL/secret owner and runtime smoke/drill evidence exist.
 
 ## Purpose
 

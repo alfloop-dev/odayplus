@@ -34,11 +34,14 @@ Original handback result: passed. PR #82 headRefOid
 `1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633`, draft `true`, state `OPEN`,
 mergeable `MERGEABLE`, listed checks successful at command time.
 
-Current authority refresh:
+Authority refresh procedure:
 
-- Refreshed: 2026-06-30
-- Current PR #82 headRefOid: `fca45b70ee7c0e58278bcf734f82e2d5e83e373a`
-- Current PR #82 state: draft/open/mergeable with attached checks successful at refresh time.
+- Before promotion, run
+  `gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url`
+  and use the returned `headRefOid` plus attached checks as the current release
+  authority.
+- A sample refresh was recorded on 2026-06-30 before PR #128 merged. Because
+  evidence-only merges move PR #82, do not treat that sample SHA as current.
 
 ```bash
 python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1

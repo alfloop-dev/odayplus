@@ -64,15 +64,12 @@ mergeable: MERGEABLE
 checks: ci/product-e2e-gate/e2e-operational-evidence/build-and-publish/deploy all SUCCESS at query time
 ```
 
-Current authority refresh:
+Authority refresh procedure:
 
 ```text
-refreshed_at: 2026-06-30
-current_headRefOid: fca45b70ee7c0e58278bcf734f82e2d5e83e373a
-state: OPEN
-draft: true
-mergeable: MERGEABLE
-checks: ci/product-e2e-gate/e2e-operational-evidence/build-and-publish/deploy all SUCCESS at refresh time
+command: gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+rule: use the returned headRefOid and attached checks as the current release authority
+note: evidence-only merges intentionally move PR #82 headRefOid; historical sample SHAs are not current authority
 ```
 
 GitHub environments:
@@ -154,7 +151,7 @@ Report summary:
 
 ```text
 ok: false
-expected_sha: fca45b70ee7c0e58278bcf734f82e2d5e83e373a
+expected_sha: sample PR #82 headRefOid captured before PR #128 merged
 correlation_id: corr-odp-pv-stage-001
 missing:
 - env:ODP_STAGING_DEPLOY_URL

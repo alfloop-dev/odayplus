@@ -47,11 +47,14 @@ Original handback observed:
 - `mergeable`: `MERGEABLE`
 - Attached checks returned `SUCCESS` for `ci`, `product-e2e-gate`, `e2e-operational-evidence`, api/web build-and-publish, and deploy.
 
-Current authority refresh:
+Authority refresh procedure:
 
-- Refreshed: 2026-06-30
-- Current PR #82 headRefOid: `fca45b70ee7c0e58278bcf734f82e2d5e83e373a`
-- Current PR #82 state: draft/open/mergeable with attached checks successful at refresh time.
+- Before promotion, run
+  `gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url`
+  and use the returned `headRefOid` plus attached checks as the current release
+  authority.
+- A sample refresh was recorded on 2026-06-30 before PR #128 merged. Because
+  evidence-only merges move PR #82, do not treat that sample SHA as current.
 
 ## Repo-Side Implementation Evidence
 
