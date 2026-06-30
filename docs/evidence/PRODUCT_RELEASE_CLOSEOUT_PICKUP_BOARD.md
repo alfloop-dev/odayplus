@@ -39,6 +39,7 @@ python3 scripts/e2e/check_product_go_no_go.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
+python3 scripts/e2e/check_external_proof_fleet_notifications.py
 python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 ```
 
@@ -120,6 +121,9 @@ Completion still requires:
 - `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`
   still passes so unaccepted #132-#138 tasks cannot be silently closed or lose
   release-blocker routing.
+- `python3 scripts/e2e/check_external_proof_fleet_notifications.py` still
+  passes so every external-proof fleet issue has a pickup comment for the
+  current PR #82 `headRefOid`.
 - `python3 scripts/e2e/check_product_go_no_go.py` still passes so
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` cannot mark live provider,
   live map, or remote staging proof complete before #132-#138 are accepted.

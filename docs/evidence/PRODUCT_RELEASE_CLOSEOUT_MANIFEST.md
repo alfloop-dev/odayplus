@@ -33,6 +33,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | External proof handback bundle validator | `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` validates the full #132-#138 handback set: every task present, no duplicates, no mixed release SHAs, and every handback accepted by the artifact checker | prepared, set-level acceptance guard |
 | External proof issue sync | `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` verifies live GitHub issues #132-#138 still carry the queue-defined fleet routing labels, pickup commands, release authority, completion boundaries, and named release-coordinator assignees | prepared, live GitHub check |
 | External proof live blocker sync | `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` compares live GitHub issue state with `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` so unaccepted #132-#138 handbacks must keep open, labeled, assigned release-blocker issues | prepared, live GitHub blocker check |
+| External proof fleet notification sync | `python3 scripts/e2e/check_external_proof_fleet_notifications.py` verifies #132-#138 each have a fleet pickup comment tied to the current PR #82 `headRefOid`, so assignees are notified whenever the release target changes | prepared, live GitHub notification check |
 | Product go/no-go external proof guard | `python3 scripts/e2e/check_product_go_no_go.py` verifies `PRODUCT_RELEASE_GO_NO_GO.md` remains conditional and keeps #132-#138 pending until accepted handbacks prove live provider, live map, and remote staging evidence | prepared, release wording guard |
 | Static release gate | `python3 scripts/e2e/check_product_release_gate.py` validates required specs, evidence docs, runner coverage, deterministic source fixtures, and correlation ids | proven |
 | Product E2E runner | `scripts/e2e/run_product_e2e.sh` runs API-bound UI, map, expansion, PV-006, PV-007, and product environment Playwright specs | proven by PR #82 checks |
@@ -104,6 +105,9 @@ Note: table blocking types use canonical queue values. The older prose labels
 - Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`
   before external-proof closeout; an issue cannot be closed while its matching
   handback status is pending, submitted, or needs revision.
+- Run `python3 scripts/e2e/check_external_proof_fleet_notifications.py` after
+  PR #82 receives a new `headRefOid`; every #132-#138 issue must have a pickup
+  comment for the current release target before fleet closeout.
 - Do not close reviewer-owned lanes by changing `ai-status.json` from an
   unassigned actor; use the named owner/reviewer lifecycle.
 - Do not run final `done` closeout from a thin or stale `main` checkout. Owner
