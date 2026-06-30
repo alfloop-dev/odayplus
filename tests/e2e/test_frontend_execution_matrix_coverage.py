@@ -563,6 +563,7 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
             assert evidence_path.exists(), f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
 
     queue_text = CLOSEOUT_QUEUE.read_text(encoding="utf-8")
+    manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
     for boundary in (
         "provider credential/OAuth wiring",
         "scheduled external fetch",
@@ -572,6 +573,31 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
         "remote staging host/url/secret configuration",
     ):
         assert boundary in queue_text
+
+    asset_entries = [entry for entry in queue_entries if entry["task_id"] == "ODP-FE-ASSET-001"]
+    assert len(asset_entries) == 1
+    asset_entry = asset_entries[0]
+    assert asset_entry["status"] == "review"
+    assert asset_entry["actor"] == "Codex2"
+    assert asset_entry["action_type"] == "reviewer_approve_or_reopen"
+    assert asset_entry["blocking_type"] == "reviewer_status_closeout"
+    assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_entry["evidence_refs"]
+    assert "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts" in asset_entry["evidence_refs"]
+    assert "masking leakage" not in queue_text
+    assert "masking leakage" not in manifest_text
+    assert "non-leakage E2E assertions are present" in manifest_text
+
+    avm_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan.spec.ts").read_text(encoding="utf-8")
+    avm_product_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts").read_text(encoding="utf-8")
+    for token in (
+        "MASKED_BY_PERMISSION",
+        "not.toContainText(\"17,654\")",
+        "not.toContainText(\"33,390\")",
+        "avm-reserve-marker",
+        "avm-asking-marker",
+    ):
+        assert token in avm_spec_text
+        assert token in avm_product_spec_text
 
 
 def test_release_gate_runs_closeout_queue_checker() -> None:
