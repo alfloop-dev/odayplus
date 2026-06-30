@@ -30,6 +30,7 @@ PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DIS
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
 PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
 PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
+PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
 PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
@@ -459,6 +460,7 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
     queue = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_QUEUE.read_text(encoding="utf-8"))
     runbook_text = PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK.read_text(encoding="utf-8")
+    assignment_ledger_text = PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json" in release_gate_text
     assert "scripts/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
@@ -488,6 +490,8 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in runbook_text
     assert "Fleet Pickup Sequence" in runbook_text
     assert "Completion Handback" in runbook_text
+    assert "It is not completion evidence." in assignment_ledger_text
+    assert "Do not mark any dispatched task complete from this ledger alone." in assignment_ledger_text
 
     for task in packet["tasks"]:
         assert task["status"] == "open"
@@ -501,6 +505,10 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
         assert task["handoff_artifacts"]
         assert task["id"] in runbook_text
         assert task["suggested_branch"] in runbook_text
+        assert task["id"] in assignment_ledger_text
+
+    for lane in packet["dispatch_lanes"]:
+        assert lane["lane"] in assignment_ledger_text
 
     for entry in queue["queue"]:
         assert entry["dispatch_status"] == "ready_for_fleet"

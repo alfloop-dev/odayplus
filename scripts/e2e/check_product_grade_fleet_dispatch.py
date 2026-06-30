@@ -22,6 +22,7 @@ BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 BRIEF_INDEX = BRIEF_DIR / "README.md"
 DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
 KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
+ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
 
 EXPECTED_ALIASES = {
     "ODP-EXT-001",
@@ -325,6 +326,7 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     markdown_text = MARKDOWN.read_text(encoding="utf-8") if MARKDOWN.exists() else ""
     gap_text = GAP_TASKS.read_text(encoding="utf-8") if GAP_TASKS.exists() else ""
+    assignment_text = ASSIGNMENT_LEDGER.read_text(encoding="utf-8") if ASSIGNMENT_LEDGER.exists() else ""
 
     release_target = packet.get("release_target") or {}
     if release_target.get("pr") != 82:
@@ -366,6 +368,38 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
         lane_aliases.update(alias for alias in aliases if isinstance(alias, str))
     if lane_aliases != EXPECTED_ALIASES:
         errors.append(f"dispatch lane aliases mismatch: {sorted(lane_aliases)}")
+
+    if not ASSIGNMENT_LEDGER.exists():
+        errors.append(f"missing fleet assignment ledger: {ASSIGNMENT_LEDGER.relative_to(ROOT)}")
+    else:
+        for required_phrase in (
+            "Release authority: PR #82 `headRefOid` and attached checks.",
+            "Dispatch packet: `docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json`.",
+            "It is not completion evidence.",
+            "Do not mark any dispatched task complete from this ledger alone.",
+            "Do not claim provider-specific production credentials",
+            "remote-staging live",
+            "remote staging drill completion without runtime evidence",
+            "Release evidence must use PR #82 `headRefOid`",
+            "/home/lupin/odayplus-dev",
+        ):
+            if required_phrase not in assignment_text:
+                errors.append(f"fleet assignment ledger missing phrase: {required_phrase}")
+        for lane in packet.get("dispatch_lanes") or []:
+            lane_name = str(lane.get("lane", ""))
+            if lane_name and lane_name not in assignment_text:
+                errors.append(f"fleet assignment ledger missing lane: {lane_name}")
+            for alias in lane.get("aliases", []):
+                if str(alias) not in assignment_text:
+                    errors.append(f"fleet assignment ledger missing task id: {alias}")
+        for required_status in (
+            "handback received",
+            "rejected handback",
+            "externally blocked",
+            "covered by existing product evidence",
+        ):
+            if required_status not in assignment_text:
+                errors.append(f"fleet assignment ledger missing status: {required_status}")
 
     for task in tasks:
         if not isinstance(task, dict):
