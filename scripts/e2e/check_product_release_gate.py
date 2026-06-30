@@ -48,6 +48,7 @@ REQUIRED_FILES = {
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
     "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
+    "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
