@@ -58,6 +58,33 @@ SECRET_VALUE_PATTERNS = (
     re.compile(r"(?i)\b(?:password|token|secret|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,*]{8,}"),
 )
 
+TASK_SPECIFIC_NOTE_TOKENS = {
+    "ODP-MAP-STAGE-001": (
+        "remote staging",
+        "staging tile endpoint",
+        "attribution",
+        "terms",
+        "tile outage",
+        "list",
+        "ranking",
+        "detail",
+        "fallback",
+    ),
+    "ODP-MAP-STAGE-002": (
+        "remote staging",
+        "staging geocoder",
+        "attribution",
+        "terms",
+        "geocoder outage",
+        "fallback",
+    ),
+}
+
+TASK_SPECIFIC_FORBIDDEN_TOKENS = {
+    "ODP-MAP-STAGE-001": ("mock://", "localhost", "127.0.0.1"),
+    "ODP-MAP-STAGE-002": ("mock://", "localhost", "127.0.0.1"),
+}
+
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -90,6 +117,23 @@ def collect_strings(value: Any) -> list[str]:
 def has_secret_like_value(payload: dict[str, Any]) -> bool:
     text_values = "\n".join(collect_strings(payload))
     return any(pattern.search(text_values) for pattern in SECRET_VALUE_PATTERNS)
+
+
+def collect_evidence_notes(handback: dict[str, Any]) -> str:
+    note_values: list[str] = []
+    for collection_name in ("artifacts", "commands_run", "required_evidence_results"):
+        collection = handback.get(collection_name)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if isinstance(item, dict) and isinstance(item.get("notes"), str):
+                note_values.append(item["notes"])
+    attestation = handback.get("completion_attestation")
+    if isinstance(attestation, dict) and isinstance(attestation.get("notes"), str):
+        note_values.append(attestation["notes"])
+    if isinstance(handback.get("redaction_summary"), str):
+        note_values.append(handback["redaction_summary"])
+    return "\n".join(note_values).lower()
 
 
 def normalize_evidence_results(value: Any) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -145,6 +189,13 @@ def validate_handback(
     queue_entry = queue_entries[str(task_id)]
     template_entry = template_entries[str(task_id)]
     prefix = str(task_id)
+    note_text = collect_evidence_notes(handback)
+    for token in TASK_SPECIFIC_NOTE_TOKENS.get(prefix, ()):
+        if token not in note_text:
+            errors.append(f"{prefix} handback evidence notes must mention {token!r}")
+    for token in TASK_SPECIFIC_FORBIDDEN_TOKENS.get(prefix, ()):
+        if token in note_text:
+            errors.append(f"{prefix} handback evidence notes must not rely on local/mock endpoint token {token!r}")
 
     if handback.get("tracking_issue") != queue_entry.get("tracking_issue"):
         errors.append(f"{prefix} tracking_issue must match queue")
