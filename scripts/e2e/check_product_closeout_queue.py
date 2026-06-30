@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+MANIFEST_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 STATUS_PATH = ROOT / "ai-status.json"
 
 REQUIRED_TASK_IDS = {
@@ -284,6 +286,81 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
         expected_actor = expected_actor_from_status(status_task, str(entry.get("action_type")))
         if expected_actor and str(entry.get("actor")) != expected_actor:
             errors.append(f"{prefix} actor {entry.get('actor')} does not match ai-status {expected_actor}")
+
+    errors.extend(validate_manifest_alignment(payload))
+
+    return errors
+
+
+def normalize_cell(value: str) -> str:
+    value = value.strip()
+    value = re.sub(r"^`|`$", "", value)
+    return value.strip()
+
+
+def manifest_closeout_rows() -> list[dict[str, str]]:
+    if not MANIFEST_PATH.exists():
+        return []
+
+    text = MANIFEST_PATH.read_text(encoding="utf-8")
+    marker = "## Remaining Closeout Actions"
+    if marker not in text:
+        return []
+    section = text.split(marker, 1)[1]
+    if "\n## " in section:
+        section = section.split("\n## ", 1)[0]
+
+    rows: list[dict[str, str]] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped.startswith("|---") or stripped.startswith("| Task "):
+            continue
+        cells = [normalize_cell(cell) for cell in stripped.strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        rows.append(
+            {
+                "task_id": cells[0],
+                "status": cells[1],
+                "actor": cells[2],
+                "blocking_type": cells[4],
+            }
+        )
+    return rows
+
+
+def validate_manifest_alignment(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    rows = manifest_closeout_rows()
+    if not rows:
+        return [f"{MANIFEST_PATH.relative_to(ROOT)} missing Remaining Closeout Actions rows"]
+
+    queue_keys = Counter(
+        (
+            str(entry.get("task_id")),
+            str(entry.get("status")),
+            str(entry.get("actor")),
+            str(entry.get("blocking_type")),
+        )
+        for entry in payload.get("queue", [])
+    )
+    manifest_keys = Counter(
+        (
+            row["task_id"],
+            row["status"],
+            row["actor"],
+            row["blocking_type"],
+        )
+        for row in rows
+        if row["task_id"] != "PR #82" and row["task_id"] != "External proof queue"
+    )
+
+    missing = queue_keys - manifest_keys
+    extra = manifest_keys - queue_keys
+    for key, count in sorted(missing.items()):
+        errors.append(f"manifest missing closeout queue row {key} x{count}")
+    for key, count in sorted(extra.items()):
+        errors.append(f"manifest has stale closeout row {key} x{count}")
 
     return errors
 
