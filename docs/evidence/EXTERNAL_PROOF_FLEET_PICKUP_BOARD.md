@@ -262,6 +262,20 @@ comment for that current release head:
 python3 scripts/e2e/check_external_proof_fleet_notifications.py
 ```
 
+Track whether fleets have returned candidate handbacks after the latest pickup,
+and whether follow-up has passed the default escalation threshold:
+
+```bash
+python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report
+```
+
+Post standardized escalation comments only after the scan marks rows as due.
+Use `--force --comment-dir <dir>` to render drafts without posting:
+
+```bash
+python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply
+```
+
 When all seven handbacks are ready, validate the complete set before release
 closeout:
 

@@ -193,6 +193,15 @@ Human/Ops must also explicitly acknowledge these boundaries:
   Run `python3 scripts/e2e/check_external_proof_fleet_notifications.py` after
   PR #82 changes head so #132-#138 assignees have task-specific instructions
   for the active `headRefOid`.
+- External proof handback follow-up must be visible before go/no-go. Run
+  `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report`
+  to see whether #132-#138 have candidate handback comments after the latest
+  current-SHA pickup, plus age and escalation status.
+- External proof escalation comments should use the standard renderer. Run
+  `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply`
+  only when the scan marks rows `Escalation Due = yes`; use
+  `python3 scripts/e2e/sync_external_proof_escalation_comments.py --force --comment-dir <dir>`
+  to prepare manual escalation drafts without posting.
 - Product closeout fleet pickup comments must track the current release target.
   After PR #82 changes `headRefOid`, run
   `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`
