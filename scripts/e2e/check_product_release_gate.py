@@ -59,6 +59,7 @@ REQUIRED_FILES = {
     "external proof handback status board updater": "scripts/e2e/update_external_proof_handback_status_board.py",
     "external proof live blocker checker": "scripts/e2e/check_external_proof_live_blockers.py",
     "external proof fleet notification checker": "scripts/e2e/check_external_proof_fleet_notifications.py",
+    "external proof fleet issue syncer": "scripts/e2e/sync_external_proof_fleet_issues.py",
     "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
