@@ -23,6 +23,7 @@ READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
 CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
@@ -274,6 +275,57 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "Do not mark the active objective complete",
     ):
         assert boundary in playbook_text
+
+
+def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    queue = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    board_text = CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
+
+    assert "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md" in release_gate_text
+    assert "Product Release Closeout Pickup Board" in board_text
+    assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
+    assert "check_product_closeout_queue.py --report" in board_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in board_text
+    assert "check_external_proof_handback_artifact.py" in board_text
+
+    for actor in ("Human/Ops", "Claude", "Claude2", "Codex", "Codex2"):
+        assert actor in board_text
+
+    for action in (
+        "go_no_go",
+        "owner_handoff",
+        "owner_done",
+        "reviewer_approve_or_reopen",
+    ):
+        assert action in board_text
+
+    for blocking_type in (
+        "human_signoff",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+    ):
+        assert blocking_type in board_text
+
+    for boundary in (
+        "provider-specific production credential",
+        "provider-specific production licensing approval",
+        "remote-staging live tile",
+        "remote staging host/url/secret",
+        "full keyboard accessibility",
+    ):
+        assert boundary in board_text
+
+    for entry in queue["queue"]:
+        assert entry["task_id"] in board_text
+        assert entry["status"] in board_text
+        assert entry["actor"] in board_text
+        assert entry["action_type"] in board_text
+        assert entry["blocking_type"] in board_text
+        for evidence_ref in entry["evidence_refs"]:
+            assert evidence_ref in board_text
+        for command in entry["allowed_commands"]:
+            assert command.split(" <")[0].split(' "<')[0] in board_text
 
 
 def test_product_grade_gap_execution_tasks_are_actionable() -> None:

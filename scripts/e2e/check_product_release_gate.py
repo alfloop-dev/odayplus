@@ -27,6 +27,7 @@ REQUIRED_FILES = {
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
+    "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
     "external proof handback example": "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
@@ -196,6 +197,7 @@ def main() -> int:
         ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),
         ("go/no-go packet", "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"),
         ("closeout playbook", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"),
+        ("closeout pickup board", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"),
         ("external proof fleet pickup board", "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"),
     ):
         doc_path = ROOT / relative_path
@@ -234,6 +236,41 @@ def main() -> int:
     ):
         if required_token not in pickup_text:
             errors.append(f"external proof fleet pickup board missing token: {required_token}")
+
+    closeout_pickup_board = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
+    closeout_pickup_text = closeout_pickup_board.read_text(encoding="utf-8") if closeout_pickup_board.exists() else ""
+    for required_token in (
+        "Product Release Closeout Pickup Board",
+        "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
+        "check_product_closeout_queue.py --report",
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+        "ODP-FE-XCUT-TYPES-001",
+        "Human/Ops",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+        "human_signoff",
+        "scripts/ai_status.py approve",
+        "scripts/ai_status.py reopen",
+        "scripts/ai_status.py done",
+        "provider-specific production credential",
+        "remote-staging live tile",
+        "remote staging host/url/secret",
+    ):
+        if required_token not in closeout_pickup_text:
+            errors.append(f"closeout pickup board missing token: {required_token}")
 
     if errors:
         print("Product release gate failed:")
