@@ -177,11 +177,12 @@
     },
     {
       "task_id": "ODP-FE-ASSET-001",
-      "status": "in_progress",
-      "actor": "Claude",
-      "action_type": "owner_handoff",
+      "status": "review",
+      "actor": "Codex2",
+      "action_type": "reviewer_approve_or_reopen",
       "allowed_commands": [
-        "AI_NAME=Claude python3 scripts/ai_status.py handoff ODP-FE-ASSET-001 Codex2 \"<handoff message after fixing AVM reserve/asking masking leakage and adding non-leakage E2E assertions>\""
+        "AI_NAME=Codex2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-ASSET-001 \"<approval message>\"",
+        "AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-ASSET-001 \"<missing evidence>\""
       ],
       "evidence_refs": [
         "apps/web/features/avm/AvmWorkspace.tsx",
@@ -189,7 +190,7 @@
         "tests/e2e/e2e-avm-netplan.spec.ts",
         "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
       ],
-      "blocking_type": "owner_status_closeout"
+      "blocking_type": "reviewer_status_closeout"
     },
     {
       "task_id": "ODP-FE-LEARN-001",

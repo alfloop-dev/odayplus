@@ -55,7 +55,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | `ODP-FE-EXP-001` | `review` | Claude | Review Expansion evidence against Expansion workflow, HeatZone map, and SiteScore specs | reviewer_status_closeout |
 | `ODP-FE-OPS-001` | `review_approved` | Claude2 | Finalize owner closeout to `done` after accepted Ops/Intervention evidence | owner_status_closeout |
 | `ODP-FE-PRICE-001` | `review` | Claude2 | Review PriceOps/AdLift evidence against Pricing and AdLift specs | reviewer_status_closeout |
-| `ODP-FE-ASSET-001` | `in_progress` | Claude | Handoff to Codex2 after fixing AVM reserve/asking masking leakage and adding non-leakage E2E assertions | owner_status_closeout |
+| `ODP-FE-ASSET-001` | `review` | Codex2 | Review Asset/NetPlan evidence now that AVM reserve/asking masking and non-leakage E2E assertions are present | reviewer_status_closeout |
 | `ODP-FE-LEARN-001` | `review` | Claude2 | Review Learning/Audit evidence against Learning Hub and Audit Evidence specs | reviewer_status_closeout |
 | `ODP-FE-XCUT-DOMAIN-001` | `review_approved` | Claude | Finalize owner closeout to `done` after accepted `packages/ui-domain` export evidence | owner_status_closeout |
 | `ODP-FE-XCUT-TYPES-001` | `review` | Claude2 | Review `packages/domain-types` frontend contract coverage and type export evidence | reviewer_status_closeout |
