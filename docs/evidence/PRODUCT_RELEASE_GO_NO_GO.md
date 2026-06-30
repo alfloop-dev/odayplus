@@ -64,6 +64,8 @@ Release is blocked if any of these are true:
 | External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
 | External proof live blocker state reviewed | Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` and confirm unaccepted #132-#138 handbacks still have open, labeled, assigned release-blocker issues | pending-human |
 | External proof fleet notification reviewed | Run `python3 scripts/e2e/check_external_proof_fleet_notifications.py` and confirm #132-#138 have pickup comments for the current PR #82 `headRefOid` | pending-human |
+| External proof handback scan reviewed | Run `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report` and confirm #132-#138 show candidate handbacks only after the latest current-SHA pickup, with pickup age and escalation due state visible | pending-human |
+| External proof escalation reviewed | Run `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply` only when the handback scan marks rows escalation due; use `--force --comment-dir <dir>` to render manual drafts without posting | pending-human |
 | Product go/no-go guard reviewed | Run `python3 scripts/e2e/check_product_go_no_go.py` and confirm this packet still keeps live provider, live map, and remote staging proof conditional until #132-#138 are accepted | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 

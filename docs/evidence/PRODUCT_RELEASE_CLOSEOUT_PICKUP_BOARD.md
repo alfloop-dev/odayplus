@@ -46,8 +46,14 @@ python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 python3 scripts/e2e/check_external_proof_fleet_notifications.py
+python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report
+python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply
 python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 ```
+
+Use `python3 scripts/e2e/sync_external_proof_escalation_comments.py --force --comment-dir <dir>`
+to render escalation drafts without posting when Product Validation wants a
+manual review before live GitHub comments.
 
 ## Pickup Table
 
@@ -159,6 +165,12 @@ Completion still requires:
 - `python3 scripts/e2e/check_external_proof_fleet_notifications.py` still
   passes so every external-proof fleet issue has a pickup comment for the
   current PR #82 `headRefOid`.
+- `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report`
+  still reports candidate handbacks, pickup age, and escalation due state for
+  every #132-#138 issue after the latest current-SHA pickup.
+- `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply` is
+  used only after the handback scan marks rows escalation due; use
+  `--force --comment-dir <dir>` to render drafts without posting.
 - `python3 scripts/e2e/check_product_closeout_fleet_notification.py` still
   passes so PR #82 has a product closeout fleet update for the current
   `headRefOid`.

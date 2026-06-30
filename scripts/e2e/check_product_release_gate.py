@@ -68,6 +68,8 @@ REQUIRED_FILES = {
     "external proof fleet issue syncer": "scripts/e2e/sync_external_proof_fleet_issues.py",
     "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
+    "external proof issue handback scanner": "scripts/e2e/check_external_proof_issue_handback_scan.py",
+    "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
 
@@ -289,6 +291,8 @@ def main() -> int:
             "update_external_proof_handback_status_board.py",
             "check_external_proof_live_blockers.py",
             "check_external_proof_fleet_notifications.py",
+            "check_external_proof_issue_handback_scan.py",
+            "sync_external_proof_escalation_comments.py",
             "check_product_go_no_go.py",
         ):
             if required_token not in doc_text:
@@ -301,6 +305,9 @@ def main() -> int:
         "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
         "generate_external_proof_handback_skeleton.py",
         "check_external_proof_fleet_pickup_board.py",
+        "check_external_proof_issue_handback_scan.py --report",
+        "sync_external_proof_escalation_comments.py --apply",
+        "--force --comment-dir",
         "ODP-EXT-PROD-001",
         "ODP-EXT-PROD-002",
         "ODP-EXT-PROD-003",
