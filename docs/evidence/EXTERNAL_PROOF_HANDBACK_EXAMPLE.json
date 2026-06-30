@@ -26,7 +26,7 @@
       "redacted": true,
       "contains_secret_values": false,
       "observed_at": "2026-06-30T00:02:00Z",
-      "notes": "Example screenshot artifact for attribution, terms, and map fallback proof."
+      "notes": "Example screenshot artifact for attribution, terms, and tile outage map fallback proof."
     },
     {
       "artifact_id": "example-report-map-stage-001",
@@ -78,7 +78,7 @@
         "example-workflow-run-map-stage-001",
         "example-report-map-stage-001"
       ],
-      "notes": "Example result. Real proof must show list, ranking, and detail fallback remain usable."
+      "notes": "Example result. Real proof must show list, ranking, and detail fallback remain usable during tile outage."
     },
     {
       "evidence": "proof report references current PR #82 headRefOid",

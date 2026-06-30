@@ -39,6 +39,31 @@ def valid_handback(task_id: str = "ODP-MAP-STAGE-001") -> dict[str, Any]:
     ]
     artifact_ids = [artifact["artifact_id"] for artifact in artifacts]
 
+    if task_id == "ODP-MAP-STAGE-001":
+        artifact_note = (
+            "Redacted remote staging evidence for staging tile endpoint, attribution, terms, "
+            "tile outage fallback, and list/ranking/detail workflow proof."
+        )
+        evidence_note = (
+            "Remote staging smoke proves the live staging tile endpoint is configured, attribution "
+            "and terms are visible, and list/ranking/detail fallback remains usable during tile outage."
+        )
+    elif task_id == "ODP-MAP-STAGE-002":
+        artifact_note = (
+            "Redacted remote staging evidence for staging geocoder endpoint, attribution, terms, "
+            "geocoder outage fallback, and list workflow proof."
+        )
+        evidence_note = (
+            "Remote staging smoke proves the staging geocoder is configured, attribution and terms "
+            "are visible, and fallback remains usable during geocoder outage."
+        )
+    else:
+        artifact_note = f"Redacted evidence for {task_id}."
+        evidence_note = f"Evidence item satisfied for {task_id}."
+
+    for artifact in artifacts:
+        artifact["notes"] = f"{artifact_note} Artifact type: {artifact['artifact_type']}."
+
     return {
         "task_id": task_id,
         "tracking_issue": queue_entry["tracking_issue"],
@@ -54,7 +79,7 @@ def valid_handback(task_id: str = "ODP-MAP-STAGE-001") -> dict[str, Any]:
                 "command": queue_entry["allowed_commands"][0],
                 "exit_code": 0,
                 "observed_at": "2026-06-30T02:32:00Z",
-                "notes": "Release head was fetched at execution time.",
+                "notes": f"Release head was fetched at execution time. {evidence_note}",
             }
         ],
         "required_evidence_results": [
@@ -62,7 +87,7 @@ def valid_handback(task_id: str = "ODP-MAP-STAGE-001") -> dict[str, Any]:
                 "evidence": evidence,
                 "status": "proven",
                 "artifact_ids": artifact_ids,
-                "notes": f"Evidence item satisfied for {task_id}.",
+                "notes": evidence_note,
             }
             for evidence in queue_entry["required_evidence"]
         ],
@@ -94,6 +119,16 @@ def run_checker(path: Path, *, expected_sha: str = EXPECTED_SHA) -> subprocess.C
 def test_external_proof_handback_artifact_checker_accepts_valid_handback(tmp_path) -> None:
     handback = tmp_path / "handback.json"
     handback.write_text(json.dumps(valid_handback(), indent=2), encoding="utf-8")
+
+    result = run_checker(handback)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "External proof handback artifact checks passed." in result.stdout
+
+
+def test_external_proof_handback_artifact_checker_accepts_valid_map_geocoder_handback(tmp_path) -> None:
+    handback = tmp_path / "handback.json"
+    handback.write_text(json.dumps(valid_handback("ODP-MAP-STAGE-002"), indent=2), encoding="utf-8")
 
     result = run_checker(handback)
 
@@ -151,6 +186,40 @@ def test_external_proof_handback_artifact_checker_rejects_missing_required_evide
 
     assert result.returncode == 1
     assert "missing required evidence results" in result.stdout
+
+
+def test_external_proof_handback_artifact_checker_rejects_map_handback_without_live_boundary_notes(tmp_path) -> None:
+    payload = valid_handback("ODP-MAP-STAGE-001")
+    for artifact in payload["artifacts"]:
+        artifact["notes"] = "Redacted screenshot and report were reviewed."
+    for command in payload["commands_run"]:
+        command["notes"] = "Command completed."
+    for result_item in payload["required_evidence_results"]:
+        result_item["notes"] = "Evidence accepted."
+    payload["redaction_summary"] = "Secret values and provider tokens were redacted before attachment."
+    payload["completion_attestation"]["notes"] = "Accepted after redacted artifact review."
+
+    handback = tmp_path / "handback.json"
+    handback.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    result = run_checker(handback)
+
+    assert result.returncode == 1
+    assert "handback evidence notes must mention 'staging tile endpoint'" in result.stdout
+    assert "handback evidence notes must mention 'tile outage'" in result.stdout
+
+
+def test_external_proof_handback_artifact_checker_rejects_map_handback_that_uses_mock_endpoint(tmp_path) -> None:
+    payload = valid_handback("ODP-MAP-STAGE-001")
+    payload["artifacts"][0]["notes"] += " Captured endpoint mock://tiles/{z}/{x}/{y}.png."
+
+    handback = tmp_path / "handback.json"
+    handback.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    result = run_checker(handback)
+
+    assert result.returncode == 1
+    assert "must not rely on local/mock endpoint token 'mock://'" in result.stdout
 
 
 def test_external_proof_handback_artifact_checker_rejects_unaccepted_attestation(tmp_path) -> None:
