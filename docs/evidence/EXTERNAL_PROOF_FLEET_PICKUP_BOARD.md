@@ -124,6 +124,63 @@ python3 scripts/e2e/check_product_go_no_go.py
 - post-drill health/version proof with correlation id
 - Completion rule: Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached.
 
+## Queue-Exact Runtime Commands
+
+These are the queue-defined commands each fleet must include in its handback
+`commands_run` evidence. Keep this section synchronized with
+`PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`; `check_external_proof_fleet_pickup_board.py`
+fails if any command fragment is missing.
+
+### `ODP-EXT-PROD-001`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+uv run pytest tests/e2e/test_external_source_product_e2e.py -k "live_provider_mode_product_e2e or auth_quota_and_freshness" -q
+```
+
+### `ODP-EXT-PROD-002`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+uv run pytest tests/e2e/test_external_source_product_e2e.py -q
+```
+
+### `ODP-EXT-PROD-003`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+uv run pytest tests/data/test_geo_pipeline.py -q
+```
+
+### `ODP-MAP-STAGE-001`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1
+```
+
+### `ODP-MAP-STAGE-002`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1
+```
+
+### `ODP-PV-STAGE-001`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-001"
+```
+
+### `ODP-PV-STAGE-002`
+
+```bash
+gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" ODP_API_BASE_URL="$ODP_STAGING_API_URL" npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000
+python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-002-version"
+```
+
 ## Product Validation Close Rule
 
 Do not close #132-#138 from local fixtures, mock-live proof, deterministic CI,
