@@ -72,6 +72,8 @@ def test_external_proof_tasks_are_routed_to_fleet_pickup_labels() -> None:
         assert f"gh issue view {issue_number}" in routing["pickup_command"]
         assert "labels" in routing["pickup_command"]
         assert "body" in routing["pickup_command"]
+        assert "PR #82" in routing["release_authority"]
+        assert "headRefOid" in routing["release_authority"]
         assert routing["dispatch_lane"]
         assert routing["escalation"]
 

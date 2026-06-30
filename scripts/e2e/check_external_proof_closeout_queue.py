@@ -130,7 +130,14 @@ def validate(payload: dict[str, Any]) -> list[str]:
         if not isinstance(routing, dict):
             errors.append(f"{prefix} fleet_routing must be an object")
             routing = {}
-        for field in ("dispatch_lane", "pickup_label", "required_issue_labels", "pickup_command", "escalation"):
+        for field in (
+            "dispatch_lane",
+            "pickup_label",
+            "required_issue_labels",
+            "pickup_command",
+            "release_authority",
+            "escalation",
+        ):
             if field not in routing:
                 errors.append(f"{prefix} fleet_routing missing {field}")
 
@@ -156,6 +163,9 @@ def validate(payload: dict[str, Any]) -> list[str]:
             errors.append(f"{prefix} pickup_command must view its tracking issue")
         if "labels" not in pickup_command or "body" not in pickup_command:
             errors.append(f"{prefix} pickup_command must request issue labels and body")
+        release_authority = str(routing.get("release_authority", ""))
+        if "PR #82" not in release_authority or "headRefOid" not in release_authority:
+            errors.append(f"{prefix} fleet_routing.release_authority must use PR #82 headRefOid")
         if not str(routing.get("escalation", "")).strip():
             errors.append(f"{prefix} fleet_routing.escalation must be non-empty")
 
