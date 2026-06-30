@@ -9,7 +9,8 @@
   "global_preflight": [
     "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
     "python3 scripts/e2e/check_product_release_gate.py",
-    "python3 scripts/e2e/check_external_proof_closeout_queue.py"
+    "python3 scripts/e2e/check_external_proof_closeout_queue.py",
+    "python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees"
   ],
   "proof_boundaries": [
     {

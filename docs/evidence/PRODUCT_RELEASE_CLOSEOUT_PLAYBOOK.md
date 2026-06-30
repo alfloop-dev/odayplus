@@ -152,6 +152,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   before Human/Ops go/no-go so #132-#138 cannot silently lose labels,
   release authority, pickup commands, or named assignees.
+- External proof live blocker state must match Product Validation intake
+  status. Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`
+  before closing any #132-#138 issue and before Human/Ops go/no-go so an
+  unaccepted handback cannot have a closed or unrouted release-blocker issue.
 - Product go/no-go external-proof wording must remain guarded. Run
   `python3 scripts/e2e/check_product_go_no_go.py` before Human/Ops go/no-go so
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` cannot mark live provider,
@@ -169,6 +173,9 @@ Do not mark the active objective complete until:
   superseded by Human/Ops.
 - `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   passes against live GitHub issues #132-#138.
+- `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`
+  passes against live GitHub issues #132-#138 and
+  `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.
 - `python3 scripts/e2e/check_product_go_no_go.py` passes against
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - `python3 scripts/e2e/check_external_proof_handback_template.py` passes and
