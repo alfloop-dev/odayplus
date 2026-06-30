@@ -46,6 +46,7 @@ REQUIRED_FILES = {
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
+    "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
@@ -198,6 +199,7 @@ def main() -> int:
         for required_token in (
             "check_external_proof_issue_sync.py",
             "--require-assignees",
+            "check_external_proof_handback_artifact.py",
         ):
             if required_token not in doc_text:
                 errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")
