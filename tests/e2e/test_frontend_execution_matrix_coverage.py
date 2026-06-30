@@ -170,6 +170,7 @@ def test_product_validation_dispatch_names_odp_frontend_lanes() -> None:
 
 def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
     audit_text = COMPLETION_AUDIT.read_text(encoding="utf-8")
+    queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
 
     required_evidence = {
         "ODP-FE-R0-001": "tests/e2e/opsboard-shell.spec.ts",
@@ -195,6 +196,27 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
     ]:
         assert xcut_evidence in audit_text
     assert "ODP-PV-008" in audit_text
+
+    active_task_ids = {entry["task_id"] for entry in queue_payload["queue"]}
+    completed_task_ids = {entry["task_id"] for entry in queue_payload["completed_closeouts"]}
+    for task_id in active_task_ids:
+        assert task_id in audit_text
+    for task_id in completed_task_ids:
+        assert task_id in audit_text
+
+    assert "completed closeouts" in audit_text.lower()
+    assert "must not be re-dispatched as active work" in audit_text
+    assert "Use `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json`" in audit_text
+    assert "accepted #132-#136 handbacks" in audit_text
+    assert "accepted #137/#138 handbacks" in audit_text
+
+    stale_recommendations = (
+        "Move `ODP-FE-EXP-001`, `ODP-FE-PRICE-001`, and `ODP-FE-LEARN-001` to review",
+        "`ODP-FE-OPS-001`, `ODP-FE-ASSET-001`, `ODP-FE-XCUT-UI-001`",
+        "`ODP-FE-XCUT-DOMAIN-001`, `ODP-FE-XCUT-TYPES-001`, and parent",
+    )
+    for stale_recommendation in stale_recommendations:
+        assert stale_recommendation not in audit_text
 
 
 def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -> None:

@@ -46,21 +46,34 @@ review/closeout.
 - `ODP-PV-008` remains in Human/Ops review.
 - PR #82 remains draft until Human/Ops records go/no-go in
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
-- Remote staging rollout remains conditional on rollout target configuration.
-- Worker runtime dispatch had prior supervisor failures in local task briefs;
-  durable repository evidence now supersedes those transient startup failures
-  for review, but individual lanes still need owner/reviewer closeout status
-  updates in `ai-status.json`.
+- `ODP-FE-XCUT-001` remains owner-held by Claude2; Codex reviewer closeout is
+  queued only after Claude2 hands off the parent cross-cutting lane.
+- `ODP-FE-R0-001` and `ODP-FE-XCUT-DOMAIN-001` are `review_approved` and need
+  Claude owner finalization.
+- `ODP-FE-EXP-001` is in Claude reviewer closeout.
+- `ODP-FE-ASSET-001` remains owner-held by Claude; Codex2 reviewer closeout is
+  queued only after Claude hands off the Asset/NetPlan lane.
+- `ODP-FE-XCUT-UI-001`, `ODP-FE-OPS-001`, `ODP-FE-PRICE-001`,
+  `ODP-FE-LEARN-001`, and `ODP-FE-XCUT-TYPES-001` are completed closeouts and
+  must not be re-dispatched as active work.
+- Remote staging rollout remains conditional on rollout target configuration
+  and accepted #137/#138 handbacks.
+- Live provider credential/licensing/geocoder and remote live map proof remain
+  conditional on accepted #132-#136 handbacks.
 
 ## Closeout Recommendation
 
-- Move `ODP-FE-EXP-001`, `ODP-FE-PRICE-001`, and `ODP-FE-LEARN-001` to review
-  after owners confirm no additional implementation scope beyond the cited E2E
-  evidence is required.
-- Ask assigned owners/reviewers to finish closeout for lanes already in review
-  or review-approved in `ai-status.json`, including `ODP-FE-R0-001`,
-  `ODP-FE-OPS-001`, `ODP-FE-ASSET-001`, `ODP-FE-XCUT-UI-001`,
-  `ODP-FE-XCUT-DOMAIN-001`, `ODP-FE-XCUT-TYPES-001`, and parent
-  `ODP-FE-XCUT-001`.
+- Use `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json` and
+  `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md` as the active task
+  source of truth.
+- Do not move completed lanes back into active review. Their evidence is kept
+  under `completed_closeouts` for lineage only.
+- Ask assigned active owners/reviewers to finish only the queued lifecycle
+  actions: Human/Ops go/no-go for `ODP-PV-008`, Claude2 handoff and Codex
+  review for `ODP-FE-XCUT-001`, Claude finalization for `ODP-FE-R0-001`,
+  Claude review for `ODP-FE-EXP-001`, Claude handoff and Codex2 review for
+  `ODP-FE-ASSET-001`, and Claude finalization for
+  `ODP-FE-XCUT-DOMAIN-001`.
 - Keep #82 draft until Human/Ops accepts the product E2E evidence and rollout
-  limitation.
+  limitation, and until #132-#138 external runtime handbacks are accepted or
+  explicitly deferred by Human/Ops policy.
