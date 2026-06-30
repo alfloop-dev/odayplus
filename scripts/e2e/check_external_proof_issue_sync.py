@@ -86,6 +86,8 @@ def validate_issue_sync(
             "generate_external_proof_handback_skeleton.py",
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
+            "check_external_proof_handback_bundle.py",
+            "#132-#138",
             "--expected-sha",
             str(routing.get("dispatch_lane", "")),
             str(routing.get("pickup_label", "")),
