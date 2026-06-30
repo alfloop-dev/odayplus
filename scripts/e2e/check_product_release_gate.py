@@ -34,6 +34,7 @@ REQUIRED_FILES = {
     "closeout action matrix checker": "scripts/e2e/check_product_closeout_action_matrix.py",
     "product closeout fleet comment syncer": "scripts/e2e/sync_product_closeout_fleet_comment.py",
     "product closeout fleet notification checker": "scripts/e2e/check_product_closeout_fleet_notification.py",
+    "release fleet dispatch status checker": "scripts/e2e/check_release_fleet_dispatch_status.py",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback status board": "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",

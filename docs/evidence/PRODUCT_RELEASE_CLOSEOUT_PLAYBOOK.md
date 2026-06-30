@@ -35,6 +35,7 @@ python3 scripts/e2e/check_product_release_gate.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
 python3 scripts/e2e/check_product_closeout_fleet_notification.py
+python3 scripts/e2e/check_release_fleet_dispatch_status.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <Reviewer> --action-type reviewer_approve_or_reopen
 python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_handback_template.py
@@ -72,6 +73,7 @@ git fetch origin dev
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 python3 scripts/e2e/check_product_closeout_fleet_notification.py
+python3 scripts/e2e/check_release_fleet_dispatch_status.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <Owner> --action-type owner_done
 AI_NAME=<Owner> python3 scripts/ai_status.py done <task-id> "<finalization message>"
 ```
@@ -190,6 +192,11 @@ Human/Ops must also explicitly acknowledge these boundaries:
   and then `python3 scripts/e2e/check_product_closeout_fleet_notification.py`
   so PR #82 itself names the ready/waiting lifecycle lanes for the active
   release candidate.
+- Release-owner fleet dispatch status must be checked as one live surface. Run
+  `python3 scripts/e2e/check_release_fleet_dispatch_status.py` after refreshing
+  issue/PR comments so PR #82 checks, #132-#138 issue handoff, external
+  blocker state, handback board, product closeout PR comment, and closeout
+  action matrix are verified together.
 - Product go/no-go external-proof wording must remain guarded. Run
   `python3 scripts/e2e/check_product_go_no_go.py` before Human/Ops go/no-go so
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` cannot mark live provider,
@@ -214,6 +221,9 @@ Do not mark the active objective complete until:
   against live GitHub issue comments for #132-#138.
 - `python3 scripts/e2e/check_product_closeout_fleet_notification.py` passes
   against live PR #82 comments for the current `headRefOid`.
+- `python3 scripts/e2e/check_release_fleet_dispatch_status.py` passes against
+  live PR #82, #132-#138 issue handoff, and product closeout notification
+  state.
 - `python3 scripts/e2e/check_product_go_no_go.py` passes against
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - `python3 scripts/e2e/check_external_proof_handback_template.py` passes and
