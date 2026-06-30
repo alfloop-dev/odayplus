@@ -38,6 +38,8 @@ The authoritative release target is draft release PR #82. Use PR #82
 | Product go/no-go external proof guard | `python3 scripts/e2e/check_product_go_no_go.py` verifies `PRODUCT_RELEASE_GO_NO_GO.md` remains conditional and keeps #132-#138 pending until accepted handbacks prove live provider, live map, and remote staging evidence | prepared, release wording guard |
 | Product closeout action preflight | `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>` verifies one owner/reviewer/Human-Ops lifecycle command against queue routing, live `ai-status.json`, evidence refs, and PR #82 checks | prepared, fleet action guard |
 | Product closeout action matrix | `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py` reports every active closeout action as `ready`, `waiting`, `blocked_by_pr_checks`, or `stale_or_invalid` before fleets run lifecycle commands | prepared, fleet readiness guard |
+| Product closeout PR comment sync | `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply` posts the current closeout action matrix to PR #82 whenever the release candidate advances | prepared, live PR handoff updater |
+| Product closeout PR comment check | `python3 scripts/e2e/check_product_closeout_fleet_notification.py` verifies PR #82 has a product closeout fleet update tied to the current `headRefOid` and listing every active owner/reviewer/Human-Ops lifecycle action | prepared, live PR notification check |
 | Static release gate | `python3 scripts/e2e/check_product_release_gate.py` validates required specs, evidence docs, runner coverage, deterministic source fixtures, and correlation ids | proven |
 | Product E2E runner | `scripts/e2e/run_product_e2e.sh` runs API-bound UI, map, expansion, PV-006, PV-007, and product environment Playwright specs | proven by PR #82 checks |
 | Dynamic release target guard | `tests/e2e/test_frontend_execution_matrix_coverage.py` rejects hard-coded `dev@...` release refs and requires PR #82 `headRefOid`/checks language | proven |
@@ -123,6 +125,12 @@ Note: table blocking types use canonical queue values. The older prose labels
 - Run `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py`
   before owner/reviewer/Human-Ops lifecycle commands so fleets can see which
   closeout actions are ready, waiting for handoff, PR-blocked, or stale.
+- Run `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`
+  after PR #82 receives a new `headRefOid`; this refreshes the PR #82 fleet
+  comment from the closeout queue and current action matrix.
+- Run `python3 scripts/e2e/check_product_closeout_fleet_notification.py`
+  before owner/reviewer/Human-Ops lifecycle commands; PR #82 must have a
+  product closeout fleet update for the current release target.
 - Do not close reviewer-owned lanes by changing `ai-status.json` from an
   unassigned actor; use the named owner/reviewer lifecycle.
 - Do not run final `done` closeout from a thin or stale `main` checkout. Owner

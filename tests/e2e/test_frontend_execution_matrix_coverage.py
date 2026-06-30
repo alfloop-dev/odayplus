@@ -25,6 +25,8 @@ CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
 CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "scripts/e2e/check_product_closeout_pickup_board.py"
+CLOSEOUT_FLEET_COMMENT_SYNC = ROOT / "scripts/e2e/sync_product_closeout_fleet_comment.py"
+CLOSEOUT_FLEET_NOTIFICATION_CHECK = ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
@@ -289,6 +291,8 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
         "check_product_closeout_action_matrix.py",
+        "sync_product_closeout_fleet_comment.py",
+        "check_product_closeout_fleet_notification.py",
         "provider credential/OAuth",
         "scheduled external fetch",
         "quota/rate-limit",
@@ -319,6 +323,8 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "check_product_go_no_go.py",
         "check_product_closeout_action.py",
         "check_product_closeout_action_matrix.py",
+        "sync_product_closeout_fleet_comment.py",
+        "check_product_closeout_fleet_notification.py",
         "gh pr view 82",
         "check_product_release_gate.py",
     ):
@@ -346,12 +352,16 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     assert "scripts/e2e/check_product_closeout_pickup_board.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
     assert "Product closeout pickup board checks passed." in checker_text
     assert "Product Release Closeout Pickup Board" in board_text
     assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
     assert "check_product_closeout_queue.py --report" in board_text
     assert "check_product_closeout_action.py" in board_text
     assert "check_product_closeout_action_matrix.py" in board_text
+    assert "sync_product_closeout_fleet_comment.py" in board_text
+    assert "check_product_closeout_fleet_notification.py" in board_text
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
     assert "check_product_go_no_go.py" in board_text
     assert "check_external_proof_handback_status_board.py" in board_text
@@ -837,6 +847,8 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_status_board.py" in release_gate_text
