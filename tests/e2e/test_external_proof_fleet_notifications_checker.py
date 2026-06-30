@@ -31,6 +31,10 @@ def queue_payload() -> dict:
                     "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
                     "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
                 ],
+                "handback_commands": [
+                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+                    "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+                ],
                 "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
             }
         ]
@@ -104,8 +108,10 @@ def test_validate_notifications_rejects_missing_required_evidence_or_command() -
     checker = load_checker_module()
     broken = pickup_comment().replace("- [ ] provider attribution and terms URL visible\n", "")
     broken = broken.replace("- `PLAYWRIGHT_BASE_URL=", "- `PLAYWRIGHT_BASE_URL_REMOVED=")
+    broken = broken.replace("generate_external_proof_handback_skeleton.py --task", "generate_external_proof_handback_skeleton.py")
 
     errors = checker.validate_notifications(queue_payload(), issue_payload(broken), expected_sha=EXPECTED_SHA)
 
     assert any("missing required evidence: provider attribution and terms URL visible" in error for error in errors)
     assert any("missing command fragment: PLAYWRIGHT_BASE_URL=" in error for error in errors)
+    assert any("missing handback command fragment: python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task" in error for error in errors)
