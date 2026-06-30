@@ -37,6 +37,7 @@ live and assigned:
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_product_go_no_go.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
+python3 scripts/e2e/update_external_proof_handback_status_board.py --help
 python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 ```
 
@@ -121,3 +122,7 @@ Completion still requires:
 - `python3 scripts/e2e/check_external_proof_handback_status_board.py` still
   passes so Product Validation handback intake state remains synchronized with
   `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.
+- Product Validation uses
+  `python3 scripts/e2e/update_external_proof_handback_status_board.py` rather
+  than manual JSON edits when a #132-#138 handback is submitted, rejected for
+  revision, or accepted.

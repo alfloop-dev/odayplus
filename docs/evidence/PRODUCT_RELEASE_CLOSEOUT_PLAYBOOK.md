@@ -134,6 +134,12 @@ Human/Ops must also explicitly acknowledge these boundaries:
   `python3 scripts/e2e/check_external_proof_handback_status_board.py` so the
   board cannot drift from the external proof queue. The status board is not
   runtime proof; it only tracks pending/submitted/needs-revision/accepted state.
+- Update that board with
+  `python3 scripts/e2e/update_external_proof_handback_status_board.py`, not by
+  manual JSON edits. Use `--status handback_submitted` when a handback arrives,
+  `--status needs_revision --next-action "<specific correction>"` when Product
+  Validation rejects it, and `--status accepted --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
+  only after the artifact checker passes.
 - A completed external-proof handback must also pass
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
   before Product Validation accepts or closes the corresponding issue. This
@@ -169,6 +175,8 @@ Do not mark the active objective complete until:
   accepted external proof artifacts cite the template fields.
 - `python3 scripts/e2e/check_external_proof_handback_status_board.py` passes
   against `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.
+- `python3 scripts/e2e/update_external_proof_handback_status_board.py --help`
+  is available for guarded intake updates.
 - Each accepted external-proof issue handback has passed
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
 - The complete external-proof handback set has passed

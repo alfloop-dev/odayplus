@@ -245,6 +245,7 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
         "check_external_proof_handback_template.py",
         "check_external_proof_handback_status_board.py",
+        "update_external_proof_handback_status_board.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
         "provider credential/OAuth",
@@ -269,6 +270,7 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "scripts/ai_status.py done",
         "check_external_proof_handback_template.py",
         "check_external_proof_handback_status_board.py",
+        "update_external_proof_handback_status_board.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
         "gh pr view 82",
@@ -303,6 +305,7 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
     assert "check_product_go_no_go.py" in board_text
     assert "check_external_proof_handback_status_board.py" in board_text
+    assert "update_external_proof_handback_status_board.py" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
 
     for actor in ("Human/Ops", "Claude", "Claude2", "Codex", "Codex2"):
@@ -580,6 +583,7 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     assert "check_product_go_no_go.py" in board_text
     assert "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json" in board_text
     assert "check_external_proof_handback_status_board.py" in board_text
+    assert "update_external_proof_handback_status_board.py" in board_text
     assert "generate_external_proof_handback_skeleton.py" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
     assert "check_external_proof_handback_bundle.py" in board_text
@@ -743,6 +747,7 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_status_board.py" in release_gate_text
+    assert "scripts/e2e/update_external_proof_handback_status_board.py" in release_gate_text
     assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
     assert "Product closeout queue checks passed." in queue_check_text
     assert "ai-status.json" in queue_check_text

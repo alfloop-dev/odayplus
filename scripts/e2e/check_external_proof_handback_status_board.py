@@ -33,6 +33,7 @@ ALLOWED_BUNDLE_STATUSES = {
 
 REQUIRED_GLOBAL_RULE_TOKENS = (
     "check_external_proof_handback_artifact.py",
+    "update_external_proof_handback_status_board.py",
     "check_external_proof_handback_bundle.py",
     "#132-#138",
     "Do not use this board as runtime proof",

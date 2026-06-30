@@ -38,6 +38,7 @@ REQUIRED_CONDITIONAL_TOKENS = (
     "remote staging proof",
     "check_external_proof_handback_artifact.py",
     "check_external_proof_handback_status_board.py",
+    "update_external_proof_handback_status_board.py",
     "check_external_proof_handback_bundle.py",
     "check_external_proof_issue_sync.py --require-assignees",
     "#132-#138",

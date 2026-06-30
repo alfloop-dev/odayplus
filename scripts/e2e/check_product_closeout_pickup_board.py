@@ -29,6 +29,7 @@ REQUIRED_BOARD_TOKENS = (
     "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
     "python3 scripts/e2e/check_product_go_no_go.py",
     "python3 scripts/e2e/check_external_proof_handback_status_board.py",
+    "python3 scripts/e2e/update_external_proof_handback_status_board.py",
     "python3 scripts/e2e/check_external_proof_handback_artifact.py",
     "provider-specific production credential",
     "provider-specific production licensing approval",
