@@ -42,6 +42,7 @@ EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fle
 EXTERNAL_PROOF_STATUS_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
 EXTERNAL_PROOF_LIVE_BLOCKERS_CHECK = ROOT / "scripts/e2e/check_external_proof_live_blockers.py"
 EXTERNAL_PROOF_NOTIFICATIONS_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+EXTERNAL_PROOF_FOLLOWUP_WORKFLOW = ROOT / ".github/workflows/external-proof-followup.yml"
 GO_NO_GO_CHECK = ROOT / "scripts/e2e/check_product_go_no_go.py"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
@@ -292,6 +293,8 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
         "sync_external_proof_escalation_comments.py --apply",
         "--force --comment-dir",
+        ".github/workflows/external-proof-followup.yml",
+        "external-proof-followup",
         "sync_external_proof_fleet_issues.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
@@ -328,6 +331,8 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
         "sync_external_proof_escalation_comments.py --apply",
         "--force --comment-dir",
+        ".github/workflows/external-proof-followup.yml",
+        "external-proof-followup",
         "sync_external_proof_fleet_issues.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
@@ -385,6 +390,8 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
     assert "sync_external_proof_escalation_comments.py --apply" in board_text
     assert "--force --comment-dir" in board_text
+    assert ".github/workflows/external-proof-followup.yml" in board_text
+    assert "external-proof-followup" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
 
     for actor in ("Human/Ops", "Claude", "Claude2", "Codex", "Codex2"):
@@ -680,6 +687,8 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
     assert "sync_external_proof_escalation_comments.py --apply" in board_text
     assert "--force --comment-dir" in board_text
+    assert ".github/workflows/external-proof-followup.yml" in board_text
+    assert "external-proof-followup" in board_text
     assert "generate_external_proof_handback_skeleton.py" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
     assert "check_external_proof_handback_bundle.py" in board_text
@@ -882,14 +891,35 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     assert "scripts/e2e/check_external_proof_issue_handback_scan.py" in release_gate_text
     assert "--fail-on-escalation" in release_gate_text
     assert "scripts/e2e/sync_external_proof_escalation_comments.py" in release_gate_text
+    assert ".github/workflows/external-proof-followup.yml" in release_gate_text
     assert "scripts/e2e/sync_external_proof_fleet_issues.py" in release_gate_text
     assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
     assert "Product closeout queue checks passed." in queue_check_text
     assert "ai-status.json" in queue_check_text
     assert "waiting_for_" in queue_check_text
     assert "waiting_for_review_after_handoff" in CLOSEOUT_QUEUE.read_text(encoding="utf-8")
-    assert "--report" in queue_check_text
-    assert "Product Release Closeout Queue Report" in queue_check_text
+
+
+def test_external_proof_followup_workflow_runs_live_handoff_guards() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    workflow_text = EXTERNAL_PROOF_FOLLOWUP_WORKFLOW.read_text(encoding="utf-8")
+
+    assert ".github/workflows/external-proof-followup.yml" in release_gate_text
+    assert "External Proof Follow-up" in workflow_text
+    assert "workflow_dispatch" in workflow_text
+    assert "schedule:" in workflow_text
+    assert "GH_TOKEN" in workflow_text
+    assert "issues: write" in workflow_text
+    assert "pull-requests: read" in workflow_text
+    assert "gh pr view 82" in workflow_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in workflow_text
+    assert "check_external_proof_fleet_notifications.py" in workflow_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in workflow_text
+    assert "check_external_proof_handback_status_board.py" in workflow_text
+    assert "check_external_proof_issue_handback_scan.py" in workflow_text
+    assert "--fail-on-escalation" in workflow_text
+    assert "sync_external_proof_escalation_comments.py" in workflow_text
+    assert "actions/upload-artifact@v4" in workflow_text
 
 
 def test_closeout_queue_report_runs_without_live_ai_status() -> None:

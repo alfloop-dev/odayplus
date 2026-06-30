@@ -70,6 +70,7 @@ REQUIRED_FILES = {
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "external proof issue handback scanner": "scripts/e2e/check_external_proof_issue_handback_scan.py",
     "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
+    "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
 
@@ -138,6 +139,30 @@ def main() -> int:
             errors.append(f"remote staging workflow missing token: {required_token}")
     if "TODO: replace with real deploy" in staging_workflow_text:
         errors.append("remote staging workflow still contains placeholder deploy TODO")
+
+    external_followup_workflow = ROOT / ".github/workflows/external-proof-followup.yml"
+    external_followup_workflow_text = (
+        external_followup_workflow.read_text(encoding="utf-8")
+        if external_followup_workflow.exists()
+        else ""
+    )
+    for required_token in (
+        "External Proof Follow-up",
+        "workflow_dispatch",
+        "schedule:",
+        "GH_TOKEN",
+        "gh pr view 82",
+        "check_external_proof_issue_sync.py --require-assignees",
+        "check_external_proof_fleet_notifications.py",
+        "check_external_proof_live_blockers.py --require-assignees",
+        "check_external_proof_handback_status_board.py",
+        "check_external_proof_issue_handback_scan.py",
+        "--fail-on-escalation",
+        "sync_external_proof_escalation_comments.py",
+        "actions/upload-artifact@v4",
+    ):
+        if required_token not in external_followup_workflow_text:
+            errors.append(f"external proof follow-up workflow missing token: {required_token}")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""

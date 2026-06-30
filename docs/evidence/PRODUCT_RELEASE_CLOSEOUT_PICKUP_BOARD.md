@@ -55,6 +55,12 @@ Use `python3 scripts/e2e/sync_external_proof_escalation_comments.py --force --co
 to render escalation drafts without posting when Product Validation wants a
 manual review before live GitHub comments.
 
+Hosted follow-up is available through `.github/workflows/external-proof-followup.yml`.
+Manual `workflow_dispatch` runs perform the same live issue sync, notification,
+blocker, handback board, and overdue handback scan checks; scheduled runs post
+de-duplicated escalation comments for overdue #132-#138 handbacks and upload
+`external-proof-followup` artifacts.
+
 ## Pickup Table
 
 | Task | Queue status | Actor | Action type | Blocking type | Required command | Evidence refs |

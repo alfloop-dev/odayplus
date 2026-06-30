@@ -203,6 +203,12 @@ Human/Ops must also explicitly acknowledge these boundaries:
   only when the scan marks rows `Escalation Due = yes`; use
   `python3 scripts/e2e/sync_external_proof_escalation_comments.py --force --comment-dir <dir>`
   to prepare manual escalation drafts without posting.
+- External proof follow-up can also run in GitHub Actions. Use
+  `.github/workflows/external-proof-followup.yml` via `workflow_dispatch` for a
+  manual check, or rely on its scheduled run to execute live issue sync,
+  notification, blocker, handback board, and overdue handback scan checks.
+  Scheduled runs post de-duplicated escalation comments for overdue #132-#138
+  rows and upload `external-proof-followup` artifacts.
 - Product closeout fleet pickup comments must track the current release target.
   After PR #82 changes `headRefOid`, run
   `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`

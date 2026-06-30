@@ -63,8 +63,9 @@ def render_escalation_comment(
     required_evidence = "\n".join(f"- [ ] {item}" for item in queue_entry.get("required_evidence", []))
     handback_commands = "\n".join(str(command) for command in queue_entry.get("handback_commands", []))
     escalation = str(queue_entry.get("fleet_routing", {}).get("escalation", ""))
+    generated_date = datetime.now(UTC).date().isoformat()
 
-    return f"""## External proof handback escalation - 2026-06-30
+    return f"""## External proof handback escalation - {generated_date}
 
 Task: `{task_id}` ({issue})
 Release target: PR #82 headRefOid `{expected_sha}`
@@ -137,6 +138,18 @@ def post_issue_comment(issue_number: str, body: str) -> None:
         body_path.unlink(missing_ok=True)
 
 
+def escalation_comment_already_posted(issue: dict[str, Any], *, task_id: str, expected_sha: str) -> bool:
+    for comment in issue.get("comments", []):
+        body = str(comment.get("body", ""))
+        if (
+            "External proof handback escalation" in body
+            and task_id in body
+            and expected_sha in body
+        ):
+            return True
+    return False
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-sha", help="expected PR #82 headRefOid; defaults to live gh pr view")
@@ -169,6 +182,10 @@ def main() -> int:
         if args.comment_dir:
             (args.comment_dir / f"{task_id}.md").write_text(body, encoding="utf-8")
         if args.apply:
+            issue = load_module(SCAN_PATH, "check_external_proof_issue_handback_scan").load_issue(issue_number)
+            if escalation_comment_already_posted(issue, task_id=task_id, expected_sha=expected_sha):
+                print(f"skipped {task_id} escalation -> issue #{issue_number}; current release escalation already posted")
+                continue
             post_issue_comment(issue_number, body)
             print(f"posted {task_id} escalation -> issue #{issue_number}")
         else:

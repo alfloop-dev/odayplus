@@ -83,3 +83,34 @@ def test_rows_to_escalate_selects_due_rows() -> None:
 
     assert len(selected) == 1
     assert selected[0][0]["task_id"] == "ODP-MAP-STAGE-001"
+
+
+def test_escalation_comment_already_posted_is_release_sha_specific() -> None:
+    syncer = load_syncer_module()
+    issue = {
+        "comments": [
+            {
+                "body": (
+                    "## External proof handback escalation - 2026-06-30\n\n"
+                    "Task: `ODP-MAP-STAGE-001` (#135)\n"
+                    f"Release target: PR #82 headRefOid `{EXPECTED_SHA}`\n"
+                )
+            }
+        ]
+    }
+
+    assert syncer.escalation_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-001",
+        expected_sha=EXPECTED_SHA,
+    )
+    assert not syncer.escalation_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-002",
+        expected_sha=EXPECTED_SHA,
+    )
+    assert not syncer.escalation_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-001",
+        expected_sha="326bacdd6f43f945609604d0aa2e56c151f840bc",
+    )

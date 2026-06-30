@@ -276,6 +276,18 @@ Use `--force --comment-dir <dir>` to render drafts without posting:
 python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply
 ```
 
+Hosted follow-up automation:
+
+```text
+.github/workflows/external-proof-followup.yml
+```
+
+The workflow supports `workflow_dispatch` for manual release-owner checks and
+scheduled runs for live issue sync, fleet notification, blocker, handback board,
+and overdue handback scan checks. Scheduled runs post de-duplicated escalation
+comments only for overdue #132-#138 handbacks and upload
+`external-proof-followup` artifacts.
+
 When all seven handbacks are ready, validate the complete set before release
 closeout:
 
