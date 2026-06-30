@@ -92,6 +92,8 @@ def synced_issue_payload() -> dict:
                     "- Product Validation tracks intake status in `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.",
                     "- Generate a task-specific starter with `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>`.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
+                    "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",
+                    "- `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete` is expected to fail until all #132-#138 handbacks and the bundle status are accepted.",
                     "- Run `python3 scripts/e2e/update_external_proof_handback_status_board.py --task ODP-MAP-STAGE-001 --status handback_submitted --handback <handback.json>` when Product Validation receives a handback.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_status_board.py` after updating intake status.",
                     "- Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
@@ -152,6 +154,10 @@ def test_validate_issue_sync_rejects_missing_queue_acceptance_tokens() -> None:
         "",
     )
     issue["135"]["body"] = issue["135"]["body"].replace(
+        "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.\n",
+        "",
+    )
+    issue["135"]["body"] = issue["135"]["body"].replace(
         "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
         "Do not close until proof references PR #82 headRefOid.",
     )
@@ -160,6 +166,7 @@ def test_validate_issue_sync_rejects_missing_queue_acceptance_tokens() -> None:
 
     assert any("body missing required evidence: staging map tile URL configured" in error for error in errors)
     assert any("body missing handback command: python3 scripts/e2e/check_external_proof_handback_template.py" in error for error in errors)
+    assert any("body missing token: check_external_proof_acceptance_readiness.py --report" in error for error in errors)
     assert any("body missing completion rule" in error for error in errors)
 
 
