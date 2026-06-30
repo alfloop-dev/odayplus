@@ -51,7 +51,7 @@ The report contains the backup SHA-256, restore SHA-256, health payloads, worker
 | API/web/worker runtime | exercised | stack is stopped/restarted around restore and health checked afterward |
 | Model alias rollback | covered elsewhere | PV-007 product E2E exercises Learning Hub canary/full/rollback and registry evidence |
 | Policy/image rollback | documented | this E2E stack uses immutable checked-in policy/code inside container images; image rollback is redeploying the previous image tag |
-| Remote staging rollout | blocked | `.github/workflows/deploy-staging.yml` still documents a placeholder because staging host/url secrets are not configured |
+| Remote staging rollout | blocked | `.github/workflows/deploy-staging.yml` now fails closed through `scripts/e2e/check_remote_staging_proof.py`; staging host/API URL/secret owner and backing services are still not configured |
 
 ## Release Decision Impact
 

@@ -9,6 +9,7 @@ from threading import Thread
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "scripts/e2e/check_remote_staging_proof.py"
+STAGING_WORKFLOW = ROOT / ".github/workflows/deploy-staging.yml"
 EXPECTED_SHA = "fd70b4f40d9bc178bb9e21ce1a24a8b4e4e95203"
 
 
@@ -112,3 +113,19 @@ def test_remote_staging_checker_verifies_health_and_release_sha(tmp_path, monkey
         assert all(check["ok"] for check in report["checks"])
     finally:
         server.shutdown()
+
+
+def test_deploy_staging_workflow_fails_closed_through_remote_checker() -> None:
+    workflow = STAGING_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "Deploy/Verify Staging" in workflow
+    assert "workflow_dispatch" in workflow
+    assert "inputs.expected_sha" in workflow
+    assert "ODAY_RELEASE_SHA" in workflow
+    assert "ODP_STAGING_DEPLOY_URL" in workflow
+    assert "ODP_STAGING_API_URL" in workflow
+    assert "ODP_STAGING_SECRET_OWNER" in workflow
+    assert "scripts/e2e/check_remote_staging_proof.py" in workflow
+    assert "--expected-sha \"$ODAY_RELEASE_SHA\"" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "TODO: replace with real deploy" not in workflow
