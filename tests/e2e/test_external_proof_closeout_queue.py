@@ -56,6 +56,11 @@ def test_external_proof_tasks_do_not_allow_local_or_mock_proof_to_close_live_cla
         assert entry["status"] == "external_blocked"
         assert "Do not close" in entry["completion_rule"]
         assert "gh pr view 82" in "\n".join(entry["allowed_commands"])
+        assert "generate_external_proof_handback_skeleton.py" in "\n".join(entry["handback_commands"])
+        assert entry["task_id"] in "\n".join(entry["handback_commands"])
+        assert "check_external_proof_handback_template.py" in "\n".join(entry["handback_commands"])
+        assert "check_external_proof_handback_artifact.py" in "\n".join(entry["handback_commands"])
+        assert "--expected-sha" in "\n".join(entry["handback_commands"])
         assert entry["required_evidence"]
 
 

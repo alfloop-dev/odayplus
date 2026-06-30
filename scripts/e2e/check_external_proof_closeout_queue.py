@@ -113,6 +113,7 @@ def validate(payload: dict[str, Any]) -> list[str]:
             "fleet_routing",
             "required_evidence",
             "allowed_commands",
+            "handback_commands",
             "evidence_refs",
             "completion_rule",
         ):
@@ -173,12 +174,26 @@ def validate(payload: dict[str, Any]) -> list[str]:
             errors.append(f"{prefix} required_evidence must be non-empty")
         if not entry.get("allowed_commands"):
             errors.append(f"{prefix} allowed_commands must be non-empty")
+        if not entry.get("handback_commands"):
+            errors.append(f"{prefix} handback_commands must be non-empty")
         if not entry.get("evidence_refs"):
             errors.append(f"{prefix} evidence_refs must be non-empty")
 
         command_text = "\n".join(str(command) for command in entry.get("allowed_commands", []))
         if "gh pr view 82" not in command_text or "headRefOid" not in command_text:
             errors.append(f"{prefix} allowed_commands must verify PR #82 headRefOid")
+        handback_text = "\n".join(str(command) for command in entry.get("handback_commands", []))
+        for token in (
+            "generate_external_proof_handback_skeleton.py",
+            str(entry.get("task_id", "")),
+            "check_external_proof_handback_template.py",
+            "check_external_proof_handback_artifact.py",
+            "--expected-sha",
+            "gh pr view 82",
+            "headRefOid",
+        ):
+            if token and token not in handback_text:
+                errors.append(f"{prefix} handback_commands missing token: {token}")
 
         for evidence_ref in entry.get("evidence_refs", []):
             ref_path = ROOT / str(evidence_ref)
