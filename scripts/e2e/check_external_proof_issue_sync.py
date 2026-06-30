@@ -132,6 +132,10 @@ def validate_issue_sync(
             if str(command) not in issue_body:
                 errors.append(f"{prefix} body missing allowed command: {command}")
 
+        for command in entry.get("handback_commands", []):
+            if str(command) not in issue_body:
+                errors.append(f"{prefix} body missing handback command: {command}")
+
         for evidence_ref in entry.get("evidence_refs", []):
             evidence_ref_token = f"`{evidence_ref}`"
             if evidence_ref_token not in issue_body:
