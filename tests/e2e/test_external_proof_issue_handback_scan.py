@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,10 +48,14 @@ def test_issue_handback_scan_reports_no_handback_after_latest_pickup() -> None:
         task_id="ODP-MAP-STAGE-001",
         issue=issue_payload(),
         expected_sha=EXPECTED_SHA,
+        now=datetime(2026, 6, 30, 13, 0, tzinfo=UTC),
+        escalation_hours=24,
     )
 
     assert row["status"] == "no_handback_after_latest_pickup"
     assert row["latest_pickup_created_at"] == "2026-06-30T12:00:00Z"
+    assert row["pickup_age_hours"] == 1
+    assert row["escalation_due"] is False
     assert row["candidate_handback_comments"] == []
 
 
@@ -67,6 +72,8 @@ def test_issue_handback_scan_detects_candidate_handback_after_latest_pickup() ->
             )
         ),
         expected_sha=EXPECTED_SHA,
+        now=datetime(2026, 6, 30, 13, 0, tzinfo=UTC),
+        escalation_hours=24,
     )
 
     assert row["status"] == "candidate_handback_detected"
@@ -87,9 +94,11 @@ def test_issue_handback_scan_rejects_missing_current_sha_pickup() -> None:
         task_id="ODP-MAP-STAGE-001",
         issue=issue_payload(pickup_sha="cd1a58902432ef891e27ba22244d159b1e7ba850"),
         expected_sha=EXPECTED_SHA,
+        now=datetime(2026, 6, 30, 13, 0, tzinfo=UTC),
+        escalation_hours=24,
     )
 
-    errors = checker.validate_scan([row])
+    errors = checker.validate_scan([row], fail_on_escalation=False)
 
     assert row["status"] == "missing_current_sha_pickup"
     assert errors == ["ODP-MAP-STAGE-001 missing_current_sha_pickup"]
@@ -101,10 +110,31 @@ def test_issue_handback_scan_renders_report() -> None:
         task_id="ODP-MAP-STAGE-001",
         issue=issue_payload(),
         expected_sha=EXPECTED_SHA,
+        now=datetime(2026, 6, 30, 13, 0, tzinfo=UTC),
+        escalation_hours=24,
     )
 
-    report = checker.render_markdown([row], expected_sha=EXPECTED_SHA)
+    report = checker.render_markdown([row], expected_sha=EXPECTED_SHA, escalation_hours=24)
 
     assert "External Proof Issue Handback Scan" in report
     assert "ODP-MAP-STAGE-001" in report
     assert "no_handback_after_latest_pickup" in report
+    assert "Escalation threshold: `24h" in report
+    assert "| `ODP-MAP-STAGE-001` | #135 | OPEN | 2026-06-30T12:00:00Z | 1.0h |" in report
+
+
+def test_issue_handback_scan_marks_escalation_due_after_threshold() -> None:
+    checker = load_checker_module()
+
+    row = checker.scan_issue_for_handbacks(
+        task_id="ODP-MAP-STAGE-001",
+        issue=issue_payload(),
+        expected_sha=EXPECTED_SHA,
+        now=datetime(2026, 7, 2, 13, 0, tzinfo=UTC),
+        escalation_hours=24,
+    )
+    errors = checker.validate_scan([row], fail_on_escalation=True)
+
+    assert row["pickup_age_hours"] == 49
+    assert row["escalation_due"] is True
+    assert errors == ["ODP-MAP-STAGE-001 handback escalation due"]
