@@ -33,6 +33,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 python3 scripts/e2e/check_product_release_gate.py
 python3 scripts/e2e/check_external_proof_closeout_queue.py
+python3 scripts/e2e/check_external_proof_handback_template.py
 ```
 
 If satisfied:
@@ -128,6 +129,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` and must pass
   `python3 scripts/e2e/check_external_proof_handback_template.py` before
   Product Validation accepts #132-#138 evidence.
+- A completed external-proof handback must also pass
+  `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
+  before Product Validation accepts or closes the corresponding issue. This
+  verifies the actual handback artifact, not only the template.
 - External proof GitHub issue handoff must remain synced with queue routing.
   Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   before Human/Ops go/no-go so #132-#138 cannot silently lose labels,
@@ -147,4 +152,6 @@ Do not mark the active objective complete until:
   passes against live GitHub issues #132-#138.
 - `python3 scripts/e2e/check_external_proof_handback_template.py` passes and
   accepted external proof artifacts cite the template fields.
+- Each accepted external-proof issue handback has passed
+  `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
 - PR #82 attached checks are still successful at the decision head.
