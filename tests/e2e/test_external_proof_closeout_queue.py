@@ -42,6 +42,10 @@ def test_external_proof_closeout_queue_covers_live_provider_map_and_staging_task
         "remote_staging",
     }
     assert payload["release_target"]["must_not_hardcode_dev_hash"] is True
+    assert all(
+        entry["tracking_issue"].startswith("https://github.com/alfloop-dev/odayplus/issues/")
+        for entry in payload["queue"]
+    )
 
 
 def test_external_proof_tasks_do_not_allow_local_or_mock_proof_to_close_live_claims() -> None:
