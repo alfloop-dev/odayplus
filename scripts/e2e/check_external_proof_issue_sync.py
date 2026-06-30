@@ -87,6 +87,8 @@ def validate_issue_sync(
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
             "check_external_proof_handback_bundle.py",
+            "check_product_go_no_go.py",
+            "PRODUCT_RELEASE_GO_NO_GO.md",
             "#132-#138",
             "--expected-sha",
             str(routing.get("dispatch_lane", "")),

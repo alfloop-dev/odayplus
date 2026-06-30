@@ -20,6 +20,7 @@ python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
 python3 scripts/e2e/check_external_proof_fleet_pickup_board.py
+python3 scripts/e2e/check_product_go_no_go.py
 ```
 
 ## Pickup Table
@@ -133,6 +134,15 @@ or document-only evidence. A closeout requires:
 
 ```bash
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+```
+
+The release go/no-go packet must still show these issues as pending external
+proof until Product Validation accepts every handback. The guarded packet is
+`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`. Validate that boundary before
+release closeout:
+
+```bash
+python3 scripts/e2e/check_product_go_no_go.py
 ```
 
 When all seven handbacks are ready, validate the complete set before release

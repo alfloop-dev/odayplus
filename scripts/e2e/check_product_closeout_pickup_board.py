@@ -27,6 +27,7 @@ REQUIRED_BOARD_TOKENS = (
     "python3 scripts/e2e/check_product_closeout_queue.py --report",
     "python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py",
     "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
+    "python3 scripts/e2e/check_product_go_no_go.py",
     "python3 scripts/e2e/check_external_proof_handback_artifact.py",
     "provider-specific production credential",
     "provider-specific production licensing approval",
