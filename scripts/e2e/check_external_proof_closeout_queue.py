@@ -47,6 +47,8 @@ REQUIRED_COMMAND_TOKENS = (
     "PLAYWRIGHT_BASE_URL",
 )
 
+REQUIRED_ROUTING_LABELS = {"product-e2e", "external-proof", "release-blocker"}
+
 FORBIDDEN_COMPLETION_PHRASES = (
     "close from deterministic fixture",
     "close from local MapLibre",
@@ -108,6 +110,7 @@ def validate(payload: dict[str, Any]) -> list[str]:
             "status",
             "blocking_type",
             "tracking_issue",
+            "fleet_routing",
             "required_evidence",
             "allowed_commands",
             "evidence_refs",
@@ -122,6 +125,39 @@ def validate(payload: dict[str, Any]) -> list[str]:
         tracking_issue = str(entry.get("tracking_issue", ""))
         if not tracking_issue.startswith("https://github.com/alfloop-dev/odayplus/issues/"):
             errors.append(f"{prefix} tracking_issue must link to a GitHub issue")
+
+        routing = entry.get("fleet_routing")
+        if not isinstance(routing, dict):
+            errors.append(f"{prefix} fleet_routing must be an object")
+            routing = {}
+        for field in ("dispatch_lane", "pickup_label", "required_issue_labels", "pickup_command", "escalation"):
+            if field not in routing:
+                errors.append(f"{prefix} fleet_routing missing {field}")
+
+        required_issue_labels = routing.get("required_issue_labels", [])
+        if not isinstance(required_issue_labels, list) or not required_issue_labels:
+            errors.append(f"{prefix} fleet_routing.required_issue_labels must be non-empty")
+            required_issue_labels = []
+        label_set = {str(label) for label in required_issue_labels}
+        missing_labels = REQUIRED_ROUTING_LABELS - label_set
+        if missing_labels:
+            errors.append(f"{prefix} fleet_routing missing required labels: {sorted(missing_labels)}")
+        pickup_label = str(routing.get("pickup_label", ""))
+        if pickup_label not in label_set:
+            errors.append(f"{prefix} fleet_routing.pickup_label must be included in required_issue_labels")
+        if entry.get("owner") == "Data Partnerships / Legal" and "data-partnerships" not in label_set:
+            errors.append(f"{prefix} Data Partnerships / Legal tasks must route with data-partnerships label")
+        if entry.get("owner") == "Platform/Ops" and "platform-ops" not in label_set:
+            errors.append(f"{prefix} Platform/Ops tasks must route with platform-ops label")
+
+        pickup_command = str(routing.get("pickup_command", ""))
+        issue_number = tracking_issue.rsplit("/", 1)[-1]
+        if f"gh issue view {issue_number}" not in pickup_command:
+            errors.append(f"{prefix} pickup_command must view its tracking issue")
+        if "labels" not in pickup_command or "body" not in pickup_command:
+            errors.append(f"{prefix} pickup_command must request issue labels and body")
+        if not str(routing.get("escalation", "")).strip():
+            errors.append(f"{prefix} fleet_routing.escalation must be non-empty")
 
         if not entry.get("required_evidence"):
             errors.append(f"{prefix} required_evidence must be non-empty")

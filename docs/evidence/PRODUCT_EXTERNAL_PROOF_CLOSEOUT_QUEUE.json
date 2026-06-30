@@ -53,6 +53,18 @@
       "status": "external_blocked",
       "blocking_type": "provider_credentials",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/132",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops external provider fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 132 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns environment-specific secret provisioning; Product Validation reviews redacted proof before closure."
+      },
       "required_evidence": [
         "secret inventory names configured in the deployment environment",
         "secret owner and rotation policy recorded",
@@ -78,6 +90,18 @@
       "status": "external_blocked",
       "blocking_type": "provider_license_and_snapshot",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/133",
+      "fleet_routing": {
+        "dispatch_lane": "Data Partnerships / Legal external provider fleet",
+        "pickup_label": "data-partnerships",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "data-partnerships",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 133 --json number,title,labels,body,url",
+        "escalation": "Data Partnerships / Legal owns provider allowed-use evidence; Product Validation reviews redacted lineage proof before closure."
+      },
       "required_evidence": [
         "provider allowed-use/license attestation for production",
         "redacted production listing raw snapshot id",
@@ -104,6 +128,18 @@
       "status": "external_blocked",
       "blocking_type": "provider_geocoder",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/134",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops external provider fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 134 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns production geocoder proof capture; Product Validation reviews redacted response and fail-closed evidence before closure."
+      },
       "required_evidence": [
         "redacted production geocoder request/response id",
         "provider observed timestamp",
@@ -130,6 +166,18 @@
       "status": "external_blocked",
       "blocking_type": "live_map_endpoint",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/135",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops live map fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 135 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns staging tile endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."
+      },
       "required_evidence": [
         "staging map tile URL configured",
         "provider attribution and terms URL visible",
@@ -155,6 +203,18 @@
       "status": "external_blocked",
       "blocking_type": "live_map_geocoder",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/136",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops live map fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 136 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns staging geocoder endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."
+      },
       "required_evidence": [
         "staging geocoder URL configured",
         "geocoder outage fallback remains usable",
@@ -180,6 +240,18 @@
       "status": "external_blocked",
       "blocking_type": "remote_staging_configuration",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/137",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops remote staging fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 137 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns staging URL and secret-owner configuration; Product Validation reviews release-sha proof before closure."
+      },
       "required_evidence": [
         "ODP_STAGING_DEPLOY_URL configured",
         "ODP_STAGING_API_URL configured",
@@ -209,6 +281,18 @@
       "status": "external_blocked",
       "blocking_type": "remote_staging_drill",
       "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/138",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops remote staging fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 138 --json number,title,labels,body,url",
+        "escalation": "Platform/Ops owns staging smoke and backup/restore/rollback execution; Product Validation reviews attached drill artifacts before closure."
+      },
       "required_evidence": [
         "ODP-PV-STAGE-001 passed against the same target",
         "product E2E smoke runs against ODP_STAGING_DEPLOY_URL",
