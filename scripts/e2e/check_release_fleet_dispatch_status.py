@@ -34,6 +34,8 @@ LIVE_CHECKS = (
     ),
 )
 
+READINESS_REPORT_COMMAND = ["python3", "scripts/e2e/check_external_proof_acceptance_readiness.py", "--report"]
+
 
 def current_pr82_payload() -> dict[str, Any]:
     raw = subprocess.check_output(
@@ -86,7 +88,8 @@ def build_live_report() -> dict[str, Any]:
     env = os.environ.copy()
     env.setdefault("PANTHEON_STATUS_ROOT", "/home/lupin/oday-plus")
     checks = [run_check(label, command, env=env) for label, command in LIVE_CHECKS]
-    return {"pr": pr_payload, "checks": checks}
+    readiness_report = run_check("external acceptance readiness", READINESS_REPORT_COMMAND, env=env)
+    return {"pr": pr_payload, "checks": checks, "acceptance_readiness": readiness_report}
 
 
 def validate_report(report: dict[str, Any]) -> list[str]:
@@ -124,6 +127,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"| {check.get('label')} | {check.get('returncode')} | `{check.get('command')}` |")
 
     errors = validate_report(report)
+    readiness = report.get("acceptance_readiness")
+    if isinstance(readiness, dict) and readiness.get("output"):
+        lines.extend(
+            [
+                "",
+                "## External Proof Acceptance Readiness",
+                "",
+                str(readiness.get("output", "")).strip(),
+            ]
+        )
+
     lines.extend(["", "## Verdict", ""])
     if errors:
         lines.append("failed")

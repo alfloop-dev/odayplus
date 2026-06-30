@@ -47,6 +47,18 @@ def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> 
                 "output": "Product closeout fleet notification checks passed.",
             },
         ],
+        "acceptance_readiness": {
+            "label": "external acceptance readiness",
+            "command": "python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report",
+            "returncode": 0,
+            "output": (
+                "# External Proof Acceptance Readiness\n\n"
+                "| Task | Issue | Fleet Lane | Status | Missing Evidence | Next Action |\n"
+                "|---|---|---|---|---:|---|\n"
+                "| `ODP-MAP-STAGE-001` | #135 | Platform/Ops live map fleet | "
+                "`pending_external_handback` | 4 | Attach remote staging tile proof. |"
+            ),
+        },
     }
 
 
@@ -59,6 +71,9 @@ def test_release_fleet_dispatch_status_accepts_clean_report() -> None:
     rendered = checker.render_markdown(report_payload())
     assert "Release Fleet Dispatch Status" in rendered
     assert "external issue sync" in rendered
+    assert "External Proof Acceptance Readiness" in rendered
+    assert "ODP-MAP-STAGE-001" in rendered
+    assert "pending_external_handback" in rendered
     assert "passed" in rendered
 
 
