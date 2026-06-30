@@ -65,6 +65,7 @@ def synced_issue_payload() -> dict:
                     "## Runtime proof handback format",
                     "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for attached runtime proof.",
                     "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` as a redacted shape example, not as live proof.",
+                    "- Generate a task-specific starter with `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"`.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before accepting or closing this issue.",
                     "## Completion rule",

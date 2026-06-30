@@ -81,6 +81,7 @@ def validate_issue_sync(
             "## Runtime proof handback format",
             "EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
             "EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
+            "generate_external_proof_handback_skeleton.py",
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
             "--expected-sha",
