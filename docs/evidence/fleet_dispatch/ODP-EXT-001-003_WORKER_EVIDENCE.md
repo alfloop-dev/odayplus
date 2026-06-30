@@ -6,12 +6,21 @@ Scope: repo-side implementation, tests, and evidence for provider registry/secre
 
 ## Release Authority
 
+Current release authority must be re-checked from PR #82 before promotion. This
+worker handback originally observed:
+
 - `gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url`
-- headRefOid: `1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633`
+- original handback headRefOid: `1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633`
 - state: `OPEN`
 - isDraft: `true`
 - mergeable: `MERGEABLE`
 - GitHub returned successful attached checks for PR #82 at command time.
+
+Current authority refresh:
+
+- Refreshed: 2026-06-30
+- Current PR #82 headRefOid: `fca45b70ee7c0e58278bcf734f82e2d5e83e373a`
+- Current PR #82 state: draft/open/mergeable with attached checks successful at refresh time.
 
 ## ODP-EXT-001 Provider Registry And Secrets
 
