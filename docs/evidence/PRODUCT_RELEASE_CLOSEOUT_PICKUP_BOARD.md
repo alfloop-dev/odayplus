@@ -30,6 +30,7 @@ python3 scripts/e2e/check_product_closeout_queue.py --report
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
 python3 scripts/e2e/check_product_closeout_fleet_notification.py
+python3 scripts/e2e/check_release_fleet_dispatch_status.py
 python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 ```
@@ -80,6 +81,7 @@ Human/Ops lifecycle action:
 ```bash
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
 python3 scripts/e2e/check_product_closeout_fleet_notification.py
+python3 scripts/e2e/check_release_fleet_dispatch_status.py
 ```
 
 ## Completed Closeouts
@@ -159,6 +161,10 @@ Completion still requires:
 - `python3 scripts/e2e/check_product_closeout_fleet_notification.py` still
   passes so PR #82 has a product closeout fleet update for the current
   `headRefOid`.
+- `python3 scripts/e2e/check_release_fleet_dispatch_status.py` still passes so
+  the live release owner view proves PR #82 checks, external issue handoff,
+  fleet notifications, blockers, handback board, and product closeout PR
+  notification are all synchronized.
 - `python3 scripts/e2e/check_product_go_no_go.py` still passes so
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` cannot mark live provider,
   live map, or remote staging proof complete before #132-#138 are accepted.
