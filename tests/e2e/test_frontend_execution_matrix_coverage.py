@@ -29,6 +29,8 @@ PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FL
 PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
 PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
 PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
+EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -444,6 +446,30 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
         assert entry["minimum_completion_signal"]["acceptance_criteria"]
         assert entry["minimum_completion_signal"]["handoff_artifacts"]
         assert entry["dispatch_command"] in runbook_text
+
+
+def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    queue = json.loads(EXTERNAL_PROOF_CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    board_text = EXTERNAL_PROOF_FLEET_PICKUP_BOARD.read_text(encoding="utf-8")
+
+    assert "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md" in release_gate_text
+    assert "External Proof Fleet Pickup Board" in board_text
+    assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in board_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in board_text
+    assert "generate_external_proof_handback_skeleton.py" in board_text
+    assert "check_external_proof_handback_artifact.py" in board_text
+    assert "mock://" in board_text
+    assert "localhost" in board_text
+    assert "127.0.0.1" in board_text
+
+    for entry in queue["queue"]:
+        issue_number = entry["tracking_issue"].rsplit("/", 1)[-1]
+        assert entry["task_id"] in board_text
+        assert f"#{issue_number}" in board_text
+        assert entry["fleet_routing"]["dispatch_lane"] in board_text
+        assert entry["fleet_routing"]["pickup_label"] in board_text
+        assert f"--task {entry['task_id']}" in board_text
 
 
 def test_product_grade_fleet_dispatch_checker_runs() -> None:

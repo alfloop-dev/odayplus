@@ -30,6 +30,7 @@ REQUIRED_FILES = {
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
     "external proof handback example": "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
+    "external proof fleet pickup board": "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md",
     "remote staging runbook": "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
     "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
     "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
@@ -195,6 +196,7 @@ def main() -> int:
         ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),
         ("go/no-go packet", "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"),
         ("closeout playbook", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"),
+        ("external proof fleet pickup board", "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"),
     ):
         doc_path = ROOT / relative_path
         doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
@@ -205,6 +207,33 @@ def main() -> int:
         ):
             if required_token not in doc_text:
                 errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")
+
+    pickup_board = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
+    pickup_text = pickup_board.read_text(encoding="utf-8") if pickup_board.exists() else ""
+    for required_token in (
+        "External Proof Fleet Pickup Board",
+        "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+        "generate_external_proof_handback_skeleton.py",
+        "ODP-EXT-PROD-001",
+        "ODP-EXT-PROD-002",
+        "ODP-EXT-PROD-003",
+        "ODP-MAP-STAGE-001",
+        "ODP-MAP-STAGE-002",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+        "#132",
+        "#133",
+        "#134",
+        "#135",
+        "#136",
+        "#137",
+        "#138",
+        "mock://",
+        "localhost",
+        "127.0.0.1",
+    ):
+        if required_token not in pickup_text:
+            errors.append(f"external proof fleet pickup board missing token: {required_token}")
 
     if errors:
         print("Product release gate failed:")
