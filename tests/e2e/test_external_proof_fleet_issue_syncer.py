@@ -75,6 +75,11 @@ def test_rendered_handoff_includes_single_file_handback_output_flow() -> None:
         assert "--output <handback.json>" in pickup_comment
         assert "check_external_proof_handback_artifact.py <handback.json>" in issue_body
         assert "check_external_proof_handback_artifact.py <handback.json>" in pickup_comment
+        assert "check_external_proof_acceptance_readiness.py --report" in issue_body
+        assert "check_external_proof_acceptance_readiness.py --report" in pickup_comment
+        assert "check_external_proof_acceptance_readiness.py --strict-complete" in issue_body
+        assert "check_external_proof_acceptance_readiness.py --strict-complete" in pickup_comment
+        assert "expected to fail until every #132-#138 handback" in pickup_comment
         assert "check_external_proof_live_blockers.py --require-assignees" in pickup_comment
         assert entry["completion_rule"] in issue_body
         assert entry["completion_rule"] in pickup_comment
@@ -109,4 +114,6 @@ def test_syncer_writes_rendered_output_dirs(tmp_path: Path) -> None:
     assert "Task: `ODP-MAP-STAGE-001`" in issue_body
     assert f"PR #82 headRefOid `{EXPECTED_SHA}`" in comment_body
     assert "--output <handback.json>" in comment_body
+    assert "check_external_proof_acceptance_readiness.py --report" in comment_body
+    assert "check_external_proof_acceptance_readiness.py --strict-complete" in comment_body
     assert "rendered ODP-MAP-STAGE-001 -> issue #135" in result.stdout

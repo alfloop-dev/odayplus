@@ -79,6 +79,8 @@ def render_issue_body(entry: dict[str, Any]) -> str:
                 '--release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>`.'
             ),
             "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
+            "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",
+            "- `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete` is expected to fail until all #132-#138 handbacks and the bundle status are accepted.",
             (
                 "- Run "
                 f"`python3 scripts/e2e/update_external_proof_handback_status_board.py --task {task_id} "
@@ -129,8 +131,12 @@ Task: `{task_id}`
 ### Handback flow
 ```bash
 {handback_commands}
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
+
+`--strict-complete` is expected to fail until every #132-#138 handback and the bundle status are accepted.
 
 Do not close this issue from deterministic fixtures, mock-live evidence, localhost proof, or document-only evidence. Completion rule: {entry["completion_rule"]}
 """
