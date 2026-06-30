@@ -63,6 +63,23 @@ Release is blocked if any of these are true:
 | External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 
+## External Proof Blocking Tasks
+
+These tasks must stay `external_blocked` in
+`PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` until Product Validation accepts
+the redacted handback artifact for each issue and the full #132-#138 bundle
+passes `check_external_proof_handback_bundle.py` against PR #82 `headRefOid`.
+
+| Task | Issue | Owner | Reviewer | Blocking type | Completion rule |
+|---|---|---|---|---|---|
+| `ODP-EXT-PROD-001` | #132 | Platform/Ops | Product Validation | `provider_credentials` | Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs. |
+| `ODP-EXT-PROD-002` | #133 | Data Partnerships / Legal | Product Validation | `provider_license_and_snapshot` | Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient. |
+| `ODP-EXT-PROD-003` | #134 | Platform/Ops | Product Validation | `provider_geocoder` | Do not close from replay fixture alone; close only with redacted production geocoder proof. |
+| `ODP-MAP-STAGE-001` | #135 | Platform/Ops | Product Validation | `live_map_endpoint` | Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke. |
+| `ODP-MAP-STAGE-002` | #136 | Platform/Ops | Product Validation | `live_map_geocoder` | Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke. |
+| `ODP-PV-STAGE-001` | #137 | Platform/Ops | Product Validation | `remote_staging_configuration` | Do not close until the checker passes against the configured remote staging target. |
+| `ODP-PV-STAGE-002` | #138 | Platform/Ops | Product Validation | `remote_staging_drill` | Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached. |
+
 ## Current Recommendation
 
 Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure a real staging target, deploy with `ODAY_RELEASE_SHA`, and pass `scripts/e2e/check_remote_staging_proof.py` before claiming live remote staging rollout.

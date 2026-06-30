@@ -24,6 +24,7 @@ REQUIRED_FILES = {
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
+    "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
@@ -225,6 +226,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"external proof handback template check failed: {output}")
+
+    go_no_go_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if go_no_go_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (go_no_go_check.stdout + go_no_go_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"product go/no-go guard check failed: {output}")
 
     for doc_label, relative_path in (
         ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),
