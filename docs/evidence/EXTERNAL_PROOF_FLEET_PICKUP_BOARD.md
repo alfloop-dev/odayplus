@@ -19,6 +19,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup
 python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
+python3 scripts/e2e/check_external_proof_fleet_pickup_board.py
 ```
 
 ## Pickup Table
@@ -51,6 +52,72 @@ python3 scripts/e2e/check_external_proof_handback_template.py
 
 - `ODP-PV-STAGE-001`: `ODP_STAGING_DEPLOY_URL`, `ODP_STAGING_API_URL`, `ODP_STAGING_SECRET_OWNER`, `ODAY_RELEASE_SHA`, `/platform/health`, and `/platform/version.release_sha` matching PR #82 `headRefOid`.
 - `ODP-PV-STAGE-002`: product smoke against `ODP_STAGING_DEPLOY_URL`, API smoke against `ODP_STAGING_API_URL`, backup artifact, restore target, rollback result, and post-drill health/version proof.
+
+## Queue-Exact Required Evidence
+
+### `ODP-EXT-PROD-001`
+
+- secret inventory names configured in the deployment environment
+- secret owner and rotation policy recorded
+- live-mode startup validation passes without printing secret values
+- failure cases still fail closed for missing/placeholder/expired/revoked credentials
+- Completion rule: Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs.
+
+### `ODP-EXT-PROD-002`
+
+- provider allowed-use/license attestation for production
+- redacted production listing raw snapshot id
+- canonical snapshot id and lineage
+- freshness SLA result
+- export restriction/watermark behavior for licensed data
+- Completion rule: Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient.
+
+### `ODP-EXT-PROD-003`
+
+- redacted production geocoder request/response id
+- provider observed timestamp
+- confidence mapping
+- low-confidence flag proof
+- timeout/unauthorized/rate-limit fail-closed behavior remains covered
+- Completion rule: Do not close from replay fixture alone; close only with redacted production geocoder proof.
+
+### `ODP-MAP-STAGE-001`
+
+- staging map tile URL configured
+- provider attribution and terms URL visible
+- remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage
+- proof report references current PR #82 headRefOid
+- Completion rule: Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.
+
+### `ODP-MAP-STAGE-002`
+
+- staging geocoder URL configured
+- geocoder outage fallback remains usable
+- attribution/terms approval is visible
+- proof report references current PR #82 headRefOid
+- Completion rule: Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke.
+
+### `ODP-PV-STAGE-001`
+
+- ODP_STAGING_DEPLOY_URL configured
+- ODP_STAGING_API_URL configured
+- ODP_STAGING_SECRET_OWNER configured
+- ODAY_RELEASE_SHA injected
+- /platform/health reachable
+- /platform/version.release_sha equals current PR #82 headRefOid
+- redacted remote staging proof report artifact
+- Completion rule: Do not close until the checker passes against the configured remote staging target.
+
+### `ODP-PV-STAGE-002`
+
+- ODP-PV-STAGE-001 passed against the same target
+- product E2E smoke runs against ODP_STAGING_DEPLOY_URL
+- API smoke runs against ODP_STAGING_API_URL
+- backup artifact id and timestamp
+- restore target and timestamp
+- rollback command/result
+- post-drill health/version proof with correlation id
+- Completion rule: Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached.
 
 ## Product Validation Close Rule
 
