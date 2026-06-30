@@ -35,6 +35,7 @@ PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
 EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_pickup_board.py"
+GO_NO_GO_CHECK = ROOT / "scripts/e2e/check_product_go_no_go.py"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -343,6 +344,38 @@ def test_product_release_closeout_pickup_board_checker_runs() -> None:
         text=True,
     )
     assert "Product closeout pickup board checks passed." in result.stdout
+
+
+def test_product_go_no_go_guard_blocks_unaccepted_external_proof_claims() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    go_no_go_text = GO_NO_GO.read_text(encoding="utf-8")
+    checker_text = GO_NO_GO_CHECK.read_text(encoding="utf-8")
+
+    assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
+    assert "Product go/no-go guard checks passed." in checker_text
+    assert "Decision status: conditional go for deterministic product E2E" in go_no_go_text
+    assert "remote staging rollout remains conditional" in go_no_go_text
+    assert "External Proof Blocking Tasks" in go_no_go_text
+
+    for task_id in (
+        "ODP-EXT-PROD-001",
+        "ODP-EXT-PROD-002",
+        "ODP-EXT-PROD-003",
+        "ODP-MAP-STAGE-001",
+        "ODP-MAP-STAGE-002",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert task_id in go_no_go_text
+
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product go/no-go guard checks passed." in result.stdout
 
 
 def test_product_grade_gap_execution_tasks_are_actionable() -> None:
