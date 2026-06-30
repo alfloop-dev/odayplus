@@ -85,6 +85,37 @@ def test_rendered_handoff_includes_single_file_handback_output_flow() -> None:
         assert entry["completion_rule"] in pickup_comment
 
 
+def test_pickup_comment_already_posted_is_release_sha_specific() -> None:
+    syncer = load_module(SYNCER, "sync_external_proof_fleet_issues")
+    issue = {
+        "comments": [
+            {
+                "body": (
+                    "## External proof fleet pickup update - 2026-06-30\n\n"
+                    f"Current release target: PR #82 headRefOid `{EXPECTED_SHA}`.\n\n"
+                    "Task: `ODP-MAP-STAGE-001`\n"
+                )
+            }
+        ]
+    }
+
+    assert syncer.pickup_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-001",
+        release_sha=EXPECTED_SHA,
+    )
+    assert not syncer.pickup_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-002",
+        release_sha=EXPECTED_SHA,
+    )
+    assert not syncer.pickup_comment_already_posted(
+        issue,
+        task_id="ODP-MAP-STAGE-001",
+        release_sha="326bacdd6f43f945609604d0aa2e56c151f840bc",
+    )
+
+
 def test_syncer_writes_rendered_output_dirs(tmp_path: Path) -> None:
     issue_dir = tmp_path / "issues"
     comment_dir = tmp_path / "comments"

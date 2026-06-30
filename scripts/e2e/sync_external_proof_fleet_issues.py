@@ -13,6 +13,7 @@ import argparse
 import json
 import subprocess
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -116,7 +117,8 @@ def render_pickup_comment(entry: dict[str, Any], release_sha: str) -> str:
     required_evidence = "\n".join(f"- [ ] {item}" for item in entry["required_evidence"])
     allowed_commands = "\n".join(f"- `{command}`" for command in entry["allowed_commands"])
     handback_commands = "\n".join(str(command) for command in entry["handback_commands"])
-    return f"""## External proof fleet pickup update - 2026-06-30
+    generated_date = datetime.now(UTC).date().isoformat()
+    return f"""## External proof fleet pickup update - {generated_date}
 
 Current release target: PR #82 headRefOid `{release_sha}`.
 
@@ -186,8 +188,30 @@ def run_gh_with_body(args: list[str], body: str) -> None:
         body_path.unlink(missing_ok=True)
 
 
+def load_issue(issue_number: str) -> dict[str, Any]:
+    raw = subprocess.check_output(
+        ["gh", "issue", "view", issue_number, "--json", "number,comments"],
+        cwd=ROOT,
+        text=True,
+    )
+    return json.loads(raw)
+
+
+def pickup_comment_already_posted(issue: dict[str, Any], *, task_id: str, release_sha: str) -> bool:
+    for comment in issue.get("comments", []):
+        body = str(comment.get("body", ""))
+        if (
+            "External proof fleet pickup update" in body
+            and task_id in body
+            and release_sha in body
+        ):
+            return True
+    return False
+
+
 def apply_to_github(entries: list[dict[str, Any]], *, release_sha: str) -> None:
     for entry in entries:
+        task_id = str(entry["task_id"])
         issue_number = issue_number_from_url(str(entry["tracking_issue"]))
         title = render_issue_title(entry)
         issue_body = render_issue_body(entry)
@@ -197,6 +221,10 @@ def apply_to_github(entries: list[dict[str, Any]], *, release_sha: str) -> None:
             cwd=ROOT,
             check=True,
         )
+        issue = load_issue(issue_number)
+        if pickup_comment_already_posted(issue, task_id=task_id, release_sha=release_sha):
+            print(f"skipped {task_id} pickup comment -> issue #{issue_number}; current release pickup already posted")
+            continue
         run_gh_with_body(["gh", "issue", "comment", issue_number], comment_body)
 
 
