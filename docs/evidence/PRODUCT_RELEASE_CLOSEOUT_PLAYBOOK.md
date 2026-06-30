@@ -39,6 +39,7 @@ python3 scripts/e2e/check_release_fleet_dispatch_status.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task <task-id> --actor <Reviewer> --action-type reviewer_approve_or_reopen
 python3 scripts/e2e/check_external_proof_closeout_queue.py
 python3 scripts/e2e/check_external_proof_handback_template.py
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 ```
 
 If satisfied:
@@ -156,6 +157,12 @@ Human/Ops must also explicitly acknowledge these boundaries:
   `python3 scripts/e2e/check_external_proof_handback_status_board.py` so the
   board cannot drift from the external proof queue. The status board is not
   runtime proof; it only tracks pending/submitted/needs-revision/accepted state.
+- Product Validation must run
+  `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report`
+  before accepting or rejecting a #132-#138 handback so the missing evidence
+  list, skeleton command, and acceptance command are visible in one report.
+  `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete`
+  must fail until every #132-#138 handback and the bundle status are accepted.
 - Update that board with
   `python3 scripts/e2e/update_external_proof_handback_status_board.py`, not by
   manual JSON edits. Use `--status handback_submitted` when a handback arrives,
@@ -230,6 +237,8 @@ Do not mark the active objective complete until:
   accepted external proof artifacts cite the template fields.
 - `python3 scripts/e2e/check_external_proof_handback_status_board.py` passes
   against `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.
+- `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete`
+  passes, proving every #132-#138 handback and the bundle status are accepted.
 - `python3 scripts/e2e/update_external_proof_handback_status_board.py --help`
   is available for guarded intake updates.
 - Each accepted external-proof issue handback has passed

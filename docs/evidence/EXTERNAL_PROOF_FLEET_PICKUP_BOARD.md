@@ -21,6 +21,7 @@ python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr v
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 python3 scripts/e2e/check_external_proof_fleet_notifications.py
@@ -225,6 +226,18 @@ accepted. Validate it before release closeout:
 ```bash
 python3 scripts/e2e/check_external_proof_handback_status_board.py
 ```
+
+Product Validation should also generate the acceptance readiness report before
+asking fleets for corrections or before accepting any handback:
+
+```bash
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete
+```
+
+The first command is expected to pass while handbacks are pending and lists the
+missing evidence per #132-#138 task. The `--strict-complete` command is expected
+to fail until every task and the bundle status are accepted.
 
 Product Validation should update the board with the guarded updater instead of
 editing JSON by hand:
