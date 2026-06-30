@@ -70,6 +70,7 @@ REQUIRED_FILES = {
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "external proof issue handback scanner": "scripts/e2e/check_external_proof_issue_handback_scan.py",
     "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
+    "external proof follow-up workflow checker": "scripts/e2e/check_external_proof_followup_workflow.py",
     "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
@@ -163,6 +164,21 @@ def main() -> int:
     ):
         if required_token not in external_followup_workflow_text:
             errors.append(f"external proof follow-up workflow missing token: {required_token}")
+
+    external_followup_workflow_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_followup_workflow.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_followup_workflow_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_followup_workflow_check.stdout + external_followup_workflow_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof follow-up workflow check failed: {output}")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""

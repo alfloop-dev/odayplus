@@ -209,6 +209,11 @@ Human/Ops must also explicitly acknowledge these boundaries:
   notification, blocker, handback board, and overdue handback scan checks.
   Scheduled runs post de-duplicated escalation comments for overdue #132-#138
   rows and upload `external-proof-followup` artifacts.
+  While the workflow is still only on PR #82/dev, validate the local contract
+  with `python3 scripts/e2e/check_external_proof_followup_workflow.py`. After
+  it reaches the default branch, run
+  `python3 scripts/e2e/check_external_proof_followup_workflow.py --require-live-active`
+  before claiming hosted follow-up is active.
 - Product closeout fleet pickup comments must track the current release target.
   After PR #82 changes `headRefOid`, run
   `PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply`

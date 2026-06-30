@@ -286,7 +286,11 @@ The workflow supports `workflow_dispatch` for manual release-owner checks and
 scheduled runs for live issue sync, fleet notification, blocker, handback board,
 and overdue handback scan checks. Scheduled runs post de-duplicated escalation
 comments only for overdue #132-#138 handbacks and upload
-`external-proof-followup` artifacts.
+`external-proof-followup` artifacts. Validate the PR-local workflow contract
+with `python3 scripts/e2e/check_external_proof_followup_workflow.py`; after it
+reaches the default branch, run
+`python3 scripts/e2e/check_external_proof_followup_workflow.py --require-live-active`
+before claiming hosted follow-up is active.
 
 When all seven handbacks are ready, validate the complete set before release
 closeout:

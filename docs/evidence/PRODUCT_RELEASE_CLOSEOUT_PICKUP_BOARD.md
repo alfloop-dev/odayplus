@@ -59,7 +59,11 @@ Hosted follow-up is available through `.github/workflows/external-proof-followup
 Manual `workflow_dispatch` runs perform the same live issue sync, notification,
 blocker, handback board, and overdue handback scan checks; scheduled runs post
 de-duplicated escalation comments for overdue #132-#138 handbacks and upload
-`external-proof-followup` artifacts.
+`external-proof-followup` artifacts. Validate the PR-local workflow contract
+with `python3 scripts/e2e/check_external_proof_followup_workflow.py`; after it
+reaches the default branch, run
+`python3 scripts/e2e/check_external_proof_followup_workflow.py --require-live-active`
+before claiming hosted follow-up is active.
 
 ## Pickup Table
 
