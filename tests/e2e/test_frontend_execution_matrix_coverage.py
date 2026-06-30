@@ -34,6 +34,7 @@ PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_
 PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
+EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_pickup_board.py"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
@@ -529,9 +530,11 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     board_text = EXTERNAL_PROOF_FLEET_PICKUP_BOARD.read_text(encoding="utf-8")
 
     assert "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md" in release_gate_text
+    assert "scripts/e2e/check_external_proof_fleet_pickup_board.py" in release_gate_text
     assert "External Proof Fleet Pickup Board" in board_text
     assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in board_text
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
+    assert "check_external_proof_fleet_pickup_board.py" in board_text
     assert "generate_external_proof_handback_skeleton.py" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
     assert "check_external_proof_handback_bundle.py" in board_text
@@ -546,6 +549,17 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
         assert entry["fleet_routing"]["dispatch_lane"] in board_text
         assert entry["fleet_routing"]["pickup_label"] in board_text
         assert f"--task {entry['task_id']}" in board_text
+
+
+def test_external_proof_fleet_pickup_board_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, str(EXTERNAL_PROOF_PICKUP_BOARD_CHECK)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "External proof fleet pickup board checks passed." in result.stdout
 
 
 def test_product_grade_fleet_dispatch_checker_runs() -> None:

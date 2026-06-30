@@ -49,6 +49,7 @@ REQUIRED_FILES = {
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
+    "external proof fleet pickup board checker": "scripts/e2e/check_external_proof_fleet_pickup_board.py",
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
     "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
     "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
@@ -195,6 +196,21 @@ def main() -> int:
         )
         errors.append(f"external proof closeout queue check failed: {output}")
 
+    external_pickup_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_fleet_pickup_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_pickup_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_pickup_board_check.stdout + external_pickup_board_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof fleet pickup board check failed: {output}")
+
     external_handback_template_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"],
         cwd=ROOT,
@@ -234,6 +250,7 @@ def main() -> int:
         "External Proof Fleet Pickup Board",
         "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
         "generate_external_proof_handback_skeleton.py",
+        "check_external_proof_fleet_pickup_board.py",
         "ODP-EXT-PROD-001",
         "ODP-EXT-PROD-002",
         "ODP-EXT-PROD-003",
