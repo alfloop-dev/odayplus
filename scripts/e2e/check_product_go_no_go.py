@@ -39,6 +39,7 @@ REQUIRED_CONDITIONAL_TOKENS = (
     "check_external_proof_handback_artifact.py",
     "check_external_proof_handback_status_board.py",
     "update_external_proof_handback_status_board.py",
+    "check_external_proof_live_blockers.py",
     "check_external_proof_handback_bundle.py",
     "check_external_proof_issue_sync.py --require-assignees",
     "#132-#138",

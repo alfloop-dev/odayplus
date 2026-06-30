@@ -76,7 +76,12 @@ def validate(payload: dict[str, Any]) -> list[str]:
         errors.append("release_target.must_not_hardcode_dev_hash must be true")
 
     preflight = "\n".join(str(command) for command in payload.get("global_preflight", []))
-    for required in ("gh pr view 82", "check_product_release_gate.py", "check_external_proof_closeout_queue.py"):
+    for required in (
+        "gh pr view 82",
+        "check_product_release_gate.py",
+        "check_external_proof_closeout_queue.py",
+        "check_external_proof_live_blockers.py --require-assignees",
+    ):
         if required not in preflight:
             errors.append(f"global_preflight missing {required}")
 

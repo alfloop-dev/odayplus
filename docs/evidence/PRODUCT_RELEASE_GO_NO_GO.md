@@ -62,6 +62,7 @@ Release is blocked if any of these are true:
 | External proof handback artifacts validated | For each submitted #132-#138 handback, run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing the issue | pending-human |
 | External proof handback bundle validated | After all #132-#138 handbacks are submitted, run `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` to prove the complete set is present, unique, accepted, and tied to the same release head | pending-human |
 | External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
+| External proof live blocker state reviewed | Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` and confirm unaccepted #132-#138 handbacks still have open, labeled, assigned release-blocker issues | pending-human |
 | Product go/no-go guard reviewed | Run `python3 scripts/e2e/check_product_go_no_go.py` and confirm this packet still keeps live provider, live map, and remote staging proof conditional until #132-#138 are accepted | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 

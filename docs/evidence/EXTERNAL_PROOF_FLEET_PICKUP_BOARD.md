@@ -21,6 +21,7 @@ python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
+python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 python3 scripts/e2e/check_external_proof_fleet_pickup_board.py
 python3 scripts/e2e/check_product_go_no_go.py
 ```
@@ -164,6 +165,13 @@ editing JSON by hand:
 python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status handback_submitted --handback <handback.json>
 python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status needs_revision --handback <handback.json> --next-action "<specific correction>"
 python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status accepted --handback <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+```
+
+Before closing any #132-#138 issue, verify that live GitHub blocker state still
+matches the handback status board:
+
+```bash
+python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
 
 When all seven handbacks are ready, validate the complete set before release
