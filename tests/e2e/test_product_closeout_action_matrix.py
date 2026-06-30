@@ -98,3 +98,26 @@ def test_closeout_action_matrix_cli_reports_markdown(tmp_path: Path) -> None:
     assert "ODP-FE-XCUT-001" in result.stdout
     assert "ready" in result.stdout
     assert "waiting" in result.stdout
+
+
+def test_closeout_action_matrix_cli_reports_missing_status_path(tmp_path: Path) -> None:
+    missing_status = tmp_path / "missing-ai-status.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(MATRIX),
+            "--status-path",
+            str(missing_status),
+            "--skip-pr-check",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "ai-status.json not found" in result.stdout
+    assert "PANTHEON_STATUS_ROOT=/home/lupin/oday-plus" in result.stdout
+    assert "--status-path <ai-status.json>" in result.stdout

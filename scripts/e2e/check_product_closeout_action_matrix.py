@@ -38,6 +38,13 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def missing_status_message(path: Path) -> str:
+    return (
+        f"ai-status.json not found at {path}. "
+        "Set PANTHEON_STATUS_ROOT=/home/lupin/oday-plus or pass --status-path <ai-status.json>."
+    )
+
+
 def classify_errors(errors: list[str]) -> str:
     if not errors:
         return "ready"
@@ -127,6 +134,9 @@ def main() -> int:
     args = parse_args()
     action_checker = load_module(ACTION_CHECKER_PATH, "check_product_closeout_action")
     queue_payload = load_json(args.queue)
+    if not args.status_path.exists():
+        print(missing_status_message(args.status_path))
+        return 2
     status_payload = load_json(args.status_path)
     pr_payload = action_checker.load_pr82_payload(args.pr_json, skip_live=args.skip_pr_check)
     rows = evaluate_matrix(queue_payload, status_payload, pr_payload=pr_payload)
