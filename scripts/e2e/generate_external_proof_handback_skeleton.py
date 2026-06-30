@@ -20,6 +20,39 @@ QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
 EXAMPLE_SHA = "1111111111111111111111111111111111111111"
 
+TASK_PROOF_GUIDANCE = {
+    "ODP-EXT-PROD-001": (
+        "production credential inventory names, secret owner, rotation policy, startup validation, "
+        "and fail closed behavior for missing/placeholder/expired/revoked credentials"
+    ),
+    "ODP-EXT-PROD-002": (
+        "provider allowed-use/license attestation, production listing snapshot id, canonical lineage, "
+        "freshness SLA, and export restriction/watermark behavior"
+    ),
+    "ODP-EXT-PROD-003": (
+        "production geocoder request/response id, observed timestamp, confidence mapping, "
+        "low-confidence handling, and timeout/unauthorized/rate-limit fail closed behavior"
+    ),
+    "ODP-MAP-STAGE-001": (
+        "remote staging live tile endpoint, provider attribution, terms URL, tile outage fallback, "
+        "and usable HeatZone list/ranking/detail workflow"
+    ),
+    "ODP-MAP-STAGE-002": (
+        "remote staging live geocoder endpoint, attribution/terms approval, geocoder outage fallback, "
+        "and usable listing workflow"
+    ),
+    "ODP-PV-STAGE-001": (
+        "ODP_STAGING_DEPLOY_URL, ODP_STAGING_API_URL, ODP_STAGING_SECRET_OWNER, ODAY_RELEASE_SHA, "
+        "/platform/health, /platform/version.release_sha, and PR #82 headRefOid match"
+    ),
+    "ODP-PV-STAGE-002": (
+        "same staging target dependency, product smoke, API smoke, backup artifact, restore target, "
+        "rollback result, post-drill health/version proof, and correlation id"
+    ),
+}
+
+FORBIDDEN_LIVE_PROOF_SHORTCUTS = "Do not use mock://, localhost, 127.0.0.1, fixture, replay fixture, deterministic fixture, or mock-live proof as closeout evidence."
+
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -33,6 +66,7 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
 
     queue_entry = queue_entries[task_id]
     template_entry = template_entries[task_id]
+    proof_guidance = TASK_PROOF_GUIDANCE[task_id]
     artifact_ids: list[str] = []
     artifacts: list[dict[str, Any]] = []
     for artifact_type in template_entry["minimum_artifact_types"]:
@@ -46,7 +80,10 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
                 "redacted": True,
                 "contains_secret_values": False,
                 "observed_at": "REPLACE_WITH_ISO_8601_TIMESTAMP",
-                "notes": f"Replace with redacted {artifact_type} proof notes for {task_id}.",
+                "notes": (
+                    f"Replace with redacted {artifact_type} proof notes for {task_id}. "
+                    f"Must cover: {proof_guidance}. {FORBIDDEN_LIVE_PROOF_SHORTCUTS}"
+                ),
             }
         )
 
@@ -60,7 +97,8 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
         "correlation_ids": [f"corr-replace-with-{task_id.lower()}"],
         "redaction_summary": (
             "Replace with a summary confirming secret values, provider tokens, private keys, "
-            "connection strings, and unredacted provider payloads are absent."
+            "connection strings, and unredacted provider payloads are absent. "
+            f"Task-specific proof must cover: {proof_guidance}."
         ),
         "artifacts": artifacts,
         "commands_run": [
@@ -68,7 +106,10 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
                 "command": command,
                 "exit_code": "REPLACE_WITH_0_AFTER_SUCCESS",
                 "observed_at": "REPLACE_WITH_ISO_8601_TIMESTAMP",
-                "notes": "Replace with command result summary and artifact reference.",
+                "notes": (
+                    "Replace with command result summary and artifact reference. "
+                    f"Must support: {proof_guidance}. {FORBIDDEN_LIVE_PROOF_SHORTCUTS}"
+                ),
             }
             for command in queue_entry["allowed_commands"]
         ],
@@ -77,7 +118,10 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
                 "evidence": evidence,
                 "status": "REPLACE_WITH_passed_OR_proven_OR_accepted",
                 "artifact_ids": artifact_ids,
-                "notes": "Replace with what the redacted artifact proves for this evidence item.",
+                "notes": (
+                    "Replace with what the redacted artifact proves for this evidence item. "
+                    f"Task-specific acceptance checklist: {proof_guidance}."
+                ),
             }
             for evidence in queue_entry["required_evidence"]
         ],
