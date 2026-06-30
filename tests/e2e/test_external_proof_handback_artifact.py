@@ -91,11 +91,12 @@ def valid_handback(task_id: str = "ODP-MAP-STAGE-001") -> dict[str, Any]:
         "artifacts": artifacts,
         "commands_run": [
             {
-                "command": queue_entry["allowed_commands"][0],
+                "command": command,
                 "exit_code": 0,
                 "observed_at": "2026-06-30T02:32:00Z",
                 "notes": f"Release head was fetched at execution time. {evidence_note}",
             }
+            for command in queue_entry["allowed_commands"]
         ],
         "required_evidence_results": [
             {
@@ -213,6 +214,19 @@ def test_external_proof_handback_artifact_checker_rejects_missing_required_evide
 
     assert result.returncode == 1
     assert "missing required evidence results" in result.stdout
+
+
+def test_external_proof_handback_artifact_checker_rejects_missing_queue_command_fragment(tmp_path) -> None:
+    payload = valid_handback("ODP-PV-STAGE-002")
+    payload["commands_run"] = payload["commands_run"][:1]
+    handback = tmp_path / "handback.json"
+    handback.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    result = run_checker(handback)
+
+    assert result.returncode == 1
+    assert "commands_run missing required queue command fragment" in result.stdout
+    assert "check_remote_staging_proof.py" in result.stdout
 
 
 def test_external_proof_handback_artifact_checker_rejects_map_handback_without_live_boundary_notes(tmp_path) -> None:

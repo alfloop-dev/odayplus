@@ -187,6 +187,11 @@ def collect_evidence_notes(handback: dict[str, Any]) -> str:
     return "\n".join(note_values).lower()
 
 
+def stable_command_fragment(command: str) -> str:
+    """Return the queue command prefix that should survive placeholder filling."""
+    return command.split(" <")[0].split(' "<')[0]
+
+
 def normalize_evidence_results(value: Any) -> tuple[dict[str, dict[str, Any]], list[str]]:
     errors: list[str] = []
     normalized: dict[str, dict[str, Any]] = {}
@@ -274,6 +279,7 @@ def validate_handback(
         errors.append(f"{prefix} redaction_summary must be non-empty")
 
     commands = handback.get("commands_run")
+    observed_commands: list[str] = []
     if not isinstance(commands, list) or not commands:
         errors.append(f"{prefix} commands_run must be a non-empty list")
     else:
@@ -282,12 +288,20 @@ def validate_handback(
             if not isinstance(command, dict):
                 errors.append(f"{command_prefix} must be an object")
                 continue
-            if not is_non_empty_string(command.get("command")):
+            command_value = command.get("command")
+            if not is_non_empty_string(command_value):
                 errors.append(f"{command_prefix}.command must be non-empty")
+            else:
+                observed_commands.append(str(command_value))
             if command.get("exit_code") != 0:
                 errors.append(f"{command_prefix}.exit_code must be 0")
             if not is_non_empty_string(command.get("observed_at")):
                 errors.append(f"{command_prefix}.observed_at must be non-empty")
+        observed_command_text = "\n".join(observed_commands)
+        for allowed_command in queue_entry.get("allowed_commands", []):
+            fragment = stable_command_fragment(str(allowed_command))
+            if fragment and fragment not in observed_command_text:
+                errors.append(f"{prefix} commands_run missing required queue command fragment: {fragment}")
 
     artifacts = handback.get("artifacts")
     artifact_ids: set[str] = set()
