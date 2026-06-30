@@ -256,6 +256,7 @@ def main() -> int:
             "--require-assignees",
             "check_external_proof_handback_artifact.py",
             "check_external_proof_handback_bundle.py",
+            "check_product_go_no_go.py",
         ):
             if required_token not in doc_text:
                 errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")

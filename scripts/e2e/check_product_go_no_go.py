@@ -48,6 +48,7 @@ REQUIRED_PENDING_CHECKS = (
     "External proof handback artifacts validated",
     "External proof handback bundle validated",
     "External proof issue sync reviewed",
+    "Product go/no-go guard reviewed",
     "Final decision recorded",
 )
 
