@@ -35,6 +35,7 @@ LIVE_CHECKS = (
 )
 
 READINESS_REPORT_COMMAND = ["python3", "scripts/e2e/check_external_proof_acceptance_readiness.py", "--report"]
+ISSUE_HANDBACK_SCAN_COMMAND = ["python3", "scripts/e2e/check_external_proof_issue_handback_scan.py", "--report"]
 
 
 def current_pr82_payload() -> dict[str, Any]:
@@ -89,7 +90,13 @@ def build_live_report() -> dict[str, Any]:
     env.setdefault("PANTHEON_STATUS_ROOT", "/home/lupin/oday-plus")
     checks = [run_check(label, command, env=env) for label, command in LIVE_CHECKS]
     readiness_report = run_check("external acceptance readiness", READINESS_REPORT_COMMAND, env=env)
-    return {"pr": pr_payload, "checks": checks, "acceptance_readiness": readiness_report}
+    issue_handback_scan = run_check("external issue handback scan", ISSUE_HANDBACK_SCAN_COMMAND, env=env)
+    return {
+        "pr": pr_payload,
+        "checks": checks,
+        "acceptance_readiness": readiness_report,
+        "issue_handback_scan": issue_handback_scan,
+    }
 
 
 def validate_report(report: dict[str, Any]) -> list[str]:
@@ -99,6 +106,10 @@ def validate_report(report: dict[str, Any]) -> list[str]:
             label = check.get("label", "<unknown>")
             output = str(check.get("output", "")).strip()
             errors.append(f"{label} failed: {output}")
+    issue_handback_scan = report.get("issue_handback_scan")
+    if isinstance(issue_handback_scan, dict) and issue_handback_scan.get("returncode") != 0:
+        output = str(issue_handback_scan.get("output", "")).strip()
+        errors.append(f"external issue handback scan failed: {output}")
     return errors
 
 
@@ -135,6 +146,16 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "## External Proof Acceptance Readiness",
                 "",
                 str(readiness.get("output", "")).strip(),
+            ]
+        )
+    issue_handback_scan = report.get("issue_handback_scan")
+    if isinstance(issue_handback_scan, dict) and issue_handback_scan.get("output"):
+        lines.extend(
+            [
+                "",
+                "## External Issue Handback Scan",
+                "",
+                str(issue_handback_scan.get("output", "")).strip(),
             ]
         )
 

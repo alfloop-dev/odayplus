@@ -59,6 +59,18 @@ def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> 
                 "`pending_external_handback` | 4 | Attach remote staging tile proof. |"
             ),
         },
+        "issue_handback_scan": {
+            "label": "external issue handback scan",
+            "command": "python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report",
+            "returncode": 0,
+            "output": (
+                "# External Proof Issue Handback Scan\n\n"
+                "| Task | Issue | Issue State | Latest Pickup | Status | Candidate Comments |\n"
+                "|---|---|---|---|---|---:|\n"
+                "| `ODP-MAP-STAGE-001` | #135 | OPEN | 2026-06-30T12:00:00Z | "
+                "`no_handback_after_latest_pickup` | 0 |"
+            ),
+        },
     }
 
 
@@ -74,6 +86,8 @@ def test_release_fleet_dispatch_status_accepts_clean_report() -> None:
     assert "External Proof Acceptance Readiness" in rendered
     assert "ODP-MAP-STAGE-001" in rendered
     assert "pending_external_handback" in rendered
+    assert "External Issue Handback Scan" in rendered
+    assert "no_handback_after_latest_pickup" in rendered
     assert "passed" in rendered
 
 
@@ -83,6 +97,17 @@ def test_release_fleet_dispatch_status_rejects_failed_guard() -> None:
     errors = checker.validate_report(report_payload(check_returncode=1))
 
     assert any("external issue sync failed" in error for error in errors)
+
+
+def test_release_fleet_dispatch_status_rejects_failed_issue_handback_scan() -> None:
+    checker = load_checker_module()
+    payload = report_payload()
+    payload["issue_handback_scan"]["returncode"] = 1
+    payload["issue_handback_scan"]["output"] = "missing_current_sha_pickup"
+
+    errors = checker.validate_report(payload)
+
+    assert "external issue handback scan failed: missing_current_sha_pickup" in errors
 
 
 def test_release_fleet_dispatch_status_rejects_unclean_pr() -> None:
