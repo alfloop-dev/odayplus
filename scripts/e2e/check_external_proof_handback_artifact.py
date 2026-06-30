@@ -59,6 +59,29 @@ SECRET_VALUE_PATTERNS = (
 )
 
 TASK_SPECIFIC_NOTE_TOKENS = {
+    "ODP-EXT-PROD-001": (
+        "production credential",
+        "secret owner",
+        "rotation",
+        "startup validation",
+        "fail closed",
+    ),
+    "ODP-EXT-PROD-002": (
+        "allowed-use",
+        "license",
+        "production listing",
+        "canonical",
+        "freshness sla",
+        "watermark",
+    ),
+    "ODP-EXT-PROD-003": (
+        "production geocoder",
+        "observed timestamp",
+        "confidence mapping",
+        "low-confidence",
+        "rate-limit",
+        "fail closed",
+    ),
     "ODP-MAP-STAGE-001": (
         "remote staging",
         "staging tile endpoint",
@@ -78,11 +101,39 @@ TASK_SPECIFIC_NOTE_TOKENS = {
         "geocoder outage",
         "fallback",
     ),
+    "ODP-PV-STAGE-001": (
+        "odp_staging_deploy_url",
+        "odp_staging_api_url",
+        "odp_staging_secret_owner",
+        "oday_release_sha",
+        "/platform/health",
+        "/platform/version",
+        "headrefoid",
+    ),
+    "ODP-PV-STAGE-002": (
+        "same staging target",
+        "product smoke",
+        "api smoke",
+        "backup",
+        "restore",
+        "rollback",
+        "post-drill",
+        "health/version",
+    ),
 }
 
+LIVE_PROOF_FORBIDDEN_TOKENS = (
+    "mock://",
+    "localhost",
+    "127.0.0.1",
+    "fixture",
+    "replay fixture",
+    "deterministic fixture",
+    "mock-live",
+)
+
 TASK_SPECIFIC_FORBIDDEN_TOKENS = {
-    "ODP-MAP-STAGE-001": ("mock://", "localhost", "127.0.0.1"),
-    "ODP-MAP-STAGE-002": ("mock://", "localhost", "127.0.0.1"),
+    task_id: LIVE_PROOF_FORBIDDEN_TOKENS for task_id in TASK_SPECIFIC_NOTE_TOKENS
 }
 
 

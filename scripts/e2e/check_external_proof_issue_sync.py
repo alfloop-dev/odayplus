@@ -69,6 +69,7 @@ def validate_issue_sync(
 
         routing = entry.get("fleet_routing", {})
         issue_body = str(issue.get("body", ""))
+        issue_title = str(issue.get("title", ""))
         issue_labels = normalize_label_names(issue)
         required_labels = {str(label) for label in routing.get("required_issue_labels", [])}
 
@@ -97,6 +98,40 @@ def validate_issue_sync(
         for token in expected_body_tokens:
             if token and token not in issue_body:
                 errors.append(f"{prefix} body missing token: {token}")
+
+        title = str(entry.get("title", ""))
+        if title and title not in issue_title:
+            errors.append(f"{prefix} title missing queue title: {title}")
+
+        for token in (
+            f"Task: `{task_id}`",
+            f"Owner: `{entry.get('owner')}`",
+            f"Reviewer: `{entry.get('reviewer')}`",
+            f"Blocking type: `{entry.get('blocking_type')}`",
+            "## Required evidence",
+            "## Allowed commands",
+            "## Evidence refs",
+        ):
+            if token not in issue_body:
+                errors.append(f"{prefix} body missing queue-derived token: {token}")
+
+        for evidence in entry.get("required_evidence", []):
+            evidence_token = f"- [ ] {evidence}"
+            if evidence_token not in issue_body:
+                errors.append(f"{prefix} body missing required evidence: {evidence}")
+
+        for command in entry.get("allowed_commands", []):
+            if str(command) not in issue_body:
+                errors.append(f"{prefix} body missing allowed command: {command}")
+
+        for evidence_ref in entry.get("evidence_refs", []):
+            evidence_ref_token = f"`{evidence_ref}`"
+            if evidence_ref_token not in issue_body:
+                errors.append(f"{prefix} body missing evidence ref: {evidence_ref}")
+
+        completion_rule = str(entry.get("completion_rule", ""))
+        if completion_rule and completion_rule not in issue_body:
+            errors.append(f"{prefix} body missing completion rule: {completion_rule}")
 
         for label in required_labels:
             label_token = f"`{label}`"
