@@ -566,6 +566,15 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in runbook_text
     assert "Fleet Pickup Sequence" in runbook_text
     assert "Completion Handback" in runbook_text
+    assert "generate_external_proof_handback_skeleton.py" in runbook_text
+    assert "check_external_proof_handback_artifact.py" in runbook_text
+    assert "check_external_proof_handback_bundle.py" in runbook_text
+    assert "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json" in runbook_text
+    assert "update_external_proof_handback_status_board.py" in runbook_text
+    assert "check_external_proof_handback_status_board.py" in runbook_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in runbook_text
+    assert "check_external_proof_fleet_notifications.py" in runbook_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in runbook_text
     assert "It is not completion evidence." in assignment_ledger_text
     assert "Do not mark any dispatched task complete from this ledger alone." in assignment_ledger_text
 
