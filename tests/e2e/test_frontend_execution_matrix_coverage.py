@@ -288,6 +288,7 @@ def test_closeout_manifest_names_remaining_workflow_gates() -> None:
         "sync_external_proof_fleet_issues.py",
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
+        "check_product_closeout_action_matrix.py",
         "provider credential/OAuth",
         "scheduled external fetch",
         "quota/rate-limit",
@@ -317,6 +318,7 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
         "check_external_proof_issue_sync.py --require-assignees",
         "check_product_go_no_go.py",
         "check_product_closeout_action.py",
+        "check_product_closeout_action_matrix.py",
         "gh pr view 82",
         "check_product_release_gate.py",
     ):
@@ -343,11 +345,13 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     assert "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md" in release_gate_text
     assert "scripts/e2e/check_product_closeout_pickup_board.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
     assert "Product closeout pickup board checks passed." in checker_text
     assert "Product Release Closeout Pickup Board" in board_text
     assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
     assert "check_product_closeout_queue.py --report" in board_text
     assert "check_product_closeout_action.py" in board_text
+    assert "check_product_closeout_action_matrix.py" in board_text
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
     assert "check_product_go_no_go.py" in board_text
     assert "check_external_proof_handback_status_board.py" in board_text
@@ -832,6 +836,7 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
 
     assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
     assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
     assert "scripts/e2e/check_external_proof_handback_status_board.py" in release_gate_text
