@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
@@ -11,6 +11,35 @@ from modules.learninghub.domain import DatasetSnapshot
 
 class ReleaseDecisionRecord(Protocol):
     release_id: str
+
+
+@runtime_checkable
+class LearningHubRepository(Protocol):
+    """Storage-neutral persistence surface for the Learning Hub registry.
+
+    Both :class:`InMemoryLearningHubRepository` and the durable SQLite-backed
+    repository in ``shared/infrastructure/persistence`` satisfy this protocol,
+    so :class:`~modules.learninghub.application.LearningHubService` and the
+    MLflow adapter accept either without code changes.
+    """
+
+    def save_dataset_snapshot(self, snapshot: DatasetSnapshot) -> DatasetSnapshot: ...
+    def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None: ...
+    def save_model_version(self, model_version: ModelVersion) -> ModelVersion: ...
+    def get_model_version(self, model_name: str, version: str) -> ModelVersion | None: ...
+    def list_model_versions(self, model_name: str) -> list[ModelVersion]: ...
+    def save_model_card(self, model_card: ModelCard) -> ModelCard: ...
+    def get_model_card(self, model_name: str, version: str) -> ModelCard | None: ...
+    def save_validation_run(self, validation_run: ValidationRun) -> ValidationRun: ...
+    def get_validation_run(self, validation_run_id: str) -> ValidationRun | None: ...
+    def set_alias(self, model_name: str, alias: ModelAlias, version: str) -> ModelVersion: ...
+    def clear_alias(self, model_name: str, alias: ModelAlias) -> None: ...
+    def get_alias(self, model_name: str, alias: ModelAlias) -> ModelVersion | None: ...
+    def save_release_decision(
+        self, decision: ReleaseDecisionRecord
+    ) -> ReleaseDecisionRecord: ...
+    def get_release_decision(self, release_id: str) -> object | None: ...
+    def list_release_decisions(self) -> list[object]: ...
 
 
 @dataclass
@@ -99,4 +128,4 @@ class InMemoryLearningHubRepository:
         return list(self._release_decisions.values())
 
 
-__all__ = ["InMemoryLearningHubRepository"]
+__all__ = ["InMemoryLearningHubRepository", "LearningHubRepository", "ReleaseDecisionRecord"]

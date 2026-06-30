@@ -1,9 +1,10 @@
 import { OperationsWorkspace } from "../../../../../../features/operations/OperationsWorkspace.tsx";
 
 type PageProps = {
-  params: { storeId: string };
+  params: Promise<{ storeId: string }>;
 };
 
-export default function StoreForecastDetailPage({ params }: PageProps) {
-  return <OperationsWorkspace view="storeDetail" storeId={params.storeId} />;
+export default async function StoreForecastDetailPage({ params }: PageProps) {
+  const { storeId } = await params;
+  return <OperationsWorkspace view="storeDetail" storeId={storeId} />;
 }

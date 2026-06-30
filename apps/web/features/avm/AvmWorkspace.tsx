@@ -1,5 +1,8 @@
 import Link from "next/link";
+import type { AvmCase } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   AVM_POLICY_VERSION,
   caseStatusTone,
@@ -17,16 +20,90 @@ import styles from "./avm.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+const SENSITIVE_PRICE_MASK = "MASKED_BY_PERMISSION";
+
 type AvmWorkspaceProps = {
   view?: AvmRouteKey;
   caseId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /avm/cases` binding; omitted on fixture-only routes. */
+  liveCases?: ApiBinding<AvmCase>;
 };
 
-export function AvmWorkspace({ view = "overview", caseId, searchParams = {} }: AvmWorkspaceProps) {
-  if (view === "cases") return <CasesListPage searchParams={searchParams} />;
+export function AvmWorkspace({ view = "overview", caseId, searchParams = {}, liveCases }: AvmWorkspaceProps) {
+  if (view === "cases") return <CasesListPage searchParams={searchParams} liveCases={liveCases} />;
   if (view === "caseDetail") return <CaseDetailPage caseId={caseId} />;
   return <AvmOverview />;
+}
+
+function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
+  return (
+    <section className={styles.reportSection} data-testid="avm-live-cases" aria-label="API-bound valuation cases">
+      <div className={styles.badgeRow}>
+        <h2>估值案件（API live）</h2>
+        <DataSourceBadge binding={binding} testId="avm-data-source" />
+      </div>
+      <p>
+        本區直接讀取後端 <code>GET /avm/cases</code>，證明後端狀態變更會出現在 UI；下方固定樣本為
+        documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="avm-live-cases-table">
+            <caption>Live valuation cases served by the backend ({binding.items.length})</caption>
+            <thead>
+              <tr>
+                <th>case_id</th>
+                <th>store_id</th>
+                <th>status</th>
+                <th>created_by</th>
+                <th>created_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((item) => (
+                <tr key={item.case_id} data-testid="avm-live-case-row">
+                  <td>{item.case_id}</td>
+                  <td>{item.store_id}</td>
+                  <td>
+                    <Badge label={item.status} tone={caseStatusTone(item.status as ValuationCase["status"])} marker="◆" />
+                  </td>
+                  <td>{item.created_by}</td>
+                  <td>{item.created_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="avm-live-cases-empty" className={styles.riskNotice}>
+          {liveCasesFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveCasesFallbackMessage(binding: ApiBinding<AvmCase>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無估值案件（cold store）；顯示固定樣本作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
+}
+
+function canViewSensitivePrice(c: ValuationCase): boolean {
+  return c.sensitivePricePermission === "visible";
+}
+
+function formatSensitivePrice(c: ValuationCase, field: "reservePrice" | "askingPrice"): string {
+  return canViewSensitivePrice(c) ? c[field].toLocaleString() : SENSITIVE_PRICE_MASK;
+}
+
+function formatReserveAsking(c: ValuationCase): string {
+  return `${formatSensitivePrice(c, "reservePrice")} / ${formatSensitivePrice(c, "askingPrice")}`;
 }
 
 function Header({
@@ -115,7 +192,7 @@ function AvmOverview() {
   );
 }
 
-function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
+function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams; liveCases?: ApiBinding<AvmCase> }) {
   const selected = selectedFromQuery(searchParams.selected) ?? valuationCases[0].caseId;
   const drawerCase = valuationCases.find((c) => c.caseId === selected) ?? valuationCases[0];
   return (
@@ -126,6 +203,7 @@ function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
       />
       <main className="odp-content" data-testid="avm-cases-page">
         <WorkspaceNav active="cases" />
+        {liveCases ? <LiveCasesPanel binding={liveCases} /> : null}
         <FilterBar />
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -157,7 +235,7 @@ function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
                   <td>{c.fairPrice.p50.toLocaleString()}</td>
                   <td>
                     <span title="敏感欄位，依權限遮罩">
-                      {c.reservePrice.toLocaleString()} / {c.askingPrice.toLocaleString()}
+                      {formatReserveAsking(c)}
                     </span>
                   </td>
                   <td>
@@ -181,8 +259,7 @@ function CasesListPage({ searchParams }: { searchParams: SearchParams }) {
               <Metric label="Confidence" value={drawerCase.confidence} />
             </div>
             <p>
-              Reserve / Asking（敏感，依權限遮罩）：{drawerCase.reservePrice.toLocaleString()} /{" "}
-              {drawerCase.askingPrice.toLocaleString()}
+              Reserve / Asking（敏感，依權限遮罩）：{formatReserveAsking(drawerCase)}
             </p>
             <p>Finance approval：{financeApprovalLabel(drawerCase)} · DataRoom：{dataRoomLabel(drawerCase)}</p>
             <p className={styles.auditLine}>correlation_id {drawerCase.correlationId}</p>
@@ -347,9 +424,14 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
     <section className={styles.reportSection} id="valuation" data-testid="valuation-range-chart">
       <h2>Three-Lens Valuation</h2>
       <p>
-        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve {c.reservePrice.toLocaleString()}（P10·0.97）／
-        asking {c.askingPrice.toLocaleString()}（P90·1.05）為敏感欄位，依權限遮罩。
+        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve {formatSensitivePrice(c, "reservePrice")}
+        （P10·0.97）／asking {formatSensitivePrice(c, "askingPrice")}（P90·1.05）為敏感欄位，依權限遮罩。
       </p>
+      {!canViewSensitivePrice(c) ? (
+        <p className={styles.riskNotice} data-testid="avm-sensitive-price-mask-notice">
+          reserve/asking price 欄位目前為 MASKED_BY_PERMISSION；range chart 不渲染 reserve/asking marker。
+        </p>
+      ) : null}
       <div className={styles.rangeChart} role="img" aria-label="估值三鏡 P10/P50/P90 區間比較">
         {c.lenses.map((lens) => (
           <div className={styles.rangeRow} key={lens.lens}>
@@ -360,8 +442,22 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
                 style={{ left: `${pct(lens.p10)}%`, right: `${100 - pct(lens.p90)}%` }}
               />
               <span className={styles.rangeMid} style={{ left: `${pct(lens.p50)}%` }} />
-              <span className={styles.rangeReserve} style={{ left: `${pct(c.reservePrice)}%` }} aria-hidden="true" />
-              <span className={styles.rangeAsking} style={{ left: `${pct(c.askingPrice)}%` }} aria-hidden="true" />
+              {canViewSensitivePrice(c) ? (
+                <>
+                  <span
+                    className={styles.rangeReserve}
+                    data-testid="avm-reserve-marker"
+                    style={{ left: `${pct(c.reservePrice)}%` }}
+                    aria-hidden="true"
+                  />
+                  <span
+                    className={styles.rangeAsking}
+                    data-testid="avm-asking-marker"
+                    style={{ left: `${pct(c.askingPrice)}%` }}
+                    aria-hidden="true"
+                  />
+                </>
+              ) : null}
             </div>
           </div>
         ))}
@@ -431,7 +527,7 @@ function ApprovalPanel({ caseData: c }: { caseData: ValuationCase }) {
         <form>
           <label>
             系統 reserve_price（P10·0.97）
-            <input defaultValue={c.reservePrice.toLocaleString()} readOnly />
+            <input value={formatSensitivePrice(c, "reservePrice")} readOnly aria-label="masked reserve price" />
           </label>
           <label className={styles.checkboxLine}>
             <input type="checkbox" name="reserveOverride" /> reserve override（覆寫須填 reason，標示與原值差）
