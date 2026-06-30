@@ -65,6 +65,7 @@ def synced_issue_payload() -> dict:
                     "## Runtime proof handback format",
                     "- Use `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for attached runtime proof.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
+                    "- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before accepting or closing this issue.",
                     "## Completion rule",
                     "Do not close until proof references PR #82 headRefOid.",
                 ]
