@@ -142,6 +142,7 @@ def parse_args() -> argparse.Namespace:
         default=EXAMPLE_SHA,
         help="Release SHA to place in the skeleton. Use PR #82 headRefOid for real handbacks.",
     )
+    parser.add_argument("--output", type=Path, help="Write a single-task skeleton to this JSON file.")
     parser.add_argument("--output-dir", type=Path, help="Write skeleton file(s) into this directory.")
     return parser.parse_args()
 
@@ -150,8 +151,21 @@ def main() -> int:
     args = parse_args()
     queue_entries = [entry["task_id"] for entry in load_json(QUEUE_PATH).get("queue", [])]
     task_ids = queue_entries if args.task == "ALL" else [args.task]
+    if args.output and len(task_ids) != 1:
+        raise SystemExit("--output can only be used with a single --task value")
+    if args.output and args.output_dir:
+        raise SystemExit("--output and --output-dir are mutually exclusive")
 
     skeletons = {task_id: build_skeleton(task_id, release_sha=args.release_sha) for task_id in task_ids}
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(skeletons[task_ids[0]], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(args.output)
+        return 0
+
     if args.output_dir:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         for task_id, skeleton in skeletons.items():

@@ -14,7 +14,7 @@
 - Use each task's suggested branch and brief file as the handoff contract.
 - Execute any task-specific `execution_commands` before requesting review.
 - Treat this kickoff queue as historical implementation dispatch; current release blockers are routed through `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.
-- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` and validate the completed handback with `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
+- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>` and validate the completed handback with `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
 - Keep `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` synchronized with `python3 scripts/e2e/update_external_proof_handback_status_board.py`; verify it with `python3 scripts/e2e/check_external_proof_handback_status_board.py`.
 - Before closing #132-#138, run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`, `python3 scripts/e2e/check_external_proof_fleet_notifications.py`, and `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`.
 
@@ -89,7 +89,7 @@ For every task, the implementation fleet must attach:
 For current live-provider, live-map, and remote-staging closeout, convert the implementation handback into the #132-#138 external-proof handback format:
 
 ```bash
-python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
