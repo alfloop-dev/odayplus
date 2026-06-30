@@ -81,7 +81,12 @@
         "docs/evidence/fleet_dispatch/ODP-EXT-004-008_WORKER_EVIDENCE.md",
         "tests/e2e/test_external_source_product_e2e.py"
       ],
-      "completion_rule": "Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs."
+      "completion_rule": "Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-EXT-PROD-002",
@@ -120,7 +125,12 @@
         "modules/external_data/providers/live.py",
         "modules/external_data/workers/scheduled_fetch.py"
       ],
-      "completion_rule": "Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient."
+      "completion_rule": "Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-002 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-EXT-PROD-003",
@@ -159,7 +169,12 @@
         "modules/external_data/providers/live.py",
         "tests/data/test_geo_pipeline.py"
       ],
-      "completion_rule": "Do not close from replay fixture alone; close only with redacted production geocoder proof."
+      "completion_rule": "Do not close from replay fixture alone; close only with redacted production geocoder proof.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-003 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-MAP-STAGE-001",
@@ -197,7 +212,12 @@
         "tests/e2e/e2e-map-live-boundary.spec.ts",
         "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
       ],
-      "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke."
+      "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-MAP-STAGE-002",
@@ -235,7 +255,12 @@
         "tests/e2e/e2e-map-live-boundary.spec.ts",
         "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
       ],
-      "completion_rule": "Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke."
+      "completion_rule": "Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-002 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-PV-STAGE-001",
@@ -277,7 +302,12 @@
         "scripts/e2e/check_remote_staging_proof.py",
         "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001-002_WORKER_EVIDENCE.md"
       ],
-      "completion_rule": "Do not close until the checker passes against the configured remote staging target."
+      "completion_rule": "Do not close until the checker passes against the configured remote staging target.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-001 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     },
     {
       "task_id": "ODP-PV-STAGE-002",
@@ -319,7 +349,12 @@
         "scripts/e2e/verify_deployment_health_backup_rollback.py",
         "tests/e2e/product-e2e-env.spec.ts"
       ],
-      "completion_rule": "Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached."
+      "completion_rule": "Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-002 --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
     }
   ]
 }
