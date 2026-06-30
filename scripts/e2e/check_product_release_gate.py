@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
     "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
+    "closeout pickup board checker": "scripts/e2e/check_product_closeout_pickup_board.py",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
     "external proof handback example": "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
@@ -147,6 +148,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"closeout queue check failed: {output}")
+
+    closeout_pickup_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if closeout_pickup_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (closeout_pickup_board_check.stdout + closeout_pickup_board_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"closeout pickup board check failed: {output}")
 
     fleet_dispatch_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],

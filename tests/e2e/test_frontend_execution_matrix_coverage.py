@@ -24,6 +24,7 @@ CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
+CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "scripts/e2e/check_product_closeout_pickup_board.py"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
@@ -279,10 +280,13 @@ def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
 
 def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    checker_text = CHECK_CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
     queue = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
     board_text = CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_pickup_board.py" in release_gate_text
+    assert "Product closeout pickup board checks passed." in checker_text
     assert "Product Release Closeout Pickup Board" in board_text
     assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
     assert "check_product_closeout_queue.py --report" in board_text
@@ -326,6 +330,17 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
             assert evidence_ref in board_text
         for command in entry["allowed_commands"]:
             assert command.split(" <")[0].split(' "<')[0] in board_text
+
+
+def test_product_release_closeout_pickup_board_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product closeout pickup board checks passed." in result.stdout
 
 
 def test_product_grade_gap_execution_tasks_are_actionable() -> None:
