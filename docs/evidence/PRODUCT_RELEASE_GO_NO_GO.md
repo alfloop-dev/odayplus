@@ -10,7 +10,8 @@ Current release candidate: draft release PR #82 head commit. GitHub PR #82
 evidence-only merges intentionally create new `dev` commits. Reference
 verification evidence: GitHub `ci`, `product-e2e-gate`,
 `e2e-operational-evidence`, API/web image builds, and `deploy` checks passed on
-2026-06-29 after frontend evidence refresh PRs #87, #88, #89, #90, and #91.
+2026-06-29 after frontend evidence refresh PRs #87, #88, #89, #90, #91, and
+fleet handback evidence PR #127.
 Final Human/Ops sign-off must verify the GitHub checks attached to the target
 release commit before promoting the draft release.
 
@@ -25,7 +26,7 @@ release commit before promoting the draft release.
 | External/source gate | passed for deterministic and mock-live E2E | `tests/fixtures/source_data/external/*.valid.json`, source stub readiness, live adapter tests, scheduled fetch tests, quota/freshness/licensing gates, and external source product E2E |
 | Audit evidence gate | passed for deterministic E2E | retained bundle checksum and audit correlations in product specs |
 | Deployment/backup/rollback gate | passed for deterministic E2E reference baseline; must pass on target release commit | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`, `python3 scripts/e2e/verify_deployment_health_backup_rollback.py`, GitHub `Deploy Dev` |
-| Shared frontend contract gate | passed on current draft release PR #82 head | PR #87 domain type contracts, PR #88 `packages/ui-domain`, PR #89 `packages/ui`, PR #90 evidence refresh, PR #91 release-candidate evidence refresh, and contract tests under `tests/contract/` |
+| Shared frontend contract gate | passed on current draft release PR #82 head | PR #87 domain type contracts, PR #88 `packages/ui-domain`, PR #89 `packages/ui`, PR #90 evidence refresh, PR #91 release-candidate evidence refresh, PR #127 fleet handback evidence refresh, and contract tests under `tests/contract/` |
 
 ## Go Criteria
 

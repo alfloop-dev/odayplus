@@ -38,14 +38,20 @@ Observed workspace:
 gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 ```
 
-Observed:
+Original handback observed:
 
 - PR: `https://github.com/alfloop-dev/odayplus/pull/82`
-- `headRefOid`: `1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633`
+- original handback headRefOid: `1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633`
 - `state`: `OPEN`
 - `isDraft`: `true`
 - `mergeable`: `MERGEABLE`
 - Attached checks returned `SUCCESS` for `ci`, `product-e2e-gate`, `e2e-operational-evidence`, api/web build-and-publish, and deploy.
+
+Current authority refresh:
+
+- Refreshed: 2026-06-30
+- Current PR #82 headRefOid: `fca45b70ee7c0e58278bcf734f82e2d5e83e373a`
+- Current PR #82 state: draft/open/mergeable with attached checks successful at refresh time.
 
 ## Repo-Side Implementation Evidence
 

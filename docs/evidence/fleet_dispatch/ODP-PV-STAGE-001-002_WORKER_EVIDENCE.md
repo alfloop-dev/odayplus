@@ -57,11 +57,22 @@ https://github.com/alfloop-dev/odayplus
 PR #82 authority check:
 
 ```text
-headRefOid: 1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633
+original handback headRefOid: 1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633
 state: OPEN
 draft: true
 mergeable: MERGEABLE
 checks: ci/product-e2e-gate/e2e-operational-evidence/build-and-publish/deploy all SUCCESS at query time
+```
+
+Current authority refresh:
+
+```text
+refreshed_at: 2026-06-30
+current_headRefOid: fca45b70ee7c0e58278bcf734f82e2d5e83e373a
+state: OPEN
+draft: true
+mergeable: MERGEABLE
+checks: ci/product-e2e-gate/e2e-operational-evidence/build-and-publish/deploy all SUCCESS at refresh time
 ```
 
 GitHub environments:
@@ -143,7 +154,7 @@ Report summary:
 
 ```text
 ok: false
-expected_sha: 1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633
+expected_sha: fca45b70ee7c0e58278bcf734f82e2d5e83e373a
 correlation_id: corr-odp-pv-stage-001
 missing:
 - env:ODP_STAGING_DEPLOY_URL
@@ -164,7 +175,7 @@ Missing external state:
 - `ODP_STAGING_API_URL`
 - `ODP_STAGING_SECRET_OWNER`
 - Real staging host/deployment target.
-- Deployed API configured with `ODAY_RELEASE_SHA=1494e51f7c90a35abbbc1b9feec6bb2dbb8d5633` or the promoted SHA.
+- Deployed API configured with `ODAY_RELEASE_SHA` equal to the current PR #82 `headRefOid` or the promoted SHA.
 - Reachable remote `/platform/health`.
 - Reachable remote `/platform/version` matching the release authority SHA.
 - Real staging deploy workflow or equivalent deployment path.
