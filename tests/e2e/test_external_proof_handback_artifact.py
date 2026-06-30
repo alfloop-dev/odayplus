@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
 CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
+EXAMPLE = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json"
 EXPECTED_SHA = "89d0ccc19c983a3e8f8e908459c65939a62d4dfb"
+EXAMPLE_SHA = "1111111111111111111111111111111111111111"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -97,6 +99,20 @@ def test_external_proof_handback_artifact_checker_accepts_valid_handback(tmp_pat
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "External proof handback artifact checks passed." in result.stdout
+
+
+def test_external_proof_handback_example_matches_checker_contract() -> None:
+    result = run_checker(EXAMPLE, expected_sha=EXAMPLE_SHA)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "External proof handback artifact checks passed." in result.stdout
+
+
+def test_external_proof_handback_example_cannot_close_current_release_without_real_sha() -> None:
+    result = run_checker(EXAMPLE, expected_sha=EXPECTED_SHA)
+
+    assert result.returncode == 1
+    assert "release_head_ref_oid must match --expected-sha" in result.stdout
 
 
 def test_external_proof_handback_artifact_checker_rejects_wrong_release_sha(tmp_path) -> None:
