@@ -673,6 +673,7 @@ def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
 def test_closeout_queue_is_machine_readable_and_complete() -> None:
     queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
     queue_entries = queue_payload["queue"]
+    completed_closeouts = queue_payload["completed_closeouts"]
 
     assert queue_payload["release_target"]["pr"] == 82
     assert queue_payload["release_target"]["must_not_hardcode_dev_hash"] is True
@@ -680,20 +681,26 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
         "global_preflight"
     ]
 
-    required_task_ids = {
+    required_active_task_ids = {
         "ODP-PV-008",
         "ODP-FE-XCUT-001",
         "ODP-FE-R0-001",
-        "ODP-FE-XCUT-UI-001",
         "ODP-FE-EXP-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+    }
+    required_completed_task_ids = {
+        "ODP-FE-XCUT-UI-001",
         "ODP-FE-OPS-001",
         "ODP-FE-PRICE-001",
-        "ODP-FE-ASSET-001",
         "ODP-FE-LEARN-001",
-        "ODP-FE-XCUT-DOMAIN-001",
         "ODP-FE-XCUT-TYPES-001",
     }
-    assert required_task_ids <= {entry["task_id"] for entry in queue_entries}
+    active_task_ids = {entry["task_id"] for entry in queue_entries}
+    completed_task_ids = {entry["task_id"] for entry in completed_closeouts}
+    assert required_active_task_ids <= active_task_ids
+    assert required_completed_task_ids <= completed_task_ids
+    assert active_task_ids.isdisjoint(completed_task_ids)
 
     required_blocking_types = {
         "human_signoff",
@@ -711,6 +718,16 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
             evidence_path = ROOT / evidence_ref
             assert evidence_path.exists(), f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
 
+    for completed_entry in completed_closeouts:
+        assert completed_entry["status"] == "done"
+        assert completed_entry["completion_note"]
+        assert completed_entry["evidence_refs"]
+        for evidence_ref in completed_entry["evidence_refs"]:
+            evidence_path = ROOT / evidence_ref
+            assert evidence_path.exists(), (
+                f"{completed_entry['task_id']} completed evidence ref is missing: {evidence_ref}"
+            )
+
     queue_text = CLOSEOUT_QUEUE.read_text(encoding="utf-8")
     manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
     for boundary in (
@@ -724,17 +741,22 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
         assert boundary in queue_text
 
     asset_entries = [entry for entry in queue_entries if entry["task_id"] == "ODP-FE-ASSET-001"]
-    assert len(asset_entries) == 1
-    asset_entry = asset_entries[0]
-    assert asset_entry["status"] == "review"
-    assert asset_entry["actor"] == "Codex2"
-    assert asset_entry["action_type"] == "reviewer_approve_or_reopen"
-    assert asset_entry["blocking_type"] == "reviewer_status_closeout"
-    assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_entry["evidence_refs"]
-    assert "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts" in asset_entry["evidence_refs"]
+    assert len(asset_entries) == 2
+    asset_owner_entry = next(entry for entry in asset_entries if entry["action_type"] == "owner_handoff")
+    asset_reviewer_entry = next(
+        entry for entry in asset_entries if entry["action_type"] == "reviewer_approve_or_reopen"
+    )
+    assert asset_owner_entry["status"] == "in_progress"
+    assert asset_owner_entry["actor"] == "Claude"
+    assert asset_owner_entry["blocking_type"] == "owner_status_closeout"
+    assert asset_reviewer_entry["status"] == "waiting_for_review_after_handoff"
+    assert asset_reviewer_entry["actor"] == "Codex2"
+    assert asset_reviewer_entry["blocking_type"] == "reviewer_status_closeout"
+    assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_reviewer_entry["evidence_refs"]
+    assert "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts" in asset_reviewer_entry["evidence_refs"]
     assert "masking leakage" not in queue_text
     assert "masking leakage" not in manifest_text
-    assert "non-leakage E2E assertions are present" in manifest_text
+    assert "non-leakage E2E assertions" in manifest_text
 
     avm_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan.spec.ts").read_text(encoding="utf-8")
     avm_product_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts").read_text(encoding="utf-8")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -23,19 +24,27 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 MANIFEST_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
-STATUS_PATH = ROOT / "ai-status.json"
+STATUS_ROOT = (
+    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
+    if os.environ.get("PANTHEON_STATUS_ROOT")
+    else ROOT
+)
+STATUS_PATH = STATUS_ROOT / "ai-status.json"
 
-REQUIRED_TASK_IDS = {
+REQUIRED_ACTIVE_TASK_IDS = {
     "ODP-PV-008",
     "ODP-FE-XCUT-001",
     "ODP-FE-R0-001",
-    "ODP-FE-XCUT-UI-001",
     "ODP-FE-EXP-001",
+    "ODP-FE-ASSET-001",
+    "ODP-FE-XCUT-DOMAIN-001",
+}
+
+REQUIRED_COMPLETED_TASK_IDS = {
+    "ODP-FE-XCUT-UI-001",
     "ODP-FE-OPS-001",
     "ODP-FE-PRICE-001",
-    "ODP-FE-ASSET-001",
     "ODP-FE-LEARN-001",
-    "ODP-FE-XCUT-DOMAIN-001",
     "ODP-FE-XCUT-TYPES-001",
 }
 
@@ -116,6 +125,7 @@ def render_report(payload: dict[str, Any], errors: list[str]) -> str:
     has_live_status = bool(status_index)
     release_target = payload.get("release_target", {})
     entries = payload.get("queue", [])
+    completed_entries = payload.get("completed_closeouts", [])
 
     rows: list[dict[str, str]] = []
     for entry in entries:
@@ -187,6 +197,20 @@ def render_report(payload: dict[str, Any], errors: list[str]) -> str:
             "{blocking_type} | {state} |".format(**row)
         )
 
+    if completed_entries:
+        lines.extend(
+            [
+                "",
+                "## Completed Closeouts",
+                "",
+                "| Task | Status | Evidence |",
+                "|---|---|---|",
+            ]
+        )
+        for entry in completed_entries:
+            evidence = ", ".join(str(ref) for ref in entry.get("evidence_refs", []))
+            lines.append(f"| {entry.get('task_id')} | {entry.get('status')} | {evidence} |")
+
     lines.extend(["", "## Scope Boundaries", ""])
     for boundary in payload.get("scope_boundaries", []):
         lines.append(f"### {boundary.get('topic')}")
@@ -242,9 +266,17 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
         return [*errors, "queue must be a non-empty list"]
 
     task_ids = {str(entry.get("task_id")) for entry in entries}
-    missing_tasks = REQUIRED_TASK_IDS - task_ids
+    missing_tasks = REQUIRED_ACTIVE_TASK_IDS - task_ids
     if missing_tasks:
-        errors.append(f"queue is missing tasks: {sorted(missing_tasks)}")
+        errors.append(f"queue is missing active tasks: {sorted(missing_tasks)}")
+
+    completed_task_ids = {str(entry.get("task_id")) for entry in payload.get("completed_closeouts", [])}
+    missing_completed_tasks = REQUIRED_COMPLETED_TASK_IDS - completed_task_ids
+    if missing_completed_tasks:
+        errors.append(f"completed_closeouts is missing tasks: {sorted(missing_completed_tasks)}")
+    overlap = task_ids & completed_task_ids
+    if overlap:
+        errors.append(f"tasks cannot be both active and completed: {sorted(overlap)}")
 
     blocking_types = {str(entry.get("blocking_type")) for entry in entries}
     missing_blocking_types = REQUIRED_BLOCKING_TYPES - blocking_types
@@ -286,6 +318,21 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
         expected_actor = expected_actor_from_status(status_task, str(entry.get("action_type")))
         if expected_actor and str(entry.get("actor")) != expected_actor:
             errors.append(f"{prefix} actor {entry.get('actor')} does not match ai-status {expected_actor}")
+
+    for index, entry in enumerate(payload.get("completed_closeouts", [])):
+        prefix = f"completed_closeouts[{index}] {entry.get('task_id')}"
+        for required_field in ("task_id", "status", "evidence_refs", "completion_note"):
+            if not entry.get(required_field):
+                errors.append(f"{prefix} missing {required_field}")
+        if entry.get("status") != "done":
+            errors.append(f"{prefix} status must be done")
+        for evidence_ref in entry.get("evidence_refs", []):
+            evidence_path = ROOT / str(evidence_ref)
+            if not evidence_path.exists():
+                errors.append(f"{prefix} evidence ref missing: {evidence_ref}")
+        status_task = status_index.get(str(entry.get("task_id")))
+        if status_task and str(status_task.get("status")) != "done":
+            errors.append(f"{prefix} does not match ai-status {status_task.get('status')}")
 
     errors.extend(validate_manifest_alignment(payload))
 
