@@ -60,8 +60,12 @@ Task: `ODP-MAP-STAGE-001`
 ```bash
 python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
+
+`--strict-complete` is expected to fail until every #132-#138 handback and the bundle status are accepted.
 
 Do not close this issue from deterministic fixtures, mock-live evidence, localhost proof, or document-only evidence. Completion rule: Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.
 """
@@ -109,9 +113,11 @@ def test_validate_notifications_rejects_missing_required_evidence_or_command() -
     broken = pickup_comment().replace("- [ ] provider attribution and terms URL visible\n", "")
     broken = broken.replace("- `PLAYWRIGHT_BASE_URL=", "- `PLAYWRIGHT_BASE_URL_REMOVED=")
     broken = broken.replace("generate_external_proof_handback_skeleton.py --task", "generate_external_proof_handback_skeleton.py")
+    broken = broken.replace("python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report\n", "")
 
     errors = checker.validate_notifications(queue_payload(), issue_payload(broken), expected_sha=EXPECTED_SHA)
 
     assert any("missing required evidence: provider attribution and terms URL visible" in error for error in errors)
     assert any("missing command fragment: PLAYWRIGHT_BASE_URL=" in error for error in errors)
     assert any("missing handback command fragment: python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task" in error for error in errors)
+    assert any("missing token: check_external_proof_acceptance_readiness.py --report" in error for error in errors)

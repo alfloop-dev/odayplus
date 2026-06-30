@@ -26,6 +26,9 @@ REQUIRED_COMMENT_TOKENS = (
     "Handback flow",
     "generate_external_proof_handback_skeleton.py",
     "check_external_proof_handback_artifact.py",
+    "check_external_proof_acceptance_readiness.py --report",
+    "check_external_proof_acceptance_readiness.py --strict-complete",
+    "expected to fail until every #132-#138 handback",
     "check_external_proof_live_blockers.py --require-assignees",
     "Do not close this issue",
 )
