@@ -32,6 +32,7 @@ recording a meaningful review summary.
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 python3 scripts/e2e/check_product_release_gate.py
+python3 scripts/e2e/check_external_proof_closeout_queue.py
 ```
 
 If satisfied:
@@ -119,6 +120,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   configuration is provided and verified with
   `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` and
   `python3 scripts/e2e/check_remote_staging_proof.py`.
+- External proof closeout remains open until
+  `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` tasks have
+  redacted runtime evidence for provider credentials/licensing/geocoder,
+  remote live map endpoints, and remote staging smoke/drill proof.
 
 ## Completion Rule
 

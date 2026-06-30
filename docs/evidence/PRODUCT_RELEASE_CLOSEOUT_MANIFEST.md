@@ -26,6 +26,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | Runtime evidence audit | `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md` marks FE lanes evidence-ready and cites executable tests | proven |
 | Product E2E readiness | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md` links P0 scenarios to executable tests, deterministic data, screenshots/traces, and audit/evidence ids | proven for deterministic product-E2E environment |
 | Release go/no-go packet | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` lists go/no-go criteria and Human/Ops checklist | prepared, pending Human/Ops |
+| External proof closeout queue | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` enumerates provider credential/license/geocoder, remote live map endpoint, and remote staging proof tasks with owners, commands, evidence refs, and completion rules | prepared, externally blocked |
 | Static release gate | `python3 scripts/e2e/check_product_release_gate.py` validates required specs, evidence docs, runner coverage, deterministic source fixtures, and correlation ids | proven |
 | Product E2E runner | `scripts/e2e/run_product_e2e.sh` runs API-bound UI, map, expansion, PV-006, PV-007, and product environment Playwright specs | proven by PR #82 checks |
 | Dynamic release target guard | `tests/e2e/test_frontend_execution_matrix_coverage.py` rejects hard-coded `dev@...` release refs and requires PR #82 `headRefOid`/checks language | proven |
@@ -56,6 +57,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | `ODP-FE-XCUT-DOMAIN-001` | `review` | Codex2 reviewer | Review `packages/ui-domain` exports and domain contract test evidence | reviewer status closeout |
 | `ODP-FE-XCUT-TYPES-001` | `review` | Claude2 reviewer | Review `packages/domain-types` frontend contract coverage and type export evidence | reviewer status closeout |
 | PR #82 | draft/open | Human/Ops and release owner | Keep draft until Human/Ops signoff and rollout target decision are recorded | release workflow |
+| External proof queue | `external_blocked` | Platform/Ops, Data Partnerships, Legal, Product Validation | Complete `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` tasks with redacted runtime proof before claiming live provider, live map, or remote staging readiness | external proof closeout |
 
 ## Closeout Invariants
 
@@ -70,6 +72,9 @@ The authoritative release target is draft release PR #82. Use PR #82
 - Do not claim live remote staging rollout until staging host/url/secret
   configuration is provided and verified with
   `scripts/e2e/check_remote_staging_proof.py`.
+- Do not claim live provider, live map, or remote staging completion until the
+  relevant task in `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
+  has attached external runtime evidence.
 - Do not close reviewer-owned lanes by changing `ai-status.json` from an
   unassigned actor; use the named owner/reviewer lifecycle.
 - Do not run final `done` closeout from a thin or stale `main` checkout. Owner

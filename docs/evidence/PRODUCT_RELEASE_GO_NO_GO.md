@@ -56,6 +56,7 @@ Release is blocked if any of these are true:
 | CI release gate reviewed | Confirm GitHub `product-e2e-gate` ran `make product-release-gate` | pending-human |
 | Deterministic environment accepted | Confirm deterministic source stub is acceptable for PV readiness | pending-human |
 | Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url/secret owner configuration and `check_remote_staging_proof.py` evidence | pending-human |
+| External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` remains open for provider credential/license/geocoder, remote live map endpoint, and remote staging proof | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 
 ## Current Recommendation
