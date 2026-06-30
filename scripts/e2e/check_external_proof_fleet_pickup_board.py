@@ -97,6 +97,11 @@ def validate(queue_payload: dict[str, Any], board_text: str) -> list[str]:
             if fragment not in board_text:
                 errors.append(f"external proof pickup board missing {prefix} handback command: {fragment}")
 
+        for command in entry.get("allowed_commands", []):
+            fragment = command_fragment(str(command))
+            if fragment not in board_text:
+                errors.append(f"external proof pickup board missing {prefix} allowed command: {fragment}")
+
         acceptance_command = (
             'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha '
             '"$(gh pr view 82 --json headRefOid --jq .headRefOid)"'

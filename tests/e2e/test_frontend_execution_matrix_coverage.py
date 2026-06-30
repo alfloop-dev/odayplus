@@ -652,6 +652,11 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
         assert entry["fleet_routing"]["dispatch_lane"] in board_text
         assert entry["fleet_routing"]["pickup_label"] in board_text
         assert f"--task {entry['task_id']}" in board_text
+        for evidence in entry["required_evidence"]:
+            assert evidence in board_text
+        for command in entry["allowed_commands"]:
+            assert command.split(" <")[0].split(' "<')[0] in board_text
+        assert entry["completion_rule"] in board_text
 
 
 def test_external_proof_fleet_pickup_board_checker_runs() -> None:
