@@ -42,6 +42,7 @@ live and assigned:
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_product_go_no_go.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
+python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 python3 scripts/e2e/update_external_proof_handback_status_board.py --help
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 python3 scripts/e2e/check_external_proof_fleet_notifications.py
@@ -171,6 +172,9 @@ Completion still requires:
 - `python3 scripts/e2e/check_external_proof_handback_status_board.py` still
   passes so Product Validation handback intake state remains synchronized with
   `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.
+- `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report`
+  still passes so Product Validation has a current missing-evidence report and
+  exact acceptance command for every #132-#138 handback.
 - Product Validation uses
   `python3 scripts/e2e/update_external_proof_handback_status_board.py` rather
   than manual JSON edits when a #132-#138 handback is submitted, rejected for
