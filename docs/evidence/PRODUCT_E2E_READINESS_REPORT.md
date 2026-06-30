@@ -73,6 +73,7 @@ The `product-e2e-gate` CI job fails if:
 ## Residual Release Risk
 
 - Remote staging rollout is still a deployment environment configuration item because staging host/url/secret owner variables are not configured. The API now exposes `/platform/version`, and `scripts/e2e/check_remote_staging_proof.py` is the required smoke/version checker once staging exists.
+- Live external proof closeout is tracked in `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`; provider credentials/licensing/geocoder proof, remote live map endpoint smoke, and remote staging smoke/drill evidence remain external tasks.
 - Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - Moderate dependency audit findings remain below the existing high/critical release-blocking threshold and are tracked by the security gate output.
