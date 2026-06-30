@@ -31,6 +31,7 @@ REQUIRED_FILES = {
     "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
     "closeout pickup board checker": "scripts/e2e/check_product_closeout_pickup_board.py",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+    "external proof handback status board": "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
     "external proof handback example": "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
     "external proof fleet pickup board": "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md",
@@ -54,6 +55,7 @@ REQUIRED_FILES = {
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
     "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
     "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
+    "external proof handback status board checker": "scripts/e2e/check_external_proof_handback_status_board.py",
     "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
     "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
@@ -227,6 +229,23 @@ def main() -> int:
         )
         errors.append(f"external proof handback template check failed: {output}")
 
+    external_handback_status_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_status_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_handback_status_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (
+                external_handback_status_board_check.stdout + external_handback_status_board_check.stderr
+            ).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof handback status board check failed: {output}")
+
     go_no_go_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
         cwd=ROOT,
@@ -256,6 +275,7 @@ def main() -> int:
             "--require-assignees",
             "check_external_proof_handback_artifact.py",
             "check_external_proof_handback_bundle.py",
+            "check_external_proof_handback_status_board.py",
             "check_product_go_no_go.py",
         ):
             if required_token not in doc_text:
