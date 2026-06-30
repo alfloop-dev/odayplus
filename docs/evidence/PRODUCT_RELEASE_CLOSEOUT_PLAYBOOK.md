@@ -133,6 +133,10 @@ Human/Ops must also explicitly acknowledge these boundaries:
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`
   before Product Validation accepts or closes the corresponding issue. This
   verifies the actual handback artifact, not only the template.
+- When all #132-#138 handbacks are claimed complete, Product Validation must
+  run `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
+  This verifies that every external proof task has exactly one accepted
+  handback and that all handbacks cite the same PR #82 `headRefOid`.
 - External proof GitHub issue handoff must remain synced with queue routing.
   Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`
   before Human/Ops go/no-go so #132-#138 cannot silently lose labels,
@@ -154,4 +158,6 @@ Do not mark the active objective complete until:
   accepted external proof artifacts cite the template fields.
 - Each accepted external-proof issue handback has passed
   `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
+- The complete external-proof handback set has passed
+  `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
 - PR #82 attached checks are still successful at the decision head.

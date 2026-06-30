@@ -526,6 +526,7 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
     assert "generate_external_proof_handback_skeleton.py" in board_text
     assert "check_external_proof_handback_artifact.py" in board_text
+    assert "check_external_proof_handback_bundle.py" in board_text
     assert "mock://" in board_text
     assert "localhost" in board_text
     assert "127.0.0.1" in board_text

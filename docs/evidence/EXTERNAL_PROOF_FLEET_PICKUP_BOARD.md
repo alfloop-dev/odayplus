@@ -67,3 +67,10 @@ or document-only evidence. A closeout requires:
 ```bash
 python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
 ```
+
+When all seven handbacks are ready, validate the complete set before release
+closeout:
+
+```bash
+python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+```
