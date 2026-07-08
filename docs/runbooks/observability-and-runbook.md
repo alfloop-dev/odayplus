@@ -14,6 +14,7 @@ here by anchor.
 | Structured logs | Cloud Logging | `timestamp, service, actor, correlation_id, resource, action, result, error_code` (`shared.observability.logging`) |
 | Metrics | Cloud Monitoring | catalog in `shared.observability.metrics.PLATFORM_METRICS`, dashboards in `infra/monitoring/dashboards.json` |
 | Traces | OpenTelemetry | span chain API → Event → Worker → Data → Model → Decision → Report under one `correlation_id` (`shared.observability.tracing`) |
+| Audit pipeline | Cloud SQL / BigQuery audit sink | canonical `AuditEvent` writes plus `audit_event_record_count`, `audit_event_write_failure_count`, `audit_evidence_export_count` (`shared.observability.audit`) |
 
 Always start from the `correlation_id`: it joins the log line, the metric label,
 the trace, and the audit event for a single request/job/workflow.
@@ -114,10 +115,20 @@ drift monitor fails, model published despite a data-quality fail. Watch
 
 Audit write failure affects high-risk decisions and is always **P0/P1**.
 
-Handling: pause high-risk-operation feature flags → check the audit store →
-identify operations whose audit was not written from API logs → replay audit
-events → mark replayed entries `recovered_audit=true` → run an audit completeness
-check before resuming high-risk operations.
+Handling: pause high-risk-operation feature flags → check
+`audit_event_write_failure_count` and the audit pipeline dead-letter queue →
+check the audit store → identify operations whose audit was not written from API
+logs → replay audit events → mark replayed entries `recovered_audit=true` → run
+an audit completeness check before resuming high-risk operations.
+
+Recovery checks:
+
+1. `audit_event_write_failure_count` is no longer increasing.
+2. Dead-letter replay has a matching `audit_event_replay_count{result="success"}`.
+3. Required decision timeline events are complete; any missing required event is
+   counted by `audit_completeness_gap_count`.
+4. Evidence exports are visible as `audit.evidence_export.v1` events and
+   `audit_evidence_export_count` samples under the same `correlation_id`.
 
 ## Acceptance
 
