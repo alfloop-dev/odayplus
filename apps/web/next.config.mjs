@@ -8,6 +8,7 @@ const nextConfig = {
     "@oday-plus/ui",
     "@oday-plus/design-tokens",
     "@oday-plus/domain-types",
+    "@oday-plus/openapi-client",
   ],
 };
 

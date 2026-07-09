@@ -1,0 +1,30 @@
+{
+  "provider_id": "geocode.primary_api",
+  "recorded_at": "2026-06-28T12:00:00Z",
+  "responses": [
+    {
+      "provider_request_id": "geo-replay-req-001",
+      "provider_observed_at": "2026-06-28T11:58:00Z",
+      "address_raw": "台北市信義區信義路五段7號",
+      "latitude": 25.033964,
+      "longitude": 121.564468,
+      "geocode_precision": "rooftop",
+      "confidence": 0.97,
+      "admin_city": "台北市",
+      "admin_district": "信義區",
+      "geocode_provider": "geocode.primary_api"
+    },
+    {
+      "provider_request_id": "geo-replay-req-002",
+      "provider_observed_at": "2026-06-28T11:59:00Z",
+      "address_raw": "新北市板橋區文化路一段100號",
+      "latitude": 25.0169,
+      "longitude": 121.4628,
+      "geocode_precision": "street",
+      "confidence": 0.81,
+      "admin_city": "新北市",
+      "admin_district": "板橋區",
+      "geocode_provider": "geocode.primary_api"
+    }
+  ]
+}

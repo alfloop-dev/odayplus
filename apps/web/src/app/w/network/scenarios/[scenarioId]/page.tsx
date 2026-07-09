@@ -1,9 +1,10 @@
 import { NetPlanWorkspace } from "../../../../../../features/netplan/NetPlanWorkspace.tsx";
 
 type PageProps = {
-  params: { scenarioId: string };
+  params: Promise<{ scenarioId: string }>;
 };
 
-export default function NetworkScenarioDetailPage({ params }: PageProps) {
-  return <NetPlanWorkspace view="scenarioDetail" scenarioId={params.scenarioId} />;
+export default async function NetworkScenarioDetailPage({ params }: PageProps) {
+  const { scenarioId } = await params;
+  return <NetPlanWorkspace view="scenarioDetail" scenarioId={scenarioId} />;
 }

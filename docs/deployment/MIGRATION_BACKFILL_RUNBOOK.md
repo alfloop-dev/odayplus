@@ -16,9 +16,29 @@ Source baseline: `ODP-SD-05_DATABASE_AND_STORAGE_DESIGN`,
      --output artifacts/migration-plan.json
    ```
 
-4. Review migration file hashes, target revision, rollback command, and owner.
-5. Run Alembic from a credentialed release runner.
-6. Run API health, contract, data, and smoke checks.
+4. Review migration file hashes, companion SQL hashes, the manifest checksum,
+   target revision, rollback command, and owner.
+5. Validate the same checksum manifest through the migration runner:
+
+   ```bash
+   python -m apps.cli.oday_cli migration-runner --environment staging \
+     --expected-manifest-sha256 "$(jq -r .manifest_sha256 artifacts/migration-plan.json)" \
+     --output artifacts/migration-runner.json
+   ```
+
+6. Run Alembic from a credentialed release runner:
+
+   ```bash
+   ODAY_DATABASE_URL="$STAGING_DATABASE_URL" \
+     python -m apps.cli.oday_cli migration-runner --environment staging \
+     --expected-manifest-sha256 "$(jq -r .manifest_sha256 artifacts/migration-plan.json)" \
+     --execute \
+     --output artifacts/migration-apply.json
+   ```
+
+7. Confirm `migration-apply.json` has `checksum_status=verified`,
+   `returncode=0`, and the expected target revision.
+8. Run API health, contract, data, and smoke checks.
 
 Rollback requires an approved window, a fresh backup/PITR checkpoint, and the
 migration owner. The first rollback command is `alembic downgrade -1`; destructive

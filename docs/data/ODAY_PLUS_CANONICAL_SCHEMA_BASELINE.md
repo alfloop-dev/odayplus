@@ -93,7 +93,9 @@
 ## 5. 資料庫 Migration 策略
 1. **工具基線**：採用 **Alembic** 作為 Python/SQL 資料庫 Schema 變更的權威管理工具。
 2. **基線版本**：版本 `0001` (由 `infra/db/migrations/versions/0001_baseline.py` 承載) 會完整執行 PostgreSQL 基線 DDL，並初始化上述 11 個 Logical Schemas。
-3. **安全防護**：
+3. **資料域增量版本**：版本 `0002` (由 `infra/db/migrations/versions/0002_data_domain_canonical_entities.py` 承載) 以 idempotent DDL 鎖定 store、machine、transaction、machine cycle、geo cell、POI、competitor、listing、candidate site、model version、prediction run、prediction、forecast output、valuation run、network plan、data snapshot 等 canonical entities 的 FK、索引與時間欄位。
+4. **Checksum Runner**：`python -m apps.cli.oday_cli migration-plan` 會輸出包含 Alembic revision 與 companion SQL 的 `manifest_sha256`；`migration-runner` 必須用同一 checksum manifest 驗證後才可 `--execute` 套用 migration。
+5. **安全防護**：
    - 任何變更均須由 Alembic 腳本封裝，嚴禁對資料庫進行手動 DDL 變更。
    - 所有 Production Schema 變更在套用前，必須於 Staging 進行 `dry-run` 驗證。
    - 下游 model-ready views 必須通過 dbt lineage 隔離，不直接曝露 raw 或未封裝 schema 給外部服務。

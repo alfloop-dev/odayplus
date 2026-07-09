@@ -1,9 +1,9 @@
 import { PriceOpsWorkspace } from "../../../features/priceops/PriceOpsWorkspace.tsx";
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function PricingPage({ searchParams }: PageProps) {
-  return <PriceOpsWorkspace searchParams={searchParams} />;
+export default async function PricingPage({ searchParams }: PageProps) {
+  return <PriceOpsWorkspace searchParams={await searchParams} />;
 }

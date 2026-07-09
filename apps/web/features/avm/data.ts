@@ -22,6 +22,8 @@ export type Lens = "income" | "asset" | "market" | "blended";
 
 export type AvmRouteKey = "overview" | "cases" | "caseDetail";
 
+export type SensitivePricePermission = "visible" | "masked";
+
 export type PriceBand = {
   p10: number;
   p50: number;
@@ -93,6 +95,7 @@ export type ValuationCase = {
   fairPrice: PriceBand;
   reservePrice: number;
   askingPrice: number;
+  sensitivePricePermission: SensitivePricePermission;
   confidence: Confidence;
   liquidityScore: number;
   normalizedMargin: NormalizedMargin;
@@ -129,6 +132,7 @@ export const valuationCases: ValuationCase[] = [
     fairPrice: { p10: 18200, p50: 24600, p90: 31800 },
     reservePrice: 17654,
     askingPrice: 33390,
+    sensitivePricePermission: "masked",
     confidence: "high",
     liquidityScore: 0.82,
     normalizedMargin: {
@@ -224,6 +228,7 @@ export const valuationCases: ValuationCase[] = [
     fairPrice: { p10: 12400, p50: 16900, p90: 22600 },
     reservePrice: 12028,
     askingPrice: 23730,
+    sensitivePricePermission: "masked",
     confidence: "medium",
     liquidityScore: 0.64,
     normalizedMargin: {
@@ -290,6 +295,7 @@ export const valuationCases: ValuationCase[] = [
     fairPrice: { p10: 8200, p50: 11400, p90: 15800 },
     reservePrice: 7954,
     askingPrice: 16590,
+    sensitivePricePermission: "masked",
     confidence: "low",
     liquidityScore: 0.41,
     normalizedMargin: {

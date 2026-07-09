@@ -1,9 +1,10 @@
 import { ExpansionWorkspace } from "../../../../../../features/expansion/ExpansionWorkspace.tsx";
 
 type PageProps = {
-  params: { reportId: string };
+  params: Promise<{ reportId: string }>;
 };
 
-export default function SiteScoreDetailPage({ params }: PageProps) {
-  return <ExpansionWorkspace view="sitescoreDetail" reportId={params.reportId} />;
+export default async function SiteScoreDetailPage({ params }: PageProps) {
+  const { reportId } = await params;
+  return <ExpansionWorkspace view="sitescoreDetail" reportId={reportId} />;
 }

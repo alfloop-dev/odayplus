@@ -1,0 +1,37 @@
+{
+  "contract_id": "admin_boundary_snapshot",
+  "cases": [
+    {
+      "label": "missing required admin_code and snapshot_id",
+      "record": {
+        "source_boundary_id": "TW-XXX",
+        "admin_level": "district",
+        "admin_name": "未知區"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped admin_level enum",
+      "record": {
+        "source_boundary_id": "TW-TPE-ZONE",
+        "admin_level": "metropolis",
+        "admin_code": "63009999",
+        "admin_name": "錯誤層級",
+        "snapshot_id": "admin-2026-01-01"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "negative area_km2 flagged as invalid amount",
+      "record": {
+        "source_boundary_id": "TW-TPE-NEG",
+        "admin_level": "village",
+        "admin_code": "63000050001",
+        "admin_name": "面積錯誤里",
+        "area_km2": -3.0,
+        "snapshot_id": "admin-2026-01-01"
+      },
+      "expect_codes": ["invalid_amount"]
+    }
+  ]
+}

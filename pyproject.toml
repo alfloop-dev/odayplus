@@ -7,7 +7,20 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
+    # API
     "fastapi>=0.115",
+    "pydantic>=2.8",
+    "uvicorn[standard]>=0.30",
+    # ML
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    # Solver / geospatial
+    "h3>=4.1",
+    "ortools>=9.10",
+    # Data
+    "duckdb>=1.0",
+    "sqlalchemy>=2.0",
 ]
 
 [dependency-groups]
