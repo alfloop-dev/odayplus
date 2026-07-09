@@ -41,6 +41,91 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   expect(browserErrors).toEqual([]);
 });
 
+test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
+  page,
+}) => {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.goto("/operator");
+
+  // Go to Govern workspace
+  await page.getByRole("button", { name: /治理稽核/ }).click();
+  await expect(page.locator('[data-screen-label="Govern 治理稽核"]')).toBeVisible();
+
+  // Test 3: 退回/駁回 reason-gate enforced
+  // Click on a pending approval, e.g. "Close escalated service issue"
+  await page.getByRole("button", { name: "Close escalated service issue" }).click();
+  // Fill less than 10 characters
+  await page.locator("#governance-reason").fill("Too short");
+  // Click Return
+  await page.getByRole("button", { name: "Return", exact: true }).click();
+  // Should show error message
+  await expect(page.getByText("退回或駁回理由需至少 10 個字")).toBeVisible();
+
+  // Now fill at least 10 characters
+  const decisionReason = "Rejecting because candidate is too risky due to high competitor density";
+  await page.locator("#governance-reason").fill(decisionReason);
+  // Click Return
+  await page.getByRole("button", { name: "Return", exact: true }).click();
+  // Check that toast or success shows completed decision notice
+  await expect(page.getByText("已完成決策 (returned)")).toBeVisible();
+  await expect(page.getByText(`決策理由：${decisionReason}`)).toBeVisible();
+
+  // Go to Decision Log tab
+  await page.getByRole("button", { name: "Decision Log" }).click();
+  await expect(page.locator("table")).toContainText("Returned");
+  await expect(page.locator("table")).toContainText(decisionReason);
+
+  // Go to Audit Trail tab
+  await page.getByRole("button", { name: "Audit Trail" }).click();
+  await expect(page.locator("table")).toContainText("決策退回");
+
+  // Test 1: Evidence Package produces mock file entry + audit event
+  // Go to Evidence Package 匯出 tab
+  await page.getByRole("button", { name: "Evidence Package 匯出" }).click();
+  await expect(page.getByRole("button", { name: "產生 Evidence Package", exact: true })).toBeVisible();
+  
+  // Click generate button
+  await page.getByRole("button", { name: "產生 Evidence Package", exact: true }).click();
+  // Wait for result
+  const resultPanel = page.locator('[data-testid="evidence-package-result"]');
+  await expect(resultPanel).toBeVisible({ timeout: 5000 });
+  const fileName = await resultPanel.locator("span").first().textContent();
+  expect(fileName).toContain("EVD-2026-0705-");
+
+  // Go to Audit Trail tab and verify audit event has been written
+  await page.getByRole("button", { name: "Audit Trail" }).click();
+  await expect(page.locator("table")).toContainText("Export Evidence Package");
+  await expect(page.locator("table")).toContainText("Antigravity6");
+
+  // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
+  // Go to 系統狀態盤 tab
+  await page.getByRole("button", { name: "系統狀態盤" }).click();
+  await expect(page.locator('[aria-label="System status board"]')).toBeVisible();
+  
+  // Verify Data Quality monitor
+  await expect(page.getByText("Google Reviews Connector")).toBeVisible();
+  await expect(page.getByText("Camera Events")).toBeVisible();
+  // Verify Model Registry
+  await expect(page.getByText("CS Intent")).toBeVisible();
+  await expect(page.getByText("PriceOps")).toBeVisible();
+  // Verify Connector/API
+  await expect(page.getByText("Google Business Profile")).toBeVisible();
+  await expect(page.getByText("LINE 官方帳號")).toBeVisible();
+  // Verify Runbook status
+  await expect(page.getByText("災備演練 (Disaster Recovery)")).toBeVisible();
+  await expect(page.getByText("系統觀測性 (Observability)")).toBeVisible();
+
+  expect(browserErrors).toEqual([]);
+});
+
+
 test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed /operator", async ({
   page,
 }) => {

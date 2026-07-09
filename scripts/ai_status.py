@@ -1057,7 +1057,13 @@ def append_log(entry: dict[str, Any]) -> None:
 def ensure_agent(name: str) -> dict[str, Any]:
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
-        raise SystemExit(f"Unknown agent: {name}")
+        base_name = re.sub(r'\d+$', '', canonical)
+        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS.get("Antigravity"))
+        KNOWN_AGENTS[canonical] = {
+            "capability_lane": template["capability_lane"],
+            "default_branch": f"feat/{canonical.lower()}-branch",
+            "target_workload": 5,
+        }
     return KNOWN_AGENTS[canonical]
 
 

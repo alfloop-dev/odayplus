@@ -524,4 +524,323 @@
   .summaryGrid {
     grid-template-columns: 1fr;
   }
+
+  .evidencePackageGrid,
+  .statusBoardGrid {
+    grid-template-columns: 1fr;
+  }
 }
+
+/* Evidence Package Styles */
+.evidencePackageGrid {
+  display: grid;
+  grid-template-columns: 460px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.exportPanel {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exportPanelTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: #172033;
+}
+
+.exportPanelSubtitle {
+  font-size: 12px;
+  color: #5a6478;
+  line-height: 1.4;
+}
+
+.formGrid2Col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.formLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4a5568;
+}
+
+.formInputDate,
+.formSelect {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #1c2333;
+  background: #fbfcfe;
+  outline: none;
+}
+
+.formInputDate:focus,
+.formSelect:focus {
+  border-color: #2563eb;
+}
+
+.checkboxGroup {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.checkboxInput {
+  accent-color: #2e3a97;
+  width: 16px;
+  height: 16px;
+}
+
+.exportButton {
+  width: 100%;
+  background: #2e3a97;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+  text-align: center;
+}
+
+.exportButton:hover {
+  background: #1e2875;
+}
+
+.exportButton:disabled {
+  background: #9ab4e9;
+  cursor: not-allowed;
+}
+
+.exportResult {
+  border: 1px solid #c6e6eb;
+  background: #e9f6f8;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.exportResultHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exportFileName {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #135e6b;
+}
+
+.exportFileSize {
+  font-size: 11px;
+  color: #4a7c86;
+}
+
+.exportFileTime {
+  margin-left: auto;
+  font-size: 11px;
+  color: #4a7c86;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.exportResultMeta {
+  font-size: 11.5px;
+  color: #4a7c86;
+}
+
+.downloadButton {
+  background: #12909f;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.2s;
+}
+
+.downloadButton:hover {
+  background: #0f7885;
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.historyFileId {
+  font-family: 'IBM Plex Mono', monospace;
+  color: #2e3a97;
+  font-weight: 600;
+}
+
+.historyMeta {
+  color: #475569;
+}
+
+.historyBadge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #eef1f5;
+  color: #475569;
+}
+
+.historyTimeBy {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* Status Board Styles */
+.statusBoardGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.statusCard {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.statusCardTitle {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #172033;
+  border-bottom: 2px solid #f1f5f9;
+  padding-bottom: 6px;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed #f1f5f9;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.statusRow:last-child {
+  border-bottom: none;
+}
+
+.statusName {
+  font-weight: 700;
+  color: #1e293b;
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.statusNameWide {
+  font-weight: 700;
+  color: #1e293b;
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.statusBadge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.statusNote {
+  font-size: 12px;
+  color: #64748b;
+  flex-grow: 1;
+}
+
+.statusVersion {
+  font-family: 'IBM Plex Mono', monospace;
+  color: #64748b;
+  font-size: 11.5px;
+  width: 45px;
+  flex-shrink: 0;
+}
+
+.decidedNotice {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #166534;
+  font-size: 13px;
+}
+
+.decidedNotice strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.decidedNotice p {
+  margin: 0;
+  color: #15803d;
+}
+
+.errorText {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 999;
+  max-width: 420px;
+  padding: 12px 14px;
+  color: #ffffff;
+  background: #111a2b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  font-weight: 750;
+  pointer-events: none;
+}
+
+
