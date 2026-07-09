@@ -6,6 +6,21 @@ application/worker stage uses to emit all three signals under one
 ``correlation_id``.
 """
 
+from shared.observability.audit import (
+    AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
+    HIGH_RISK_AUDIT_ACTIONS,
+    AuditCompletenessReport,
+    AuditCompletenessRule,
+    AuditEvidenceBundle,
+    AuditPipeline,
+    AuditPipelineError,
+    AuditSink,
+    AuditValidationError,
+    DeadLetterAuditEvent,
+    build_audit_event,
+    build_evidence_bundle,
+    check_audit_completeness,
+)
 from shared.observability.correlation import (
     CORRELATION_ID_HEADER,
     CorrelationContext,
@@ -38,6 +53,16 @@ from shared.observability.tracing import (
 )
 
 __all__ = [
+    "AUDIT_EVIDENCE_EXPORT_EVENT_TYPE",
+    "HIGH_RISK_AUDIT_ACTIONS",
+    "AuditCompletenessReport",
+    "AuditCompletenessRule",
+    "AuditEvidenceBundle",
+    "AuditPipeline",
+    "AuditPipelineError",
+    "AuditSink",
+    "AuditValidationError",
+    "DeadLetterAuditEvent",
     "CORRELATION_ID_HEADER",
     "CorrelationContext",
     "new_correlation_id",
@@ -60,4 +85,7 @@ __all__ = [
     "SpanStatus",
     "TraceContext",
     "Tracer",
+    "build_audit_event",
+    "build_evidence_bundle",
+    "check_audit_completeness",
 ]

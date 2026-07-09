@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+CHECKER = ROOT / "scripts/e2e/check_release_fleet_dispatch_status.py"
+
+
+def load_checker_module():
+    spec = importlib.util.spec_from_file_location("check_release_fleet_dispatch_status", CHECKER)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> dict:
+    return {
+        "pr": {
+            "number": 82,
+            "isDraft": True,
+            "state": "OPEN",
+            "headRefOid": "fc20a1b647861cc81f72e3a2a91bd5c7d7050848",
+            "mergeStateStatus": merge_state,
+            "url": "https://github.com/alfloop-dev/odayplus/pull/82",
+            "statusCheckRollup": [
+                {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        },
+        "checks": [
+            {
+                "label": "external issue sync",
+                "command": "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
+                "returncode": check_returncode,
+                "output": "External proof issue sync checks passed.",
+            },
+            {
+                "label": "product closeout PR notification",
+                "command": "python3 scripts/e2e/check_product_closeout_fleet_notification.py",
+                "returncode": 0,
+                "output": "Product closeout fleet notification checks passed.",
+            },
+        ],
+        "acceptance_readiness": {
+            "label": "external acceptance readiness",
+            "command": "python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report",
+            "returncode": 0,
+            "output": (
+                "# External Proof Acceptance Readiness\n\n"
+                "| Task | Issue | Fleet Lane | Status | Missing Evidence | Next Action |\n"
+                "|---|---|---|---|---:|---|\n"
+                "| `ODP-MAP-STAGE-001` | #135 | Platform/Ops live map fleet | "
+                "`pending_external_handback` | 4 | Attach remote staging tile proof. |"
+            ),
+        },
+        "issue_handback_scan": {
+            "label": "external issue handback scan",
+            "command": "python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
+            "returncode": 0,
+            "output": (
+                "# External Proof Issue Handback Scan\n\n"
+                "| Task | Issue | Issue State | Latest Pickup | Status | Candidate Comments |\n"
+                "|---|---|---|---|---|---:|\n"
+                "| `ODP-MAP-STAGE-001` | #135 | OPEN | 2026-06-30T12:00:00Z | "
+                "`no_handback_after_latest_pickup` | 0 |"
+            ),
+        },
+    }
+
+
+def test_release_fleet_dispatch_status_accepts_clean_report() -> None:
+    checker = load_checker_module()
+
+    errors = checker.validate_report(report_payload())
+
+    assert errors == []
+    rendered = checker.render_markdown(report_payload())
+    assert "Release Fleet Dispatch Status" in rendered
+    assert "external issue sync" in rendered
+    assert "External Proof Acceptance Readiness" in rendered
+    assert "ODP-MAP-STAGE-001" in rendered
+    assert "pending_external_handback" in rendered
+    assert "External Issue Handback Scan" in rendered
+    assert "no_handback_after_latest_pickup" in rendered
+    assert "passed" in rendered
+
+
+def test_release_fleet_dispatch_status_rejects_failed_guard() -> None:
+    checker = load_checker_module()
+
+    errors = checker.validate_report(report_payload(check_returncode=1))
+
+    assert any("external issue sync failed" in error for error in errors)
+
+
+def test_release_fleet_dispatch_status_rejects_failed_issue_handback_scan() -> None:
+    checker = load_checker_module()
+    payload = report_payload()
+    payload["issue_handback_scan"]["returncode"] = 1
+    payload["issue_handback_scan"]["output"] = "missing_current_sha_pickup"
+
+    errors = checker.validate_report(payload)
+
+    assert "external issue handback scan failed: missing_current_sha_pickup" in errors
+
+
+def test_release_fleet_dispatch_status_rejects_overdue_external_handback() -> None:
+    checker = load_checker_module()
+    payload = report_payload()
+    payload["issue_handback_scan"]["returncode"] = 1
+    payload["issue_handback_scan"]["output"] = (
+        "# External Proof Issue Handback Scan\n\n"
+        "| Task | Issue | Issue State | Latest Pickup | Age | Status | Candidate Comments | Escalation Due |\n"
+        "|---|---|---|---|---:|---|---:|---|\n"
+        "| `ODP-MAP-STAGE-001` | #135 | OPEN | 2026-06-29T12:00:00Z | 25.0h | "
+        "`no_handback_after_latest_pickup` | 0 | yes |"
+    )
+
+    errors = checker.validate_report(payload)
+
+    assert any("external issue handback scan failed" in error for error in errors)
+    assert any("Escalation Due" in error for error in errors)
+
+
+def test_release_fleet_dispatch_status_rejects_unclean_pr() -> None:
+    checker = load_checker_module()
+
+    errors = checker.validate_report(report_payload(merge_state="UNSTABLE"))
+
+    assert "PR #82 mergeStateStatus must be CLEAN" in errors
+
+
+def test_release_fleet_dispatch_status_cli_uses_fixture(tmp_path: Path) -> None:
+    fixture = tmp_path / "dispatch-status.json"
+    fixture.write_text(json.dumps(report_payload(), indent=2), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(CHECKER), "--fixture", str(fixture), "--report"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Release Fleet Dispatch Status" in result.stdout
+    assert "product closeout PR notification" in result.stdout

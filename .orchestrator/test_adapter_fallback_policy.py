@@ -215,7 +215,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     os.environ,
-                    {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config")},
+                    {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config"), "GH_CONFIG_DIR": ""},
                     clear=False,
                 ),
                 mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),

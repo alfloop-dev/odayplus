@@ -20,6 +20,23 @@ def test_health_routes_publish_correlation_id() -> None:
     assert "time" in body
 
 
+def test_platform_version_exposes_release_sha(monkeypatch) -> None:
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "fd70b4f40d9bc178bb9e21ce1a24a8b4e4e95203")
+    client = TestClient(create_app())
+
+    response = client.get("/platform/version", headers={"x-correlation-id": "corr-version-1"})
+
+    assert response.status_code == 200
+    assert response.headers["x-correlation-id"] == "corr-version-1"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "oday-api"
+    assert body["api_version"] == "0.1.0"
+    assert body["release_sha"] == "fd70b4f40d9bc178bb9e21ce1a24a8b4e4e95203"
+    assert body["correlation_id"] == "corr-version-1"
+    assert "time" in body
+
+
 def test_job_enqueue_is_idempotent_and_audited() -> None:
     client = TestClient(create_app())
     headers = {"x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}
@@ -68,6 +85,24 @@ def test_job_lookup_and_openapi_contract() -> None:
     assert "/health" in paths
     assert "/healthz" in paths
     assert "/platform/health" in paths
+    assert "/platform/version" in paths
     assert "/jobs" in paths
     assert "/jobs/{job_id}" in paths
     assert "/audit/events" in paths
+
+
+def test_external_data_freshness_api_exposes_lineage_and_correlation() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/external-data/freshness", headers={"x-correlation-id": "corr-fresh-api"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["correlation_id"] == "corr-fresh-api"
+    freshness = body["freshness"][0]
+    assert freshness["provider_id"] == "listing.partner_feed"
+    assert freshness["data_status"] == "FRESH"
+    assert freshness["source_snapshot_id"] == "snap-expansion-20260628-0100"
+    assert freshness["provider_observed_at"] == "2026-06-28T09:00:00+00:00"
+    assert freshness["ingested_at"] == "2026-06-28T09:12:00+00:00"
+    assert freshness["correlation_id"] == "corr-fresh-api"

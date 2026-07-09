@@ -1,0 +1,985 @@
+"""Verify FE fleet dispatch tasks stay tied to product E2E proof.
+
+The design-to-frontend execution matrix is the handoff contract used to split
+frontend work across implementation fleets. This test makes that contract part
+of CI so future edits cannot remove a workflow from the product E2E gate while
+the matrix still claims product-grade acceptance.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+MATRIX = ROOT / "docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md"
+FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md"
+COMPLETION_AUDIT = ROOT / "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
+GO_NO_GO = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
+READINESS_REPORT = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
+CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
+CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
+CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
+CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "scripts/e2e/check_product_closeout_pickup_board.py"
+CLOSEOUT_FLEET_COMMENT_SYNC = ROOT / "scripts/e2e/sync_product_closeout_fleet_comment.py"
+CLOSEOUT_FLEET_NOTIFICATION_CHECK = ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
+RELEASE_FLEET_DISPATCH_STATUS_CHECK = ROOT / "scripts/e2e/check_release_fleet_dispatch_status.py"
+PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
+PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
+PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
+PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
+PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
+PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
+EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
+EXTERNAL_PROOF_HANDBACK_STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_pickup_board.py"
+EXTERNAL_PROOF_STATUS_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+EXTERNAL_PROOF_LIVE_BLOCKERS_CHECK = ROOT / "scripts/e2e/check_external_proof_live_blockers.py"
+EXTERNAL_PROOF_NOTIFICATIONS_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+EXTERNAL_PROOF_FOLLOWUP_WORKFLOW = ROOT / ".github/workflows/external-proof-followup.yml"
+EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK = ROOT / "scripts/e2e/check_external_proof_followup_workflow.py"
+GO_NO_GO_CHECK = ROOT / "scripts/e2e/check_product_go_no_go.py"
+RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
+RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
+CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
+GRADE_FLEET_DISPATCH_CHECK = ROOT / "scripts/e2e/check_product_grade_fleet_dispatch.py"
+HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
+STALE_RELEASE_REFS = (
+    "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
+    "dev@d9d637a351cdacfa98184a91b64a403098aabfa6",
+    "dev@27f5ba0301b143e3b1ca544d44de3ecac4f97cfa",
+    "PR #80",
+)
+
+
+FE_TASKS = {
+    "FE-R0-001": {
+        "keywords": ("OpsBoard App Shell", "Task Center"),
+        "specs": ("tests/e2e/e2e-api-bound-ui.spec.ts",),
+    },
+    "FE-EXP-001": {
+        "keywords": ("HeatZone Map and Ranking",),
+        "specs": ("tests/e2e/e2e-map.spec.ts", "tests/e2e/e2e-expansion-product.spec.ts"),
+    },
+    "FE-EXP-002": {
+        "keywords": ("Listing to Candidate Site Workflow",),
+        "specs": ("tests/e2e/e2e-expansion-product.spec.ts",),
+    },
+    "FE-EXP-003": {
+        "keywords": ("SiteScore Report and Opening Approval",),
+        "specs": ("tests/e2e/e2e-expansion-product.spec.ts",),
+    },
+    "FE-OPS-001": {
+        "keywords": ("Operations Alert Workbench",),
+        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    },
+    "FE-INT-001": {
+        "keywords": ("Intervention Lifecycle",),
+        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    },
+    "FE-PRICE-001": {
+        "keywords": ("PriceOps Simulation", "Pricing approval and rollback"),
+        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    },
+    "FE-AD-001": {
+        "keywords": ("AdLift Candidate", "AdLift incrementality"),
+        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    },
+    "FE-AVM-001": {
+        "keywords": ("Asset Valuation and DataRoom", "AVM valuation"),
+        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    },
+    "FE-NET-001": {
+        "keywords": ("NetPlan Scenario Builder", "NetPlan solve"),
+        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    },
+    "FE-LEARN-001": {
+        "keywords": ("Learning Hub Model Governance", "Model release and rollback"),
+        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    },
+    "FE-AUDIT-001": {
+        "keywords": ("Audit Decision Log", "Decision audit export"),
+        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    },
+    "FE-XCUT-001": {
+        "keywords": ("Design token package",),
+        "specs": ("tests/e2e/product-e2e-env.spec.ts",),
+    },
+    "FE-XCUT-005": {
+        "keywords": ("Job and audit UX",),
+        "specs": ("tests/e2e/product-e2e-env.spec.ts",),
+    },
+    "FE-XCUT-006": {
+        "keywords": ("Map and chart fallback",),
+        "specs": ("tests/e2e/e2e-map.spec.ts",),
+    },
+}
+
+
+ODP_FE_TASKS = {
+    "ODP-FE-R0-001": (("FE-R0-001", "FE-R0-002"), ("tests/e2e/e2e-api-bound-ui.spec.ts",)),
+    "ODP-FE-EXP-001": (
+        ("FE-EXP-001", "FE-EXP-002", "FE-EXP-003"),
+        ("tests/e2e/e2e-map.spec.ts", "tests/e2e/e2e-expansion-product.spec.ts"),
+    ),
+    "ODP-FE-OPS-001": (
+        ("FE-OPS-001", "FE-INT-001"),
+        ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    ),
+    "ODP-FE-PRICE-001": (
+        ("FE-PRICE-001", "FE-AD-001"),
+        ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+    ),
+    "ODP-FE-ASSET-001": (
+        ("FE-AVM-001", "FE-NET-001"),
+        ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    ),
+    "ODP-FE-LEARN-001": (
+        ("FE-LEARN-001", "FE-AUDIT-001"),
+        ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+    ),
+    "ODP-FE-XCUT-001": (
+        ("FE-XCUT-001", "FE-XCUT-002", "FE-XCUT-003", "FE-XCUT-004", "FE-XCUT-005", "FE-XCUT-006"),
+        ("tests/e2e/test_frontend_execution_matrix_coverage.py",),
+    ),
+}
+
+
+def test_frontend_execution_matrix_names_all_fleet_tasks() -> None:
+    matrix_text = MATRIX.read_text(encoding="utf-8")
+
+    for task_id, expectation in FE_TASKS.items():
+        assert task_id in matrix_text
+        for keyword in expectation["keywords"]:
+            assert keyword in matrix_text
+
+
+def test_product_validation_dispatch_names_odp_frontend_lanes() -> None:
+    dispatch_text = FLEET_DISPATCH.read_text(encoding="utf-8")
+    matrix_text = MATRIX.read_text(encoding="utf-8")
+
+    for odp_task_id, (matrix_task_ids, e2e_specs) in ODP_FE_TASKS.items():
+        assert odp_task_id in dispatch_text
+        for matrix_task_id in matrix_task_ids:
+            assert matrix_task_id in matrix_text
+            assert matrix_task_id in dispatch_text
+        for e2e_spec in e2e_specs:
+            assert e2e_spec in dispatch_text
+
+
+def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
+    audit_text = COMPLETION_AUDIT.read_text(encoding="utf-8")
+    queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+
+    required_evidence = {
+        "ODP-FE-R0-001": "tests/e2e/opsboard-shell.spec.ts",
+        "ODP-FE-EXP-001": "tests/e2e/e2e-expansion-product.spec.ts",
+        "ODP-FE-OPS-001": "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+        "ODP-FE-PRICE-001": "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+        "ODP-FE-ASSET-001": "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "ODP-FE-LEARN-001": "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "ODP-FE-XCUT-001": "tests/e2e/test_frontend_execution_matrix_coverage.py",
+    }
+
+    for lane, evidence_ref in required_evidence.items():
+        assert lane in audit_text
+        assert evidence_ref in audit_text
+    assert "evidence-ready" in audit_text
+    for xcut_evidence in [
+        "tests/contract/test_frontend_domain_type_coverage.py",
+        "tests/contract/test_ui_core_component_exports.py",
+        "packages/ui-domain",
+        "PR #87",
+        "PR #88",
+        "PR #89",
+    ]:
+        assert xcut_evidence in audit_text
+    assert "ODP-PV-008" in audit_text
+
+    active_task_ids = {entry["task_id"] for entry in queue_payload["queue"]}
+    completed_task_ids = {entry["task_id"] for entry in queue_payload["completed_closeouts"]}
+    for task_id in active_task_ids:
+        assert task_id in audit_text
+    for task_id in completed_task_ids:
+        assert task_id in audit_text
+
+    assert "completed closeouts" in audit_text.lower()
+    assert "must not be re-dispatched as active work" in audit_text
+    assert "Use `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json`" in audit_text
+    assert "accepted #132-#136 handbacks" in audit_text
+    assert "accepted #137/#138 handbacks" in audit_text
+
+    stale_recommendations = (
+        "Move `ODP-FE-EXP-001`, `ODP-FE-PRICE-001`, and `ODP-FE-LEARN-001` to review",
+        "`ODP-FE-OPS-001`, `ODP-FE-ASSET-001`, `ODP-FE-XCUT-UI-001`",
+        "`ODP-FE-XCUT-DOMAIN-001`, `ODP-FE-XCUT-TYPES-001`, and parent",
+    )
+    for stale_recommendation in stale_recommendations:
+        assert stale_recommendation not in audit_text
+
+
+def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -> None:
+    evidence_docs = [
+        FLEET_DISPATCH,
+        COMPLETION_AUDIT,
+        GO_NO_GO,
+        READINESS_REPORT,
+        CLOSEOUT_MANIFEST,
+        CLOSEOUT_PLAYBOOK,
+        CLOSEOUT_QUEUE,
+    ]
+
+    for evidence_doc in evidence_docs:
+        text = evidence_doc.read_text(encoding="utf-8")
+        assert "PR #82" in text, evidence_doc
+        assert "headRefOid" in text, evidence_doc
+        assert "attached checks" in text, evidence_doc
+        assert not HARDCODED_DEV_RELEASE_REF.search(text), evidence_doc
+        for stale_ref in STALE_RELEASE_REFS:
+            assert stale_ref not in text, f"{evidence_doc} still cites stale release ref {stale_ref}"
+        for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90", "PR #91"):
+            assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
+
+
+def test_frontend_closeout_evidence_does_not_use_stale_dev_release_refs() -> None:
+    closeout_docs = sorted((ROOT / "docs/evidence").glob("ODP_FE_*_CLOSEOUT.md"))
+    assert closeout_docs
+
+    for closeout_doc in closeout_docs:
+        text = closeout_doc.read_text(encoding="utf-8")
+        assert not HARDCODED_DEV_RELEASE_REF.search(text), closeout_doc
+        for stale_ref in STALE_RELEASE_REFS:
+            assert stale_ref not in text, f"{closeout_doc} still cites stale release ref {stale_ref}"
+        assert "PR #82" in text, f"{closeout_doc} must point release authority back to PR #82"
+        assert "headRefOid" in text, f"{closeout_doc} must point release authority back to PR #82 headRefOid"
+
+
+def test_closeout_manifest_names_remaining_workflow_gates() -> None:
+    manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
+
+    required_tasks = (
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+        "ODP-FE-XCUT-TYPES-001",
+    )
+    for task_id in required_tasks:
+        assert task_id in manifest_text
+
+    for invariant in (
+        "Do not mark the release complete while PR #82 is draft",
+        "Do not claim live external provider integration",
+        "Do not claim live remote staging rollout",
+        "EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
+        "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
+        "check_external_proof_handback_template.py",
+        "check_external_proof_handback_status_board.py",
+        "check_external_proof_acceptance_readiness.py",
+        "update_external_proof_handback_status_board.py",
+        "check_external_proof_live_blockers.py --require-assignees",
+        "check_external_proof_fleet_notifications.py",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
+        "sync_external_proof_escalation_comments.py --apply",
+        "--force --comment-dir",
+        ".github/workflows/external-proof-followup.yml",
+        "check_external_proof_followup_workflow.py",
+        "--require-live-active",
+        "external-proof-followup",
+        "sync_external_proof_fleet_issues.py",
+        "check_external_proof_issue_sync.py --require-assignees",
+        "check_product_go_no_go.py",
+        "check_product_closeout_action_matrix.py",
+        "sync_product_closeout_fleet_comment.py",
+        "check_product_closeout_fleet_notification.py",
+        "check_release_fleet_dispatch_status.py",
+        "provider credential/OAuth",
+        "scheduled external fetch",
+        "quota/rate-limit",
+        "production licensing",
+        "thin or stale `main` checkout",
+        "scripts/ai_status.py",
+        "Human/Ops",
+        "reviewer status closeout",
+        "owner status closeout",
+    ):
+        assert invariant in manifest_text
+
+
+def test_closeout_playbook_gives_actionable_commands_for_each_actor() -> None:
+    playbook_text = CLOSEOUT_PLAYBOOK.read_text(encoding="utf-8")
+
+    for command in (
+        "scripts/ai_status.py approve",
+        "scripts/ai_status.py reopen",
+        "scripts/ai_status.py done",
+        "check_external_proof_handback_template.py",
+        "check_external_proof_handback_status_board.py",
+        "check_external_proof_acceptance_readiness.py",
+        "update_external_proof_handback_status_board.py",
+        "check_external_proof_live_blockers.py --require-assignees",
+        "check_external_proof_fleet_notifications.py",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
+        "sync_external_proof_escalation_comments.py --apply",
+        "--force --comment-dir",
+        ".github/workflows/external-proof-followup.yml",
+        "check_external_proof_followup_workflow.py",
+        "--require-live-active",
+        "external-proof-followup",
+        "sync_external_proof_fleet_issues.py",
+        "check_external_proof_issue_sync.py --require-assignees",
+        "check_product_go_no_go.py",
+        "check_product_closeout_action.py",
+        "check_product_closeout_action_matrix.py",
+        "sync_product_closeout_fleet_comment.py",
+        "check_product_closeout_fleet_notification.py",
+        "check_release_fleet_dispatch_status.py",
+        "gh pr view 82",
+        "check_product_release_gate.py",
+    ):
+        assert command in playbook_text
+
+    for actor in ("Human/Ops", "Claude", "Claude2", "Codex", "Codex2"):
+        assert actor in playbook_text
+
+    for boundary in (
+        "External data proof is deterministic source-stub/fixture coverage",
+        "Map proof is deterministic local MapLibre/deck/H3 coverage",
+        "Remote staging rollout remains conditional",
+        "Do not mark the active objective complete",
+    ):
+        assert boundary in playbook_text
+
+
+def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    checker_text = CHECK_CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
+    queue = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    board_text = CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
+
+    assert "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_pickup_board.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
+    assert "scripts/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
+    assert "Product closeout pickup board checks passed." in checker_text
+    assert "Product Release Closeout Pickup Board" in board_text
+    assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
+    assert "check_product_closeout_queue.py --report" in board_text
+    assert "check_product_closeout_action.py" in board_text
+    assert "check_product_closeout_action_matrix.py" in board_text
+    assert "sync_product_closeout_fleet_comment.py" in board_text
+    assert "check_product_closeout_fleet_notification.py" in board_text
+    assert "check_release_fleet_dispatch_status.py" in board_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in board_text
+    assert "check_product_go_no_go.py" in board_text
+    assert "check_external_proof_handback_status_board.py" in board_text
+    assert "check_external_proof_acceptance_readiness.py --report" in board_text
+    assert "update_external_proof_handback_status_board.py" in board_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in board_text
+    assert "check_external_proof_fleet_notifications.py" in board_text
+    assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
+    assert "sync_external_proof_escalation_comments.py --apply" in board_text
+    assert "--force --comment-dir" in board_text
+    assert ".github/workflows/external-proof-followup.yml" in board_text
+    assert "check_external_proof_followup_workflow.py" in board_text
+    assert "--require-live-active" in board_text
+    assert "external-proof-followup" in board_text
+    assert "check_external_proof_handback_artifact.py" in board_text
+
+    for actor in ("Human/Ops", "Claude", "Claude2", "Codex", "Codex2"):
+        assert actor in board_text
+
+    for action in (
+        "go_no_go",
+        "owner_handoff",
+        "owner_done",
+        "reviewer_approve_or_reopen",
+    ):
+        assert action in board_text
+
+    for blocking_type in (
+        "human_signoff",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+    ):
+        assert blocking_type in board_text
+
+    for boundary in (
+        "provider-specific production credential",
+        "provider-specific production licensing approval",
+        "remote-staging live tile",
+        "remote staging host/url/secret",
+        "full keyboard accessibility",
+    ):
+        assert boundary in board_text
+
+    for entry in queue["queue"]:
+        assert entry["task_id"] in board_text
+        assert entry["status"] in board_text
+        assert entry["actor"] in board_text
+        assert entry["action_type"] in board_text
+        assert entry["blocking_type"] in board_text
+        for evidence_ref in entry["evidence_refs"]:
+            assert evidence_ref in board_text
+        for command in entry["allowed_commands"]:
+            assert command.split(" <")[0].split(' "<')[0] in board_text
+
+
+def test_product_release_closeout_pickup_board_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product closeout pickup board checks passed." in result.stdout
+
+
+def test_product_go_no_go_guard_blocks_unaccepted_external_proof_claims() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    go_no_go_text = GO_NO_GO.read_text(encoding="utf-8")
+    checker_text = GO_NO_GO_CHECK.read_text(encoding="utf-8")
+
+    assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
+    assert "Product go/no-go guard checks passed." in checker_text
+    assert "Decision status: conditional go for deterministic product E2E" in go_no_go_text
+    assert "remote staging rollout remains conditional" in go_no_go_text
+    assert "External Proof Blocking Tasks" in go_no_go_text
+
+    for task_id in (
+        "ODP-EXT-PROD-001",
+        "ODP-EXT-PROD-002",
+        "ODP-EXT-PROD-003",
+        "ODP-MAP-STAGE-001",
+        "ODP-MAP-STAGE-002",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert task_id in go_no_go_text
+
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product go/no-go guard checks passed." in result.stdout
+
+
+def test_product_grade_gap_execution_tasks_are_actionable() -> None:
+    gap_text = PRODUCT_GRADE_GAP_TASKS.read_text(encoding="utf-8")
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+
+    assert "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md" in release_gate_text
+    assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md" in release_gate_text
+    assert "PR #82" in gap_text
+    assert "headRefOid" in gap_text
+    assert "attached checks" in gap_text
+
+    for task_id in (
+        "ODP-PV-LIVE-SRC-001",
+        "ODP-PV-LIVE-SRC-002",
+        "ODP-PV-LIVE-SRC-003",
+        "ODP-PV-LIVE-MAP-001",
+        "ODP-PV-LIVE-MAP-002",
+        "ODP-PV-LIVE-MAP-003",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert task_id in gap_text
+
+    for boundary in (
+        "provider credential/OAuth",
+        "scheduled external fetch",
+        "quota/rate-limit",
+        "production licensing",
+        "live tile rollout",
+        "live geocoder rollout",
+        "full keyboard accessibility",
+        "direct map picking",
+        "remote staging host/url/secret",
+        "Deterministic fixture/source-stub tests must remain as CI defaults",
+    ):
+        assert boundary in gap_text
+
+    for alias in (
+        "ODP-EXT-001",
+        "ODP-EXT-002",
+        "ODP-EXT-003",
+        "ODP-EXT-004",
+        "ODP-EXT-005",
+        "ODP-EXT-006",
+        "ODP-EXT-007",
+        "ODP-EXT-008",
+        "ODP-MAP-E2E-001",
+        "ODP-MAP-E2E-002",
+        "ODP-MAP-E2E-003",
+        "ODP-MAP-E2E-004",
+        "ODP-MAP-A11Y-001",
+        "ODP-MAP-E2E-005",
+        "ODP-MAP-E2E-006",
+    ):
+        assert alias in gap_text
+
+
+def test_product_grade_fleet_dispatch_names_all_live_gap_aliases() -> None:
+    gap_text = PRODUCT_GRADE_GAP_TASKS.read_text(encoding="utf-8")
+    dispatch_text = PRODUCT_GRADE_FLEET_DISPATCH.read_text(encoding="utf-8")
+    dispatch_packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
+
+    assert "PR #82" in dispatch_text
+    assert "headRefOid" in dispatch_text
+    assert "attached checks" in dispatch_text
+    assert "deterministic product E2E proof" in dispatch_text
+    assert "document-only PR must not close" in dispatch_text
+
+    for alias in (
+        "ODP-EXT-001",
+        "ODP-EXT-002",
+        "ODP-EXT-003",
+        "ODP-EXT-004",
+        "ODP-EXT-005",
+        "ODP-EXT-006",
+        "ODP-EXT-007",
+        "ODP-EXT-008",
+        "ODP-MAP-E2E-001",
+        "ODP-MAP-E2E-002",
+        "ODP-MAP-E2E-003",
+        "ODP-MAP-E2E-004",
+        "ODP-MAP-A11Y-001",
+        "ODP-MAP-E2E-005",
+        "ODP-MAP-E2E-006",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+    ):
+        assert alias in gap_text
+        assert alias in dispatch_text
+        assert alias in {task["id"] for task in dispatch_packet["tasks"]}
+
+    for lane in (
+        "External provider foundation",
+        "External source operations",
+        "Live map provider gate",
+        "Map accessibility and resilience",
+        "Remote staging rollout",
+    ):
+        assert lane in dispatch_text
+
+    for proof_boundary in (
+        "live-provider proof",
+        "live-map proof",
+        "remote-staging proof",
+        "Deterministic fixture/source-stub tests",
+        "provider secrets",
+        "staging version matches PR #82 `headRefOid`",
+    ):
+        assert proof_boundary in dispatch_text
+
+
+def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    checker_text = GRADE_FLEET_DISPATCH_CHECK.read_text(encoding="utf-8")
+    packet = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_PACKET.read_text(encoding="utf-8"))
+    queue = json.loads(PRODUCT_GRADE_FLEET_DISPATCH_QUEUE.read_text(encoding="utf-8"))
+    runbook_text = PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK.read_text(encoding="utf-8")
+    assignment_ledger_text = PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER.read_text(encoding="utf-8")
+
+    assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json" in release_gate_text
+    assert "scripts/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
+    assert "Product-grade fleet dispatch checks passed." in checker_text
+
+    assert packet["release_target"]["pr"] == 82
+    assert packet["release_target"]["must_not_hardcode_dev_hash"] is True
+    assert "headRefOid" in packet["release_target"]["authority"]
+
+    expected_boundaries = {"external_data_sources", "maps", "remote_staging"}
+    assert set(packet["scope_boundaries"]) == expected_boundaries
+
+    task_ids = {task["id"] for task in packet["tasks"]}
+    lane_aliases = {
+        alias
+        for lane in packet["dispatch_lanes"]
+        for alias in lane["aliases"]
+    }
+    queue_ids = {entry["task_id"] for entry in queue["queue"]}
+    assert task_ids == lane_aliases
+    assert task_ids == queue_ids
+    assert queue["status"] == "ready_for_fleet_pickup"
+    assert queue["queue_role"] == "historical_initial_dispatch"
+    assert queue["current_remaining_queue"] == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+    assert "Product-Grade E2E Fleet Kickoff Runbook" in runbook_text
+    assert "historical_initial_dispatch" in runbook_text
+    assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in runbook_text
+    assert "Fleet Pickup Sequence" in runbook_text
+    assert "Completion Handback" in runbook_text
+    assert "generate_external_proof_handback_skeleton.py" in runbook_text
+    assert "check_external_proof_handback_artifact.py" in runbook_text
+    assert "check_external_proof_handback_bundle.py" in runbook_text
+    assert "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json" in runbook_text
+    assert "update_external_proof_handback_status_board.py" in runbook_text
+    assert "check_external_proof_handback_status_board.py" in runbook_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in runbook_text
+    assert "check_external_proof_fleet_notifications.py" in runbook_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in runbook_text
+    assert "It is not completion evidence." in assignment_ledger_text
+    assert "Do not mark any dispatched task complete from this ledger alone." in assignment_ledger_text
+
+    for task in packet["tasks"]:
+        assert task["status"] == "open"
+        assert task["scope_boundary"] in expected_boundaries
+        assert task["owner_lane"]
+        assert task["reviewer_lane"]
+        assert task["implementation_evidence"]
+        assert task["verification_evidence"]
+        assert task["acceptance_criteria"]
+        assert task["suggested_branch"].startswith(f"task/{task['id']}")
+        assert task["handoff_artifacts"]
+        assert task["id"] in runbook_text
+        assert task["suggested_branch"] in runbook_text
+        assert task["id"] in assignment_ledger_text
+
+    for lane in packet["dispatch_lanes"]:
+        assert lane["lane"] in assignment_ledger_text
+
+    for entry in queue["queue"]:
+        assert entry["dispatch_status"] == "ready_for_fleet"
+        assert entry["dispatch_command"] == (
+            f"python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task {entry['task_id']}"
+        )
+        assert (ROOT / entry["brief_path"]).exists()
+        assert entry["minimum_completion_signal"]["implementation_evidence"]
+        assert entry["minimum_completion_signal"]["verification_evidence"]
+        assert entry["minimum_completion_signal"]["acceptance_criteria"]
+        assert entry["minimum_completion_signal"]["handoff_artifacts"]
+        assert entry["dispatch_command"] in runbook_text
+
+
+def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    queue = json.loads(EXTERNAL_PROOF_CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    board_text = EXTERNAL_PROOF_FLEET_PICKUP_BOARD.read_text(encoding="utf-8")
+
+    assert "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md" in release_gate_text
+    assert "scripts/e2e/check_external_proof_fleet_pickup_board.py" in release_gate_text
+    assert "External Proof Fleet Pickup Board" in board_text
+    assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in board_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in board_text
+    assert "sync_external_proof_fleet_issues.py --release-sha" in board_text
+    assert "check_external_proof_fleet_pickup_board.py" in board_text
+    assert "check_product_go_no_go.py" in board_text
+    assert "EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json" in board_text
+    assert "check_external_proof_handback_status_board.py" in board_text
+    assert "check_external_proof_acceptance_readiness.py --report" in board_text
+    assert "check_external_proof_acceptance_readiness.py --strict-complete" in board_text
+    assert "update_external_proof_handback_status_board.py" in board_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in board_text
+    assert "check_external_proof_fleet_notifications.py" in board_text
+    assert "check_external_proof_issue_handback_scan.py --report --fail-on-escalation" in board_text
+    assert "sync_external_proof_escalation_comments.py --apply" in board_text
+    assert "--force --comment-dir" in board_text
+    assert ".github/workflows/external-proof-followup.yml" in board_text
+    assert "check_external_proof_followup_workflow.py" in board_text
+    assert "--require-live-active" in board_text
+    assert "external-proof-followup" in board_text
+    assert "generate_external_proof_handback_skeleton.py" in board_text
+    assert "check_external_proof_handback_artifact.py" in board_text
+    assert "check_external_proof_handback_bundle.py" in board_text
+    assert "mock://" in board_text
+    assert "localhost" in board_text
+    assert "127.0.0.1" in board_text
+
+    for entry in queue["queue"]:
+        issue_number = entry["tracking_issue"].rsplit("/", 1)[-1]
+        assert entry["task_id"] in board_text
+        assert f"#{issue_number}" in board_text
+        assert entry["fleet_routing"]["dispatch_lane"] in board_text
+        assert entry["fleet_routing"]["pickup_label"] in board_text
+        assert f"--task {entry['task_id']}" in board_text
+        for evidence in entry["required_evidence"]:
+            assert evidence in board_text
+        for command in entry["allowed_commands"]:
+            assert command.split(" <")[0].split(' "<')[0] in board_text
+        assert entry["completion_rule"] in board_text
+
+
+def test_external_proof_fleet_pickup_board_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, str(EXTERNAL_PROOF_PICKUP_BOARD_CHECK)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "External proof fleet pickup board checks passed." in result.stdout
+
+
+def test_product_grade_fleet_dispatch_checker_runs() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Product-grade fleet dispatch checks passed." in result.stdout
+
+
+def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
+    report_result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--report"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = report_result.stdout
+    assert "# Product-Grade E2E Fleet Dispatch Report" in report
+    assert "Dispatch Lanes" in report
+    assert "Task Brief Commands" in report
+    assert "ODP-EXT-001" in report
+    assert "ODP-MAP-E2E-001" in report
+    assert "ODP-PV-STAGE-001" in report
+
+    brief_result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--task", "ODP-MAP-E2E-003"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    brief = brief_result.stdout
+    assert "# Fleet Execution Brief: ODP-MAP-E2E-003" in brief
+    assert "Suggested branch: `task/ODP-MAP-E2E-003-direct-map-picking`" in brief
+    assert "Direct map picking" in brief
+    assert "Implementation Evidence Required" in brief
+    assert "Verification Evidence Required" in brief
+    assert "Acceptance Criteria" in brief
+    assert "Handoff Artifacts" in brief
+
+    generated_index = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "README.md").read_text(encoding="utf-8")
+    generated_brief = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "ODP-MAP-E2E-003.md").read_text(encoding="utf-8")
+    assert report.strip() == generated_index.strip()
+    assert brief.strip() == generated_brief.strip()
+
+
+def test_closeout_queue_is_machine_readable_and_complete() -> None:
+    queue_payload = json.loads(CLOSEOUT_QUEUE.read_text(encoding="utf-8"))
+    queue_entries = queue_payload["queue"]
+    completed_closeouts = queue_payload["completed_closeouts"]
+
+    assert queue_payload["release_target"]["pr"] == 82
+    assert queue_payload["release_target"]["must_not_hardcode_dev_hash"] is True
+    assert "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url" in queue_payload[
+        "global_preflight"
+    ]
+
+    required_active_task_ids = {
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+    }
+    required_completed_task_ids = {
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-TYPES-001",
+    }
+    active_task_ids = {entry["task_id"] for entry in queue_entries}
+    completed_task_ids = {entry["task_id"] for entry in completed_closeouts}
+    assert required_active_task_ids <= active_task_ids
+    assert required_completed_task_ids <= completed_task_ids
+    assert active_task_ids.isdisjoint(completed_task_ids)
+
+    required_blocking_types = {
+        "human_signoff",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+    }
+    assert required_blocking_types <= {entry["blocking_type"] for entry in queue_entries}
+
+    for entry in queue_entries:
+        assert entry["actor"]
+        assert entry["action_type"]
+        assert entry["allowed_commands"]
+        assert entry["evidence_refs"]
+        for evidence_ref in entry["evidence_refs"]:
+            evidence_path = ROOT / evidence_ref
+            assert evidence_path.exists(), f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
+
+    for completed_entry in completed_closeouts:
+        assert completed_entry["status"] == "done"
+        assert completed_entry["completion_note"]
+        assert completed_entry["evidence_refs"]
+        for evidence_ref in completed_entry["evidence_refs"]:
+            evidence_path = ROOT / evidence_ref
+            assert evidence_path.exists(), (
+                f"{completed_entry['task_id']} completed evidence ref is missing: {evidence_ref}"
+            )
+
+    queue_text = CLOSEOUT_QUEUE.read_text(encoding="utf-8")
+    manifest_text = CLOSEOUT_MANIFEST.read_text(encoding="utf-8")
+    for boundary in (
+        "provider credential/OAuth wiring",
+        "scheduled external fetch",
+        "quota/rate-limit handling",
+        "live tile rollout",
+        "full keyboard accessibility",
+        "remote staging host/url/secret configuration",
+    ):
+        assert boundary in queue_text
+
+    asset_entries = [entry for entry in queue_entries if entry["task_id"] == "ODP-FE-ASSET-001"]
+    assert len(asset_entries) == 2
+    asset_owner_entry = next(entry for entry in asset_entries if entry["action_type"] == "owner_handoff")
+    asset_reviewer_entry = next(
+        entry for entry in asset_entries if entry["action_type"] == "reviewer_approve_or_reopen"
+    )
+    assert asset_owner_entry["status"] == "in_progress"
+    assert asset_owner_entry["actor"] == "Claude"
+    assert asset_owner_entry["blocking_type"] == "owner_status_closeout"
+    assert asset_reviewer_entry["status"] == "waiting_for_review_after_handoff"
+    assert asset_reviewer_entry["actor"] == "Codex2"
+    assert asset_reviewer_entry["blocking_type"] == "reviewer_status_closeout"
+    assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_reviewer_entry["evidence_refs"]
+    assert "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts" in asset_reviewer_entry["evidence_refs"]
+    assert "masking leakage" not in queue_text
+    assert "masking leakage" not in manifest_text
+    assert "non-leakage E2E assertions" in manifest_text
+
+    avm_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan.spec.ts").read_text(encoding="utf-8")
+    avm_product_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts").read_text(encoding="utf-8")
+    for token in (
+        "MASKED_BY_PERMISSION",
+        "not.toContainText(\"17,654\")",
+        "not.toContainText(\"33,390\")",
+        "avm-reserve-marker",
+        "avm-asking-marker",
+    ):
+        assert token in avm_spec_text
+        assert token in avm_product_spec_text
+
+
+def test_release_gate_runs_closeout_queue_checker() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    queue_check_text = CLOSEOUT_QUEUE_CHECK.read_text(encoding="utf-8")
+
+    assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
+    assert "scripts/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_handback_status_board.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_acceptance_readiness.py" in release_gate_text
+    assert "scripts/e2e/update_external_proof_handback_status_board.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_live_blockers.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_fleet_notifications.py" in release_gate_text
+    assert "scripts/e2e/check_external_proof_issue_handback_scan.py" in release_gate_text
+    assert "--fail-on-escalation" in release_gate_text
+    assert "scripts/e2e/sync_external_proof_escalation_comments.py" in release_gate_text
+    assert ".github/workflows/external-proof-followup.yml" in release_gate_text
+    assert "scripts/e2e/check_external_proof_followup_workflow.py" in release_gate_text
+    assert "scripts/e2e/sync_external_proof_fleet_issues.py" in release_gate_text
+    assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
+    assert "Product closeout queue checks passed." in queue_check_text
+    assert "ai-status.json" in queue_check_text
+    assert "waiting_for_" in queue_check_text
+    assert "waiting_for_review_after_handoff" in CLOSEOUT_QUEUE.read_text(encoding="utf-8")
+
+
+def test_external_proof_followup_workflow_runs_live_handoff_guards() -> None:
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+    workflow_text = EXTERNAL_PROOF_FOLLOWUP_WORKFLOW.read_text(encoding="utf-8")
+    checker_text = EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK.read_text(encoding="utf-8")
+
+    assert ".github/workflows/external-proof-followup.yml" in release_gate_text
+    assert "scripts/e2e/check_external_proof_followup_workflow.py" in release_gate_text
+    assert "External Proof Follow-up" in workflow_text
+    assert "workflow_dispatch" in workflow_text
+    assert "schedule:" in workflow_text
+    assert "GH_TOKEN" in workflow_text
+    assert "issues: write" in workflow_text
+    assert "pull-requests: read" in workflow_text
+    assert "gh pr view 82" in workflow_text
+    assert "check_external_proof_issue_sync.py --require-assignees" in workflow_text
+    assert "check_external_proof_fleet_notifications.py" in workflow_text
+    assert "check_external_proof_live_blockers.py --require-assignees" in workflow_text
+    assert "check_external_proof_handback_status_board.py" in workflow_text
+    assert "check_external_proof_issue_handback_scan.py" in workflow_text
+    assert "--fail-on-escalation" in workflow_text
+    assert "sync_external_proof_escalation_comments.py" in workflow_text
+    assert "actions/upload-artifact@v4" in workflow_text
+    assert "--require-live-active" in checker_text
+    assert "not listed by GitHub Actions" in checker_text
+
+
+def test_closeout_queue_report_runs_without_live_ai_status() -> None:
+    import os
+    test_env = os.environ.copy()
+    test_env["PANTHEON_STATUS_ROOT"] = "/tmp/nonexistent-status-path-for-test"
+    result = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_queue.py", "--report"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=test_env,
+    )
+    report = result.stdout
+
+    assert "# Product Release Closeout Queue Report" in report
+    assert "PR: #82" in report
+    assert "ai-status.json loaded: false" in report
+    assert "| Task | Queue Status | Live Status | Actor | Action | Blocking Type | State |" in report
+    assert "ODP-PV-008" in report
+    assert "queued_no_live_status" in report
+    assert "external_data_sources" in report
+    assert "provider credential/OAuth wiring" in report
+    assert "maps" in report
+    assert "full keyboard accessibility" in report
+    assert "remote_staging" in report
+
+
+def test_product_e2e_runner_includes_specs_for_each_dispatch_workflow() -> None:
+    runner_text = RUNNER.read_text(encoding="utf-8")
+
+    for task_id, expectation in FE_TASKS.items():
+        missing = [spec for spec in expectation["specs"] if spec not in runner_text]
+        assert not missing, f"{task_id} is missing product E2E runner specs: {missing}"
+
+
+def test_release_gate_static_check_tracks_same_product_e2e_specs() -> None:
+    runner_text = RUNNER.read_text(encoding="utf-8")
+    release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
+
+    runner_specs = {
+        line.strip().rstrip(" \\")
+        for line in runner_text.splitlines()
+        if line.strip().startswith("tests/e2e/") and line.strip().endswith((".spec.ts", ".spec.ts \\"))
+    }
+
+    for spec in runner_specs:
+        assert spec in release_gate_text
