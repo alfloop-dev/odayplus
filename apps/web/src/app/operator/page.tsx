@@ -6,7 +6,10 @@ export const metadata: Metadata = {
   description: "Oday Plus operator console design prototype",
 };
 
-export default function OperatorPage() {
-  return <OperatorConsole />;
-}
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
 
+export default async function OperatorPage({ searchParams }: PageProps) {
+  return <OperatorConsole searchParams={await searchParams} />;
+}

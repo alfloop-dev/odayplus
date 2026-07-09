@@ -18,6 +18,7 @@ import {
 import { DesignStoreOpsWorkspace, DesignTodayWorkspace } from "./DesignAlignedWorkspaces";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
+import { GrowthWorkspace } from "./GrowthWorkspace";
 import {
   DEFAULT_OPERATOR_ROLE_ID,
   DEFAULT_WORKSPACE_ID,
@@ -267,7 +268,7 @@ const notifications = [
   },
 ];
 
-export function OperatorConsole() {
+export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
@@ -282,11 +283,27 @@ export function OperatorConsole() {
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
-    const storedWorkspace = getWorkspace(window.sessionStorage.getItem(workspaceStorageKey));
-
     setActiveRoleId(storedRole.id);
-    setActiveWorkspaceId(isWorkspaceAllowed(storedRole, storedWorkspace.id) ? storedWorkspace.id : DEFAULT_WORKSPACE_ID);
-  }, []);
+
+    let targetWorkspaceId = DEFAULT_WORKSPACE_ID;
+    if (searchParams && typeof searchParams.ws === "string") {
+      const ws = searchParams.ws as WorkspaceId;
+      if (WORKSPACES.some((w) => w.id === ws)) {
+        targetWorkspaceId = ws;
+      }
+    } else {
+      const storedWorkspace = getWorkspace(window.sessionStorage.getItem(workspaceStorageKey));
+      targetWorkspaceId = storedWorkspace.id;
+    }
+
+    if (isWorkspaceAllowed(storedRole, targetWorkspaceId)) {
+      setActiveWorkspaceId(targetWorkspaceId);
+      window.sessionStorage.setItem(workspaceStorageKey, targetWorkspaceId);
+    } else {
+      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
+      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
+    }
+  }, [searchParams?.ws]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -518,6 +535,8 @@ export function OperatorConsole() {
               role={activeRole.label}
             />
           </WorkspaceChrome>
+        ) : activeWorkspaceId === "growth" ? (
+          <GrowthWorkspace searchParams={searchParams} basePath="/operator" />
         ) : (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <WorkspacePlaceholder workspaceId={activeWorkspaceId} />
