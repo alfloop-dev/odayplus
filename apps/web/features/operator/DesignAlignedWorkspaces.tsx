@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, useState, useMemo, useEffect } from "react";
-import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES } from "./fixtures";
+import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import styles from "./designAligned.module.css";
 import type { Issue, Severity, EvidenceKind, OperatorRoleId } from "./types";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
