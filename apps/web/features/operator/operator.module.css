@@ -1,0 +1,381 @@
+.consoleTabs,
+.workspaceNav,
+.headerActions,
+.badgeRow,
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+}
+
+.consoleTabs {
+  margin-bottom: var(--odp-space-4);
+  padding-bottom: var(--odp-space-2);
+  border-bottom: 1px solid var(--odp-color-border-default);
+}
+
+.consoleTabs a,
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-primary);
+  text-decoration: none;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.consoleTabs a[aria-current="page"],
+.primaryButton {
+  border-color: var(--odp-color-border-focus);
+  background: var(--odp-color-bg-info-soft);
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.secondaryButton {
+  color: var(--odp-color-text-secondary);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.primaryButton[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.overviewGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--odp-space-3);
+  margin-bottom: var(--odp-space-4);
+}
+
+.metric {
+  display: grid;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  box-shadow: var(--odp-elevation-card);
+}
+
+.metric span {
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.metric strong {
+  font-size: var(--odp-font-size-xl);
+  line-height: var(--odp-line-height-compact);
+}
+
+.section {
+  margin-bottom: var(--odp-space-5);
+}
+
+.sectionTitle {
+  margin: 0 0 var(--odp-space-1);
+  font-size: var(--odp-font-size-lg);
+  line-height: var(--odp-line-height-compact);
+}
+
+.sectionHint {
+  margin: 0 0 var(--odp-space-3);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+  margin-bottom: var(--odp-space-3);
+}
+
+.filterBar span {
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-pill, var(--odp-radius-md));
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+  text-decoration: none;
+  font-size: var(--odp-font-size-sm);
+}
+
+.chip[aria-current="true"] {
+  border-color: var(--odp-color-border-focus);
+  background: var(--odp-color-bg-info-soft);
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--odp-font-size-sm);
+}
+
+.table caption {
+  padding: var(--odp-space-2) var(--odp-space-3);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+  text-align: left;
+}
+
+.table th,
+.table td {
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.table tr[aria-selected="true"] {
+  background: var(--odp-color-bg-info-soft);
+}
+
+.link {
+  color: var(--odp-color-text-link);
+  font-weight: var(--odp-font-weight-semibold);
+  text-decoration: none;
+}
+
+.subtle {
+  display: block;
+  margin-top: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.mono {
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 40%);
+  gap: var(--odp-space-4);
+  align-items: start;
+}
+
+.drawer {
+  display: grid;
+  gap: var(--odp-space-3);
+  padding: var(--odp-density-card-padding);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  box-shadow: var(--odp-elevation-card);
+}
+
+.drawer h2 {
+  margin: 0;
+  font-size: var(--odp-font-size-lg);
+  line-height: var(--odp-line-height-compact);
+}
+
+.drawer h3 {
+  margin: 0 0 var(--odp-space-1);
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-secondary);
+}
+
+.drawer p {
+  margin: 0;
+  color: var(--odp-color-text-primary);
+}
+
+.softBlock,
+.warningBlock,
+.successBlock {
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-muted);
+}
+
+.warningBlock {
+  border-color: var(--odp-color-status-red);
+  background: var(--odp-color-status-red-soft);
+  color: var(--odp-color-status-red-on);
+}
+
+.successBlock {
+  border-color: var(--odp-color-status-green);
+  background: var(--odp-color-status-green-soft);
+  color: var(--odp-color-status-green-on);
+}
+
+.twoColumn {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--odp-space-3);
+}
+
+.liftRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--odp-space-3);
+}
+
+.liftRow strong {
+  font-size: var(--odp-font-size-lg);
+}
+
+.auditGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--odp-space-1) var(--odp-space-4);
+  margin: 0;
+  font-size: var(--odp-font-size-xs);
+}
+
+.auditGrid dt {
+  color: var(--odp-color-text-secondary);
+}
+
+.auditGrid dd {
+  margin: 0;
+  font-family: var(--odp-font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.closeoutPanel {
+  display: grid;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-focus);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+}
+
+.closeoutActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--odp-z-modal, 1000);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--odp-space-4);
+  background: var(--odp-color-scrim, rgba(15, 23, 42, 0.55));
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--odp-density-card-padding);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-lg, var(--odp-radius-md));
+  background: var(--odp-color-bg-surface);
+  box-shadow: var(--odp-elevation-overlay, var(--odp-elevation-card));
+}
+
+.modalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--odp-space-3);
+  margin-bottom: var(--odp-space-3);
+}
+
+.modalHeader h2 {
+  margin: 0;
+  font-size: var(--odp-font-size-lg);
+}
+
+.modalForm {
+  display: grid;
+  gap: var(--odp-space-3);
+}
+
+.modalForm label {
+  display: grid;
+  gap: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.modalForm input,
+.modalForm select,
+.modalForm textarea {
+  min-height: var(--odp-density-control-height);
+  padding: var(--odp-space-1) var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-primary);
+  font: inherit;
+}
+
+.modalForm textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.modalActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--odp-space-2);
+  margin-top: var(--odp-space-2);
+}
+
+.auditLine {
+  margin: 0;
+  color: var(--odp-color-text-secondary);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .overviewGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detailGrid,
+  .twoColumn {
+    grid-template-columns: 1fr;
+  }
+}
