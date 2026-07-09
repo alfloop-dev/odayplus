@@ -15,7 +15,7 @@ from modules.learninghub.application import LearningHubError, LearningHubService
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, HTTPException, Request, status
+    from fastapi import APIRouter, HTTPException, Request, status, Depends
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -112,16 +112,20 @@ else:
         artifact_store: InMemoryArtifactStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
+        from shared.auth import Action
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+
         router = APIRouter(prefix="/learninghub", tags=["learninghub"])
         active_repository = repository or InMemoryLearningHubRepository()
         active_artifacts = artifact_store or InMemoryArtifactStore()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         service = LearningHubService(
             repository=active_repository,
             audit_log=active_audit_log,
         )
 
-        @router.post("/dataset-snapshots", status_code=status.HTTP_201_CREATED)
+        @router.post("/dataset-snapshots", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.CREATE, engine=authz_engine))])
         def register_dataset_snapshot(
             body: DatasetSnapshotPayload, request: Request
         ) -> dict[str, Any]:
@@ -148,7 +152,7 @@ else:
             )
             return payload
 
-        @router.post("/models/{model_name}/versions", status_code=status.HTTP_201_CREATED)
+        @router.post("/models/{model_name}/versions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.CREATE, engine=authz_engine))])
         def register_model_version(
             model_name: str, body: ModelVersionPayload, request: Request
         ) -> dict[str, Any]:
@@ -224,7 +228,7 @@ else:
             )
             return payload
 
-        @router.post("/releases", status_code=status.HTTP_201_CREATED)
+        @router.post("/releases", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.PUBLISH, engine=authz_engine))])
         def request_release(body: ReleasePayload, request: Request) -> dict[str, Any]:
             try:
                 decision = service.request_release(
@@ -251,7 +255,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/models/{model_name}")
+        @router.get("/models/{model_name}", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def get_model(model_name: str) -> dict[str, Any]:
             versions = active_repository.list_model_versions(model_name)
             return {
@@ -264,7 +268,7 @@ else:
                 ],
             }
 
-        @router.get("/models/{model_name}/evidence")
+        @router.get("/models/{model_name}/evidence", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def get_model_evidence(model_name: str) -> dict[str, Any]:
             return build_model_registry_evidence(
                 model_name=model_name,
@@ -272,7 +276,7 @@ else:
                 artifact_store=active_artifacts,
             ).to_dict()
 
-        @router.get("/releases")
+        @router.get("/releases", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def list_releases(model_name: str | None = None) -> dict[str, Any]:
             releases = active_repository.list_release_decisions()
             if model_name is not None:

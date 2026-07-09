@@ -12,7 +12,7 @@ from shared.audit import InMemoryAuditLog
 from shared.audit.persistence import EvidenceBundleStore
 
 try:
-    from fastapi import APIRouter, HTTPException, Request, status
+    from fastapi import APIRouter, HTTPException, Request, status, Depends
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -38,13 +38,17 @@ else:
         evidence_store: EvidenceBundleStore | None = None,
         service: AuditEvidenceExportService | None = None,
     ) -> APIRouter:
+        from shared.auth import Action
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+
         router = APIRouter(prefix="/audit", tags=["audit"])
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         export_service = service or AuditEvidenceExportService(
             audit_log=active_audit_log, evidence_store=evidence_store
         )
 
-        @router.post("/evidence/export", status_code=status.HTTP_201_CREATED)
+        @router.post("/evidence/export", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("audit", Action.EXPORT, engine=authz_engine))])
         def export_evidence(body: EvidenceExportPayload, request: Request) -> dict[str, Any]:
             try:
                 export_request = EvidenceExportRequest(
@@ -74,7 +78,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/evidence/exports")
+        @router.get("/evidence/exports", dependencies=[Depends(require_permission("audit", Action.VIEW, engine=authz_engine))])
         def list_retained_evidence(program_id: str | None = None) -> dict[str, Any]:
             if evidence_store is None:
                 return {"exports": []}
@@ -85,7 +89,7 @@ else:
             )
             return {"exports": [record.summary() for record in records]}
 
-        @router.get("/evidence/exports/{export_id}")
+        @router.get("/evidence/exports/{export_id}", dependencies=[Depends(require_permission("audit", Action.VIEW, engine=authz_engine))])
         def get_retained_evidence(export_id: str) -> dict[str, Any]:
             record = None if evidence_store is None else evidence_store.get(export_id)
             if record is None:
