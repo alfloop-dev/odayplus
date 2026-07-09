@@ -35,6 +35,7 @@ export type GovernanceApproval = {
   risk?: string;
   roleNote?: string;
   evidence?: GovernanceEvidence[];
+  reason?: string;
 };
 
 export type GovernanceDecisionRow = {
