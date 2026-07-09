@@ -937,12 +937,16 @@ def test_external_proof_followup_workflow_runs_live_handoff_guards() -> None:
 
 
 def test_closeout_queue_report_runs_without_live_ai_status() -> None:
+    import os
+    test_env = os.environ.copy()
+    test_env["PANTHEON_STATUS_ROOT"] = "/tmp/nonexistent-status-path-for-test"
     result = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_closeout_queue.py", "--report"],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
+        env=test_env,
     )
     report = result.stdout
 

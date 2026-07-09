@@ -1,3 +1,4 @@
+# CI Workflow config. To run the full CI suite locally, use: make ci
 name: CI
 
 on:
@@ -66,6 +67,9 @@ jobs:
 
       - name: Test product code
         run: uv run pytest -m "not requires_live_env" tests modules apps shared models
+
+      - name: Run security checks
+        run: make security
 
       - name: Run Node workspace checks
         run: make node-check
