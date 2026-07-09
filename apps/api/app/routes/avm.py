@@ -6,7 +6,7 @@ from modules.avm.application.valuation import AVMError
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status, Depends
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -67,8 +67,8 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         case_store: AVMCaseStore | None = None,
     ) -> APIRouter:
-        from shared.auth import Action
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
 
         router = APIRouter(prefix="/avm", tags=["avm"])
         service = AVMService(repository=repository or InMemoryAVMRepository())

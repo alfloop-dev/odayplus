@@ -5,7 +5,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, Request, status, Depends
+    from fastapi import APIRouter, Depends, Header, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -60,8 +60,8 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_store: ForecastOpsJobStore | None = None,
     ) -> APIRouter:
-        from shared.auth import Action
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
 
         router = APIRouter(prefix="/forecastops", tags=["forecastops"])
         forecast_repository = repository or InMemoryForecastOpsRepository()

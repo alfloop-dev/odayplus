@@ -16,7 +16,7 @@ from modules.intervention.domain.lifecycle import InterventionError
 from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status, Depends
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -88,8 +88,8 @@ else:
         workflow: InterventionWorkflow | None = None,
         label_registry: InMemoryLabelRegistry | None = None,
     ) -> APIRouter:
-        from shared.auth import Action
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
 
         router = APIRouter(prefix="/interventions", tags=["interventions"])
         active_workflow = workflow or InterventionWorkflow()

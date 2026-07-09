@@ -6,7 +6,7 @@ from uuid import uuid4
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status, Depends
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -44,8 +44,8 @@ else:
         workflow: SiteScoreDecisionWorkflow | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
-        from shared.auth import Action
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
 
         router = APIRouter(prefix="/sitescore", tags=["sitescore"])
         active_audit_log = audit_log or InMemoryAuditLog()

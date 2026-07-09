@@ -16,6 +16,7 @@ from modules.adlift import (
     run_adlift_incrementality_batch,
     run_incrementality,
 )
+from tests.integration._authz import ADLIFT_HEADERS
 
 GENERATED_AT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -338,7 +339,7 @@ def test_batch_worker_succeeds_and_serialises() -> None:
 
 
 def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=ADLIFT_HEADERS)
     campaign_payload: dict = {
         "campaign_id": "camp-api-001",
         "name": "API Spring Campaign",

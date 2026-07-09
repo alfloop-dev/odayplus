@@ -6,7 +6,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, HTTPException, Request, status, Depends
+    from fastapi import APIRouter, Depends, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -68,8 +68,8 @@ else:
         repository: InMemoryNetPlanRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
-        from shared.auth import Action
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
 
         router = APIRouter(prefix="/netplan", tags=["netplan"])
         service = NetPlanService(repository=repository or InMemoryNetPlanRepository())
