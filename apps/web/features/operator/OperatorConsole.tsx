@@ -282,21 +282,28 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const activeWorkspace = getWorkspace(activeWorkspaceId);
 
   useEffect(() => {
+    const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
+    setActiveRoleId(storedRole.id);
+
+    let targetWorkspaceId = DEFAULT_WORKSPACE_ID;
     if (searchParams && typeof searchParams.ws === "string") {
       const ws = searchParams.ws as WorkspaceId;
-      if (WORKSPACES.some((w) => w.id === ws) && isWorkspaceAllowed(activeRole, ws)) {
-        setActiveWorkspaceId(ws);
+      if (WORKSPACES.some((w) => w.id === ws)) {
+        targetWorkspaceId = ws;
       }
+    } else {
+      const storedWorkspace = getWorkspace(window.sessionStorage.getItem(workspaceStorageKey));
+      targetWorkspaceId = storedWorkspace.id;
     }
-  }, [searchParams?.ws, activeRole]);
 
-  useEffect(() => {
-    const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
-    const storedWorkspace = getWorkspace(window.sessionStorage.getItem(workspaceStorageKey));
-
-    setActiveRoleId(storedRole.id);
-    setActiveWorkspaceId(isWorkspaceAllowed(storedRole, storedWorkspace.id) ? storedWorkspace.id : DEFAULT_WORKSPACE_ID);
-  }, []);
+    if (isWorkspaceAllowed(storedRole, targetWorkspaceId)) {
+      setActiveWorkspaceId(targetWorkspaceId);
+      window.sessionStorage.setItem(workspaceStorageKey, targetWorkspaceId);
+    } else {
+      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
+      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
+    }
+  }, [searchParams?.ws]);
 
   useEffect(() => {
     if (!toast) return undefined;

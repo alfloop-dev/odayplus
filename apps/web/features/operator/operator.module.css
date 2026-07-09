@@ -1415,3 +1415,5 @@
   .detailGrid,
   .twoColumn {
     grid-template-columns: 1fr;
+  }
+}

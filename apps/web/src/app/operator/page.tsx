@@ -7,9 +7,9 @@ export const metadata: Metadata = {
 };
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function OperatorPage({ searchParams }: PageProps) {
-  return <OperatorConsole searchParams={searchParams} />;
+export default async function OperatorPage({ searchParams }: PageProps) {
+  return <OperatorConsole searchParams={await searchParams} />;
 }
