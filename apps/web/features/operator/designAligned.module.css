@@ -753,3 +753,66 @@
   background: #fff;
   border: 1px solid #ccd6e5;
 }
+
+.forecastChartSection {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #dfe6f1;
+  border-radius: 8px;
+  background: #fcfdfe;
+}
+
+.forecastChartSection h4 {
+  margin: 0 0 12px;
+  color: #172139;
+  font-size: 14px;
+}
+
+.chartLegend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #53617a;
+  justify-content: center;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendItem i {
+  display: inline-block;
+  width: 12px;
+  height: 6px;
+  border-radius: 2px;
+}
+
+.filterButton {
+  border: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filterButton:hover {
+  background: #e1e7f8;
+}
+
+.filterActive {
+  background: #25359a !important;
+  color: #ffffff !important;
+}
+
+.evidenceClickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.evidenceClickable:hover {
+  transform: translateY(-2px);
+  border-color: #3442aa !important;
+  box-shadow: 0 4px 12px rgba(52, 66, 170, 0.08);
+}
+

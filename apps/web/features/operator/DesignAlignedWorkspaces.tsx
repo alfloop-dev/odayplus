@@ -1,10 +1,26 @@
 "use client";
 
-import type { CSSProperties } from "react";
-import { ISSUE_FIXTURES } from "./fixtures";
+import { CSSProperties, useState, useMemo, useEffect } from "react";
+import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import styles from "./designAligned.module.css";
-import type { Issue } from "./types";
+import type { Issue, Severity, EvidenceKind, OperatorRoleId } from "./types";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
+import {
+  filterStoreOpsIssues,
+  getIssueEvidence,
+  getAiRecommendation,
+  getPrimaryActionLabel,
+  getSecondaryActionLabels,
+  getLocalAuditEvents,
+  formatCompactDateTime,
+  formatSla,
+  getStatusLabel,
+  getSeverityLabel,
+  getSeverityTone,
+  getStatusTone,
+  getSourceLabel,
+  getSourceTone,
+} from "./storeOpsViewModel";
 
 type DesignTodayWorkspaceProps = {
   onQueueSelect: (workspaceId: "store" | "growth" | "network" | "govern") => void;
@@ -284,7 +300,171 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
 }
 
 export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorkspaceProps) {
-  const issue = ISSUE_FIXTURES.find((item) => item.id === "ISS-1024") ?? ISSUE_FIXTURES[0];
+  // 1. Get current operator role from sessionStorage if available
+  const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storedRole = window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId;
+      if (storedRole) {
+        setRoleId(storedRole);
+      }
+    }
+  }, []);
+
+  // 2. Search & filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [selectedSeverities, setSelectedSeverities] = useState<Severity[]>([]);
+  const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIssueId, setSelectedIssueId] = useState<string>("ISS-1024");
+
+  // 3. Apply filters and sort (by severity + SLA)
+  const filteredIssues = useMemo(() => {
+    return filterStoreOpsIssues(
+      ISSUE_FIXTURES,
+      {
+        search: searchQuery,
+        statuses: [],
+        sources: selectedSources as any[],
+        severities: selectedSeverities,
+        mineOnly,
+      },
+      roleId
+    );
+  }, [searchQuery, selectedSources, selectedSeverities, mineOnly, roleId]);
+
+  // 4. Resolve selected issue
+  const issue = useMemo(() => {
+    return filteredIssues.find((i) => i.id === selectedIssueId) ?? filteredIssues[0] ?? ISSUE_FIXTURES[0];
+  }, [filteredIssues, selectedIssueId]);
+
+  // 5. Generate 28-day revenue forecast band data based on selected store
+  const forecastData = useMemo(() => {
+    const baseVal = issue.storeId === "ST-014" ? 14000 : issue.storeId === "ST-021" ? 9000 : 20000;
+    const points = [];
+    for (let i = 0; i < 28; i++) {
+      const dayOfWeek = i % 7;
+      const weekendBoost = (dayOfWeek === 5 || dayOfWeek === 6) ? baseVal * 0.25 : 0;
+      const wave = Math.sin(i / 3) * (baseVal * 0.08);
+      const p50 = baseVal + weekendBoost + wave;
+      const p90 = p50 * 1.15;
+      const p10 = p50 * 0.85;
+
+      let actual: number | undefined = undefined;
+      if (i < 14) {
+        actual = p50 + (Math.sin(i * 1.7) * (baseVal * 0.05));
+        // Simulate revenue drop during issue peak (Day 11-13)
+        if (i >= 11 && i <= 13) {
+          actual = p10 * 0.82;
+        }
+      }
+      points.push({ day: i - 14, p10, p50, p90, actual });
+    }
+    return points;
+  }, [issue.storeId]);
+
+  // SVG Chart layout mapping
+  const chartWidth = 540;
+  const chartHeight = 140;
+  const paddingX = 40;
+  const paddingY = 20;
+
+  const chartParams = useMemo(() => {
+    const p10Values = forecastData.map((p) => p.p10);
+    const p90Values = forecastData.map((p) => p.p90);
+    const actualValues = forecastData.map((p) => p.actual).filter((v): v is number => v !== undefined);
+
+    const minY = Math.min(...p10Values, ...actualValues) * 0.9;
+    const maxY = Math.max(...p90Values) * 1.1;
+
+    const getX = (index: number) => paddingX + (index / 27) * (chartWidth - paddingX * 2);
+    const getY = (value: number) => chartHeight - paddingY - ((value - minY) / (maxY - minY)) * (chartHeight - paddingY * 2);
+
+    const bandPoints = forecastData.map((p, idx) => `${getX(idx)},${getY(p.p90)}`);
+    const reverseBandPoints = [...forecastData].reverse().map((p, idx) => `${getX(27 - idx)},${getY(p.p10)}`);
+    const bandPath = `M ${bandPoints.join(" L ")} L ${reverseBandPoints.join(" L ")} Z`;
+
+    const p50Path = `M ${forecastData.map((p, idx) => `${getX(idx)},${getY(p.p50)}`).join(" L ")}`;
+
+    const actualPoints = forecastData.filter((p) => p.actual !== undefined);
+    const actualPath = `M ${actualPoints.map((p, idx) => `${getX(idx)},${getY(p.actual!)}`).join(" L ")}`;
+
+    return { getX, getY, bandPath, p50Path, actualPath, minY, maxY };
+  }, [forecastData]);
+
+  // 6. Dynamic evidence list resolved from issue
+  const issueEvidence = useMemo(() => {
+    return getIssueEvidence(issue, EVIDENCE_FIXTURES);
+  }, [issue]);
+
+  const supportingEvidence = useMemo(() => {
+    return issueEvidence.filter((e) => e.polarity === "supporting");
+  }, [issueEvidence]);
+
+  const contraryEvidence = useMemo(() => {
+    return issueEvidence.filter((e) => e.polarity === "contrary");
+  }, [issueEvidence]);
+
+  const evGoogleReview = issueEvidence.find((e) => e.kind === "googleReview");
+  const evCsCase = issueEvidence.find((e) => e.kind === "csCase");
+  const evCamera = issueEvidence.find((e) => e.kind === "camera");
+  const evPayment = issueEvidence.find((e) => e.kind === "payment");
+  const evIot = issueEvidence.find((e) => e.kind === "iot");
+  const evForecastOps = issueEvidence.find((e) => e.kind === "forecastOps");
+
+  // 7. Filtered audit timelines
+  const localAuditEvents = useMemo(() => {
+    return getLocalAuditEvents(issue, AUDIT_EVENT_FIXTURES);
+  }, [issue]);
+
+  // 8. Store lighting status helper
+  const storeObj = useMemo(() => {
+    return STORE_FIXTURES.find((s) => s.id === issue.storeId);
+  }, [issue.storeId]);
+
+  // Interactive callbacks
+  const toggleSource = (source: string) => {
+    setSelectedSources((prev) =>
+      prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source]
+    );
+  };
+
+  const toggleSeverity = (severity: Severity) => {
+    setSelectedSeverities((prev) =>
+      prev.includes(severity) ? prev.filter((s) => s !== severity) : [...prev, severity]
+    );
+  };
+
+  const clearFilters = () => {
+    setSelectedSources([]);
+    setSelectedSeverities([]);
+    setMineOnly(false);
+    setSearchQuery("");
+  };
+
+  const getDialogTypeFromLabel = (label: string): StoreOpsWorkflowDialogType => {
+    const normalized = label.toLowerCase();
+    if (normalized.includes("triage")) return "triage";
+    if (normalized.includes("assign") || normalized.includes("指派")) return "assign";
+    if (normalized.includes("action") || normalized.includes("處置") || normalized.includes("工單")) return "action";
+    if (normalized.includes("observation") || normalized.includes("field report") || normalized.includes("現場回報")) return "fieldReport";
+    if (normalized.includes("outcome") || normalized.includes("成效") || normalized.includes("判斷")) return "outcome";
+    if (normalized.includes("escalate") || normalized.includes("升級") || normalized.includes("approval")) return "escalate";
+    if (normalized.includes("camera") || normalized.includes("影像")) return "cameraPurpose";
+    if (normalized.includes("reply") || normalized.includes("回覆")) return "replyReview";
+    if (normalized.includes("transfer") || normalized.includes("audit") || normalized.includes("packet") || normalized.includes("稽核")) return "transfer";
+    return "triage";
+  };
+
+  const handleActionClick = (label: string) => {
+    const dialogType = getDialogTypeFromLabel(label);
+    if (issue) {
+      onOpenWorkflow(dialogType, issue);
+    }
+  };
+
+  const primaryActionLabel = getPrimaryActionLabel(issue);
+  const secondaryActionLabels = getSecondaryActionLabels(issue);
 
   return (
     <div className={styles.storeWorkspace} data-screen-label="Store Ops 門市營運">
@@ -292,121 +472,371 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorksp
         <h1>門市營運</h1>
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>
       </header>
-
       <div className={styles.storeGrid}>
         <aside className={styles.storeQueue} aria-label="門市 Issue queue">
           <label className={styles.designSearch}>
-            <input placeholder="搜尋標題／門市／編號" />
+            <input
+              placeholder="搜尋標題／門市／編號"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </label>
           <div className={styles.filterRows}>
-            <span>全部 7</span>
-            <span>待處理 4</span>
-            <span>處置中 1</span>
-            <span>觀察／成效 1</span>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.length === 0 && selectedSeverities.length === 0 && !mineOnly ? styles.filterActive : ""}`}
+              onClick={clearFilters}
+            >
+              全部 {ISSUE_FIXTURES.length}
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSeverities.includes("critical") ? styles.filterActive : ""}`}
+              onClick={() => toggleSeverity("critical")}
+            >
+              Critical
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSeverities.includes("high") ? styles.filterActive : ""}`}
+              onClick={() => toggleSeverity("high")}
+            >
+              High
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSeverities.includes("medium") ? styles.filterActive : ""}`}
+              onClick={() => toggleSeverity("medium")}
+            >
+              Medium
+            </button>
           </div>
           <div className={styles.filterRows}>
-            <span>全部</span>
-            <span>客服類</span>
-            <span>設備類</span>
-            <span>評價</span>
-            <span>影像</span>
-            <span>支付</span>
-            <span>預測</span>
-            <span>只看我的</span>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${mineOnly ? styles.filterActive : ""}`}
+              onClick={() => setMineOnly(!mineOnly)}
+            >
+              只看我的
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("googleReview") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("googleReview")}
+            >
+              評價
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("csCase") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("csCase")}
+            >
+              客服
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("camera") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("camera")}
+            >
+              影像
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("iot") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("iot")}
+            >
+              設備
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("payment") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("payment")}
+            >
+              支付
+            </button>
+            <button
+              type="button"
+              className={`${styles.filterButton} ${selectedSources.includes("forecastOps") ? styles.filterActive : ""}`}
+              onClick={() => toggleSource("forecastOps")}
+            >
+              預測
+            </button>
           </div>
           <div className={styles.storeQueueList}>
-            {storeQueue.map((row) => (
-              <button className={styles.storeQueueItem} data-active={row.id === "ISS-1024"} key={row.id} type="button">
-                <span className={styles.storeTopline}>
-                  <small>{row.id}</small>
-                  <b data-tone={row.tone}>{row.status}</b>
-                  <em>{row.due}</em>
-                </span>
-                <strong>{row.title}</strong>
-                <span>{row.store}・設備異常</span>
-                <span className={styles.tagLine}>
-                  {row.tags.map((tag) => (
-                    <b key={tag}>{tag}</b>
-                  ))}
-                </span>
-                <span className={styles.nextLine}>下一步：{row.next}</span>
-              </button>
-            ))}
+            {filteredIssues.map((row) => {
+              const next = getPrimaryActionLabel(row);
+              return (
+                <button
+                  className={styles.storeQueueItem}
+                  data-active={row.id === selectedIssueId}
+                  key={row.id}
+                  onClick={() => setSelectedIssueId(row.id)}
+                  type="button"
+                >
+                  <span className={styles.storeTopline}>
+                    <small>{row.id}</small>
+                    <b data-tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</b>
+                    <b data-tone={getSeverityTone(row.severity)} style={{ marginLeft: "4px" }}>
+                      {getSeverityLabel(row.severity)}
+                    </b>
+                    <em>{formatSla(row.slaDueAt)}</em>
+                  </span>
+                  <strong>{row.title}</strong>
+                  <span>{row.storeName}・{getSourceLabel(row.source)}</span>
+                  <span className={styles.nextLine}>下一步：{next}</span>
+                </button>
+              );
+            })}
+            {filteredIssues.length === 0 && (
+              <div style={{ padding: "20px", color: "#8794aa", textAlign: "center" }}>沒有匹配的 Issue</div>
+            )}
           </div>
         </aside>
 
-        <main className={styles.storeDetail} aria-label="ISS-1024 detail">
+        <main className={styles.storeDetail} aria-label={`${issue.id} detail`}>
           <section className={styles.issueHero}>
             <div>
-              <span className={styles.issueId}>ISS-1024</span>
-              <b>嚴重</b>
-              <b>新進</b>
+              <span className={styles.issueId}>{issue.id}</span>
+              <b data-tone={getSeverityTone(issue.severity)}>{getSeverityLabel(issue.severity)}</b>
+              <b data-tone={getStatusTone(issue.status)}>{getStatusLabel(issue.status)}</b>
             </div>
-            <h2>付款機前卡住＋付款失敗＋Google 負評</h2>
-            <p>
-              門市付款機自 07:58 起出現交易逾時尖峰，Camera 偵測顧客於 kiosk 前停留異常，
-              同時段新增 1 則付款相關一星評價與 3 件 AI 未解決客服案件。
-            </p>
+            <h2>{issue.title}</h2>
+            <p>{issue.summary}</p>
             <ol className={styles.progress}>
-              {["新進", "分類", "指派", "處置", "執行", "觀察", "成效", "結案"].map((step, index) => (
-                <li data-active={index === 0} key={step}>{step}</li>
-              ))}
+              {["new", "triaged", "assigned", "inprogress", "executed", "observing", "outcomeready", "closed"].map((step, index) => {
+                const isActive = issue.status === step || 
+                  (step === "new" && issue.status !== "new") ||
+                  (step === "triaged" && !["new"].includes(issue.status)) ||
+                  (step === "assigned" && !["new", "triaged"].includes(issue.status)) ||
+                  (step === "inprogress" && !["new", "triaged", "assigned"].includes(issue.status)) ||
+                  (step === "executed" && !["new", "triaged", "assigned", "inprogress"].includes(issue.status)) ||
+                  (step === "observing" && !["new", "triaged", "assigned", "inprogress", "executed"].includes(issue.status)) ||
+                  (step === "outcomeready" && !["new", "triaged", "assigned", "inprogress", "executed", "observing"].includes(issue.status));
+                return (
+                  <li data-active={isActive} key={step}>
+                    {getStatusLabel(step as any)}
+                  </li>
+                );
+              })}
             </ol>
-            <div className={styles.nextStep}>下一步　請完成 Triage — 判斷根因分類與信心度</div>
+            <div className={styles.nextStep}>下一步：{getAiRecommendation(issue)}</div>
           </section>
 
           <section className={styles.storeStrip}>
-            <span><small>門市</small><strong>Oday 信義松仁店</strong></span>
-            <span><small>型態</small><strong>自助洗衣</strong></span>
-            <span><small>機台</small><strong>14 台</strong></span>
-            <span><small>今日營收</small><strong>NT$18,420</strong></span>
-            <span><small>FORECASTOPS 四燈</small><strong>需求・設備・清潔・客訴</strong></span>
+            <span>
+              <small>門市</small>
+              <strong>{issue.storeName}</strong>
+            </span>
+            <span>
+              <small>型態</small>
+              <strong>自助洗衣</strong>
+            </span>
+            <span>
+              <small>機台</small>
+              <strong>14 台</strong>
+            </span>
+            <span>
+              <small>今日營收</small>
+              <strong>
+                NT$
+                {issue.storeId === "ST-008" ? "18,420" : issue.storeId === "ST-014" ? "14,200" : "9,500"}
+              </strong>
+            </span>
+            <span>
+              <small>FORECASTOPS 四燈</small>
+              <strong>
+                {storeObj
+                  ? `需求(${storeObj.lights.demand})・設備(${storeObj.lights.operations})・清潔(${storeObj.lights.staffing})・利潤(${storeObj.lights.margin})`
+                  : "需求・設備・清潔・利潤"}
+              </strong>
+            </span>
           </section>
 
           <section className={styles.evidenceFusion}>
             <div className={styles.sectionTitle}>
               <h3>證據融合</h3>
               <span>EVIDENCE FUSION</span>
-              <strong>證據強度　強</strong>
+              <strong>證據強度 {supportingEvidence.length >= 3 ? "強" : "中"}</strong>
             </div>
             <div className={styles.evidenceCards}>
-              <article><small>Google 評價</small><strong>1.0 ★ 未回覆</strong><p>付款失敗／找不到客服 今日 08:12</p></article>
-              <article><small>客服案件</small><strong>3 件（AI 未解決為主）</strong><p>intent: payment_failed 持續更新</p></article>
-              <article><small>Camera 事件</small><strong>customer_stuck_at_kiosk</strong><p>信心 86%・場域事件</p></article>
-              <article><small>支付</small><strong>失敗率 12.4%</strong><p>較 baseline +8.1pp 即時</p></article>
-              <article><small>IoT 設備</small><strong>交易逾時尖峰</strong><p>30 分內 14 次</p></article>
-              <article><small>ForecastOps</small><strong>四燈評估</strong><p>設備紅燈為主因</p></article>
+              <article>
+                <small>Google 評價</small>
+                {evGoogleReview ? (
+                  <>
+                    <strong>★ {(evGoogleReview.confidence * 5).toFixed(1)} 未回覆</strong>
+                    <p>{evGoogleReview.summary}</p>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>4.8 ★ 正常</strong>
+                    <p>近期無負面評價回報</p>
+                  </>
+                )}
+              </article>
+              <article>
+                <small>客服案件</small>
+                {evCsCase ? (
+                  <>
+                    <strong>Zendesk 異常</strong>
+                    <p>{evCsCase.summary}</p>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>0 件 正常</strong>
+                    <p>客服管道運作正常</p>
+                  </>
+                )}
+              </article>
+              <article
+                className={evCamera && evCamera.lockedReason ? styles.evidenceClickable : ""}
+                onClick={() => evCamera && evCamera.lockedReason && onOpenWorkflow("cameraPurpose", issue)}
+              >
+                <small>Camera 影像</small>
+                {evCamera ? (
+                  evCamera.lockedReason ? (
+                    <>
+                      <strong style={{ color: "#d18700" }}>影像鎖定 • 需授權</strong>
+                      <p style={{ textDecoration: "underline" }}>點擊填寫調閱目的</p>
+                    </>
+                  ) : (
+                    <>
+                      <strong style={{ color: "#087a47" }}>影像已解鎖</strong>
+                      <p>{evCamera.summary}</p>
+                    </>
+                  )
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>正常</strong>
+                    <p>影像監控無异常偵測</p>
+                  </>
+                )}
+              </article>
+              <article>
+                <small>支付</small>
+                {evPayment ? (
+                  <>
+                    <strong>交易延遲警告</strong>
+                    <p>{evPayment.summary}</p>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>交易正常</strong>
+                    <p>無異常交易或退款尖峰</p>
+                  </>
+                )}
+              </article>
+              <article>
+                <small>IoT 設備</small>
+                {evIot ? (
+                  <>
+                    <strong>Telemetry 警告</strong>
+                    <p>{evIot.summary}</p>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>設備在線</strong>
+                    <p>硬體感測器狀態健康</p>
+                  </>
+                )}
+              </article>
+              <article>
+                <small>ForecastOps</small>
+                {evForecastOps ? (
+                  <>
+                    <strong>四燈評估警告</strong>
+                    <p>{evForecastOps.summary}</p>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: "#087a47" }}>指標正常</strong>
+                    <p>需求與營運四燈皆綠</p>
+                  </>
+                )}
+              </article>
             </div>
 
-            <div className={styles.metricChart}>
-              <div>
-                <small>付款失敗率</small>
-                <strong>12.4%</strong>
-                <span>+8.1pp vs baseline</span>
-              </div>
-              <div className={styles.bars}>
-                {Array.from({ length: 14 }, (_, index) => (
-                  <i key={index} style={{ height: `${18 + index * 4}px` }} />
-                ))}
+            {/* 28-day Revenue Forecast and Anomaly Band Chart */}
+            <div className={styles.forecastChartSection}>
+              <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
+              <svg
+                width="100%"
+                height={chartHeight}
+                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                style={{ background: "#111a2e", borderRadius: "8px", padding: "8px" }}
+              >
+                <defs>
+                  <linearGradient id="bandGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
+                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.05" />
+                  </linearGradient>
+                </defs>
+
+                {/* Grid Lines */}
+                <line x1={paddingX} y1={chartParams.getY(chartParams.minY)} x2={chartWidth - paddingX} y2={chartParams.getY(chartParams.minY)} stroke="#2a3b5c" strokeWidth="1" />
+                <line x1={paddingX} y1={chartParams.getY((chartParams.maxY + chartParams.minY) / 2)} x2={chartWidth - paddingX} y2={chartParams.getY((chartParams.maxY + chartParams.minY) / 2)} stroke="#2a3b5c" strokeDasharray="3,3" />
+                <line x1={paddingX} y1={chartParams.getY(chartParams.maxY)} x2={chartWidth - paddingX} y2={chartParams.getY(chartParams.maxY)} stroke="#2a3b5c" strokeWidth="1" />
+
+                {/* Prediction Band Area */}
+                <path d={chartParams.bandPath} fill="url(#bandGrad)" />
+
+                {/* P50 Median Forecast Line */}
+                <path d={chartParams.p50Path} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4,4" />
+
+                {/* Actual Revenue Line */}
+                <path d={chartParams.actualPath} fill="none" stroke="#10b981" strokeWidth="2.5" />
+
+                {/* Today vertical indicator */}
+                <line x1={chartParams.getX(13)} y1={paddingY} x2={chartParams.getX(13)} y2={chartHeight - paddingY} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="3,3" />
+                <text x={chartParams.getX(13)} y={paddingY - 5} fill="#ef4444" fontSize="10" textAnchor="middle" fontWeight="bold">Today</text>
+
+                {/* Pulse circle on Today Actual value if exists */}
+                {forecastData[13].actual !== undefined && (
+                  <>
+                    <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="5" fill="#ef4444" />
+                    <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="10" fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.7">
+                      <animate attributeName="r" values="5;12;5" dur="2s" repeatCount="indefinite" />
+                    </circle>
+                  </>
+                )}
+
+                {/* Y Axis text labels */}
+                <text x={paddingX - 10} y={chartParams.getY(chartParams.maxY) + 4} fill="#8190a8" fontSize="9" textAnchor="end">{(chartParams.maxY / 1000).toFixed(0)}k</text>
+                <text x={paddingX - 10} y={chartParams.getY((chartParams.maxY + chartParams.minY) / 2) + 4} fill="#8190a8" fontSize="9" textAnchor="end">{((chartParams.maxY + chartParams.minY) / 2000).toFixed(0)}k</text>
+                <text x={paddingX - 10} y={chartParams.getY(chartParams.minY) + 4} fill="#8190a8" fontSize="9" textAnchor="end">{(chartParams.minY / 1000).toFixed(0)}k</text>
+
+                {/* X Axis text labels */}
+                <text x={chartParams.getX(0)} y={chartHeight - 4} fill="#8190a8" fontSize="9" textAnchor="middle">D-14</text>
+                <text x={chartParams.getX(7)} y={chartHeight - 4} fill="#8190a8" fontSize="9" textAnchor="middle">D-7</text>
+                <text x={chartParams.getX(13)} y={chartHeight - 4} fill="#ef4444" fontSize="9" textAnchor="middle" fontWeight="bold">Today</text>
+                <text x={chartParams.getX(20)} y={chartHeight - 4} fill="#8190a8" fontSize="9" textAnchor="middle">D+7</text>
+                <text x={chartParams.getX(27)} y={chartHeight - 4} fill="#8190a8" fontSize="9" textAnchor="middle">D+14</text>
+              </svg>
+              <div className={styles.chartLegend}>
+                <span className={styles.legendItem}><i style={{ background: "rgba(59, 130, 246, 0.25)" }} /> P10-P90 預測帶</span>
+                <span className={styles.legendItem}><i style={{ borderTop: "2px dashed #3b82f6" }} /> P50 預測中位數</span>
+                <span className={styles.legendItem}><i style={{ borderTop: "2px solid #10b981" }} /> 實際營收 (實際跌破預測帶)</span>
               </div>
             </div>
 
             <div className={styles.evidenceLists}>
               <section>
-                <h4>支持證據 4</h4>
-                <p>付款失敗率 12.4%，較同時段 baseline +8.1pp</p>
-                <p>Camera 事件 customer_stuck_at_kiosk（信心 86%）</p>
-                <p>3 件 AI 未解決案件 intent 均為 payment_failed</p>
+                <h4>支持證據 {supportingEvidence.length}</h4>
+                {supportingEvidence.map((e) => (
+                  <p key={e.id}>{e.title}：{e.summary}</p>
+                ))}
               </section>
               <section>
-                <h4>反向證據 1</h4>
-                <p>店內人流正常，可排除需求面異常</p>
+                <h4>反向證據 {contraryEvidence.length}</h4>
+                {contraryEvidence.map((e) => (
+                  <p key={e.id}>{e.title}：{e.summary}</p>
+                ))}
+                {contraryEvidence.length === 0 && <p style={{ color: "#8794aa", fontStyle: "italic" }}>目前無反向反駁證據</p>}
               </section>
             </div>
 
             <div className={styles.aiBox}>
               <b>AI 建議</b>
-              指派工務檢查付款機（讀卡模組／韌體），客服先回覆 Google 負評並建立退款處理；處置後觀察 14 天付款失敗率與負評主題是否下降。
+              {getAiRecommendation(issue)}
             </div>
           </section>
         </main>
@@ -415,26 +845,54 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorksp
           <section>
             <h2>ACTION RAIL <span>下一步</span></h2>
             <dl>
-              <div><dt>狀態</dt><dd>新進</dd></div>
-              <div><dt>Owner</dt><dd>未指派</dd></div>
-              <div><dt>SLA</dt><dd>3h 12m</dd></div>
-              <div><dt>期限</dt><dd>今日 13:00 前完成 Triage</dd></div>
+              <div>
+                <dt>狀態</dt>
+                <dd>{getStatusLabel(issue.status)}</dd>
+              </div>
+              <div>
+                <dt>Owner</dt>
+                <dd>{issue.ownerName}</dd>
+              </div>
+              <div>
+                <dt>SLA</dt>
+                <dd>{formatSla(issue.slaDueAt)}</dd>
+              </div>
+              <div>
+                <dt>期限</dt>
+                <dd>今日 {formatCompactDateTime(issue.slaDueAt)} 前完成</dd>
+              </div>
             </dl>
-            <button className={styles.primaryAction} onClick={() => onOpenWorkflow("triage", issue)} type="button">
-              完成 Triage
+            <button
+              className={styles.primaryAction}
+              onClick={() => handleActionClick(primaryActionLabel)}
+              type="button"
+            >
+              {primaryActionLabel}
             </button>
-            <button className={styles.secondaryAction} onClick={() => onOpenWorkflow("escalate", issue)} type="button">
-              升級（Growth／Network／Govern）
-            </button>
+            {secondaryActionLabels.map((label) => (
+              <button
+                key={label}
+                className={styles.secondaryAction}
+                onClick={() => handleActionClick(label)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
           </section>
 
           <section>
             <h2>AUDIT TIMELINE <span>全部 →</span></h2>
             <div className={styles.auditMini}>
-              <p><time>08:20</time> 系統 3 件 AI 未解決客服案件併入 Issue</p>
-              <p><time>08:12</time> 系統 新增 Google 一星評價 → 併入 Issue</p>
-              <p><time>08:05</time> 系統 Camera 事件 customer_stuck_at_kiosk</p>
-              <p><time>07:58</time> 系統 付款失敗率超過閾值 → 建立 Issue</p>
+              {localAuditEvents.map((event) => (
+                <p key={event.id}>
+                  <time>{formatCompactDateTime(event.occurredAt)}</time>
+                  <strong>{event.actorName}</strong> {event.message}
+                </p>
+              ))}
+              {localAuditEvents.length === 0 && (
+                <p style={{ color: "#8794aa", fontStyle: "italic" }}>目前尚無此事件的稽核日誌</p>
+              )}
             </div>
           </section>
         </aside>
