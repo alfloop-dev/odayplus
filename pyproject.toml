@@ -46,7 +46,15 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501", "E402"]
 
 [tool.pytest.ini_options]
-testpaths = [".orchestrator", "scripts", "tests"]
+testpaths = [
+    ".orchestrator",
+    "scripts",
+    "tests",
+    "modules",
+    "apps",
+    "shared",
+    "models",
+]
 python_files = ["test_*.py"]
 addopts = "-q"
 pythonpath = ["."]
