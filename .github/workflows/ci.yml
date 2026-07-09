@@ -63,7 +63,7 @@ jobs:
         run: make bootstrap
 
       - name: Lint product code
-        run: uv run ruff check tests modules apps shared models
+        run: uv run ruff check tests modules apps shared models solver pipelines infra
 
       - name: Test product code
         run: uv run pytest -m "not requires_live_env" tests modules apps shared models
