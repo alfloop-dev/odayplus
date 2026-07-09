@@ -1,3 +1,10 @@
+"""ODay Plus Domain API Service (FastAPI).
+
+Exposes integration, opsboard, data, and ML domain endpoints wired to durable
+repositories, mapping components, and the artifact store. Also sets up the
+correlation ID tracking middleware, job queues, and the audit log.
+"""
+
 from __future__ import annotations
 
 import os
