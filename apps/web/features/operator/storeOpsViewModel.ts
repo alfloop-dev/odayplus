@@ -23,6 +23,7 @@ export type StoreOpsIssueFilters = {
   search: string;
   statuses: IssueStatus[];
   sources: StoreOpsSource[];
+  severities: Severity[];
   mineOnly: boolean;
 };
 
@@ -231,16 +232,25 @@ export function hasLockedCameraEvidence(evidence: EvidenceItem[]): boolean {
   return evidence.some((item) => item.kind === "camera" && Boolean(item.lockedReason));
 }
 
+const SEVERITY_WEIGHTS: Record<Severity, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
 export function filterStoreOpsIssues(issues: Issue[], filters: StoreOpsIssueFilters, roleId: OperatorRoleId): Issue[] {
   const query = filters.search.trim().toLowerCase();
   const statusSet = new Set(filters.statuses);
   const sourceSet = new Set(filters.sources);
+  const severitySet = new Set(filters.severities);
 
   return issues
     .filter((issue) => {
       if (filters.mineOnly && issue.ownerRoleId !== roleId) return false;
       if (statusSet.size > 0 && !statusSet.has(issue.status)) return false;
       if (sourceSet.size > 0 && !sourceSet.has(issue.source)) return false;
+      if (severitySet.size > 0 && !severitySet.has(issue.severity)) return false;
       if (!query) return true;
 
       return [issue.id, issue.title, issue.storeName, issue.summary, issue.ownerName, getStatusLabel(issue.status)]
@@ -249,13 +259,11 @@ export function filterStoreOpsIssues(issues: Issue[], filters: StoreOpsIssueFilt
         .includes(query);
     })
     .sort((first, second) => {
-      const firstStable = STORE_OPS_STABLE_ISSUE_SET.has(first.id) ? 0 : 1;
-      const secondStable = STORE_OPS_STABLE_ISSUE_SET.has(second.id) ? 0 : 1;
-      if (firstStable !== secondStable) return firstStable - secondStable;
-
-      const statusDelta = STORE_OPS_STATUS_ORDER.indexOf(first.status) - STORE_OPS_STATUS_ORDER.indexOf(second.status);
-      if (statusDelta !== 0) return statusDelta;
-
+      const firstWeight = SEVERITY_WEIGHTS[first.severity] ?? 0;
+      const secondWeight = SEVERITY_WEIGHTS[second.severity] ?? 0;
+      if (firstWeight !== secondWeight) {
+        return secondWeight - firstWeight;
+      }
       return new Date(first.slaDueAt).getTime() - new Date(second.slaDueAt).getTime();
     });
 }
