@@ -15,7 +15,9 @@ import {
   TabBar,
   type Tone,
 } from "./components";
+import { fixtureOperatorAdapter } from "./adapters";
 import { DesignStoreOpsWorkspace, DesignTodayWorkspace } from "./DesignAlignedWorkspaces";
+import { APPROVAL_FIXTURES, ISSUE_FIXTURES, LISTING_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -250,23 +252,113 @@ const auditFeed = [
   },
 ];
 
-const notifications = [
-  {
-    title: "SLA 即將到期",
-    detail: "ISS-1024 需在 58 分鐘內完成 Triage。",
-    tone: "danger" as Tone,
-  },
-  {
-    title: "核准中心新增",
-    detail: "SiteScore APR-501 已送出複審。",
-    tone: "warning" as Tone,
-  },
-  {
-    title: "模型快照更新",
-    detail: "ForecastOps v2.6 完成 06:00 refresh。",
-    tone: "info" as Tone,
-  },
-];
+// Higher tone urgency sorts first so the console surfaces the most critical
+// signal at the top of both the notification tray and the search results.
+const TONE_PRIORITY: Record<Tone, number> = {
+  danger: 0,
+  warning: 1,
+  accent: 2,
+  info: 3,
+  success: 4,
+  neutral: 5,
+};
+
+type ConsoleNotification = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: Tone;
+};
+
+// Notifications are derived from typed fixtures (open issues + pending
+// approvals) rather than a hand-written list, then ordered by tone priority.
+function buildNotifications(): ConsoleNotification[] {
+  const issueNotifications: ConsoleNotification[] = ISSUE_FIXTURES.map((issue) => ({
+    id: `NTF-${issue.id}`,
+    title: issue.title,
+    detail: `${issue.storeName}｜狀態 ${issue.status}`,
+    tone:
+      issue.severity === "critical"
+        ? "danger"
+        : issue.severity === "high"
+          ? "warning"
+          : issue.severity === "medium"
+            ? "info"
+            : "neutral",
+  }));
+
+  const approvalNotifications: ConsoleNotification[] = APPROVAL_FIXTURES.filter(
+    (approval) => approval.status === "pending",
+  ).map((approval) => ({
+    id: `NTF-${approval.id}`,
+    title: `待核准：${approval.title}`,
+    detail: `${approval.module}｜風險 ${approval.risk}`,
+    tone: approval.risk === "high" || approval.risk === "critical" ? "danger" : approval.risk === "medium" ? "warning" : "info",
+  }));
+
+  return [...issueNotifications, ...approvalNotifications].sort(
+    (a, b) => TONE_PRIORITY[a.tone] - TONE_PRIORITY[b.tone],
+  );
+}
+
+const notifications = buildNotifications();
+
+type SearchResultGroup = "門市" | "案件" | "物件";
+
+type SearchResult = {
+  id: string;
+  label: string;
+  detail: string;
+  group: SearchResultGroup;
+  tone: Tone;
+  workspace: WorkspaceId;
+};
+
+function matchesQuery(query: string, fields: Array<string | undefined>): boolean {
+  return fields.some((field) => field?.toLowerCase().includes(query));
+}
+
+// Global search filters stores (門市), issues (案件), and listings (物件)
+// from the shared fixtures and points each hit at the workspace that owns it.
+function buildSearchResults(rawQuery: string): SearchResult[] {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return [];
+
+  const stores: SearchResult[] = STORE_FIXTURES.filter((store) =>
+    matchesQuery(query, [store.id, store.name, store.district, store.city, store.manager]),
+  ).map((store) => ({
+    id: store.id,
+    label: store.name,
+    detail: `${store.district}・${store.manager}｜風險 ${store.riskScore}`,
+    group: "門市",
+    tone: store.riskScore >= 80 ? "danger" : store.riskScore >= 60 ? "warning" : "info",
+    workspace: "store",
+  }));
+
+  const issues: SearchResult[] = ISSUE_FIXTURES.filter((issue) =>
+    matchesQuery(query, [issue.id, issue.title, issue.storeName, issue.summary]),
+  ).map((issue) => ({
+    id: issue.id,
+    label: issue.title,
+    detail: `${issue.storeName}｜${issue.id}`,
+    group: "案件",
+    tone: issue.severity === "critical" ? "danger" : issue.severity === "high" ? "warning" : "info",
+    workspace: "store",
+  }));
+
+  const listings: SearchResult[] = LISTING_FIXTURES.filter((listing) =>
+    matchesQuery(query, [listing.id, listing.address]),
+  ).map((listing) => ({
+    id: listing.id,
+    label: listing.address,
+    detail: `${listing.id}｜狀態 ${listing.status}`,
+    group: "物件",
+    tone: "info",
+    workspace: "network",
+  }));
+
+  return [...stores, ...issues, ...listings];
+}
 
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
@@ -277,6 +369,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
+  const [demoResetNonce, setDemoResetNonce] = useState(0);
 
   const activeRole = getOperatorRole(activeRoleId);
   const activeWorkspace = getWorkspace(activeWorkspaceId);
@@ -316,8 +409,16 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     return workQueue.filter((item) => item.workspace === "today" || isWorkspaceAllowed(activeRole, item.workspace));
   }, [activeRole]);
 
+  const searchResults = useMemo(() => buildSearchResults(searchValue), [searchValue]);
+  const isSearchOpen = searchValue.trim().length > 0;
+
   function showToast(message: string) {
     setToast(message);
+  }
+
+  function handleSearchSelect(result: SearchResult) {
+    setSearchValue("");
+    handleWorkspaceClick(result.workspace);
   }
 
   function handleWorkspaceClick(workspaceId: WorkspaceId) {
@@ -358,8 +459,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     window.sessionStorage.removeItem(workspaceStorageKey);
     setActiveRoleId(DEFAULT_OPERATOR_ROLE_ID);
     setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
+    setActiveStoreOpsDialog(null);
+    setSelectedStoreOpsIssue(undefined);
     setSearchValue("");
-    showToast("POC session 已重置為營運主管 Today");
+    // Reset the shared fixture-backed demo state and force the workspace
+    // subtree to remount so in-session edits fall back to the fixtures.
+    void fixtureOperatorAdapter.resetState();
+    setDemoResetNonce((nonce) => nonce + 1);
+    showToast("POC 示範資料已重設為營運主管 Today");
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
@@ -406,15 +513,40 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         </nav>
 
         <div className={styles.topActions}>
-          <label className={styles.searchBox}>
-            <span aria-hidden="true">/</span>
-            <input
-              aria-label="Global search"
-              onChange={(event) => setSearchValue(event.target.value)}
-              placeholder="搜尋門市、案件、物件..."
-              value={searchValue}
-            />
-          </label>
+          <div className={styles.popoverAnchor}>
+            <label className={styles.searchBox}>
+              <span aria-hidden="true">/</span>
+              <input
+                aria-label="Global search"
+                onChange={(event) => setSearchValue(event.target.value)}
+                placeholder="搜尋門市、案件、物件..."
+                value={searchValue}
+              />
+            </label>
+            {isSearchOpen ? (
+              <div className={styles.notificationPanel} data-testid="operator-search-results">
+                <div className={styles.popoverTitle}>搜尋結果 · {searchResults.length}</div>
+                {searchResults.length === 0 ? (
+                  <p className={styles.searchEmpty}>找不到符合「{searchValue.trim()}」的門市、案件或物件。</p>
+                ) : (
+                  searchResults.map((result) => (
+                    <button
+                      className={styles.searchResult}
+                      key={`${result.group}-${result.id}`}
+                      onClick={() => handleSearchSelect(result)}
+                      type="button"
+                    >
+                      <StatusBadge tone={result.tone}>{result.group}</StatusBadge>
+                      <span className={styles.searchResultText}>
+                        <strong>{result.label}</strong>
+                        <small>{result.detail}</small>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
 
           <div className={styles.popoverAnchor}>
             <Button
@@ -424,13 +556,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               size="sm"
               variant="ghost"
             >
-              ! 3
+              ! {notifications.length}
             </Button>
             {isNotificationOpen ? (
               <div className={styles.notificationPanel}>
                 <div className={styles.popoverTitle}>Notifications</div>
                 {notifications.map((notification) => (
-                  <article className={styles.notificationItem} key={notification.title}>
+                  <article className={styles.notificationItem} key={notification.id}>
                     <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
                     <p>{notification.detail}</p>
                   </article>
@@ -505,7 +637,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         </Button>
       </div>
 
-      <main className={styles.shell}>
+      <main className={styles.shell} key={demoResetNonce}>
         {activeWorkspaceId === "today" ? (
           <DesignTodayWorkspace onQueueSelect={(workspaceId) => handleWorkspaceClick(workspaceId)} />
         ) : activeWorkspaceId === "store" ? (
