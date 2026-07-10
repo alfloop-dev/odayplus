@@ -7,10 +7,12 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
 import yaml
 
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import ModelAlias
+
 
 class LocalModelArtifactStore:
     """Local file-based artifact store for ML models, handling Model Cards and metadata."""
@@ -207,9 +209,7 @@ class ArtifactStore(Protocol):
 
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]: ...
 
-    def list_artifacts_for_version(
-        self, model_name: str, version: str
-    ) -> list[ArtifactRecord]: ...
+    def list_artifacts_for_version(self, model_name: str, version: str) -> list[ArtifactRecord]: ...
 
     def verify(self, artifact_id: str) -> bool: ...
 
@@ -269,13 +269,9 @@ class InMemoryArtifactStore:
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
         return [r for r in self._records.values() if r.model_name == model_name]
 
-    def list_artifacts_for_version(
-        self, model_name: str, version: str
-    ) -> list[ArtifactRecord]:
+    def list_artifacts_for_version(self, model_name: str, version: str) -> list[ArtifactRecord]:
         return [
-            r
-            for r in self._records.values()
-            if r.model_name == model_name and r.version == version
+            r for r in self._records.values() if r.model_name == model_name and r.version == version
         ]
 
     def verify(self, artifact_id: str) -> bool:
@@ -346,9 +342,7 @@ def build_model_registry_evidence(
     ):
         version = model_version.version
         card = repository.get_model_card(model_name, version)
-        validation = (
-            repository.get_validation_run(card.validation_run_id) if card else None
-        )
+        validation = repository.get_validation_run(card.validation_run_id) if card else None
         artifacts = artifact_store.list_artifacts_for_version(model_name, version)
         version_entries.append(
             {
@@ -365,12 +359,8 @@ def build_model_registry_evidence(
                 "approved_by": model_version.approved_by,
                 "git_sha": model_version.git_sha,
                 "run_id": model_version.run_id,
-                "validation_run_id": (
-                    validation.validation_run_id if validation else None
-                ),
-                "validation_status": (
-                    validation.status.value if validation else None
-                ),
+                "validation_run_id": (validation.validation_run_id if validation else None),
+                "validation_status": (validation.status.value if validation else None),
                 "model_card": _model_card_evidence(card),
                 "artifacts": [artifact.to_dict() for artifact in artifacts],
             }
