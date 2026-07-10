@@ -171,10 +171,43 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
   await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
 
+  // Test reason gate validation error
+  await page.getByTestId("review-reason-input-RV-701").fill("Short");
+  await page.getByTestId("review-btn-approve-RV-701").click();
+  await expect(page.getByTestId("review-error-RV-701")).toContainText("決策理由需至少 10 個字");
+
+  // Perform a valid decision
+  const reviewReason = "Review approved based on excellent SiteScore and fit metrics.";
+  await page.getByTestId("review-reason-input-RV-701").fill(reviewReason);
+  await page.getByTestId("review-btn-return-RV-701").click(); // Return decision status
+
+  // Verify UI changes on card
+  await expect(page.getByTestId("review-card-RV-701")).toContainText("退回");
+  await expect(page.getByTestId("review-reason-RV-701")).toContainText(reviewReason);
+  await expect(page.getByTestId("review-card-RV-701")).toContainText("Decided");
+
+  // Check that candidate status is updated in Candidates tab
+  await page.getByTestId("network-tab-2").click();
+  await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+  await expect(page.getByTestId("network-candidate-table")).toContainText("觀望");
+
   // 低效重配 / Rebalance
   await page.getByTestId("network-tab-6").click();
   await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
   await expect(page.getByTestId("rebalance-card-RB-801")).toContainText("新北板橋文化");
+
+  // Verify AVM bands
+  await expect(page.getByTestId("rebalance-avm-RB-801")).toBeVisible();
+  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P50 公允價值");
+  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P10");
+  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P90");
+
+  // Verify NetPlan scenarios
+  await expect(page.getByTestId("rebalance-netplan-RB-801")).toBeVisible();
+  await expect(page.getByTestId("rebalance-scenario-0")).toContainText("Keep / Improve");
+  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("Move (移轉新址)");
+  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("系統建議");
+  await expect(page.getByTestId("rebalance-scenario-2")).toContainText("Exit (關店止損)");
 
   // Back to Find Areas remains functional.
   await page.getByTestId("network-tab-0").click();

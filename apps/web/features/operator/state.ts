@@ -479,6 +479,27 @@ function decideSiteReviewState(
   const candidateStatus: CandidateStatus | undefined =
     status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "returned" ? "wait" : undefined;
 
+  const decidedAt = nextAuditTimestamp(state);
+  const decisionId = nextDecisionId(state);
+  const actorName = resolveActorName(state, actor.actorRoleId, actor.actorName);
+  const candidate = state.candidates.find((c) => c.id === review.candidateId);
+
+  const decision = {
+    id: decisionId,
+    module: "network" as const,
+    targetType: "siteReview" as const,
+    targetId: reviewId,
+    approvalId: undefined,
+    systemRecommendation: candidate?.recommendation ?? "WAIT",
+    finalDecision: status === "approved" ? ("approved" as const) : status === "rejected" ? ("rejected" as const) : ("returned" as const),
+    reason: actor.reason ?? actor.note ?? "",
+    actorRoleId: actor.actorRoleId,
+    actorName,
+    modelVersion: candidate?.modelVersion ?? "v1.0.0",
+    datasetSnapshotId: candidate?.datasetSnapshotId ?? "snap-default",
+    decidedAt,
+  };
+
   const nextState: OperatorState = {
     ...state,
     siteReviews: state.siteReviews.map((item) =>
@@ -487,13 +508,14 @@ function decideSiteReviewState(
             ...item,
             status,
             reason: actor.reason,
-            decidedAt: nextAuditTimestamp(state),
+            decidedAt,
           }
         : item,
     ),
     candidates: candidateStatus
       ? state.candidates.map((item) => (item.id === review.candidateId ? { ...item, status: candidateStatus } : item))
       : state.candidates,
+    decisions: [...state.decisions, decision],
   };
 
   return appendAuditEvent(nextState, {

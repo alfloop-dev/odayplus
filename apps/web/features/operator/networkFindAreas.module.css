@@ -961,3 +961,223 @@
   margin-left: 4px;
   font-size: 10px;
 }
+
+/* --- Rebalance AVM & NetPlan Extensions --- */
+
+.rebalanceAvmBlock {
+  border: 1px solid #c6e6eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #e9f6f8;
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.rebalanceAvmHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rebalanceAvmHeader span:first-child {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #0e7c8c;
+  letter-spacing: 0.05em;
+}
+
+.rebalanceAvmHeader span:last-child {
+  font-size: 10px;
+  color: #4a7c86;
+}
+
+.avmValueP50 {
+  font-size: 19px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #135e6b;
+  margin-top: 4px;
+}
+
+.avmValueP50::after {
+  content: " P50 公允價值";
+  font-size: 10px;
+  color: #4a7c86;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.avmBands {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: #4a7c86;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.avmReserveNote {
+  font-size: 10.5px;
+  color: #4a7c86;
+  border-top: 1px dashed #c6e6eb;
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
+.rebalanceNetPlanBlock {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.rebalanceNetPlanHeader {
+  font-size: 11px;
+  font-weight: 800;
+  color: #8a93a8;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.netPlanScenarioList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.netPlanScenarioCard {
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #e0e5ef;
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.netPlanScenarioCardRec {
+  border-color: #2e3a97;
+  background: #f4f6fc;
+}
+
+.scenarioTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.scenarioTitleRow strong {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #1c2333;
+}
+
+.recBadge {
+  font-size: 9px;
+  font-weight: 800;
+  color: #1e7f4f;
+  background: #e5f3ea;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.roiValue {
+  margin-left: auto;
+  font-size: 11px;
+  color: #2e3a97;
+  font-weight: 700;
+}
+
+.scenarioDetails {
+  font-size: 11px !important;
+  color: #5a6478 !important;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* --- Review Decision Reason Gate Styles --- */
+
+.reasonInputGroup {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.reasonInputGroup label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a6478;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.errorText {
+  color: #b91c1c;
+  font-size: 11.5px;
+  font-weight: 700;
+  margin: 2px 0 0 0;
+}
+
+.actionButtons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btnApprove,
+.btnReturn,
+.btnReject {
+  flex: 1;
+  font-size: 11.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.btnApprove {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.btnApprove:hover {
+  background: #059669;
+}
+
+.btnReturn {
+  background: #f59e0b;
+  color: #ffffff;
+}
+
+.btnReturn:hover {
+  background: #d97706;
+}
+
+.btnReject {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.btnReject:hover {
+  background: #dc2626;
+}

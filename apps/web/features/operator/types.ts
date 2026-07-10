@@ -327,6 +327,20 @@ export type RebalanceStore = {
   netPlanOptionId?: string;
   relatedApprovalId?: string;
   summary: string;
+  avmP10?: number;
+  avmP50?: number;
+  avmP90?: number;
+  avmConf?: string;
+  avmReserve?: string;
+  netPlanScenarios?: Array<{
+    name: string;
+    roi: string;
+    inv: string;
+    payback: string;
+    risk: string;
+    time: string;
+    isSystemRecommendation?: boolean;
+  }>;
 };
 
 export type Approval = {

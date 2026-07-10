@@ -179,6 +179,12 @@ export type RebalanceQueueRow = {
   relatedApprovalId?: string;
   summary: string;
   tone: NetworkTone;
+  avmP10?: number;
+  avmP50?: number;
+  avmP90?: number;
+  avmConf?: string;
+  avmReserve?: string;
+  netPlanScenarios?: RebalanceStore["netPlanScenarios"];
 };
 
 export type NetworkFindAreasViewModel = {
@@ -604,6 +610,12 @@ function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueR
     storeName: store.storeName,
     summary: store.summary,
     tone: store.status === "approved" || store.status === "closed" ? "good" : store.status === "pendingapproval" ? "watch" : "watch",
+    avmP10: store.avmP10,
+    avmP50: store.avmP50,
+    avmP90: store.avmP90,
+    avmConf: store.avmConf,
+    avmReserve: store.avmReserve,
+    netPlanScenarios: store.netPlanScenarios,
   }));
 }
 

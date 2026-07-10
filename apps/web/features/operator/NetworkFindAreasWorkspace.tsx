@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CANDIDATE_FIXTURES,
   HEAT_ZONE_FIXTURES,
@@ -11,7 +11,7 @@ import {
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
 import styles from "./networkFindAreas.module.css";
-import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
+import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
 import {
   buildNetworkFindAreasViewModel,
   type CandidatePipelineRow,
@@ -33,6 +33,7 @@ export type NetworkFindAreasWorkspaceCallbacks = {
   onSourceListings?: (heatZone: OperatorHeatZone) => void;
   onScoreCandidate?: (candidate: Candidate, heatZone: OperatorHeatZone) => void;
   onSubmitReview?: (heatZone: OperatorHeatZone) => void;
+  onDecideReview?: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
 };
 
 export type NetworkFindAreasWorkspaceProps = {
@@ -74,6 +75,17 @@ export function NetworkFindAreasWorkspace({
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
   const [activeTab, setActiveTab] = useState(0);
+  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviews);
+  const [localCandidates, setLocalCandidates] = useState<Candidate[]>(() => candidates);
+
+  useEffect(() => {
+    setLocalSiteReviews(siteReviews);
+  }, [siteReviews]);
+
+  useEffect(() => {
+    setLocalCandidates(candidates);
+  }, [candidates]);
+
   const effectiveLens = activeLens ?? localLens;
   const effectiveSelectedId = selectedHeatZoneId ?? localSelectedId;
   const effectiveTrackedIds = trackedHeatZoneIds ?? Array.from(localTrackedIds);
@@ -83,15 +95,15 @@ export function NetworkFindAreasWorkspace({
     () =>
       buildNetworkFindAreasViewModel({
         activeLens: effectiveLens,
-        candidates,
+        candidates: localCandidates,
         heatZones,
         listings,
         listingSources,
         rebalanceStores,
         selectedHeatZoneId: effectiveSelectedId,
-        siteReviews,
+        siteReviews: localSiteReviews,
       }),
-    [candidates, effectiveLens, effectiveSelectedId, heatZones, listings, listingSources, rebalanceStores, siteReviews],
+    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listings, listingSources, rebalanceStores, localSiteReviews],
   );
 
   const selectedZone = viewModel.selectedZone;
@@ -144,6 +156,34 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  function handleDecideReview(reviewId: string, status: SiteReviewStatus, reason: string) {
+    setLocalSiteReviews((prev) =>
+      prev.map((r) =>
+        r.id === reviewId
+          ? {
+              ...r,
+              status,
+              reason,
+              decidedAt: new Date().toISOString().substring(0, 19).replace("T", " "),
+            }
+          : r
+      )
+    );
+
+    const review = localSiteReviews.find((r) => r.id === reviewId);
+    if (review) {
+      const candidateStatus: CandidateStatus | undefined =
+        status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "returned" ? "wait" : undefined;
+      if (candidateStatus) {
+        setLocalCandidates((prev) =>
+          prev.map((c) => (c.id === review.candidateId ? { ...c, status: candidateStatus } : c))
+        );
+      }
+    }
+
+    callbacks?.onDecideReview?.(reviewId, status, reason);
+  }
+
   return (
     <section className={styles.workspace} data-testid="network-find-areas-workspace">
       <header className={styles.header}>
@@ -187,7 +227,7 @@ export function NetworkFindAreasWorkspace({
       ) : activeTab === 4 ? (
         <ComparePanel compare={viewModel.compare} />
       ) : activeTab === 5 ? (
-        <ReviewQueuePanel rows={viewModel.reviewQueue} onSubmitReview={submitReview} />
+        <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
       ) : activeTab === 6 ? (
         <RebalancePanel rows={viewModel.rebalanceQueue} />
       ) : (
@@ -680,7 +720,30 @@ function ComparePanel({ compare }: { compare: NetworkCompareViewModel }) {
   );
 }
 
-function ReviewQueuePanel({ rows, onSubmitReview }: { rows: ReviewQueueRow[]; onSubmitReview: () => void }) {
+function ReviewQueuePanel({
+  rows,
+  onDecideReview,
+}: {
+  rows: ReviewQueueRow[];
+  onDecideReview: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
+}) {
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const handleDecision = (row: ReviewQueueRow, status: SiteReviewStatus) => {
+    const reason = (reasons[row.id] ?? "").trim();
+    if (reason.length < 10) {
+      setErrors((prev) => ({ ...prev, [row.id]: "決策理由需至少 10 個字" }));
+      return;
+    }
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[row.id];
+      return next;
+    });
+    onDecideReview(row.id, status, reason);
+  };
+
   return (
     <div className={styles.tabPanel} data-testid="network-panel-review" role="tabpanel">
       <div className={styles.panelHeader}>
@@ -721,13 +784,66 @@ function ReviewQueuePanel({ rows, onSubmitReview }: { rows: ReviewQueueRow[]; on
                   <dd>{row.requestedAt}</dd>
                 </div>
               </dl>
-              {row.reasonRequired ? <p className={styles.reasonNote}>此高風險審核需填寫決策理由。</p> : null}
-              {row.reason ? <p className={styles.muted}>{row.reason}</p> : null}
+              {row.reasonRequired && row.status === "pending" ? (
+                <p className={styles.reasonNote}>此高風險審核需填寫決策理由。</p>
+              ) : null}
+              {row.reason ? (
+                <p className={styles.muted} data-testid={`review-reason-${row.id}`}>
+                  <strong>決策理由：</strong>{row.reason}
+                </p>
+              ) : null}
               {row.status === "pending" ? (
-                <div className={styles.detailActions}>
-                  <button onClick={onSubmitReview} type="button">
-                    Submit Review
-                  </button>
+                <div className={styles.reasonInputGroup}>
+                  <label htmlFor={`reason-${row.id}`}>決策理由 (至少 10 個字):</label>
+                  <textarea
+                    id={`reason-${row.id}`}
+                    data-testid={`review-reason-input-${row.id}`}
+                    placeholder="請輸入核准/退回/駁回理由..."
+                    value={reasons[row.id] ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setReasons((prev) => ({ ...prev, [row.id]: val }));
+                      if (val.trim().length >= 10) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next[row.id];
+                          return next;
+                        });
+                      }
+                    }}
+                    className={styles.textarea}
+                  />
+                  {errors[row.id] && (
+                    <p className={styles.errorText} data-testid={`review-error-${row.id}`}>
+                      {errors[row.id]}
+                    </p>
+                  )}
+                  <div className={styles.actionButtons}>
+                    <button
+                      onClick={() => handleDecision(row, "approved")}
+                      className={styles.btnApprove}
+                      data-testid={`review-btn-approve-${row.id}`}
+                      type="button"
+                    >
+                      核准 (Approve)
+                    </button>
+                    <button
+                      onClick={() => handleDecision(row, "returned")}
+                      className={styles.btnReturn}
+                      data-testid={`review-btn-return-${row.id}`}
+                      type="button"
+                    >
+                      退回 (Return)
+                    </button>
+                    <button
+                      onClick={() => handleDecision(row, "rejected")}
+                      className={styles.btnReject}
+                      data-testid={`review-btn-reject-${row.id}`}
+                      type="button"
+                    >
+                      駁回 (Reject)
+                    </button>
+                  </div>
                 </div>
               ) : row.decidedAt ? (
                 <small className={styles.muted}>Decided {row.decidedAt}</small>
@@ -776,6 +892,48 @@ function RebalancePanel({ rows }: { rows: RebalanceQueueRow[] }) {
                   <dd>{row.relatedApprovalId ?? "—"}</dd>
                 </div>
               </dl>
+              {row.avmP50 !== undefined && (
+                <div className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${row.id}`}>
+                  <div className={styles.rebalanceAvmHeader}>
+                    <span>AVM 估值（P50 公允價值）</span>
+                    <span className={styles.muted}>{row.avmConf ?? "中高（收益法＋市場比較）"}</span>
+                  </div>
+                  <div className={styles.avmValueP50}>
+                    {formatCurrency(row.avmP50)}
+                  </div>
+                  <div className={styles.avmBands}>
+                    <span>P10: {row.avmP10 ? formatCurrency(row.avmP10) : "—"}</span>
+                    <span>P90: {row.avmP90 ? formatCurrency(row.avmP90) : "—"}</span>
+                  </div>
+                  {row.avmReserve && <div className={styles.avmReserveNote}>{row.avmReserve}</div>}
+                </div>
+              )}
+              {row.netPlanScenarios && row.netPlanScenarios.length > 0 && (
+                <div className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${row.id}`}>
+                  <div className={styles.rebalanceNetPlanHeader}>NETPLAN 三案</div>
+                  <div className={styles.netPlanScenarioList}>
+                    {row.netPlanScenarios.map((sc, i) => (
+                      <div
+                        key={i}
+                        className={classNames(
+                          styles.netPlanScenarioCard,
+                          sc.isSystemRecommendation && styles.netPlanScenarioCardRec
+                        )}
+                        data-testid={`rebalance-scenario-${i}`}
+                      >
+                        <div className={styles.scenarioTitleRow}>
+                          <strong>{sc.name}</strong>
+                          {sc.isSystemRecommendation && <span className={styles.recBadge}>系統建議</span>}
+                          <span className={styles.roiValue}>{sc.roi}</span>
+                        </div>
+                        <p className={styles.scenarioDetails}>
+                          投資 {sc.inv} · 回本 {sc.payback} · 風險 {sc.risk} · 時程 {sc.time}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </article>
           ))}
         </div>
