@@ -640,3 +640,324 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* --- ODP-OC-FE-04: additional Network tabs (listings/candidates/sitescore/compare/review/rebalance) --- */
+
+.tab[aria-current="page"],
+.tabActive {
+  border-color: #2563eb;
+  color: #0f172a;
+}
+
+.tabPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.dataTable thead th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  background: #f4f7fc;
+  color: #45536b;
+  font-weight: 800;
+  padding: 9px 12px;
+  border-bottom: 1px solid #d7deea;
+  white-space: nowrap;
+}
+
+.dataTable tbody th,
+.dataTable tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #eef2f8;
+  vertical-align: top;
+  color: #1f2a3d;
+}
+
+.dataTable tbody th {
+  text-align: left;
+  font-weight: 700;
+  color: #45536b;
+  white-space: nowrap;
+}
+
+.dataTable tbody tr:last-child th,
+.dataTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.dataTable tbody tr[data-tone="risk"] {
+  background: #fef2f2;
+}
+
+.dataTable tbody tr[data-tone="watch"] {
+  background: #fffbeb;
+}
+
+.dataTable small {
+  display: block;
+  color: #6b7688;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.dataTable strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toneBadge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+
+.toneBadge[data-tone="good"] {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.toneBadge[data-tone="watch"] {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.toneBadge[data-tone="risk"] {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.muted {
+  color: #6b7688;
+}
+
+.flag,
+.flagRisk {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin: 0 4px 2px 0;
+}
+
+.flag {
+  background: #eef2f8;
+  color: #45536b;
+}
+
+.flagRisk {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.bestTag {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #047857;
+  background: #ecfdf5;
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.cardRow,
+.cardGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.cardRow {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.cardGrid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.sourceCard,
+.scoreCard,
+.reviewCard {
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.scoreCard[data-tone="risk"],
+.reviewCard[data-tone="risk"] {
+  border-color: #fecaca;
+}
+
+.scoreCard[data-tone="good"],
+.reviewCard[data-tone="good"] {
+  border-color: #a7f3d0;
+}
+
+.sourceCardHead,
+.scoreCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scoreCardHead strong {
+  display: block;
+  font-size: 14px;
+}
+
+.scoreCardHead small {
+  display: block;
+  color: #6b7688;
+  font-size: 11px;
+}
+
+.sourceCard p,
+.scoreCard p,
+.reviewCard p {
+  margin: 0;
+  font-size: 12.5px;
+  color: #35425a;
+}
+
+.scoreMeter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scoreMeter strong {
+  font-size: 15px;
+  min-width: 28px;
+}
+
+.scoreMeter i {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: #eef2f8;
+  overflow: hidden;
+}
+
+.scoreMeter b {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #10b981;
+}
+
+.scoreMeter[data-tone="watch"] b {
+  background: #f59e0b;
+}
+
+.scoreMeter[data-tone="risk"] b {
+  background: #ef4444;
+}
+
+.scoreMeterWide strong {
+  font-size: 22px;
+}
+
+.scoreBand {
+  font-weight: 800;
+  font-size: 12px;
+  color: #45536b;
+}
+
+.scoreMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.scoreMeta div {
+  display: grid;
+  gap: 1px;
+}
+
+.scoreMeta dt {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a96a8;
+  font-weight: 700;
+}
+
+.scoreMeta dd {
+  margin: 0;
+  font-size: 12px;
+  color: #1f2a3d;
+  font-weight: 600;
+}
+
+.gateRow {
+  display: flex;
+}
+
+.gateOk,
+.gateWarn {
+  font-size: 11.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.gateOk {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.gateWarn {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.missingList {
+  margin: 0;
+  padding-left: 16px;
+  color: #6b7688;
+  font-size: 11.5px;
+  display: grid;
+  gap: 2px;
+}
+
+.reasonNote {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.leaderCell {
+  background: #ecfdf5;
+  font-weight: 800;
+  color: #047857;
+}
+
+.leaderMark {
+  margin-left: 4px;
+  font-size: 10px;
+}

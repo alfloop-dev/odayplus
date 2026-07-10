@@ -126,6 +126,64 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 });
 
 
+test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page }) => {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.goto("/operator");
+
+  // Enter the Network (展店與店網) workspace.
+  await page.getByRole("button", { name: /展店與店網/ }).click();
+  const workspace = page.getByTestId("network-find-areas-workspace");
+  await expect(workspace).toBeVisible();
+
+  // Default tab is Find Areas.
+  await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
+
+  // 物件雷達 / Listing Radar
+  await page.getByTestId("network-tab-1").click();
+  await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+  await expect(page.getByTestId("network-listing-table")).toContainText("LST-440");
+  await expect(page.getByTestId("network-listing-table")).toContainText("LST-441");
+
+  // 候選點 / Candidates
+  await page.getByTestId("network-tab-2").click();
+  await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1002");
+
+  // SiteScore / Score Lab
+  await page.getByTestId("network-tab-3").click();
+  await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
+  await expect(page.getByTestId("sitescore-card-CS-1002")).toContainText("sitescore-v0.9.4");
+
+  // 比較 / Compare
+  await page.getByTestId("network-tab-4").click();
+  await expect(page.getByTestId("network-panel-compare")).toBeVisible();
+  await expect(page.getByTestId("network-compare-table")).toContainText("Brand Fit");
+
+  // 審核 / Review
+  await page.getByTestId("network-tab-5").click();
+  await expect(page.getByTestId("network-panel-review")).toBeVisible();
+  await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
+
+  // 低效重配 / Rebalance
+  await page.getByTestId("network-tab-6").click();
+  await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
+  await expect(page.getByTestId("rebalance-card-RB-801")).toContainText("新北板橋文化");
+
+  // Back to Find Areas remains functional.
+  await page.getByTestId("network-tab-0").click();
+  await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
+
+  expect(browserErrors).toEqual([]);
+});
+
+
 test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed /operator", async ({
   page,
 }) => {

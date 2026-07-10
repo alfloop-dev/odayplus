@@ -1,4 +1,14 @@
-import type { Candidate, HeatZoneLens, Listing, OperatorHeatZone, RiskLevel } from "./types";
+import type {
+  Candidate,
+  HeatZoneLens,
+  Listing,
+  ListingSource,
+  OperatorHeatZone,
+  OperatorRoleId,
+  RebalanceStore,
+  RiskLevel,
+  SiteReview,
+} from "./types";
 
 export type NetworkFindAreasLens = HeatZoneLens | "life";
 
@@ -61,6 +71,116 @@ export type NetworkFindAreasMapPoint = {
   status: string;
 };
 
+export type NetworkTone = "good" | "watch" | "risk";
+
+export type ListingRadarRow = {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  sourceStatus: ListingSource["status"];
+  complianceNote: string;
+  heatZoneId: string;
+  zoneLabel: string;
+  address: string;
+  status: Listing["status"];
+  statusLabel: string;
+  rentLabel: string;
+  areaPing: number;
+  geocodeConfidence: number;
+  geocodeConfidenceLabel: string;
+  isDuplicate: boolean;
+  duplicateOfId?: string;
+  hardRuleFailures: string[];
+  candidateId?: string;
+  tone: NetworkTone;
+};
+
+export type CandidatePipelineRow = {
+  id: string;
+  heatZoneId: string;
+  zoneLabel: string;
+  title: string;
+  address: string;
+  status: Candidate["status"];
+  statusLabel: string;
+  score: number;
+  scoreMeter: number;
+  recommendation: Candidate["recommendation"];
+  modelVersion: string;
+  datasetSnapshotId: string;
+  missingData: string[];
+  reviewId?: string;
+  listingId?: string;
+  isBestInZone: boolean;
+  tone: NetworkTone;
+};
+
+export type SiteScoreLabRow = {
+  id: string;
+  title: string;
+  zoneLabel: string;
+  score: number;
+  scoreMeter: number;
+  recommendation: Candidate["recommendation"];
+  band: string;
+  tone: NetworkTone;
+  modelVersion: string;
+  datasetSnapshotId: string;
+  missingData: string[];
+  evidenceReady: boolean;
+  decisionReady: boolean;
+  gateLabel: string;
+};
+
+export type CompareMetricRow = {
+  key: string;
+  label: string;
+  values: Array<{ zoneId: string; value: number; label: string; isLeader: boolean }>;
+};
+
+export type CompareColumn = {
+  zoneId: string;
+  label: string;
+  rank: number;
+  lensLabel: string;
+};
+
+export type NetworkCompareViewModel = {
+  columns: CompareColumn[];
+  metrics: CompareMetricRow[];
+};
+
+export type ReviewQueueRow = {
+  id: string;
+  candidateId: string;
+  candidateTitle: string;
+  zoneLabel: string;
+  status: SiteReview["status"];
+  statusLabel: string;
+  requestedByLabel: string;
+  reviewerLabels: string[];
+  requestedAt: string;
+  decidedAt?: string;
+  reasonRequired: boolean;
+  reason?: string;
+  score?: number;
+  recommendation?: Candidate["recommendation"];
+  tone: NetworkTone;
+};
+
+export type RebalanceQueueRow = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  status: RebalanceStore["status"];
+  statusLabel: string;
+  avmRequestId?: string;
+  netPlanOptionId?: string;
+  relatedApprovalId?: string;
+  summary: string;
+  tone: NetworkTone;
+};
+
 export type NetworkFindAreasViewModel = {
   lenses: LensDefinition[];
   activeLens: NetworkFindAreasLens;
@@ -68,11 +188,19 @@ export type NetworkFindAreasViewModel = {
   zones: NetworkFindAreasZoneViewModel[];
   rankedZones: NetworkFindAreasZoneViewModel[];
   mapPoints: NetworkFindAreasMapPoint[];
+  listingRadar: ListingRadarRow[];
+  candidatePipeline: CandidatePipelineRow[];
+  siteScoreLab: SiteScoreLabRow[];
+  compare: NetworkCompareViewModel;
+  reviewQueue: ReviewQueueRow[];
+  rebalanceQueue: RebalanceQueueRow[];
   totals: {
     heatZones: number;
     listings: number;
     candidates: number;
     averageConfidence: string;
+    reviews: number;
+    rebalances: number;
   };
 };
 
@@ -80,6 +208,9 @@ export type BuildNetworkFindAreasViewModelInput = {
   heatZones: OperatorHeatZone[];
   listings: Listing[];
   candidates: Candidate[];
+  listingSources?: ListingSource[];
+  siteReviews?: SiteReview[];
+  rebalanceStores?: RebalanceStore[];
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
 };
@@ -155,11 +286,76 @@ const RISK_LABEL: Record<RiskLevel, string> = {
   critical: "Critical",
 };
 
+const ROLE_LABEL: Record<OperatorRoleId, string> = {
+  opsLead: "營運主管",
+  supportLead: "客服主管",
+  facilitiesLead: "工務主任",
+  marketingManager: "行銷經理",
+  expansionManager: "展店經理",
+  auditPm: "PM／稽核",
+};
+
+const LISTING_STATUS_LABEL: Record<Listing["status"], string> = {
+  new: "新進",
+  parsed: "已解析",
+  geocoded: "已定位",
+  watching: "追蹤中",
+  contacted: "已接觸",
+  visit: "已勘查",
+  candidate: "轉候選",
+  scored: "已評分",
+  duplicate: "重複",
+  hardfail: "硬規則不符",
+  archived: "封存",
+  expired: "過期",
+};
+
+const CANDIDATE_STATUS_LABEL: Record<Candidate["status"], string> = {
+  missingdata: "缺資料",
+  scoring: "評分中",
+  wait: "觀望",
+  ready: "可審",
+  pendingreview: "待審核",
+  approved: "已核准",
+  rejected: "已否決",
+  blocked: "阻擋",
+};
+
+const SITE_REVIEW_STATUS_LABEL: Record<SiteReview["status"], string> = {
+  pending: "待審",
+  approved: "核准",
+  returned: "退回",
+  rejected: "否決",
+};
+
+const REBALANCE_STATUS_LABEL: Record<RebalanceStore["status"], string> = {
+  watching: "追蹤中",
+  avmrequested: "AVM 待估",
+  avmready: "AVM 完成",
+  netplanreview: "店網評估",
+  pendingapproval: "待核准",
+  approved: "已核准",
+  closed: "結案",
+};
+
+function recommendationTone(recommendation: Candidate["recommendation"]): NetworkTone {
+  if (recommendation === "GO") {
+    return "good";
+  }
+  if (recommendation === "REJECT") {
+    return "risk";
+  }
+  return "watch";
+}
+
 export function buildNetworkFindAreasViewModel({
   activeLens = "demand",
   candidates,
   heatZones,
   listings,
+  listingSources = [],
+  siteReviews = [],
+  rebalanceStores = [],
   selectedHeatZoneId,
 }: BuildNetworkFindAreasViewModelInput): NetworkFindAreasViewModel {
   const zones = [...heatZones].sort((left, right) => left.rank - right.rank);
@@ -192,20 +388,231 @@ export function buildNetworkFindAreasViewModel({
     return left.rank - right.rank;
   });
 
+  const zoneLabelById = new Map(zoneModels.map((zone) => [zone.id, zone.label] as const));
+  const bestCandidateIds = new Set(
+    zoneModels.map((zone) => zone.bestCandidate?.id).filter((id): id is string => Boolean(id)),
+  );
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate] as const));
+
+  const listingRadar = buildListingRadar(listings, listingSources, zoneLabelById);
+  const candidatePipeline = buildCandidatePipeline(candidates, zoneLabelById, bestCandidateIds);
+  const siteScoreLab = buildSiteScoreLab(candidates, zoneLabelById);
+  const compare = buildCompareViewModel(rankedZones);
+  const reviewQueue = buildReviewQueue(siteReviews, candidateById, zoneLabelById);
+  const rebalanceQueue = buildRebalanceQueue(rebalanceStores);
+
   return {
     activeLens,
+    candidatePipeline,
+    compare,
     lenses: NETWORK_FIND_AREAS_LENSES,
+    listingRadar,
     mapPoints: buildMapPoints(zoneModels),
     rankedZones,
+    rebalanceQueue,
+    reviewQueue,
     selectedZone,
+    siteScoreLab,
     totals: {
       averageConfidence: formatPercent(average(zoneModels.map((zone) => zone.confidence))),
       candidates: candidates.length,
       heatZones: zoneModels.length,
       listings: listings.length,
+      rebalances: rebalanceStores.length,
+      reviews: siteReviews.length,
     },
     zones: zoneModels,
   };
+}
+
+function buildListingRadar(
+  listings: Listing[],
+  sources: ListingSource[],
+  zoneLabelById: Map<string, string>,
+): ListingRadarRow[] {
+  const sourceById = new Map(sources.map((source) => [source.id, source] as const));
+  return listings.map((listing) => {
+    const source = sourceById.get(listing.sourceId);
+    const isDuplicate = listing.status === "duplicate" || Boolean(listing.duplicateOfId);
+    const tone: NetworkTone =
+      listing.status === "hardfail" || listing.hardRuleFailures.length > 0
+        ? "risk"
+        : isDuplicate || listing.status === "expired"
+          ? "watch"
+          : "good";
+    return {
+      address: listing.address,
+      areaPing: listing.areaPing,
+      candidateId: listing.candidateId,
+      complianceNote: source?.complianceNote ?? "Source metadata unavailable.",
+      duplicateOfId: listing.duplicateOfId,
+      geocodeConfidence: listing.geocodeConfidence,
+      geocodeConfidenceLabel: formatPercent(listing.geocodeConfidence),
+      hardRuleFailures: listing.hardRuleFailures,
+      heatZoneId: listing.heatZoneId,
+      id: listing.id,
+      isDuplicate,
+      rentLabel: formatCurrencyTwd(listing.rentPerMonth),
+      sourceId: listing.sourceId,
+      sourceName: source?.name ?? listing.sourceId,
+      sourceStatus: source?.status ?? "manualOnly",
+      status: listing.status,
+      statusLabel: LISTING_STATUS_LABEL[listing.status] ?? listing.status,
+      tone,
+      zoneLabel: zoneLabelById.get(listing.heatZoneId) ?? listing.heatZoneId,
+    };
+  });
+}
+
+function buildCandidatePipeline(
+  candidates: Candidate[],
+  zoneLabelById: Map<string, string>,
+  bestCandidateIds: Set<string>,
+): CandidatePipelineRow[] {
+  return [...candidates]
+    .sort((left, right) => right.score - left.score)
+    .map((candidate) => ({
+      address: candidate.address,
+      datasetSnapshotId: candidate.datasetSnapshotId,
+      heatZoneId: candidate.heatZoneId,
+      id: candidate.id,
+      isBestInZone: bestCandidateIds.has(candidate.id),
+      listingId: candidate.listingId,
+      missingData: candidate.missingData,
+      modelVersion: candidate.modelVersion,
+      recommendation: candidate.recommendation,
+      reviewId: candidate.reviewId,
+      score: candidate.score,
+      scoreMeter: clamp01(candidate.score / 100),
+      status: candidate.status,
+      statusLabel: CANDIDATE_STATUS_LABEL[candidate.status] ?? candidate.status,
+      title: candidate.title,
+      tone: recommendationTone(candidate.recommendation),
+      zoneLabel: zoneLabelById.get(candidate.heatZoneId) ?? candidate.heatZoneId,
+    }));
+}
+
+function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, string>): SiteScoreLabRow[] {
+  return [...candidates]
+    .sort((left, right) => right.score - left.score)
+    .map((candidate) => {
+      const evidenceReady = candidate.missingData.length === 0;
+      const decisionReady = evidenceReady && candidate.recommendation === "GO";
+      return {
+        band:
+          candidate.recommendation === "GO"
+            ? "GO ≥ 80"
+            : candidate.recommendation === "WAIT"
+              ? "WAIT 60–79"
+              : "REJECT < 60",
+        datasetSnapshotId: candidate.datasetSnapshotId,
+        decisionReady,
+        evidenceReady,
+        gateLabel: evidenceReady
+          ? decisionReady
+            ? "可送核准"
+            : "證據齊備，建議續觀察"
+          : `待補 ${candidate.missingData.length} 項證據`,
+        id: candidate.id,
+        missingData: candidate.missingData,
+        modelVersion: candidate.modelVersion,
+        recommendation: candidate.recommendation,
+        score: candidate.score,
+        scoreMeter: clamp01(candidate.score / 100),
+        title: candidate.title,
+        tone: recommendationTone(candidate.recommendation),
+        zoneLabel: zoneLabelById.get(candidate.heatZoneId) ?? candidate.heatZoneId,
+      };
+    });
+}
+
+const COMPARE_METRICS: Array<{ key: string; label: string; pick: (zone: NetworkFindAreasZoneViewModel) => number }> = [
+  { key: "demand", label: "Demand Gap", pick: (zone) => zone.demandGap },
+  { key: "fit", label: "Brand Fit", pick: (zone) => zone.fitScore },
+  { key: "competition", label: "Competition (low better)", pick: (zone) => 1 - zone.competitionIndex },
+  { key: "cannibalization", label: "Cannibalization (low better)", pick: (zone) => zone.cannibalizationScore },
+  { key: "rent", label: "Rent Opportunity", pick: (zone) => zone.rentScore },
+  { key: "traffic", label: "Traffic", pick: (zone) => zone.trafficScore },
+  { key: "unmet", label: "Unmet Demand", pick: (zone) => zone.unmetScore },
+  { key: "confidence", label: "Confidence", pick: (zone) => zone.confidence },
+];
+
+function buildCompareViewModel(rankedZones: NetworkFindAreasZoneViewModel[]): NetworkCompareViewModel {
+  const columns: CompareColumn[] = rankedZones.map((zone) => ({
+    label: `${zone.id} · ${zone.label}`,
+    lensLabel: zone.lensLabel,
+    rank: zone.rank,
+    zoneId: zone.id,
+  }));
+
+  const metrics: CompareMetricRow[] = COMPARE_METRICS.map((metric) => {
+    const raw = rankedZones.map((zone) => ({ value: clamp01(metric.pick(zone)), zoneId: zone.id }));
+    const maxValue = raw.reduce((max, entry) => Math.max(max, entry.value), 0);
+    return {
+      key: metric.key,
+      label: metric.label,
+      values: raw.map((entry) => ({
+        isLeader: rankedZones.length > 1 && entry.value === maxValue && maxValue > 0,
+        label: formatPercent(entry.value),
+        value: entry.value,
+        zoneId: entry.zoneId,
+      })),
+    };
+  });
+
+  return { columns, metrics };
+}
+
+function buildReviewQueue(
+  siteReviews: SiteReview[],
+  candidateById: Map<string, Candidate>,
+  zoneLabelById: Map<string, string>,
+): ReviewQueueRow[] {
+  return siteReviews.map((review) => {
+    const candidate = candidateById.get(review.candidateId);
+    const tone: NetworkTone =
+      review.status === "approved" ? "good" : review.status === "rejected" ? "risk" : "watch";
+    return {
+      candidateId: review.candidateId,
+      candidateTitle: candidate?.title ?? review.candidateId,
+      decidedAt: review.decidedAt,
+      id: review.id,
+      reason: review.reason,
+      reasonRequired: review.reasonRequired,
+      recommendation: candidate?.recommendation,
+      requestedAt: review.requestedAt,
+      requestedByLabel: ROLE_LABEL[review.requestedByRoleId] ?? review.requestedByRoleId,
+      reviewerLabels: review.reviewerRoleIds.map((roleId) => ROLE_LABEL[roleId] ?? roleId),
+      score: candidate?.score,
+      status: review.status,
+      statusLabel: SITE_REVIEW_STATUS_LABEL[review.status] ?? review.status,
+      tone,
+      zoneLabel: candidate ? zoneLabelById.get(candidate.heatZoneId) ?? candidate.heatZoneId : "—",
+    };
+  });
+}
+
+function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueRow[] {
+  return rebalanceStores.map((store) => ({
+    avmRequestId: store.avmRequestId,
+    id: store.id,
+    netPlanOptionId: store.netPlanOptionId,
+    relatedApprovalId: store.relatedApprovalId,
+    status: store.status,
+    statusLabel: REBALANCE_STATUS_LABEL[store.status] ?? store.status,
+    storeId: store.storeId,
+    storeName: store.storeName,
+    summary: store.summary,
+    tone: store.status === "approved" || store.status === "closed" ? "good" : store.status === "pendingapproval" ? "watch" : "watch",
+  }));
+}
+
+function formatCurrencyTwd(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    currency: "TWD",
+    maximumFractionDigits: 0,
+    style: "currency",
+  }).format(value);
 }
 
 function buildZoneViewModel({
