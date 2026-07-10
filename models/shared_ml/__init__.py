@@ -16,6 +16,8 @@ from models.shared_ml.validation import (
     ValidationStatus,
     validate_model_candidate,
 )
+from models.shared_ml.backtest import run_rolling_backtest
+from models.shared_ml.drift import calculate_psi, monitor_drift
 
 __all__ = [
     "MetricThreshold",
@@ -32,4 +34,8 @@ __all__ = [
     "ValidationRun",
     "ValidationStatus",
     "validate_model_candidate",
+    "run_rolling_backtest",
+    "calculate_psi",
+    "monitor_drift",
 ]
+
