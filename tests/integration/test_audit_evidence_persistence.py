@@ -37,6 +37,7 @@ from shared.audit.persistence import (
 )
 from shared.infrastructure.persistence import build_persistence
 from shared.infrastructure.persistence.factory import _durable_bundle
+from tests.integration._authz import AUDIT_HEADERS
 
 NOW = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -303,7 +304,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
             )
         )
         app = create_app(persistence=bundle_persistence)
-        client = TestClient(app)
+        client = TestClient(app, headers=AUDIT_HEADERS)
 
         response = client.post(
             "/audit/evidence/export",

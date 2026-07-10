@@ -3,6 +3,11 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from shared.auth import Role
+
+# External-data freshness is an integration-domain read guarded by RBAC
+# (ODP-GAP-API-001); DATA_OWNER holds the integration view grant.
+_EXTERNAL_DATA_HEADERS = {"x-subject-id": "test-operator", "x-roles": Role.DATA_OWNER.value}
 
 
 def test_health_routes_publish_correlation_id() -> None:
@@ -94,7 +99,10 @@ def test_job_lookup_and_openapi_contract() -> None:
 def test_external_data_freshness_api_exposes_lineage_and_correlation() -> None:
     client = TestClient(create_app())
 
-    response = client.get("/external-data/freshness", headers={"x-correlation-id": "corr-fresh-api"})
+    response = client.get(
+        "/external-data/freshness",
+        headers={**_EXTERNAL_DATA_HEADERS, "x-correlation-id": "corr-fresh-api"},
+    )
 
     assert response.status_code == 200
     body = response.json()

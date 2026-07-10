@@ -6,7 +6,7 @@ from uuid import uuid4
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -20,19 +20,23 @@ else:
         SiteScoreDecisionWorkflow,
     )
 
+
     class SiteScoreScoreJobPayload(BaseModel):
         features: list[dict[str, Any]] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         idempotency_key: str | None = None
 
+
     class OpenDecisionPayload(BaseModel):
         report_id: str
         created_by: str = Field(min_length=1)
+
 
     class DecisionPayload(BaseModel):
         action: str
         actor: str = Field(min_length=1)
         reason: str = ""
+
 
     def create_sitescore_router(
         *,
@@ -40,8 +44,12 @@ else:
         workflow: SiteScoreDecisionWorkflow | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/sitescore", tags=["sitescore"])
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         site_repository = repository or InMemorySiteScoreRepository()
         realization_hook = CandidateSiteRealizationHook()
         decision_workflow = workflow or SiteScoreDecisionWorkflow(
@@ -53,8 +61,8 @@ else:
         idempotency_index: dict[str, str] = {}
         jobs: dict[str, dict[str, Any]] = {}
 
-        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED)
-        @router.post("/reports", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/reports", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
         def create_score_job(
             body: SiteScoreScoreJobPayload,
             request: Request,
@@ -100,7 +108,7 @@ else:
                 idempotency_index[effective_key] = job_id
             return payload
 
-        @router.get("/reports")
+        @router.get("/reports", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def list_reports() -> dict[str, Any]:
             reports = site_repository.list_latest()
             return {
@@ -108,7 +116,7 @@ else:
                 "count": len(reports),
             }
 
-        @router.get("/reports/{candidate_site_id}")
+        @router.get("/reports/{candidate_site_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def candidate_reports(candidate_site_id: str) -> dict[str, Any]:
             latest = site_repository.latest(candidate_site_id)
             if latest is None:
@@ -120,7 +128,7 @@ else:
                 "version_count": len(history),
             }
 
-        @router.post("/decisions", status_code=status.HTTP_201_CREATED)
+        @router.post("/decisions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
         def open_decision(body: OpenDecisionPayload, request: Request) -> dict[str, Any]:
             report = site_repository.get_report(body.report_id)
             if report is None:
@@ -137,7 +145,7 @@ else:
             )
             return decision.to_dict()
 
-        @router.post("/decisions/{decision_id}/decision")
+        @router.post("/decisions/{decision_id}/decision", dependencies=[Depends(require_permission("sitescore", Action.APPROVE, engine=authz_engine))])
         def decide(decision_id: str, body: DecisionPayload, request: Request) -> dict[str, Any]:
             try:
                 action = DecisionAction(body.action)
@@ -161,14 +169,14 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/decisions/{decision_id}")
+        @router.get("/decisions/{decision_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def get_decision(decision_id: str) -> dict[str, Any]:
             decision = decision_workflow.get(decision_id)
             if decision is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="decision not found")
             return decision.to_dict()
 
-        @router.get("/realized")
+        @router.get("/realized", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def list_realized() -> dict[str, Any]:
             realized = realization_hook.list_realized()
             return {

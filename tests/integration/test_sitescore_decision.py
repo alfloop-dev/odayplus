@@ -22,6 +22,7 @@ from shared.workflow.sitescore import (
     SiteScoreDecisionError,
     SiteScoreDecisionWorkflow,
 )
+from tests.integration._authz import SITESCORE_HEADERS
 
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
@@ -220,7 +221,7 @@ def test_decision_workflow_reject_and_request_revision_paths() -> None:
 
 
 def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=SITESCORE_HEADERS)
 
     score_response = client.post(
         "/sitescore/score-jobs",
@@ -300,7 +301,7 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
 
 
 def test_sitescore_prediction_run_replay() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=SITESCORE_HEADERS)
     score_response = client.post(
         "/sitescore/score-jobs",
         json={

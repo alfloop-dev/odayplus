@@ -61,6 +61,8 @@ from modules.priceops.domain.pricing import (
     RollbackPlan,
 )
 from modules.sitescore.domain.scoring import SiteScoreReport
+from shared.domain import ForecastOutput as CanonicalForecastOutput
+from shared.domain import Prediction, PredictionRun
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
 
@@ -170,6 +172,9 @@ class DurableForecastOpsRepository:
     _FORECASTS = "forecastops.forecasts"
     _ALERTS = "forecastops.alerts"
     _HANDOFFS = "forecastops.handoffs"
+    _PREDICTION_RUNS = "forecastops.prediction_runs"
+    _PREDICTIONS = "forecastops.predictions"
+    _CANONICAL_FORECASTS = "forecastops.canonical_forecasts"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -217,6 +222,36 @@ class DurableForecastOpsRepository:
 
     def list_handoffs(self) -> list[InterventionHandoff]:
         return self._store.list_all(self._HANDOFFS)
+
+    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
+        self._store.put(self._PREDICTION_RUNS, run.prediction_run_id, run)
+        return run
+
+    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
+        return self._store.get(self._PREDICTION_RUNS, prediction_run_id)
+
+    def save_prediction(self, prediction: Prediction) -> Prediction:
+        self._store.append_version(
+            self._PREDICTIONS,
+            f"prediction-{uuid4()}",
+            prediction,
+            group_key=prediction.prediction_run_id,
+        )
+        return prediction
+
+    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
+        return self._store.list_by_group(self._PREDICTIONS, prediction_run_id)
+
+    def save_canonical_forecast(
+        self, forecast: CanonicalForecastOutput
+    ) -> CanonicalForecastOutput:
+        self._store.put(self._CANONICAL_FORECASTS, forecast.forecast_output_id, forecast)
+        return forecast
+
+    def get_canonical_forecast(
+        self, forecast_output_id: str
+    ) -> CanonicalForecastOutput | None:
+        return self._store.get(self._CANONICAL_FORECASTS, forecast_output_id)
 
 
 class DurableAdLiftRepository:
