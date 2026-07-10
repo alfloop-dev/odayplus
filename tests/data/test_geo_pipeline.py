@@ -42,12 +42,16 @@ def test_address_normalization_geocode_and_h3_are_reproducible() -> None:
 
     assert normalized.normalized_address == "台北市大安區和平東路二段100號"
     assert result.address.city == "台北市"
+    import h3
     assert result.address.district == "大安區"
     assert result.address.geocode_precision == "rooftop"
     assert result.address.geocode_confidence == 0.92
-    assert result.address.h3_res_8.startswith("h3r8_")
-    assert result.address.h3_res_9.startswith("h3r9_")
-    assert result.address.h3_res_10.startswith("h3r10_")
+    assert h3.is_valid_cell(result.address.h3_res_8)
+    assert h3.is_valid_cell(result.address.h3_res_9)
+    assert h3.is_valid_cell(result.address.h3_res_10)
+    assert h3.get_resolution(result.address.h3_res_8) == 8
+    assert h3.get_resolution(result.address.h3_res_9) == 9
+    assert h3.get_resolution(result.address.h3_res_10) == 10
     assert result.quality_flags == ()
 
     geo_cell = build_geo_cell(result)
@@ -83,7 +87,9 @@ def test_geo_pipeline_flags_stale_source_snapshot() -> None:
         as_of=datetime(2026, 6, 27, tzinfo=UTC),
     )
 
-    assert result.address.h3_res_9.startswith("h3r9_")
+    import h3
+    assert h3.is_valid_cell(result.address.h3_res_9)
+    assert h3.get_resolution(result.address.h3_res_9) == 9
     assert "stale_source_snapshot" in result.quality_flags
 
 

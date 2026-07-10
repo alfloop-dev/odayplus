@@ -407,7 +407,7 @@ dev = [
 requires-dist = [
     { name = "duckdb", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "h3", specifier = ">=4.1" },
+    { name = "h3", specifier = ">=4.5.0" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "ortools", specifier = ">=9.15.6755" },
     { name = "pydantic", specifier = ">=2.8" },

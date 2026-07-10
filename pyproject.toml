@@ -17,7 +17,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "statsmodels>=0.14",
     # Solver / geospatial
-    "h3>=4.1",
+    "h3>=4.5.0",
     "ortools>=9.15.6755",
     # Data
     "duckdb>=1.0",
