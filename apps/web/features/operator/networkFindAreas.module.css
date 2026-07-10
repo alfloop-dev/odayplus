@@ -640,3 +640,544 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* --- ODP-OC-FE-04: additional Network tabs (listings/candidates/sitescore/compare/review/rebalance) --- */
+
+.tab[aria-current="page"],
+.tabActive {
+  border-color: #2563eb;
+  color: #0f172a;
+}
+
+.tabPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.dataTable thead th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  background: #f4f7fc;
+  color: #45536b;
+  font-weight: 800;
+  padding: 9px 12px;
+  border-bottom: 1px solid #d7deea;
+  white-space: nowrap;
+}
+
+.dataTable tbody th,
+.dataTable tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #eef2f8;
+  vertical-align: top;
+  color: #1f2a3d;
+}
+
+.dataTable tbody th {
+  text-align: left;
+  font-weight: 700;
+  color: #45536b;
+  white-space: nowrap;
+}
+
+.dataTable tbody tr:last-child th,
+.dataTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.dataTable tbody tr[data-tone="risk"] {
+  background: #fef2f2;
+}
+
+.dataTable tbody tr[data-tone="watch"] {
+  background: #fffbeb;
+}
+
+.dataTable small {
+  display: block;
+  color: #6b7688;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.dataTable strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toneBadge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+
+.toneBadge[data-tone="good"] {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.toneBadge[data-tone="watch"] {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.toneBadge[data-tone="risk"] {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.muted {
+  color: #6b7688;
+}
+
+.flag,
+.flagRisk {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin: 0 4px 2px 0;
+}
+
+.flag {
+  background: #eef2f8;
+  color: #45536b;
+}
+
+.flagRisk {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.bestTag {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #047857;
+  background: #ecfdf5;
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.cardRow,
+.cardGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.cardRow {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.cardGrid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.sourceCard,
+.scoreCard,
+.reviewCard {
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.scoreCard[data-tone="risk"],
+.reviewCard[data-tone="risk"] {
+  border-color: #fecaca;
+}
+
+.scoreCard[data-tone="good"],
+.reviewCard[data-tone="good"] {
+  border-color: #a7f3d0;
+}
+
+.sourceCardHead,
+.scoreCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scoreCardHead strong {
+  display: block;
+  font-size: 14px;
+}
+
+.scoreCardHead small {
+  display: block;
+  color: #6b7688;
+  font-size: 11px;
+}
+
+.sourceCard p,
+.scoreCard p,
+.reviewCard p {
+  margin: 0;
+  font-size: 12.5px;
+  color: #35425a;
+}
+
+.scoreMeter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scoreMeter strong {
+  font-size: 15px;
+  min-width: 28px;
+}
+
+.scoreMeter i {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: #eef2f8;
+  overflow: hidden;
+}
+
+.scoreMeter b {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #10b981;
+}
+
+.scoreMeter[data-tone="watch"] b {
+  background: #f59e0b;
+}
+
+.scoreMeter[data-tone="risk"] b {
+  background: #ef4444;
+}
+
+.scoreMeterWide strong {
+  font-size: 22px;
+}
+
+.scoreBand {
+  font-weight: 800;
+  font-size: 12px;
+  color: #45536b;
+}
+
+.scoreMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.scoreMeta div {
+  display: grid;
+  gap: 1px;
+}
+
+.scoreMeta dt {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a96a8;
+  font-weight: 700;
+}
+
+.scoreMeta dd {
+  margin: 0;
+  font-size: 12px;
+  color: #1f2a3d;
+  font-weight: 600;
+}
+
+.gateRow {
+  display: flex;
+}
+
+.gateOk,
+.gateWarn {
+  font-size: 11.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.gateOk {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.gateWarn {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.missingList {
+  margin: 0;
+  padding-left: 16px;
+  color: #6b7688;
+  font-size: 11.5px;
+  display: grid;
+  gap: 2px;
+}
+
+.reasonNote {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.leaderCell {
+  background: #ecfdf5;
+  font-weight: 800;
+  color: #047857;
+}
+
+.leaderMark {
+  margin-left: 4px;
+  font-size: 10px;
+}
+
+/* --- Rebalance AVM & NetPlan Extensions --- */
+
+.rebalanceAvmBlock {
+  border: 1px solid #c6e6eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #e9f6f8;
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.rebalanceAvmHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rebalanceAvmHeader span:first-child {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #0e7c8c;
+  letter-spacing: 0.05em;
+}
+
+.rebalanceAvmHeader span:last-child {
+  font-size: 10px;
+  color: #4a7c86;
+}
+
+.avmValueP50 {
+  font-size: 19px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #135e6b;
+  margin-top: 4px;
+}
+
+.avmValueP50::after {
+  content: " P50 公允價值";
+  font-size: 10px;
+  color: #4a7c86;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.avmBands {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: #4a7c86;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.avmReserveNote {
+  font-size: 10.5px;
+  color: #4a7c86;
+  border-top: 1px dashed #c6e6eb;
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
+.rebalanceNetPlanBlock {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.rebalanceNetPlanHeader {
+  font-size: 11px;
+  font-weight: 800;
+  color: #8a93a8;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.netPlanScenarioList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.netPlanScenarioCard {
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #e0e5ef;
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.netPlanScenarioCardRec {
+  border-color: #2e3a97;
+  background: #f4f6fc;
+}
+
+.scenarioTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.scenarioTitleRow strong {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #1c2333;
+}
+
+.recBadge {
+  font-size: 9px;
+  font-weight: 800;
+  color: #1e7f4f;
+  background: #e5f3ea;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.roiValue {
+  margin-left: auto;
+  font-size: 11px;
+  color: #2e3a97;
+  font-weight: 700;
+}
+
+.scenarioDetails {
+  font-size: 11px !important;
+  color: #5a6478 !important;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* --- Review Decision Reason Gate Styles --- */
+
+.reasonInputGroup {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.reasonInputGroup label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a6478;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.errorText {
+  color: #b91c1c;
+  font-size: 11.5px;
+  font-weight: 700;
+  margin: 2px 0 0 0;
+}
+
+.actionButtons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btnApprove,
+.btnReturn,
+.btnReject {
+  flex: 1;
+  font-size: 11.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.btnApprove {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.btnApprove:hover {
+  background: #059669;
+}
+
+.btnReturn {
+  background: #f59e0b;
+  color: #ffffff;
+}
+
+.btnReturn:hover {
+  background: #d97706;
+}
+
+.btnReject {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.btnReject:hover {
+  background: #dc2626;
+}
