@@ -268,8 +268,10 @@ def forecast_stores(
     *,
     prediction_origin_time: datetime | None = None,
     scored_at: datetime | None = None,
+    prediction_run_id: str | None = None,
 ) -> tuple[list[ForecastOutput], list[Alert], list[InterventionHandoff]]:
     scored_time = scored_at or datetime.now(UTC)
+    run_id = prediction_run_id or f"forecast-run-{uuid4()}"
     outputs: list[ForecastOutput] = []
     alerts: list[Alert] = []
     handoffs: list[InterventionHandoff] = []
@@ -279,6 +281,7 @@ def forecast_stores(
             forecast_input,
             prediction_origin_time=prediction_origin_time or forecast_input.prediction_origin_time,
             scored_at=scored_time,
+            prediction_run_id=run_id,
         )
         outputs.append(output)
         alert = _alert_for(output, opened_at=scored_time)
@@ -294,6 +297,7 @@ def _forecast_one(
     *,
     prediction_origin_time: datetime,
     scored_at: datetime,
+    prediction_run_id: str,
 ) -> ForecastOutput:
     observations = forecast_input.observations
     if not observations:
@@ -327,7 +331,7 @@ def _forecast_one(
     return ForecastOutput(
         forecast_output_id=f"forecast-output-{uuid4()}",
         store_id=forecast_input.store_id,
-        prediction_run_id=f"forecast-run-{uuid4()}",
+        prediction_run_id=prediction_run_id,
         horizon_days=forecast_input.horizon_days,
         target_metric=forecast_input.target_metric,
         p10=w4.p10,

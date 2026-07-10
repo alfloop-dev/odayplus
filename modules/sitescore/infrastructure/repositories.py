@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from modules.sitescore.domain.scoring import SiteScoreReport
+from shared.domain import Prediction, PredictionRun, SiteScoreRun
 
 
 @dataclass
@@ -17,6 +18,9 @@ class InMemorySiteScoreRepository:
 
     _history: dict[str, list[SiteScoreReport]] = field(default_factory=dict)
     _by_report_id: dict[str, SiteScoreReport] = field(default_factory=dict)
+    _prediction_runs: dict[str, PredictionRun] = field(default_factory=dict)
+    _predictions: dict[str, list[Prediction]] = field(default_factory=dict)
+    _sitescore_runs: dict[str, SiteScoreRun] = field(default_factory=dict)
 
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
         versions = self._history.setdefault(report.candidate_site_id, [])
@@ -43,5 +47,27 @@ class InMemorySiteScoreRepository:
     def list_latest(self) -> list[SiteScoreReport]:
         return [versions[-1] for versions in self._history.values() if versions]
 
+    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
+        self._prediction_runs[run.prediction_run_id] = run
+        return run
+
+    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
+        return self._prediction_runs.get(prediction_run_id)
+
+    def save_prediction(self, prediction: Prediction) -> Prediction:
+        self._predictions.setdefault(prediction.prediction_run_id, []).append(prediction)
+        return prediction
+
+    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
+        return list(self._predictions.get(prediction_run_id, []))
+
+    def save_sitescore_run(self, run: SiteScoreRun) -> SiteScoreRun:
+        self._sitescore_runs[run.sitescore_run_id] = run
+        return run
+
+    def get_sitescore_run(self, sitescore_run_id: str) -> SiteScoreRun | None:
+        return self._sitescore_runs.get(sitescore_run_id)
+
 
 __all__ = ["InMemorySiteScoreRepository"]
+

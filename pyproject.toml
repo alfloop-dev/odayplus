@@ -9,6 +9,7 @@ authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
     # API
     "fastapi>=0.115",
+    "pyyaml>=6.0.3",
     "pydantic>=2.8",
     "uvicorn[standard]>=0.30",
     # ML
@@ -17,7 +18,7 @@ dependencies = [
     "statsmodels>=0.14",
     # Solver / geospatial
     "h3>=4.1",
-    "ortools>=9.10",
+    "ortools>=9.15.6755",
     # Data
     "duckdb>=1.0",
     "sqlalchemy>=2.0",

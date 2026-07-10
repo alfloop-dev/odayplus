@@ -1055,6 +1055,7 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
+    import re
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
         base_name = re.sub(r'\d+$', '', canonical)
