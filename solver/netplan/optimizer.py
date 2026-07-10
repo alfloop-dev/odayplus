@@ -206,7 +206,7 @@ def solve_network_plan(
     x = {}
     for entity_id, options in options_by_entity.items():
         x[entity_id] = []
-        for j, option in enumerate(options):
+        for j, _option in enumerate(options):
             var = solver.BoolVar(f"x_{entity_id}_{j}")
             x[entity_id].append(var)
 
@@ -323,7 +323,7 @@ def solve_network_plan(
     for _ in range(alternative_limit):
         current_selected_vars = []
         for entity_id, options in options_by_entity.items():
-            for j, option in enumerate(options):
+            for j, _option in enumerate(options):
                 if x[entity_id][j].solution_value() > 0.5:
                     current_selected_vars.append(x[entity_id][j])
         
