@@ -301,7 +301,7 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
 
 
 def test_sitescore_prediction_run_replay() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=SITESCORE_HEADERS)
     score_response = client.post(
         "/sitescore/score-jobs",
         json={

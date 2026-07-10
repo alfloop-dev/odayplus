@@ -178,7 +178,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
 
 def test_forecastops_prediction_run_replay() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "inputs": [
