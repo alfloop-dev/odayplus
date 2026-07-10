@@ -25,12 +25,14 @@ class ProviderMetadata:
     cost_model: str = "free"
     status: str = "production"  # candidate, staging, production, deprecated, blocked
 
+
 class WeatherProvider(Protocol):
     def get_daily_weather(self, station_id: str, date_str: str) -> dict[str, Any] | None:
         """Fetch weather data for a given station and date.
         Returns a dict conforming to weather_daily_snapshot schema or None.
         """
         ...
+
 
 class DemographicsProvider(Protocol):
     def get_demographics(self, h3_index: str) -> dict[str, Any] | None:
@@ -39,6 +41,7 @@ class DemographicsProvider(Protocol):
         """
         ...
 
+
 class FixtureWeatherProvider:
     def __init__(self, data_map: dict[tuple[str, str], dict[str, Any]] | None = None) -> None:
         self.data_map = {}
@@ -46,7 +49,7 @@ class FixtureWeatherProvider:
             self.data_map = data_map
         else:
             # Attempt to load from the JSON fixture
-            fixture_path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "source_data" / "external" / "weather_daily_snapshot.valid.json"
+            fixture_path = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "source_data" / "external" / "weather_daily_snapshot.valid.json"
             if fixture_path.exists():
                 try:
                     with open(fixture_path, encoding="utf-8") as f:
@@ -59,6 +62,7 @@ class FixtureWeatherProvider:
 
     def get_daily_weather(self, station_id: str, date_str: str) -> dict[str, Any] | None:
         return self.data_map.get((station_id, date_str))
+
 
 class LiveWeatherProvider:
     def __init__(self, api_url: str = "https://api.weather.example.com/v1", api_key: str = "live_key_placeholder") -> None:
@@ -87,6 +91,7 @@ class LiveWeatherProvider:
             "snapshot_id": f"weather-live-{station_id}-{date_str}"
         }
 
+
 class FixtureDemographicsProvider:
     def __init__(self, data_map: dict[str, dict[str, Any]] | None = None) -> None:
         self.data_map = {}
@@ -94,7 +99,7 @@ class FixtureDemographicsProvider:
             self.data_map = data_map
         else:
             # Attempt to load from the JSON fixture
-            fixture_path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "source_data" / "external" / "demographics_snapshot.valid.json"
+            fixture_path = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "source_data" / "external" / "demographics_snapshot.valid.json"
             if fixture_path.exists():
                 try:
                     with open(fixture_path, encoding="utf-8") as f:
@@ -106,6 +111,7 @@ class FixtureDemographicsProvider:
 
     def get_demographics(self, h3_index: str) -> dict[str, Any] | None:
         return self.data_map.get(h3_index)
+
 
 class LiveDemographicsProvider:
     def __init__(self, api_url: str = "https://api.demographics.example.com/v1") -> None:
@@ -128,9 +134,11 @@ class LiveDemographicsProvider:
             "snapshot_id": f"demographics-live-{h3_index}"
         }
 
+
 class LicenseViolationError(Exception):
     """Raised when a data provider is used in a prohibited or unlicensed way."""
     pass
+
 
 class ProviderRegistry:
     def __init__(self) -> None:
@@ -168,6 +176,7 @@ class ProviderRegistry:
         if usage not in meta.allowed_usage:
             raise LicenseViolationError(f"Usage {usage!r} is not allowed by the license of {source_id}")
         return True
+
 
 # Global Registry Instance
 provider_registry = ProviderRegistry()

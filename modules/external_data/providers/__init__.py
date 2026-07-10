@@ -26,6 +26,18 @@ from modules.external_data.providers.provider_mock import (
     ProviderMockRequest,
     listing_provider_mock_payload,
 )
+from modules.external_data.providers.weather_demographics import (
+    DemographicsProvider,
+    FixtureDemographicsProvider,
+    FixtureWeatherProvider,
+    LicenseViolationError,
+    LiveDemographicsProvider,
+    LiveWeatherProvider,
+    ProviderMetadata,
+    ProviderRegistry,
+    WeatherProvider,
+    provider_registry,
+)
 
 __all__ = [
     "GeocodeClient",
@@ -50,4 +62,14 @@ __all__ = [
     "ListingProviderMockService",
     "ProviderMockRequest",
     "listing_provider_mock_payload",
+    "DemographicsProvider",
+    "FixtureDemographicsProvider",
+    "FixtureWeatherProvider",
+    "LicenseViolationError",
+    "LiveDemographicsProvider",
+    "LiveWeatherProvider",
+    "ProviderMetadata",
+    "ProviderRegistry",
+    "WeatherProvider",
+    "provider_registry",
 ]
