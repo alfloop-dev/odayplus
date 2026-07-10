@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
-
-from datetime import UTC
 from uuid import uuid4
+
 from modules.sitescore.domain.scoring import (
+    SITESCORE_MODEL_VERSION,
     SiteScoreFeatureInput,
     SiteScoreReport,
     score_sites,
-    SITESCORE_MODEL_VERSION,
 )
 from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
-from shared.domain import PredictionRun, Prediction, SiteScoreRun
+from shared.domain import Prediction, PredictionRun, SiteScoreRun
 
 
 class SiteScoreReportService:

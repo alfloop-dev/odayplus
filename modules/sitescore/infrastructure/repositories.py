@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from modules.sitescore.domain.scoring import SiteScoreReport
-from shared.domain import PredictionRun, Prediction, SiteScoreRun
+from shared.domain import Prediction, PredictionRun, SiteScoreRun
 
 
 @dataclass

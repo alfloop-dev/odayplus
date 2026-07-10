@@ -9,7 +9,8 @@ from modules.forecastops.domain.forecasting import (
     ForecastSeries,
     InterventionHandoff,
 )
-from shared.domain import PredictionRun, Prediction, ForecastOutput as CanonicalForecastOutput
+from shared.domain import ForecastOutput as CanonicalForecastOutput
+from shared.domain import Prediction, PredictionRun
 
 
 @dataclass

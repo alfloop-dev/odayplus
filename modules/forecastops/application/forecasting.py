@@ -51,8 +51,10 @@ class ForecastOpsService:
     ) -> ForecastOpsResult:
         from datetime import UTC
         from uuid import uuid4
+
         from modules.forecastops.domain.forecasting import FORECASTOPS_MODEL_VERSION
-        from shared.domain import PredictionRun, Prediction, ForecastOutput as CanonicalForecastOutput
+        from shared.domain import ForecastOutput as CanonicalForecastOutput
+        from shared.domain import Prediction, PredictionRun
 
         run_id = f"pred-run-forecast-{uuid4()}"
         forecasts, alerts, handoffs = forecast_stores(
