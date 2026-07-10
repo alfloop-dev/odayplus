@@ -1,0 +1,21 @@
+{
+  "contract_id": "demographics_snapshot",
+  "title": "Demographics Snapshot",
+  "kind": "external",
+  "doc_ref": "ODP-DATA-03 §6 (CONN-MKT-POP)",
+  "source_system": "SRC-EXT-DEMOGRAPHICS",
+  "source_dataset": "demographics_snapshot",
+  "canonical_target": "demographics",
+  "mapping_id": "MAP-EXT-DEMOGRAPHICS-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "acquisition_method": "file",
+  "fields": [
+    {"name": "h3_index", "type": "string", "required": true, "description": "H3 cell index (typically resolution 9)."},
+    {"name": "population_total", "type": "number", "required": true, "minimum": 0, "description": "Total population in the cell."},
+    {"name": "household_total", "type": "number", "required": false, "minimum": 0, "description": "Total households in the cell."},
+    {"name": "median_income", "type": "number", "required": false, "minimum": 0, "description": "Median household income in the cell."},
+    {"name": "age_median", "type": "number", "required": false, "minimum": 0, "description": "Median age of residents in the cell."},
+    {"name": "snapshot_id", "type": "string", "required": true, "description": "Source snapshot id for reproducibility."}
+  ]
+}

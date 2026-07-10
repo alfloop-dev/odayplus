@@ -8,6 +8,7 @@ license = { text = "MIT" }
 authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
     "fastapi>=0.115",
+    "h3>=4.5.0",
 ]
 
 [dependency-groups]
