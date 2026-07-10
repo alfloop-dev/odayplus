@@ -1,0 +1,70 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    image: odayplus/api:e2e
+    environment:
+      ODP_ENV: e2e
+      ODP_PERSISTENCE: durable
+      ODP_DB_PATH: /data/product-e2e.sqlite3
+    ports:
+      - "${ODP_E2E_API_PORT:-8099}:8000"
+    volumes:
+      - e2e-db:/data
+      - e2e-storage:/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/platform/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+    image: odayplus/web:e2e
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      ODP_API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_URL: http://localhost:${ODP_E2E_API_PORT:-8099}
+    ports:
+      - "${ODP_E2E_WEB_PORT:-3100}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  source-stub:
+    image: python:3.12-slim
+    working_dir: /fixtures
+    command: ["python", "-m", "http.server", "8077", "--bind", "0.0.0.0"]
+    ports:
+      - "${ODP_E2E_SOURCE_STUB_PORT:-8077}:8077"
+    volumes:
+      - ../../tests/fixtures/source_data:/fixtures:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8077/external/listing_raw_snapshot.valid.json').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    image: odayplus/api:e2e
+    command: ["python", "scripts/e2e/worker_heartbeat.py", "--interval", "15"]
+    environment:
+      ODP_ENV: e2e
+      ODP_PERSISTENCE: durable
+      ODP_DB_PATH: /data/product-e2e.sqlite3
+      ODP_E2E_WORKER_HEARTBEAT: /storage/worker-heartbeat.jsonl
+    volumes:
+      - e2e-db:/data
+      - e2e-storage:/storage
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  e2e-db:
+  e2e-storage:

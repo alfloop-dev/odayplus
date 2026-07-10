@@ -1,0 +1,267 @@
+.mapShell {
+  display: grid;
+  grid-template-rows: auto minmax(380px, 1fr) auto;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-inset);
+}
+
+.mapToolbar,
+.boundaryBar,
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-3);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-bg-surface);
+  border-bottom: 1px solid var(--odp-color-border-default);
+}
+
+.legend {
+  border-top: 1px solid var(--odp-color-border-default);
+  border-bottom: 0;
+}
+
+.boundaryBar {
+  gap: var(--odp-space-3);
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.boundaryBar a {
+  color: var(--odp-color-text-link);
+}
+
+.boundaryAlert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-warning);
+  background: var(--odp-color-bg-warning-soft);
+  color: var(--odp-color-text-warning);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+}
+
+.statePanel {
+  display: grid;
+  gap: var(--odp-space-1);
+  padding: var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.statePanel strong {
+  color: var(--odp-color-text-primary);
+}
+
+.evidencePanel {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.5fr) minmax(280px, 1fr);
+  gap: var(--odp-space-3);
+  padding: var(--odp-space-3);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  background: var(--odp-color-bg-surface);
+}
+
+.evidenceTriggers {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: var(--odp-space-2);
+}
+
+.evidenceTrigger {
+  min-height: 32px;
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-muted);
+  color: var(--odp-color-text-secondary);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+  cursor: pointer;
+}
+
+.evidenceTrigger:hover,
+.evidenceTrigger:focus-visible,
+.evidenceTrigger[aria-pressed="true"] {
+  border-color: var(--odp-color-border-focus);
+  color: var(--odp-color-text-primary);
+  outline: 2px solid color-mix(in srgb, var(--odp-color-border-focus) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.evidenceTooltip {
+  display: grid;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-strong);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-inset);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+}
+
+.evidenceTooltip strong {
+  color: var(--odp-color-text-primary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--odp-space-2) var(--odp-space-4);
+  margin: 0;
+}
+
+.evidenceGrid div {
+  min-width: 0;
+}
+
+.evidenceGrid dt {
+  color: var(--odp-color-text-secondary);
+  font-weight: var(--odp-font-weight-medium);
+}
+
+.evidenceGrid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--odp-color-text-primary);
+  font-family: var(--odp-font-family-mono);
+}
+
+.mapToolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  min-height: var(--odp-density-control-height);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+  white-space: nowrap;
+}
+
+.mapToolbar input {
+  width: 16px;
+  height: 16px;
+}
+
+.layerKeyboardButton {
+  min-height: 28px;
+  padding: 0 var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+  cursor: pointer;
+}
+
+.layerKeyboardButton:focus-visible,
+.layerKeyboardButton[aria-pressed="true"] {
+  border-color: var(--odp-color-border-focus);
+  color: var(--odp-color-text-primary);
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 2px;
+}
+
+.mapCanvas {
+  position: relative;
+  min-height: 380px;
+}
+
+.deckOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.mapCanvas :global(.maplibregl-canvas),
+.deckOverlay canvas {
+  outline: none;
+}
+
+.mapCanvas :global(.maplibregl-map) {
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+}
+
+.mapStatus {
+  position: absolute;
+  left: var(--odp-space-3);
+  bottom: var(--odp-space-3);
+  z-index: 2;
+  max-width: min(460px, calc(100% - var(--odp-space-6)));
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: color-mix(in srgb, var(--odp-color-bg-surface) 92%, transparent);
+  color: var(--odp-color-text-secondary);
+  font-family: var(--odp-font-family-mono);
+  font-size: var(--odp-font-size-xs);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-sm);
+}
+
+.swatchGreen {
+  background: #2f855a;
+}
+
+.swatchYellow {
+  background: #b7791f;
+}
+
+.swatchOrange {
+  background: #c05621;
+}
+
+.swatchBlue {
+  background: #2b6cb0;
+}
+
+.swatchPurple {
+  background: #6b46c1;
+}
+
+@media (max-width: 960px) {
+  .mapShell {
+    min-height: 460px;
+    grid-template-rows: auto minmax(320px, 1fr) auto;
+  }
+
+  .evidencePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .evidenceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapCanvas {
+    min-height: 320px;
+  }
+}

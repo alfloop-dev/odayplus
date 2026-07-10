@@ -18,11 +18,11 @@ or canonical tables directly.
 | `intervention_panel_view` | store x date x intervention | InterventionOps, PriceOps | `operations.interventions`, `operations.intervention_outcomes` |
 | `valuation_view` | store x valuation date | DealRoomAVM | `asset.valuation_runs`, `operations.forecast_outputs`, `core.stores` |
 | `network_plan_view` | planning entity x quarter | NetPlan | `network.network_plans`, `network.network_plan_actions` |
+| `brand_transfer_view` | source brand x target brand x segment x age | SiteScore | `core.brands` |
+| `ramp_curve_view` | store cohort x store age x calendar | SiteScore, ForecastOps | `core.stores` |
+| `matched_control_view` | treated store x control candidate x date | AdLift | `core.stores` |
 
-The broader `ODP-DATA-06` catalog also includes `brand_transfer_view`,
-`ramp_curve_view`, and `matched_control_view`. Those remain documented
-follow-on views because the current canonical baseline does not yet include
-every source table needed for a useful physical model.
+All 10 views from the `ODP-DATA-06` catalog are now formally implemented. `brand_transfer_view`, `ramp_curve_view`, and `matched_control_view` are wired using baseline core tables as safe, predictable mock baselines to satisfy integration downstream dependencies.
 
 ## Common Contract
 

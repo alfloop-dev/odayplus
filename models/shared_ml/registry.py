@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -126,10 +126,166 @@ class RegisteredModel:
         }
 
 
+@dataclass(frozen=True)
+class FeatureDefinition:
+    feature_id: str
+    feature_name: str
+    version: str
+    status: str  # DRAFT | ACTIVE | DEPRECATED | BLOCKED
+    owner: str
+    domain: str
+    entity_type: str
+    entity_key: Sequence[str]
+    grain: str
+    value_type: str
+    unit: str
+    semantic_type: str
+    source_table: str
+    source_view: str
+    source_system: str
+    calculation_sql_uri: str
+    feature_available_time_rule: str
+    refresh_frequency: str
+    allowed_model_names: Sequence[str] = ()
+    forbidden_model_names: Sequence[str] = ()
+    quality_rules: Sequence[str] = ()
+    null_policy: str = "ALLOW"
+    pii_classification: str = "NONE"
+    lineage: Sequence[str] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    approved_by: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "feature_id": self.feature_id,
+            "feature_name": self.feature_name,
+            "version": self.version,
+            "status": self.status,
+            "owner": self.owner,
+            "domain": self.domain,
+            "entity_type": self.entity_type,
+            "entity_key": list(self.entity_key),
+            "grain": self.grain,
+            "value_type": self.value_type,
+            "unit": self.unit,
+            "semantic_type": self.semantic_type,
+            "source_table": self.source_table,
+            "source_view": self.source_view,
+            "source_system": self.source_system,
+            "calculation_sql_uri": self.calculation_sql_uri,
+            "feature_available_time_rule": self.feature_available_time_rule,
+            "refresh_frequency": self.refresh_frequency,
+            "allowed_model_names": list(self.allowed_model_names),
+            "forbidden_model_names": list(self.forbidden_model_names),
+            "quality_rules": list(self.quality_rules),
+            "null_policy": self.null_policy,
+            "pii_classification": self.pii_classification,
+            "lineage": list(self.lineage),
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "approved_by": self.approved_by,
+        }
+
+
+@dataclass(frozen=True)
+class LabelDefinition:
+    label_id: str
+    label_name: str
+    version: str
+    status: str  # DRAFT | ACTIVE | DEPRECATED | BLOCKED
+    owner: str
+    entity_type: str
+    entity_key: Sequence[str]
+    outcome_definition: str
+    outcome_unit: str
+    label_window_start_rule: str
+    label_window_end_rule: str
+    label_maturity_rule: str
+    source_table: str
+    calculation_sql_uri: str
+    allowed_models: Sequence[str] = ()
+    forbidden_models: Sequence[str] = ()
+    quality_rules: Sequence[str] = ()
+    treatment_dependency: str = "NONE"
+    contamination_risk: str = "LOW"
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    approved_by: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label_id": self.label_id,
+            "label_name": self.label_name,
+            "version": self.version,
+            "status": self.status,
+            "owner": self.owner,
+            "entity_type": self.entity_type,
+            "entity_key": list(self.entity_key),
+            "outcome_definition": self.outcome_definition,
+            "outcome_unit": self.outcome_unit,
+            "label_window_start_rule": self.label_window_start_rule,
+            "label_window_end_rule": self.label_window_end_rule,
+            "label_maturity_rule": self.label_maturity_rule,
+            "source_table": self.source_table,
+            "calculation_sql_uri": self.calculation_sql_uri,
+            "allowed_models": list(self.allowed_models),
+            "forbidden_models": list(self.forbidden_models),
+            "quality_rules": list(self.quality_rules),
+            "treatment_dependency": self.treatment_dependency,
+            "contamination_risk": self.contamination_risk,
+            "created_at": self.created_at.isoformat(),
+            "approved_by": self.approved_by,
+        }
+
+
+@dataclass(frozen=True)
+class FeatureSet:
+    feature_set_id: str
+    model_name: str
+    version: str
+    features: Sequence[str]
+    point_in_time_policy_id: str
+    approved_by: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "feature_set_id": self.feature_set_id,
+            "model_name": self.model_name,
+            "version": self.version,
+            "features": list(self.features),
+            "point_in_time_policy_id": self.point_in_time_policy_id,
+            "approved_by": self.approved_by,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
+class LabelSet:
+    label_set_id: str
+    labels: Sequence[str]
+    maturity_policy: str
+    excluded_conditions: Sequence[str] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label_set_id": self.label_set_id,
+            "labels": list(self.labels),
+            "maturity_policy": self.maturity_policy,
+            "excluded_conditions": list(self.excluded_conditions),
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 __all__ = [
     "ModelAlias",
     "ModelRegistryError",
     "ModelStage",
     "ModelVersion",
     "RegisteredModel",
+    "FeatureDefinition",
+    "LabelDefinition",
+    "FeatureSet",
+    "LabelSet",
 ]

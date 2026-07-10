@@ -3397,6 +3397,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "dispatch_chair_review", return_value=False),
             mock.patch.object(supervisor, "process_queue", return_value=False),
             mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-06-30T04:30:09Z"),
             mock.patch.object(supervisor, "trim_worker_history"),
             mock.patch.object(supervisor, "trim_seen_events"),
             mock.patch.object(supervisor, "save_runtime_state", side_effect=capture_save),
