@@ -180,7 +180,8 @@ def test_geocode_connector_emits_address_with_h3(connectors: dict) -> None:
     run = connectors["geocode_result_snapshot"].ingest(records)
     address = run.accepted[0].canonical
     assert isinstance(address, AddressLocation)
-    assert address.h3_res_9 and address.h3_res_9.startswith("h3r9_")
+    import h3
+    assert address.h3_res_9 and h3.is_valid_cell(address.h3_res_9)
     assert run.accepted[0].geocode.h3_resolution_map[9] == address.h3_res_9
 
 
@@ -199,7 +200,8 @@ def test_admin_boundary_canonicalizes_to_geo_cell(connectors: dict) -> None:
     cell = run.accepted[0].canonical
     assert isinstance(cell, GeoCell)
     assert cell.admin_district == "信義區"
-    assert cell.h3_index.startswith("h3r9_")
+    import h3
+    assert h3.is_valid_cell(cell.h3_index)
 
 
 # --- acceptance #4: lineage envelope ----------------------------------------
