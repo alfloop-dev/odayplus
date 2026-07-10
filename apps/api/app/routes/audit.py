@@ -9,6 +9,7 @@ from modules.opsboard.audit import AuditEvidenceExportError, AuditEvidenceExport
 from modules.opsboard.audit.application.evidence_export import decision_card_from_mapping
 from modules.opsboard.audit.domain.evidence import EvidenceExportRequest
 from shared.audit import InMemoryAuditLog
+from shared.audit.persistence import EvidenceBundleStore
 
 try:
     from fastapi import APIRouter, HTTPException, Request, status
@@ -34,11 +35,14 @@ else:
     def create_audit_router(
         *,
         audit_log: InMemoryAuditLog | None = None,
+        evidence_store: EvidenceBundleStore | None = None,
         service: AuditEvidenceExportService | None = None,
     ) -> APIRouter:
         router = APIRouter(prefix="/audit", tags=["audit"])
         active_audit_log = audit_log or InMemoryAuditLog()
-        export_service = service or AuditEvidenceExportService(audit_log=active_audit_log)
+        export_service = service or AuditEvidenceExportService(
+            audit_log=active_audit_log, evidence_store=evidence_store
+        )
 
         @router.post("/evidence/export", status_code=status.HTTP_201_CREATED)
         def export_evidence(body: EvidenceExportPayload, request: Request) -> dict[str, Any]:
@@ -69,6 +73,27 @@ else:
             payload = bundle.to_dict()
             payload["correlation_id"] = request.state.correlation_id
             return payload
+
+        @router.get("/evidence/exports")
+        def list_retained_evidence(program_id: str | None = None) -> dict[str, Any]:
+            if evidence_store is None:
+                return {"exports": []}
+            records = (
+                evidence_store.list_for_program(program_id)
+                if program_id is not None
+                else evidence_store.list_all()
+            )
+            return {"exports": [record.summary() for record in records]}
+
+        @router.get("/evidence/exports/{export_id}")
+        def get_retained_evidence(export_id: str) -> dict[str, Any]:
+            record = None if evidence_store is None else evidence_store.get(export_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="retained evidence bundle not found",
+                )
+            return record.to_dict()
 
         return router
 

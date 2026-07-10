@@ -179,6 +179,8 @@ class AuditEvidenceBundle:
     missing_requirements: tuple[str, ...]
     bundle_checksum: str
     audit_event_id: str
+    retention_class: str | None = None
+    retain_until: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -196,6 +198,12 @@ class AuditEvidenceBundle:
             "missing_requirements": list(self.missing_requirements),
             "bundle_checksum": self.bundle_checksum,
             "audit_event_id": self.audit_event_id,
+            "retention": {
+                "retention_class": self.retention_class,
+                "retain_until": (
+                    self.retain_until.isoformat() if self.retain_until else None
+                ),
+            },
         }
 
 

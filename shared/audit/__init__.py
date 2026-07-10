@@ -8,6 +8,13 @@ audit event for authorization decisions (ODP-SD-09 §11/§7, ODP-AC-AUTH-005).
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
 
+from .persistence import (
+    EvidenceBundleStore,
+    EvidenceRetentionPolicy,
+    InMemoryEvidenceBundleStore,
+    RetainedEvidence,
+    resolve_retention_policy,
+)
 from .policy import (
     ALWAYS_AUDITED_ACTIONS,
     HIGH_RISK_ACTIONS,
@@ -27,8 +34,12 @@ __all__ = [
     "AuditEvent",
     "AuditOutcome",
     "AuditRecorder",
+    "EvidenceBundleStore",
+    "EvidenceRetentionPolicy",
     "HIGH_RISK_ACTIONS",
     "InMemoryAuditLog",
+    "InMemoryEvidenceBundleStore",
+    "RetainedEvidence",
     "SECURITY_EVENT_TYPE",
     "build_security_event",
     "is_high_risk",
@@ -36,4 +47,5 @@ __all__ = [
     "mask_phone",
     "mask_text",
     "requires_audit",
+    "resolve_retention_policy",
 ]

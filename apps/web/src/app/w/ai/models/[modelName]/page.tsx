@@ -1,9 +1,10 @@
 import { LearningHubWorkspace } from "../../../../../../features/learninghub/LearningHubWorkspace.tsx";
 
 type PageProps = {
-  params: { modelName: string };
+  params: Promise<{ modelName: string }>;
 };
 
-export default function AiModelHistoryPage({ params }: PageProps) {
-  return <LearningHubWorkspace view="modelHistory" modelName={decodeURIComponent(params.modelName)} />;
+export default async function AiModelHistoryPage({ params }: PageProps) {
+  const { modelName } = await params;
+  return <LearningHubWorkspace view="modelHistory" modelName={decodeURIComponent(modelName)} />;
 }

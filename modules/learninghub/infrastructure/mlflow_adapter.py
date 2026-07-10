@@ -4,14 +4,14 @@ from dataclasses import dataclass
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 
-from .repositories import InMemoryLearningHubRepository
+from .repositories import LearningHubRepository
 
 
 @dataclass
 class MlflowRegistryAdapter:
     """MLflow-style logical registry backed by the Learning Hub repository."""
 
-    repository: InMemoryLearningHubRepository
+    repository: LearningHubRepository
 
     def register_model_version(self, model_version: ModelVersion) -> ModelVersion:
         return self.repository.save_model_version(model_version)

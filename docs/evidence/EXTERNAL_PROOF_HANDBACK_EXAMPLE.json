@@ -1,0 +1,98 @@
+{
+  "task_id": "ODP-MAP-STAGE-001",
+  "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/135",
+  "release_head_ref_oid": "1111111111111111111111111111111111111111",
+  "executed_at": "2026-06-30T00:00:00Z",
+  "executed_by": "Platform/Ops example runner",
+  "environment": "remote_staging",
+  "correlation_ids": [
+    "corr-example-map-stage-001"
+  ],
+  "redaction_summary": "Example-only handback. Provider tokens, credentials, private connection details, and raw provider payloads are intentionally absent. Replace every artifact id, URL, timestamp, and release_head_ref_oid before submitting real proof.",
+  "artifacts": [
+    {
+      "artifact_id": "example-workflow-run-map-stage-001",
+      "artifact_type": "workflow_run",
+      "location": "https://github.com/alfloop-dev/odayplus/actions/runs/0000000000",
+      "redacted": true,
+      "contains_secret_values": false,
+      "observed_at": "2026-06-30T00:01:00Z",
+      "notes": "Example workflow run artifact showing the expected shape. This is not live proof."
+    },
+    {
+      "artifact_id": "example-screenshot-map-stage-001",
+      "artifact_type": "screenshot",
+      "location": "https://github.com/alfloop-dev/odayplus/issues/135#issuecomment-example-screenshot",
+      "redacted": true,
+      "contains_secret_values": false,
+      "observed_at": "2026-06-30T00:02:00Z",
+      "notes": "Example screenshot artifact for attribution, terms, and tile outage map fallback proof."
+    },
+    {
+      "artifact_id": "example-report-map-stage-001",
+      "artifact_type": "report",
+      "location": "docs/evidence/example-only/map-stage-001-report.example.json",
+      "redacted": true,
+      "contains_secret_values": false,
+      "observed_at": "2026-06-30T00:03:00Z",
+      "notes": "Example report artifact with release SHA, correlation id, and required evidence mapping."
+    }
+  ],
+  "commands_run": [
+    {
+      "command": "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+      "exit_code": 0,
+      "observed_at": "2026-06-30T00:04:00Z",
+      "notes": "Example command result. Real handback must cite the current PR #82 headRefOid."
+    },
+    {
+      "command": "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+      "exit_code": 0,
+      "observed_at": "2026-06-30T00:05:00Z",
+      "notes": "Example map live-boundary command. Real handback must attach the workflow run or redacted log."
+    }
+  ],
+  "required_evidence_results": [
+    {
+      "evidence": "staging map tile URL configured",
+      "status": "proven",
+      "artifact_ids": [
+        "example-workflow-run-map-stage-001",
+        "example-report-map-stage-001"
+      ],
+      "notes": "Example result. Real proof must identify the configured staging tile endpoint without exposing provider tokens."
+    },
+    {
+      "evidence": "provider attribution and terms URL visible",
+      "status": "proven",
+      "artifact_ids": [
+        "example-screenshot-map-stage-001",
+        "example-report-map-stage-001"
+      ],
+      "notes": "Example result. Real proof must show attribution and terms in the remote staging UI."
+    },
+    {
+      "evidence": "remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage",
+      "status": "proven",
+      "artifact_ids": [
+        "example-workflow-run-map-stage-001",
+        "example-report-map-stage-001"
+      ],
+      "notes": "Example result. Real proof must show list, ranking, and detail fallback remain usable during tile outage."
+    },
+    {
+      "evidence": "proof report references current PR #82 headRefOid",
+      "status": "proven",
+      "artifact_ids": [
+        "example-report-map-stage-001"
+      ],
+      "notes": "Example result. Real proof must replace the example release_head_ref_oid with the current PR #82 headRefOid."
+    }
+  ],
+  "completion_attestation": {
+    "accepted_by": "Product Validation example reviewer",
+    "accepted_at": "2026-06-30T00:06:00Z",
+    "decision": "accepted",
+    "notes": "Example-only attestation demonstrating accepted shape. This file is not acceptable live proof because it uses the example SHA."
+  }
+}

@@ -1,9 +1,10 @@
 import { LearningHubWorkspace } from "../../../../../../features/learninghub/LearningHubWorkspace.tsx";
 
 type PageProps = {
-  params: { releaseId: string };
+  params: Promise<{ releaseId: string }>;
 };
 
-export default function AiReleaseDetailPage({ params }: PageProps) {
-  return <LearningHubWorkspace view="releaseDetail" releaseId={decodeURIComponent(params.releaseId)} />;
+export default async function AiReleaseDetailPage({ params }: PageProps) {
+  const { releaseId } = await params;
+  return <LearningHubWorkspace view="releaseDetail" releaseId={decodeURIComponent(releaseId)} />;
 }

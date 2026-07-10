@@ -1459,12 +1459,69 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
     )
 
 
+# Canonical worker context that lives in the supervisor root but is gitignored, so a
+# fresh or reused worktree never contains it. Always safe to (re)seed as untracked
+# copies: the reuse-dirt guard runs `git status --untracked-files=no`, so untracked
+# seeds never block re-dispatch.
+_SEEDABLE_UNTRACKED_CONTEXT = ("ai-status.json", "current-work.md", "ai-activity-log.jsonl")
+
+
+def _generated_collaboration_guide(config: dict[str, Any]) -> str:
+    """Materialize AI_COLLABORATION_GUIDE.md into a worktree when the repo has none.
+
+    The wakeup prompt tells every worker to read AI_COLLABORATION_GUIDE.md first, but
+    the file is not tracked anywhere in the repo, so a worker (notably the
+    Antigravity/`agy` CLI) burns its whole session hunting for it and never reaches
+    the commit/closeout step. Seeding a concise, accurate guide stops the hunt.
+    """
+    return "\n".join(
+        [
+            "# AI Collaboration Guide (worker-seeded)",
+            "",
+            "Generated into this worktree because the supervisor root has no tracked",
+            "AI_COLLABORATION_GUIDE.md. It restates the rules already in your wakeup prompt.",
+            "",
+            "## Workspace",
+            "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
+            "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
+            "  `./scripts/git/task_start.sh \"<TASK-ID>\"` if not.",
+            "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
+            "  (gitignored); do not edit them by hand — use the status commands.",
+            "",
+            "## Commit discipline (critical — uncommitted work jams the fleet)",
+            "- Commit AND push your work before you finish. A worktree left dirty blocks",
+            "  the next dispatch and can deadlock the whole fleet.",
+            "- Anchor-commit intermediate states per .orchestrator/skills/worker-anchor-commit.md.",
+            "- Commit subject must include the Task ID; body needs LLM-Agent / Task-ID / Reviewer.",
+            "- No interactive git (`git add -p/-i`, `git commit --interactive`, `git rebase -i`).",
+            "",
+            "## Status & closeout",
+            "- Update status only via `scripts/ai-status.sh` or `python3 scripts/ai_status.py`",
+            "  with your own `AI_NAME`.",
+            "- For `owned_finalize_dispatch` / `review_approved`, follow",
+            "  .orchestrator/skills/task-closeout-finalization.md before `... done`.",
+            "",
+        ]
+    )
+
+
 def materialize_worker_context_files(
     config: dict[str, Any],
     request: DeliveryRequest,
     workspace_path: Path,
 ) -> list[str]:
-    """Copy generated task briefs into isolated worktrees before worker launch."""
+    """Seed the context files a worker is told to read into its isolated worktree.
+
+    Task briefs are copied/generated as before. The other canonical references
+    (ai-status.json, current-work.md, AI_COLLABORATION_GUIDE.md, ...) live in the
+    supervisor root but are gitignored or untracked, so a fresh/reused worktree does
+    NOT contain them. Without them the worker — notably the Antigravity/`agy` CLI —
+    burns its whole session hunting for files it was instructed to read and never
+    reaches the commit/closeout step, leaving uncommitted dirt that then jams the
+    reuse lease. Seeding them as untracked copies is safe: the reuse-dirt guard runs
+    `git status --porcelain --untracked-files=no`, so untracked seeds never block
+    re-dispatch, and we never overwrite a file the branch already tracks.
+    """
     if not request.context_files:
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
@@ -1473,21 +1530,41 @@ def materialize_worker_context_files(
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
-        if ".orchestrator/task-briefs/" not in rel_value:
-            continue
         destination = workspace_path / rel_value
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        copied = False
-        for candidate in _task_brief_context_candidates(request.task_id, rel_value):
-            source = status_root / candidate
-            if not source.exists() or not source.is_file():
+        if ".orchestrator/task-briefs/" in rel_value:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            copied = False
+            for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                source = status_root / candidate
+                if not source.exists() or not source.is_file():
+                    continue
+                shutil.copy2(source, destination)
+                copied = True
+                break
+            if not copied:
+                destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
+            materialized.append(rel_value)
+            continue
+        # Non-task-brief canonical context. Never clobber a file the branch already
+        # tracks (that would create real dirt and block the lease); always refresh the
+        # known-gitignored status files so the worker sees current state, otherwise
+        # only fill a gap. AI_COLLABORATION_GUIDE.md is untracked everywhere, so
+        # generate it when missing.
+        source = status_root / rel_value
+        always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
+        if source.exists() and source.is_file():
+            if destination.exists() and not always_refresh:
                 continue
-            shutil.copy2(source, destination)
-            copied = True
-            break
-        if not copied:
-            destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
-        materialized.append(rel_value)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(source, destination)
+            except OSError:
+                continue
+            materialized.append(rel_value)
+        elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
+            materialized.append(rel_value)
     if materialized:
         request.metadata["materialized_context_files"] = materialized
     return materialized
@@ -1538,6 +1615,31 @@ def prepare_worker_workspace(
                     "refresh_status": refresh_status,
                 },
             )
+            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                # Orphaned dirt from a prior worker that never cleaned up jams the reuse
+                # lease and, once enough worktrees are dirty, deadlocks the whole fleet.
+                # Back up and reset it (only when no live worker for this task holds it),
+                # then retry the refresh so this dispatch proceeds instead of blocking
+                # forever. This self-heals both future and pre-existing dirty worktrees.
+                if _backup_and_reset_dirty_worktree(
+                    config, state, worktree_path, workspace_task_id, trigger="lease_blocked"
+                ):
+                    refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                        repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_worktree_reset_released",
+                            "task_id": request.task_id,
+                            "target_agent": target_agent,
+                            "queue_event_id": queue_event_id,
+                            "workspace_branch": branch,
+                            "workspace_path": str(worktree_path),
+                            "refresh_ok": refresh_ok,
+                            "refresh_status": refresh_status,
+                        },
+                    )
             if not refresh_ok and refresh_status == "skipped_dirty_worktree":
                 message = (
                     f"Cannot lease isolated worker worktree for {workspace_task_id}: "
@@ -7731,6 +7833,116 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
     return agents, task_agents, event_keys
 
 
+def _backup_and_reset_dirty_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path | str | None,
+    task_id: str | None,
+    *,
+    run_id: str | None = None,
+    trigger: str = "",
+) -> bool:
+    """Back up tracked dirt then hard-reset an orphaned dirty worktree.
+
+    Returns True iff it found *real* (tracked/staged) dirt and reset the worktree to a
+    clean, leaseable state. A worker killed/timed out before committing — or one that
+    advanced its task but never cleaned up — leaves dirt that makes `reuse_existing`
+    fail the lease guard forever (`skipped_dirty_worktree`); once enough worktrees are
+    dirty the whole fleet deadlocks (the supervisor keeps emitting dispatch events that
+    never spawn a worker). Uncommitted work is never silently destroyed: the tracked
+    diff is dumped to `.orchestrator/worktree-dirt-backups/` first. Refuses to touch a
+    worktree a live worker for the same task is still using.
+    """
+    if worktree_path is None:
+        return False
+    repo_root = config_path(config, "status_file").parents[0].resolve()
+    try:
+        worktree_path = Path(worktree_path).expanduser().resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+    if worktree_path == repo_root or not (worktree_path / ".git").exists():
+        return False
+
+    # Never reset a worktree another live worker for this task is still using.
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    for other in state.get("workers", {}).values():
+        if run_id and other.get("run_id") == run_id:
+            continue
+        if other.get("task_id") == task_id and other.get("status") in active_statuses:
+            return False
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status_proc.returncode != 0 or not status_proc.stdout.strip():
+        return False
+    classification, _paths = _classify_worktree_dirt(status_proc.stdout)
+    if classification != "real":
+        return False  # clean or scratch-only -> the reuse guard already handles it
+
+    backup_patch: Path | None = None
+    try:
+        backup_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = re.sub(r"[^0-9A-Za-z_-]+", "-", str(run_id or trigger or "orphan")) or "orphan"
+        backup_patch = backup_dir / f"{_task_id_slug(task_id)}-{stamp}.patch"
+        diff_proc = subprocess.run(
+            ["git", "diff", "HEAD", "--binary"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        backup_patch.write_text(diff_proc.stdout or "", encoding="utf-8")
+    except OSError:
+        backup_patch = None
+
+    subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=False)
+    subprocess.run(["git", "clean", "-fdq"], cwd=worktree_path, capture_output=True, text=True, check=False)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_worktree_reset",
+            "task_id": task_id,
+            "run_id": run_id,
+            "trigger": trigger,
+            "workspace_path": str(worktree_path),
+            "backup_patch": str(backup_patch) if backup_patch else None,
+            "message": (
+                f"Hard-reset dirty worktree for {task_id} ({trigger or 'cleanup'}) so dispatch "
+                f"can lease it"
+                + (f"; uncommitted work backed up to {backup_patch}." if backup_patch else ".")
+            ),
+        },
+    )
+    return True
+
+
+def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
+    """Reset a failed worker's isolated worktree so the next dispatch can lease it."""
+    settings = worker_worktree_settings(config)
+    if not settings.get("enabled"):
+        return
+    task_id = worker.get("task_id")
+    repo_root = config_path(config, "status_file").parents[0].resolve()
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    worktree_path: Path | None = None
+    if raw_path:
+        worktree_path = Path(raw_path).expanduser()
+    elif task_id:
+        branch = worker_task_branch(config, task_id)
+        worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
+            config, task_id, settings
+        )
+    _backup_and_reset_dirty_worktree(
+        config, state, worktree_path, task_id, run_id=worker.get("run_id"), trigger="worker_failed"
+    )
+
+
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
@@ -7749,6 +7961,11 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
+    if status == "failed":
+        try:
+            reset_worker_worktree_after_failure(config, state, worker)
+        except Exception:  # noqa: BLE001 - worktree recovery must never break finalize
+            pass
 
 
 
