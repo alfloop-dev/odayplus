@@ -1,0 +1,848 @@
+.workspace {
+  --store-bg: var(--operator-bg, #eef3f8);
+  --store-text: var(--operator-text, #142033);
+  --store-muted: var(--operator-muted, #66748a);
+  --store-soft: var(--operator-soft, #f6f9fc);
+  --store-surface: var(--operator-surface, #ffffff);
+  --store-border: var(--operator-border, #dbe3ec);
+  --store-border-strong: var(--operator-border-strong, #c7d1dd);
+  --store-info: var(--tone-info, #2563eb);
+  --store-success: var(--tone-success, #0f8f68);
+  --store-warning: var(--tone-warning, #c77700);
+  --store-danger: var(--tone-danger, #d8334f);
+  --store-accent: var(--tone-accent, #7c3aed);
+  display: grid;
+  gap: 12px;
+  min-width: 1120px;
+  color: var(--store-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header p,
+.header h1,
+.panelHeader p,
+.panelHeader h2,
+.sectionTitle p,
+.sectionTitle h3,
+.issueHero h2,
+.issueHero p,
+.evidenceItem p,
+.evidenceItem h3,
+.cameraLockedPanel p,
+.cameraLockedPanel h3 {
+  margin: 0;
+}
+
+.header p,
+.panelHeader p,
+.sectionTitle p,
+.cameraLockedPanel p,
+.evidenceItem p {
+  color: var(--store-muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.header h1 {
+  margin-top: 2px;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.headerMeta,
+.issueHeroTopline,
+.sectionTitle,
+.filterTitle,
+.issueTopline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headerMeta,
+.filterTitle,
+.sectionTitle {
+  justify-content: space-between;
+}
+
+.workbenchGrid {
+  display: grid;
+  grid-template-columns: 318px minmax(0, 1fr) 308px;
+  gap: 12px;
+  align-items: start;
+}
+
+.queuePanel,
+.detailPanel,
+.actionRail {
+  min-width: 0;
+}
+
+.queuePanel,
+.detailPanel,
+.railPanel {
+  overflow: hidden;
+  background: var(--store-surface);
+  border: 1px solid var(--store-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(21, 32, 51, 0.06);
+}
+
+.queuePanel {
+  position: sticky;
+  top: 82px;
+  display: grid;
+  align-content: start;
+}
+
+.detailPanel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.actionRail {
+  position: sticky;
+  top: 82px;
+  display: grid;
+  gap: 10px;
+}
+
+.panelHeader,
+.sectionTitle {
+  min-height: 54px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panelHeader h2,
+.sectionTitle h3 {
+  margin-top: 2px;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.searchField {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  color: var(--store-muted);
+  font-size: 12px;
+  font-weight: 800;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.searchField input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--store-text);
+  background: #ffffff;
+  border: 1px solid var(--store-border-strong);
+  border-radius: 8px;
+  outline: 0;
+}
+
+.searchField input:focus {
+  border-color: var(--store-info);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.filterBlock {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.filterTitle span {
+  color: var(--store-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.filterTitle button {
+  padding: 0;
+  color: var(--store-info);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.filterGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filterPill {
+  min-height: 26px;
+  padding: 0 8px;
+  color: #43526a;
+  background: #f3f6fa;
+  border: 1px solid var(--store-border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.filterPill_active {
+  color: #12345f;
+  background: #e7f0ff;
+  border-color: #bcd2fa;
+}
+
+.queueList {
+  display: grid;
+  max-height: calc(100vh - 392px);
+  overflow: auto;
+}
+
+.issueRow {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr) 82px;
+  gap: 9px;
+  width: 100%;
+  min-height: 91px;
+  padding: 10px 11px;
+  color: var(--store-text);
+  text-align: left;
+  background: #ffffff;
+  border: 0;
+  border-bottom: 1px solid var(--store-border);
+  cursor: pointer;
+}
+
+.issueRow:hover,
+.issueRow_selected {
+  background: #f7fbff;
+}
+
+.issueRow_selected {
+  box-shadow: inset 3px 0 0 var(--store-info);
+}
+
+.issueMarker {
+  width: 4px;
+  height: 100%;
+  min-height: 54px;
+  border-radius: 999px;
+}
+
+.issueRowMain {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.issueTopline {
+  justify-content: start;
+}
+
+.issueTopline strong {
+  color: var(--store-muted);
+  font-size: 12px;
+}
+
+.issueTitle,
+.issueMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issueTitle {
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.issueMeta {
+  color: #43526a;
+  font-size: 12px;
+}
+
+.issueRowSide {
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 7px;
+  color: var(--store-muted);
+  font-size: 11px;
+}
+
+.issueHero,
+.progressStrip,
+.summaryGrid,
+.storeSnapshot,
+.evidenceTabsSection,
+.trendPanel,
+.supportingPanel,
+.recommendationPanel,
+.timelinePanel {
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid var(--store-border);
+  border-radius: 8px;
+}
+
+.issueHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 16px;
+  padding: 14px;
+}
+
+.issueHeroMain {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.issueHeroTopline {
+  justify-content: start;
+  flex-wrap: wrap;
+}
+
+.issueHeroTopline > span {
+  color: var(--store-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.issueHero h2 {
+  font-size: 22px;
+  letter-spacing: 0;
+  line-height: 1.18;
+}
+
+.issueHero p {
+  color: #43526a;
+  font-size: 14px;
+  line-height: 1.42;
+}
+
+.issueHeroStats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 0;
+}
+
+.issueHeroStats div,
+.ownerList div {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  background: var(--store-soft);
+  border: 1px solid var(--store-border);
+  border-radius: 8px;
+}
+
+.issueHeroStats dt,
+.ownerList dt {
+  color: var(--store-muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.issueHeroStats dd,
+.ownerList dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.progressStrip {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(76px, 1fr));
+  gap: 0;
+  padding: 10px;
+}
+
+.progressStep {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+  padding: 0 5px;
+  color: var(--store-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.progressStep span {
+  width: 100%;
+  height: 5px;
+  background: #d8e1eb;
+  border-radius: 999px;
+}
+
+.step_complete span,
+.step_active span {
+  background: var(--store-success);
+}
+
+.step_active {
+  color: var(--store-text);
+}
+
+.step_exception {
+  color: var(--store-danger);
+}
+
+.step_exception span {
+  background: var(--store-danger);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+}
+
+.storeSnapshot {
+  display: grid;
+}
+
+.lightGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.lightCard {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+  padding: 10px;
+  background: var(--store-soft);
+  border: 1px solid var(--store-border);
+  border-radius: 8px;
+}
+
+.lightDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.lightCard strong,
+.lightCard small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lightCard strong {
+  font-size: 13px;
+}
+
+.lightCard small {
+  grid-column: 2;
+  color: var(--store-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.evidenceTabsSection {
+  display: grid;
+}
+
+.evidenceTabs {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+  padding: 8px;
+  background: #f3f7fb;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.evidenceTab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 5px;
+  min-height: 42px;
+  padding: 6px 8px;
+  color: var(--store-muted);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.evidenceTab span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidenceTab strong {
+  justify-self: end;
+  font-size: 13px;
+}
+
+.evidenceTab small {
+  grid-column: 1 / -1;
+  color: var(--store-warning);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.evidenceTab_active {
+  color: var(--store-text);
+  background: #ffffff;
+  border-color: var(--store-border);
+  box-shadow: 0 1px 5px rgba(21, 32, 51, 0.08);
+}
+
+.evidenceTab_locked {
+  background: #fff8e8;
+  border-color: #efd690;
+}
+
+.evidenceBody {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.evidenceItem,
+.cameraLockedPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px;
+  background: var(--store-soft);
+  border: 1px solid var(--store-border);
+  border-radius: 8px;
+}
+
+.cameraLockedPanel {
+  background: #fff8e8;
+  border-color: #efd690;
+}
+
+.evidenceItem h3,
+.cameraLockedPanel h3 {
+  margin-top: 3px;
+  font-size: 14px;
+}
+
+.evidenceItem span,
+.cameraLockedPanel span {
+  display: block;
+  margin-top: 5px;
+  color: #43526a;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.evidenceItemSide {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 84px;
+  color: var(--store-muted);
+  font-size: 11px;
+}
+
+.evidenceItemSide strong {
+  color: var(--store-text);
+  font-size: 18px;
+}
+
+.trendAndEvidenceGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.78fr);
+  gap: 10px;
+}
+
+.trendPanel,
+.supportingPanel,
+.recommendationPanel,
+.timelinePanel {
+  display: grid;
+}
+
+.trendList,
+.splitEvidenceList,
+.timelineList,
+.relatedList,
+.auditList {
+  display: grid;
+}
+
+.trendList {
+  gap: 8px;
+  padding: 10px;
+}
+
+.trendRow {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 32px;
+  gap: 9px;
+  align-items: center;
+  color: var(--store-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trendTrack {
+  height: 9px;
+  overflow: hidden;
+  background: #e7edf4;
+  border-radius: 999px;
+}
+
+.trendTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.trendRow strong {
+  justify-self: end;
+  color: var(--store-text);
+}
+
+.splitEvidenceRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 10px;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.splitEvidenceRow:last-child {
+  border-bottom: 0;
+}
+
+.splitEvidenceRow div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.splitEvidenceRow strong,
+.splitEvidenceRow span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.splitEvidenceRow strong {
+  font-size: 13px;
+}
+
+.splitEvidenceRow span {
+  color: var(--store-muted);
+  font-size: 12px;
+}
+
+.recommendationPanel p {
+  margin: 0;
+  padding: 11px 12px;
+  color: #43526a;
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 2px;
+  background: #d8e1eb;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.toggle span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(21, 32, 51, 0.18);
+  transition: transform 150ms ease;
+}
+
+.toggle_active {
+  background: var(--store-info);
+}
+
+.toggle_active span {
+  transform: translateX(16px);
+}
+
+.timelineRow {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.timelineRow:last-child {
+  border-bottom: 0;
+}
+
+.timelineDot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+}
+
+.timelineRow strong {
+  font-size: 13px;
+}
+
+.timelineRow p {
+  margin: 4px 0;
+  color: #43526a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.timelineRow time {
+  color: var(--store-muted);
+  font-size: 11px;
+}
+
+.railPanel {
+  display: grid;
+}
+
+.railPanel > button {
+  margin: 0 12px 12px;
+}
+
+.ownerList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.secondaryActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.secondaryActions button {
+  min-width: 0;
+}
+
+.relatedRow {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--store-border);
+}
+
+.relatedRow:last-child {
+  border-bottom: 0;
+}
+
+.relatedRow span:first-child {
+  color: var(--store-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.relatedRow strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyState {
+  margin: 0;
+  padding: 14px 12px;
+  color: var(--store-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tone_neutral {
+  background: var(--store-border-strong);
+}
+
+.tone_info {
+  background: var(--store-info);
+}
+
+.tone_success {
+  background: var(--store-success);
+}
+
+.tone_warning {
+  background: var(--store-warning);
+}
+
+.tone_danger {
+  background: var(--store-danger);
+}
+
+.tone_accent {
+  background: var(--store-accent);
+}
+
+.issueRow:focus-visible,
+.filterPill:focus-visible,
+.filterTitle button:focus-visible,
+.evidenceTab:focus-visible,
+.toggle:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1260px) {
+  .workbenchGrid {
+    grid-template-columns: 300px minmax(0, 1fr) 292px;
+  }
+
+  .progressStrip {
+    grid-template-columns: repeat(4, minmax(86px, 1fr));
+    gap: 8px 0;
+  }
+}

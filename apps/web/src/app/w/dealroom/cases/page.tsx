@@ -1,9 +1,18 @@
 import { AvmWorkspace } from "../../../../../features/avm/AvmWorkspace.tsx";
+import { getServerApiClient } from "../../../../lib/api/client.ts";
+import { loadApiBinding } from "../../../../lib/api/binding.ts";
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function DealRoomCasesPage({ searchParams }: PageProps) {
-  return <AvmWorkspace view="cases" searchParams={searchParams} />;
+// Server state must reflect live backend rows, so this route is dynamic.
+export const dynamic = "force-dynamic";
+
+export default async function DealRoomCasesPage({ searchParams }: PageProps) {
+  const liveCases = await loadApiBinding({
+    client: getServerApiClient(),
+    fetcher: (client) => client.listAvmCases().then((response) => response.items),
+  });
+  return <AvmWorkspace view="cases" searchParams={await searchParams} liveCases={liveCases} />;
 }

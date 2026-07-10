@@ -1,0 +1,103 @@
+name: External Proof Follow-up
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "PR #82 headRefOid to verify; defaults to live PR #82 head."
+        required: false
+        type: string
+      escalation_hours:
+        description: "Hours after latest pickup before no-handback rows are escalated."
+        required: false
+        default: "24"
+        type: string
+      apply_escalations:
+        description: "Post standardized escalation comments for overdue handbacks."
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: external-proof-followup
+  cancel-in-progress: false
+
+jobs:
+  external-proof-followup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ESCALATION_HOURS: ${{ inputs.escalation_hours || '24' }}
+      APPLY_ESCALATIONS: ${{ github.event_name == 'schedule' || inputs.apply_escalations == true }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve PR #82 release authority
+        run: |
+          set -euo pipefail
+          expected_sha="${{ inputs.expected_sha }}"
+          if [ -z "$expected_sha" ]; then
+            expected_sha="$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+          fi
+          echo "EXPECTED_SHA=${expected_sha}" >> "$GITHUB_ENV"
+          echo "Resolved PR #82 headRefOid: ${expected_sha}"
+
+      - name: Verify live external proof handoff state
+        run: |
+          set -euo pipefail
+          python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
+          python3 scripts/e2e/check_external_proof_fleet_notifications.py
+          python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
+          python3 scripts/e2e/check_external_proof_handback_status_board.py
+
+      - name: Scan external proof handbacks
+        id: scan
+        run: |
+          set +e
+          python3 scripts/e2e/check_external_proof_issue_handback_scan.py \
+            --expected-sha "$EXPECTED_SHA" \
+            --escalation-hours "$ESCALATION_HOURS" \
+            --report \
+            --fail-on-escalation \
+            > external-proof-handback-scan.md
+          scan_exit="$?"
+          set -e
+          cat external-proof-handback-scan.md
+          echo "scan_exit=${scan_exit}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Post or render escalation comments
+        if: ${{ steps.scan.outputs.scan_exit != '0' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .odp_data/external-proof-escalations
+          args=(
+            --expected-sha "$EXPECTED_SHA"
+            --escalation-hours "$ESCALATION_HOURS"
+            --comment-dir .odp_data/external-proof-escalations
+          )
+          if [ "$APPLY_ESCALATIONS" = "true" ]; then
+            args+=(--apply)
+          fi
+          python3 scripts/e2e/sync_external_proof_escalation_comments.py "${args[@]}"
+
+      - name: Upload follow-up reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-proof-followup
+          path: |
+            external-proof-handback-scan.md
+            .odp_data/external-proof-escalations/*.md
+          if-no-files-found: ignore
+
+      - name: Fail when external proof handback follow-up is overdue
+        if: ${{ steps.scan.outputs.scan_exit != '0' }}
+        run: exit 1

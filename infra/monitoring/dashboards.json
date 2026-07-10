@@ -62,8 +62,11 @@
       "title": "Audit & Compliance",
       "audience": "Auditor",
       "panels": [
-        {"title": "Decision log volume", "metric": "prediction_count", "viz": "table"},
-        {"title": "Evidence export count", "metric": "api_request_count", "viz": "stat"},
+        {"title": "Audit event volume", "metric": "audit_event_record_count", "viz": "timeseries"},
+        {"title": "Evidence export count", "metric": "audit_evidence_export_count", "viz": "stat"},
+        {"title": "Audit write failures", "metric": "audit_event_write_failure_count", "viz": "timeseries"},
+        {"title": "Audit pipeline lag", "metric": "audit_event_pipeline_lag_seconds", "viz": "heatmap"},
+        {"title": "Audit completeness gaps", "metric": "audit_completeness_gap_count", "viz": "table"},
         {"title": "Authorization failures", "metric": "api_error_count", "viz": "timeseries"}
       ]
     },

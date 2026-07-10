@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -24,6 +25,14 @@ target_metadata = None
 # ... etc.
 
 
+def database_url() -> str:
+    url = config.get_main_option("sqlalchemy.url") or os.environ.get("ODAY_DATABASE_URL")
+    if not url:
+        raise RuntimeError("Set ODAY_DATABASE_URL or sqlalchemy.url before running migrations")
+    config.set_main_option("sqlalchemy.url", url)
+    return url
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -36,7 +45,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -55,6 +64,7 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    database_url()
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

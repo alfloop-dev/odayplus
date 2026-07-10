@@ -35,6 +35,7 @@ class MetricCategory(StrEnum):
     DATA = "data"
     MODEL = "model"
     BUSINESS = "business"
+    AUDIT = "audit"
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,13 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage"),
     MetricDefinition("netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome"),
     MetricDefinition("model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",)),
+    # §7 / §10 Audit trail and evidence export
+    MetricDefinition("audit_event_record_count", C, Cat.AUDIT, "Audit events durably recorded", ("event_type", "action", "result")),
+    MetricDefinition("audit_event_write_failure_count", C, Cat.ERROR, "Audit event write failures", ("event_type", "action", "error_class")),
+    MetricDefinition("audit_event_pipeline_lag_seconds", H, Cat.AUDIT, "Audit pipeline write lag", ("sink", "event_type"), "s"),
+    MetricDefinition("audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",)),
+    MetricDefinition("audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result")),
+    MetricDefinition("audit_completeness_gap_count", C, Cat.AUDIT, "Missing required audit timeline events", ("rule", "resource", "missing_event_type")),
 )
 
 

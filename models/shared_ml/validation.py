@@ -31,9 +31,15 @@ class MetricThreshold:
         if self.max_value is not None and value > self.max_value:
             return ValidationStatus.FAILED, f"{self.metric_name} above maximum {self.max_value}"
         if self.warning_min_value is not None and value < self.warning_min_value:
-            return ValidationStatus.WARNING, f"{self.metric_name} below warning {self.warning_min_value}"
+            return (
+                ValidationStatus.WARNING,
+                f"{self.metric_name} below warning {self.warning_min_value}",
+            )
         if self.warning_max_value is not None and value > self.warning_max_value:
-            return ValidationStatus.WARNING, f"{self.metric_name} above warning {self.warning_max_value}"
+            return (
+                ValidationStatus.WARNING,
+                f"{self.metric_name} above warning {self.warning_max_value}",
+            )
         return ValidationStatus.PASSED, None
 
 

@@ -1,9 +1,9 @@
 import { OperationsWorkspace } from "../../../../../features/operations/OperationsWorkspace.tsx";
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function ForecastPage({ searchParams }: PageProps) {
-  return <OperationsWorkspace view="forecast" searchParams={searchParams} />;
+export default async function ForecastPage({ searchParams }: PageProps) {
+  return <OperationsWorkspace view="forecast" searchParams={await searchParams} />;
 }
