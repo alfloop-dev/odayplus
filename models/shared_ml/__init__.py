@@ -1,16 +1,17 @@
 """Shared ML lifecycle primitives."""
 
+from models.shared_ml.artifact_store import LocalModelArtifactStore
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import (
+    FeatureDefinition,
+    FeatureSet,
+    LabelDefinition,
+    LabelSet,
     ModelAlias,
     ModelRegistryError,
     ModelStage,
     ModelVersion,
     RegisteredModel,
-    FeatureDefinition,
-    LabelDefinition,
-    FeatureSet,
-    LabelSet,
 )
 from models.shared_ml.validation import (
     MetricThreshold,
@@ -20,7 +21,6 @@ from models.shared_ml.validation import (
     ValidationStatus,
     validate_model_candidate,
 )
-from models.shared_ml.artifact_store import LocalModelArtifactStore
 
 __all__ = [
     "MetricThreshold",
@@ -43,4 +43,3 @@ __all__ = [
     "FeatureSet",
     "LabelSet",
 ]
-

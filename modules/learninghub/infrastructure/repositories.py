@@ -4,14 +4,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from models.shared_ml import (
-    ModelCard,
+    FeatureDefinition,
+    FeatureSet,
+    LabelDefinition,
+    LabelSet,
     ModelAlias,
+    ModelCard,
     ModelRegistryError,
     ModelVersion,
-    FeatureDefinition,
-    LabelDefinition,
-    FeatureSet,
-    LabelSet,
 )
 from models.shared_ml.validation import ValidationRun
 from modules.learninghub.domain import DatasetSnapshot
@@ -114,7 +114,9 @@ class InMemoryLearningHubRepository:
         self._features[(feature.feature_name, feature.version)] = feature
         return feature
 
-    def get_feature(self, feature_name: str, version: str | None = None) -> FeatureDefinition | None:
+    def get_feature(
+        self, feature_name: str, version: str | None = None
+    ) -> FeatureDefinition | None:
         if version:
             return self._features.get((feature_name, version))
         matches = [f for (name, _), f in self._features.items() if name == feature_name]
@@ -132,10 +134,10 @@ class InMemoryLearningHubRepository:
     def get_label(self, label_name: str, version: str | None = None) -> LabelDefinition | None:
         if version:
             return self._labels.get((label_name, version))
-        matches = [l for (name, _), l in self._labels.items() if name == label_name]
+        matches = [lbl for (name, _), lbl in self._labels.items() if name == label_name]
         if not matches:
             return None
-        return max(matches, key=lambda l: l.version)
+        return max(matches, key=lambda lbl: lbl.version)
 
     def list_labels(self) -> list[LabelDefinition]:
         return list(self._labels.values())

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import shutil
 import tempfile
+from datetime import UTC, datetime
+
 import pytest
 
 from models.shared_ml import (
@@ -18,7 +19,6 @@ from models.shared_ml import (
     ModelVersion,
 )
 from modules.learninghub import (
-    InMemoryLearningHubRepository,
     LearningHubError,
     LearningHubService,
 )
@@ -332,7 +332,9 @@ def test_model_card_generator_and_artifact_store() -> None:
 
         # 使用 LocalModelArtifactStore 驗證載入
         store = LocalModelArtifactStore()
-        loaded_card = store.load_model_card("test_model", "1.0.0", artifact_uri=model_version.artifact_uri)
+        loaded_card = store.load_model_card(
+            "test_model", "1.0.0", artifact_uri=model_version.artifact_uri
+        )
 
         assert loaded_card is not None
         assert loaded_card.model_name == "test_model"

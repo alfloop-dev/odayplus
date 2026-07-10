@@ -7,6 +7,13 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml import (
+    FeatureDefinition,
+    FeatureSet,
+    LabelDefinition,
+    LabelSet,
+    LocalModelArtifactStore,
+)
 from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelStage, ModelVersion
 from models.shared_ml.validation import (
@@ -14,13 +21,6 @@ from models.shared_ml.validation import (
     SegmentMetric,
     ValidationRun,
     validate_model_candidate,
-)
-from models.shared_ml import (
-    FeatureDefinition,
-    LabelDefinition,
-    FeatureSet,
-    LabelSet,
-    LocalModelArtifactStore,
 )
 from modules.learninghub.domain import DatasetSnapshot, build_dataset_snapshot
 from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
@@ -121,12 +121,12 @@ class LearningHubService:
             if label_set is None:
                 raise LearningHubError(f"unknown label set {label_set_id}")
             allowed_labels = set()
-            for l in label_set.labels:
-                name = l.split("@")[0] if "@" in l else l
+            for lbl in label_set.labels:
+                name = lbl.split("@")[0] if "@" in lbl else lbl
                 allowed_labels.add(name)
-            for l in label_set.labels:
-                name = l.split("@")[0] if "@" in l else l
-                version = l.split("@")[1] if "@" in l else None
+            for lbl in label_set.labels:
+                name = lbl.split("@")[0] if "@" in lbl else lbl
+                version = lbl.split("@")[1] if "@" in lbl else None
                 lbl_def = self.repository.get_label(name, version)
                 if lbl_def and lbl_def.status == "BLOCKED":
                     raise LearningHubError(f"label {name} is BLOCKED and cannot be used")
@@ -140,12 +140,16 @@ class LearningHubService:
                 if key in system_features:
                     continue
                 if allowed_features is not None and key not in allowed_features:
-                    raise LearningHubError(f"feature {key} in dataset is not allowed by feature set {feature_set_id}")
-            
+                    raise LearningHubError(
+                        f"feature {key} in dataset is not allowed by feature set {feature_set_id}"
+                    )
+
             row_labels = row.get("labels", {})
             for key in row_labels:
                 if allowed_labels is not None and key not in allowed_labels:
-                    raise LearningHubError(f"label {key} in dataset is not allowed by label set {label_set_id}")
+                    raise LearningHubError(
+                        f"label {key} in dataset is not allowed by label set {label_set_id}"
+                    )
 
         snapshot = build_dataset_snapshot(
             rows,
@@ -268,7 +272,9 @@ class LearningHubService:
             self.repository.clear_alias(model_name, ModelAlias.PREVIOUS_PRODUCTION)
         else:
             alias = ModelAlias.SHADOW if release_type is ReleaseType.SHADOW else ModelAlias.CANARY
-            self.registry.transition_stage(model_name=model_name, version=version, stage=target_stage)
+            self.registry.transition_stage(
+                model_name=model_name, version=version, stage=target_stage
+            )
             self.repository.set_alias(model_name, alias, version)
 
         audit_event = self.audit_log.record(
@@ -292,7 +298,9 @@ class LearningHubService:
             release_id=f"model-release-{uuid4()}",
             model_name=model_name,
             from_version=from_version,
-            to_version=rollback_target if release_type is ReleaseType.ROLLBACK and rollback_target else version,
+            to_version=rollback_target
+            if release_type is ReleaseType.ROLLBACK and rollback_target
+            else version,
             release_type=release_type,
             reason=reason,
             approval_id=approval_id,
@@ -357,7 +365,9 @@ class LearningHubService:
     def create_feature(self, feature: FeatureDefinition) -> FeatureDefinition:
         return self.repository.save_feature(feature)
 
-    def get_feature(self, feature_name: str, version: str | None = None) -> FeatureDefinition | None:
+    def get_feature(
+        self, feature_name: str, version: str | None = None
+    ) -> FeatureDefinition | None:
         return self.repository.get_feature(feature_name, version)
 
     def list_features(self) -> list[FeatureDefinition]:

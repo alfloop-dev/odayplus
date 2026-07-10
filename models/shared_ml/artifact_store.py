@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
+
 import yaml
 
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
@@ -32,10 +32,7 @@ class LocalModelArtifactStore:
             target_dir = Path(path_str) / "validation"
         else:
             target_dir = (
-                self.base_dir
-                / model_card.model_name
-                / model_card.model_version
-                / "validation"
+                self.base_dir / model_card.model_name / model_card.model_version / "validation"
             )
 
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +71,7 @@ class LocalModelArtifactStore:
         if not target_file.exists():
             return None
 
-        with open(target_file, "r", encoding="utf-8") as f:
+        with open(target_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         approvals = [
