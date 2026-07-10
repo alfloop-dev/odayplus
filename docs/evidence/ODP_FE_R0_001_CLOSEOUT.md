@@ -31,8 +31,8 @@ rate-limit failures.
 The reviewed shell + global surfaces were already merged to `origin/dev`
 through the OpsBoard shell foundation (`ODP-R0-004`, commit `95a46cf`) and the
 `frontend-product-e2e` batch. This historical closeout record is not
-release-candidate authority; current release evidence must use the active
-release-candidate PR head and its attached checks. This file records the owner
+release-candidate authority; current release evidence must use PR #82
+`headRefOid` and attached checks. This file records the owner
 finalization evidence required before moving the task to `done`, and is the
 task's delivery footprint (the shell itself carries no isolated
 `ODP-FE-R0-001` commit because its scope landed under the shell foundation and
