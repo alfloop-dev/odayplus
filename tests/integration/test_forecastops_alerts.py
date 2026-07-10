@@ -174,3 +174,48 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
     audit = client.get("/audit/events", params={"correlation_id": "corr-forecast-1"})
     assert any(event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"])
+
+
+def test_forecastops_prediction_run_replay() -> None:
+    client = TestClient(create_app())
+    payload = {
+        "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        "inputs": [
+            {
+                "store_id": "store-replay-001",
+                "observations": [
+                    {
+                        "business_date": "2026-06-25",
+                        "actual_revenue": 100_000,
+                        "site_score_baseline_p50": 100_000,
+                    }
+                ],
+            }
+        ],
+    }
+    response = client.post(
+        "/forecastops/forecast-jobs",
+        json=payload,
+    )
+    assert response.status_code == 202
+    body = response.json()
+    forecast = body["forecasts"][0]
+    forecast_output_id = forecast["forecast_output_id"]
+    prediction_run_id = forecast["prediction_run_id"]
+    assert prediction_run_id.startswith("pred-run-forecast-")
+
+    # 1. Fetch prediction run by ID
+    pred_run_response = client.get(f"/forecastops/prediction-runs/{prediction_run_id}")
+    assert pred_run_response.status_code == 200
+    pred_run_body = pred_run_response.json()
+    assert pred_run_body["prediction_run"]["prediction_run_id"] == prediction_run_id
+    assert len(pred_run_body["predictions"]) == 1
+    assert pred_run_body["predictions"][0]["entity_id"] == "store-replay-001"
+
+    # 2. Fetch canonical forecast output by ID
+    output_response = client.get(f"/forecastops/forecast-outputs/{forecast_output_id}")
+    assert output_response.status_code == 200
+    output_body = output_response.json()
+    assert output_body["store_id"] == "store-replay-001"
+    assert output_body["prediction_run_id"] == prediction_run_id
+

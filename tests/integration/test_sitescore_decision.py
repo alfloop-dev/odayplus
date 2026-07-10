@@ -297,3 +297,45 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
 
     audit = client.get("/audit/events", params={"correlation_id": "corr-ss-1"})
     assert any(event["action"] == "run_model" for event in audit.json()["events"])
+
+
+def test_sitescore_prediction_run_replay() -> None:
+    client = TestClient(create_app())
+    score_response = client.post(
+        "/sitescore/score-jobs",
+        json={
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+            "features": [
+                {
+                    "candidate_site_id": "CS-REPLAY-001",
+                    "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+                    "heat_zone_score": 85,
+                    "monthly_rent": 50_000,
+                    "area_ping": 25,
+                    "comparable_store_count": 5,
+                    "comparable_monthly_revenue_p50": 450_000,
+                }
+            ],
+        },
+    )
+    assert score_response.status_code == 202
+    body = score_response.json()
+    report = body["reports"][0]
+    sitescore_run_id = report["sitescore_run_id"]
+    
+    # 1. Fetch sitescore run by ID
+    run_response = client.get(f"/sitescore/runs/{sitescore_run_id}")
+    assert run_response.status_code == 200
+    run_body = run_response.json()
+    assert run_body["candidate_site_id"] == "CS-REPLAY-001"
+    prediction_run_id = run_body["prediction_run_id"]
+    assert prediction_run_id.startswith("pred-run-sitescore-")
+
+    # 2. Fetch prediction run by ID
+    pred_run_response = client.get(f"/sitescore/prediction-runs/{prediction_run_id}")
+    assert pred_run_response.status_code == 200
+    pred_run_body = pred_run_response.json()
+    assert pred_run_body["prediction_run"]["prediction_run_id"] == prediction_run_id
+    assert len(pred_run_body["predictions"]) == 1
+    assert pred_run_body["predictions"][0]["entity_id"] == "CS-REPLAY-001"
+
