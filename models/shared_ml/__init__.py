@@ -7,6 +7,10 @@ from models.shared_ml.registry import (
     ModelStage,
     ModelVersion,
     RegisteredModel,
+    FeatureDefinition,
+    LabelDefinition,
+    FeatureSet,
+    LabelSet,
 )
 from models.shared_ml.validation import (
     MetricThreshold,
@@ -16,6 +20,7 @@ from models.shared_ml.validation import (
     ValidationStatus,
     validate_model_candidate,
 )
+from models.shared_ml.artifact_store import LocalModelArtifactStore
 
 __all__ = [
     "MetricThreshold",
@@ -32,4 +37,10 @@ __all__ = [
     "ValidationRun",
     "ValidationStatus",
     "validate_model_candidate",
+    "LocalModelArtifactStore",
+    "FeatureDefinition",
+    "LabelDefinition",
+    "FeatureSet",
+    "LabelSet",
 ]
+
