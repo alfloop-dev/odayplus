@@ -1,9 +1,9 @@
 import { AuditWorkspace } from "../../../../../features/audit/AuditWorkspace.tsx";
 
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function AuditDecisionsPage({ searchParams }: PageProps) {
-  return <AuditWorkspace view="decisions" searchParams={searchParams} />;
+export default async function AuditDecisionsPage({ searchParams }: PageProps) {
+  return <AuditWorkspace view="decisions" searchParams={await searchParams} />;
 }

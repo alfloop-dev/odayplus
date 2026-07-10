@@ -1,15 +1,16 @@
 import { LearningHubWorkspace } from "../../../../../../../features/learninghub/LearningHubWorkspace.tsx";
 
 type PageProps = {
-  params: { modelName: string; version: string };
+  params: Promise<{ modelName: string; version: string }>;
 };
 
-export default function AiModelVersionPage({ params }: PageProps) {
+export default async function AiModelVersionPage({ params }: PageProps) {
+  const { modelName, version } = await params;
   return (
     <LearningHubWorkspace
       view="modelDetail"
-      modelName={decodeURIComponent(params.modelName)}
-      version={decodeURIComponent(params.version)}
+      modelName={decodeURIComponent(modelName)}
+      version={decodeURIComponent(version)}
     />
   );
 }

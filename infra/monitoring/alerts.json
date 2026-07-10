@@ -45,6 +45,15 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
     },
     {
+      "id": "audit-write-failure",
+      "name": "Audit write failure",
+      "severity": "P1",
+      "metric": "audit_event_write_failure_count",
+      "condition": "any audit_event_write_failure_count for high-risk action or export in production",
+      "secondary_metric": "audit_event_replay_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
+    },
+    {
       "id": "model-drift-high",
       "name": "Model drift high",
       "severity": "P2",
@@ -64,7 +73,7 @@
       "id": "data-room-abnormal-download",
       "name": "Data Room abnormal download",
       "severity": "P1",
-      "metric": "api_request_count",
+      "metric": "audit_evidence_export_count",
       "condition": "high-volume or unauthorized export attempts in a short window",
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
     },

@@ -41,6 +41,9 @@ class GeocodeCandidate:
     provider: str
     admin_city: str = ""
     admin_district: str = ""
+    provider_request_id: str = ""
+    provider_observed_at: datetime | None = None
+    quality_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,8 @@ class GeocodeResult:
     admin_match_flag: bool
     quality_flags: tuple[str, ...] = ()
     h3_resolution_map: Mapping[int, str] = field(default_factory=dict)
+    provider_request_id: str = ""
+    provider_observed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +163,7 @@ class GeoPipeline:
         if candidate is None:
             candidate = GeocodeCandidate(0.0, 0.0, "manual", 0.0, "unresolved")
             flags.append("missing_geocode")
+        flags.extend(candidate.quality_flags)
 
         if not coordinates_in_market(candidate.latitude, candidate.longitude):
             flags.append("coordinates_out_of_market")
@@ -195,6 +201,8 @@ class GeoPipeline:
             admin_match_flag=admin_match,
             quality_flags=tuple(flags),
             h3_resolution_map=h3_map,
+            provider_request_id=candidate.provider_request_id,
+            provider_observed_at=candidate.provider_observed_at,
         )
 
     def build_feature_snapshots(
@@ -285,6 +293,8 @@ class GeoPipeline:
             str(record.get("geocode_provider") or "source_coordinates"),
             str(record.get("city") or ""),
             str(record.get("district") or ""),
+            str(record.get("provider_request_id") or ""),
+            _parse_datetime(record.get("provider_observed_at")),
         )
 
     def _h3_for_record(self, record: Mapping[str, Any], resolution: int, as_of: datetime) -> str | None:

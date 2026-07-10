@@ -75,17 +75,17 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 5,
+        "target_workload": 20,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 5,
+        "target_workload": 10,
     },
     "Antigravity": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity-research-runtime",
-        "target_workload": 5,
+        "target_workload": 70,
     },
     "Antigravity2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
@@ -130,12 +130,12 @@ KNOWN_AGENTS = {
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 35,
+        "target_workload": 5,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 35,
+        "target_workload": 5,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
@@ -1055,9 +1055,16 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
+    import re
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
-        raise SystemExit(f"Unknown agent: {name}")
+        base_name = re.sub(r'\d+$', '', canonical)
+        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS.get("Antigravity"))
+        KNOWN_AGENTS[canonical] = {
+            "capability_lane": template["capability_lane"],
+            "default_branch": f"feat/{canonical.lower()}-branch",
+            "target_workload": 5,
+        }
     return KNOWN_AGENTS[canonical]
 
 

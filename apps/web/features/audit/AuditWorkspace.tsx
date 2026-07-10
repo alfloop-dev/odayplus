@@ -1,5 +1,8 @@
 import Link from "next/link";
+import type { AuditEvent } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   auditDecisions,
   matrixColumns,
@@ -17,14 +20,76 @@ type AuditWorkspaceProps = {
   view?: "overview" | "decisions" | "decisionDetail" | "evidence" | "admin";
   decisionId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /audit/events` binding; supplied on the admin route. */
+  liveEvents?: ApiBinding<AuditEvent>;
 };
 
-export function AuditWorkspace({ view = "overview", decisionId, searchParams = {} }: AuditWorkspaceProps) {
+export function AuditWorkspace({ view = "overview", decisionId, searchParams = {}, liveEvents }: AuditWorkspaceProps) {
   if (view === "decisions") return <DecisionsPage searchParams={searchParams} />;
   if (view === "decisionDetail") return <DecisionDetailPage decision={selectedDecision(decisionId)} />;
   if (view === "evidence") return <EvidencePage />;
-  if (view === "admin") return <AdminAuditPage />;
+  if (view === "admin") return <AdminAuditPage liveEvents={liveEvents} />;
   return <AuditOverview />;
+}
+
+function LiveAuditEvents({ binding }: { binding: ApiBinding<AuditEvent> }) {
+  return (
+    <section className={styles.panel} data-testid="audit-live-events" aria-label="API-bound audit events">
+      <div className={styles.badgeRow}>
+        <h2>Audit events（API live）</h2>
+        <DataSourceBadge binding={binding} testId="audit-data-source" />
+      </div>
+      <p>
+        後端每次寫入都會記錄 audit event；本區直接讀取 <code>GET /audit/events</code>，
+        下方固定決策列為 documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="audit-live-events-table">
+            <caption>Live audit events served by the backend ({binding.items.length})</caption>
+            <thead>
+              <tr>
+                <th>event_type</th>
+                <th>actor</th>
+                <th>action</th>
+                <th>resource</th>
+                <th>outcome</th>
+                <th>occurred_at</th>
+                <th>correlation_id</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((event) => (
+                <tr key={event.event_id} data-testid="audit-live-event-row">
+                  <td>{event.event_type}</td>
+                  <td>{event.actor}</td>
+                  <td>{event.action}</td>
+                  <td className={styles.mono}>{event.resource}</td>
+                  <td>{event.outcome}</td>
+                  <td>{event.occurred_at}</td>
+                  <td className={styles.mono}>{event.correlation_id}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="audit-live-events-empty" className={styles.subtle}>
+          {liveEventsFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveEventsFallbackMessage(binding: ApiBinding<AuditEvent>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無 audit event（cold store）；顯示固定樣本作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
 }
 
 function AuditOverview() {
@@ -139,12 +204,13 @@ function EvidencePage() {
   );
 }
 
-function AdminAuditPage() {
+function AdminAuditPage({ liveEvents }: { liveEvents?: ApiBinding<AuditEvent> }) {
   return (
     <>
       <Header title="Audit & Evidence（管理段）" summary="全租戶高風險決策稽核與 Evidence 匯出；role-gated for audit/admin." statusLabel="admin · role-gated" />
       <main className="odp-content" data-testid="admin-audit-page">
         <WorkspaceNav active="admin" />
+        {liveEvents ? <LiveAuditEvents binding={liveEvents} /> : null}
         <div className={styles.panel}>
           <h2>Role gate</h2>
           <p>Deep links without audit/admin permission return 403. Restricted fields remain masked unless policy permits reveal.</p>

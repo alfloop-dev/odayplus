@@ -5,7 +5,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -61,16 +61,20 @@ else:
         store: HeatZoneResultStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/heatzones", tags=["heatzones"])
         result_store = store or HeatZoneResultStore()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
 
-        @router.get("")
+        @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def list_heatzones(limit: int = 100) -> dict[str, Any]:
             scores = result_store.list_scores()[: max(0, limit)]
             return {"items": scores, "count": len(scores)}
 
-        @router.get("/map")
+        @router.get("/map", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def heatzone_map() -> dict[str, Any]:
             features = result_store.map_features()
             return {
@@ -79,7 +83,11 @@ else:
                 "count": len(features),
             }
 
-        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED)
+        @router.post(
+            "/score-jobs",
+            status_code=status.HTTP_202_ACCEPTED,
+            dependencies=[Depends(require_permission("heatzone", Action.CREATE, engine=authz_engine))],
+        )
         def create_score_job(
             body: HeatZoneScoreJobPayload,
             request: Request,
@@ -126,14 +134,14 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/snapshots/{snapshot_id}")
+        @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def snapshot(snapshot_id: str) -> dict[str, Any] | None:
             result = result_store.snapshot(snapshot_id)
             if result is None:
                 return None
             return result.to_dict()
 
-        @router.get("/{h3_index}")
+        @router.get("/{h3_index}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def heatzone_detail(h3_index: str) -> dict[str, Any] | None:
             for item in result_store.list_scores():
                 if item["h3_index"] == h3_index:

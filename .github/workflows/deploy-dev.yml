@@ -18,7 +18,16 @@ permissions:
   packages: write
 
 jobs:
+  e2e-operational-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run E2E deployment health, backup, restore, and rollback proof
+        run: python3 scripts/e2e/verify_deployment_health_backup_rollback.py
+
   build-and-publish:
+    needs: e2e-operational-evidence
     runs-on: ubuntu-latest
     environment:
       name: dev

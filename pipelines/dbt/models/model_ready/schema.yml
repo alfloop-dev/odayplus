@@ -64,3 +64,22 @@ models:
       - name: planning_quarter
         tests:
           - not_null
+  - name: brand_transfer_view
+    description: Brand transfer view for SiteScore.
+    columns:
+      - name: entity_id
+        tests:
+          - not_null
+  - name: ramp_curve_view
+    description: Store cohorts ramp curve view for SiteScore and ForecastOps.
+    columns:
+      - name: entity_id
+        tests:
+          - not_null
+  - name: matched_control_view
+    description: Matched control view for AdLift campaigns.
+    columns:
+      - name: entity_id
+        tests:
+          - not_null
+

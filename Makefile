@@ -5,7 +5,7 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap lint test smoke node-check ci clean
+.PHONY: help bootstrap lint test smoke dependency-audit security node-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
@@ -13,7 +13,9 @@ help:
 	@printf "  make lint        Run Python lint checks\n"
 	@printf "  make test        Run CI-safe Python tests\n"
 	@printf "  make smoke       Run fast foundation smoke tests\n"
+	@printf "  make security    Run dependency audit and security acceptance tests\n"
 	@printf "  make node-check  Run Node workspace checks when a lockfile exists\n"
+	@printf "  make product-e2e-gate  Run product E2E release gate checks\n"
 	@printf "  make ci          Run the full CI baseline\n"
 	@printf "  make clean       Remove local test and lint caches\n"
 
@@ -34,17 +36,34 @@ test: bootstrap
 smoke: bootstrap
 	$(UV) run pytest tests/smoke
 
+dependency-audit:
+	@if [[ -f package-lock.json ]]; then \
+		npm run audit:security; \
+	else \
+		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
+	fi
+
+security: bootstrap dependency-audit
+	$(UV) run pytest tests/security
+
 node-check:
 	@if [[ -f package-lock.json ]]; then \
 		npm ci; \
 		npm run lint --workspaces --if-present; \
 		npm run typecheck --workspaces --if-present; \
+		npm run build --workspaces --if-present; \
 		npm run test --workspaces --if-present; \
 	else \
 		printf "Skipping Node workspace checks: package-lock.json is not present yet.\n"; \
 	fi
 
-ci: bootstrap lint test smoke node-check
+product-e2e-gate:
+	python3 scripts/e2e/check_product_release_gate.py
+
+product-release-gate: product-e2e-gate
+	scripts/e2e/run_product_e2e.sh
+
+ci: bootstrap lint security test smoke node-check
 
 clean:
 	rm -rf .pytest_cache .ruff_cache htmlcov .coverage .coverage.*
