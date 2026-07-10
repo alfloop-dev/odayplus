@@ -176,11 +176,11 @@ else:
         from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.audit import create_audit_router
         from apps.api.app.routes.avm import create_avm_router
-        from apps.api.app.routes.external_data import router as external_data_router
+        from apps.api.app.routes.external_data import create_external_data_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.learninghub import create_learninghub_router
-        from apps.api.app.routes.listings import router as listings_router
+        from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
@@ -208,8 +208,8 @@ else:
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(external_data_router)
-        api.include_router(listings_router)
+        api.include_router(create_external_data_router(audit_log=audit_log))
+        api.include_router(create_listings_router(audit_log=audit_log))
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
             create_forecastops_router(repository=forecast_repository, audit_log=audit_log)

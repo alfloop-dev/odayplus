@@ -19,7 +19,21 @@ from apps.api.oday_api.main import create_app
 from shared.audit.events import InMemoryAuditLog
 from shared.audit.policy import SECURITY_EVENT_TYPE
 from shared.auth import Role
-from tests.integration._authz import FORECASTOPS_HEADERS, auth_headers
+from tests.integration._authz import (
+    EXTERNAL_DATA_HEADERS,
+    FORECASTOPS_HEADERS,
+    HEATZONE_HEADERS,
+    LISTING_HEADERS,
+    auth_headers,
+)
+
+
+def _security_denials(audit_log: InMemoryAuditLog) -> list:
+    return [
+        event
+        for event in audit_log.list_events()
+        if event.event_type == SECURITY_EVENT_TYPE and event.outcome == "deny"
+    ]
 
 
 def test_domain_route_denies_anonymous_and_writes_security_audit() -> None:
@@ -71,6 +85,85 @@ def test_high_risk_execute_route_is_reachable_with_authorized_role() -> None:
 
     assert response.status_code != status.HTTP_403_FORBIDDEN
     assert response.status_code != status.HTTP_401_UNAUTHORIZED
+
+
+def test_heatzone_routes_deny_anonymous_and_write_security_audit() -> None:
+    # Regression guard for the RBAC coverage gap: the heatzone router had no
+    # require_permission guard, so anonymous callers reached read + score-job
+    # routes (ODP-GAP-API-001 review). Both the read and the create verb must
+    # now deny anonymous callers and record a security audit event.
+    audit_log = InMemoryAuditLog()
+    client = TestClient(create_app(audit_log=audit_log))
+
+    listing = client.get("/heatzones")
+    score_job = client.post("/heatzones/score-jobs", json={"features": []})
+
+    assert listing.status_code == status.HTTP_403_FORBIDDEN
+    assert score_job.status_code == status.HTTP_403_FORBIDDEN
+    denials = _security_denials(audit_log)
+    assert denials, "a 403 must record a security authorization event"
+    assert {event.resource for event in denials} == {"heatzone"}
+    assert {event.action for event in denials} == {"view", "create"}
+
+
+def test_heatzone_routes_allow_expansion_user() -> None:
+    client = TestClient(create_app(), headers=HEATZONE_HEADERS)
+
+    listing = client.get("/heatzones")
+    score_job = client.post("/heatzones/score-jobs", json={"features": []})
+
+    assert listing.status_code == status.HTTP_200_OK
+    # CREATE is not a HIGH_RISK verb, but the route must be reachable (not 403).
+    assert score_job.status_code != status.HTTP_403_FORBIDDEN
+    assert score_job.status_code != status.HTTP_401_UNAUTHORIZED
+
+
+def test_listing_routes_deny_anonymous_and_write_security_audit() -> None:
+    audit_log = InMemoryAuditLog()
+    client = TestClient(create_app(audit_log=audit_log))
+
+    import_job = client.post("/listings/import-jobs", json={"records": []})
+    candidates = client.get("/listings/candidates")
+
+    assert import_job.status_code == status.HTTP_403_FORBIDDEN
+    assert candidates.status_code == status.HTTP_403_FORBIDDEN
+    denials = _security_denials(audit_log)
+    assert denials, "a 403 must record a security authorization event"
+    assert {event.resource for event in denials} == {"listing"}
+    assert {event.action for event in denials} == {"view", "create"}
+
+
+def test_listing_routes_allow_expansion_user() -> None:
+    client = TestClient(create_app(), headers=LISTING_HEADERS)
+
+    import_job = client.post("/listings/import-jobs", json={"records": []})
+    candidates = client.get("/listings/candidates")
+
+    assert import_job.status_code != status.HTTP_403_FORBIDDEN
+    assert import_job.status_code != status.HTTP_401_UNAUTHORIZED
+    assert candidates.status_code == status.HTTP_200_OK
+
+
+def test_external_data_route_denies_anonymous_and_writes_security_audit() -> None:
+    audit_log = InMemoryAuditLog()
+    client = TestClient(create_app(audit_log=audit_log))
+
+    response = client.get("/external-data/freshness")
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    denials = _security_denials(audit_log)
+    assert denials, "a 403 must record a security authorization event"
+    assert denials[-1].resource == "integration"
+    assert denials[-1].action == "view"
+
+
+def test_external_data_route_allows_data_owner() -> None:
+    client = TestClient(create_app(), headers=EXTERNAL_DATA_HEADERS)
+
+    response = client.get("/external-data/freshness")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert "freshness" in response.json()
 
 
 def test_openapi_contract_exposes_domain_paths() -> None:

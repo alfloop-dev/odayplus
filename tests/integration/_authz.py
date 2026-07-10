@@ -30,6 +30,13 @@ ADLIFT_HEADERS = auth_headers(Role.MARKETING_MANAGER)
 AUDIT_HEADERS = auth_headers(Role.AUDITOR)
 AVM_HEADERS = auth_headers(Role.FINANCE_LEGAL)
 FORECASTOPS_HEADERS = auth_headers(Role.OPERATIONS_MANAGER)
+# Expansion domain: EXPANSION_USER holds heatzone view/create and listing
+# view/create/update (ROLE_PERMISSIONS in shared.auth.rbac).
+HEATZONE_HEADERS = auth_headers(Role.EXPANSION_USER)
+LISTING_HEADERS = auth_headers(Role.EXPANSION_USER)
+# External-data freshness is an integration-domain read; DATA_OWNER holds the
+# integration view grant.
+EXTERNAL_DATA_HEADERS = auth_headers(Role.DATA_OWNER)
 # Intervention lifecycle spans create/approve (operations manager) and execute
 # (regional supervisor); a principal may hold both roles.
 INTERVENTION_HEADERS = auth_headers(
