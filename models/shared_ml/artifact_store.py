@@ -1,27 +1,3 @@
-"""Content-addressed model artifact store and registry evidence (ODP-PV-013).
-
-The Learning Hub registry primitives in this package (``ModelVersion``,
-``ModelCard``, ``ValidationRun``) are storage-neutral domain objects. What turns
-a *demo* registry into a *production* one is durable, tamper-evident **artifact
-evidence**: every registered model version must point at a real, content-hashed
-artifact, and the registry state (versions, validation, aliases, promotions,
-rollbacks) must be reproducible into an auditable manifest.
-
-This module owns two things, both storage-neutral so the durable SQLite backend
-(``shared/infrastructure/persistence``) and in-memory tests share one contract:
-
-* :class:`ArtifactStore` — a content-addressed blob store. ``put_artifact``
-  hashes the bytes (SHA-256) and returns an :class:`ArtifactRecord` whose
-  ``uri`` is derived from the digest, so a ``ModelVersion.artifact_uri`` cannot
-  silently drift from the bytes it claims to describe. ``verify`` re-hashes the
-  stored bytes to prove the artifact has not been tampered with.
-* :func:`build_model_registry_evidence` — reduces registry + artifact state for
-  one model into a JSON-serializable :class:`ModelRegistryEvidence` manifest
-  (versions, metrics, aliases, model-card completeness, release decisions,
-  artifact digests). This is the durable evidence the PV phase requires instead
-  of demo registry state.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -29,10 +5,129 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import yaml
+
+from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import ModelAlias
 
+
+class LocalModelArtifactStore:
+    """Local file-based artifact store for ML models, handling Model Cards and metadata."""
+
+    def __init__(self, base_dir: str | Path | None = None) -> None:
+        self.base_dir = Path(base_dir) if base_dir else Path("/tmp/model_artifacts")
+
+    def save_model_card(self, model_card: ModelCard, artifact_uri: str | None = None) -> str:
+        """Saves a model card as a YAML file inside the model validation artifact directory.
+
+        Args:
+            model_card: The ModelCard instance to save.
+            artifact_uri: Optional base directory to store the card in. If not provided,
+              defaults to self.base_dir / model_name / model_version.
+
+        Returns:
+            The absolute path to the saved model card file.
+        """
+        if artifact_uri:
+            path_str = artifact_uri
+            if path_str.startswith("file://"):
+                path_str = path_str[7:]
+            target_dir = Path(path_str) / "validation"
+        else:
+            target_dir = (
+                self.base_dir / model_card.model_name / model_card.model_version / "validation"
+            )
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / "model_card.yaml"
+
+        data = model_card.to_dict()
+        with open(target_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+        return str(target_file)
+
+    def load_model_card(
+        self,
+        model_name: str,
+        version: str,
+        artifact_uri: str | None = None,
+    ) -> ModelCard | None:
+        """Loads a model card from the validation directory of the model artifact.
+
+        Args:
+            model_name: The name of the model.
+            version: The version of the model.
+            artifact_uri: Optional base directory containing the model.
+
+        Returns:
+            The ModelCard instance if found, otherwise None.
+        """
+        if artifact_uri:
+            path_str = artifact_uri
+            if path_str.startswith("file://"):
+                path_str = path_str[7:]
+            target_file = Path(path_str) / "validation" / "model_card.yaml"
+        else:
+            target_file = self.base_dir / model_name / version / "validation" / "model_card.yaml"
+
+        if not target_file.exists():
+            return None
+
+        with open(target_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        approvals = [
+            ModelCardApproval(
+                approver=app["approver"],
+                role=app["role"],
+                decision=app.get("decision", "approved"),
+                approved_at=datetime.fromisoformat(app["approved_at"]),
+            )
+            for app in data.get("approvals", [])
+        ]
+
+        # Handle datetime parsing for created_at
+        created_at_val = data.get("created_at")
+        if isinstance(created_at_val, str):
+            created_at = datetime.fromisoformat(created_at_val)
+        else:
+            created_at = datetime.now()
+
+        return ModelCard(
+            model_name=data["model_name"],
+            model_version=data["model_version"],
+            owner=data["owner"],
+            risk_level=ModelRiskLevel(data["risk_level"]),
+            intended_use=data["intended_use"],
+            not_intended_use=data["not_intended_use"],
+            dataset_snapshot_id=data["dataset_snapshot_id"],
+            validation_run_id=data["validation_run_id"],
+            feature_set_id=data["feature_set_id"],
+            label_set_id=data["label_set_id"],
+            training_period=data["training_period"],
+            validation_period=data["validation_period"],
+            algorithm=data["algorithm"],
+            baseline=data["baseline"],
+            metrics_summary=data["metrics_summary"],
+            segment_metrics=data.get("segment_metrics", []),
+            calibration_summary=data.get("calibration_summary", {}),
+            explainability_method=data.get("explainability_method", "not_applicable"),
+            limitations=data.get("limitations", []),
+            known_biases=data.get("known_biases", []),
+            privacy_review=data.get("privacy_review", "PASSED"),
+            security_review=data.get("security_review", "PASSED"),
+            release_status=data.get("release_status", "DEV"),
+            rollback_conditions=data.get("rollback_conditions", []),
+            approvals=approvals,
+            created_at=created_at,
+        )
+
+
+# -- Content-addressed model artifact store and registry evidence (ODP-PV-013) --
 DIGEST_ALGORITHM = "sha256"
 
 
@@ -114,9 +209,7 @@ class ArtifactStore(Protocol):
 
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]: ...
 
-    def list_artifacts_for_version(
-        self, model_name: str, version: str
-    ) -> list[ArtifactRecord]: ...
+    def list_artifacts_for_version(self, model_name: str, version: str) -> list[ArtifactRecord]: ...
 
     def verify(self, artifact_id: str) -> bool: ...
 
@@ -176,13 +269,9 @@ class InMemoryArtifactStore:
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
         return [r for r in self._records.values() if r.model_name == model_name]
 
-    def list_artifacts_for_version(
-        self, model_name: str, version: str
-    ) -> list[ArtifactRecord]:
+    def list_artifacts_for_version(self, model_name: str, version: str) -> list[ArtifactRecord]:
         return [
-            r
-            for r in self._records.values()
-            if r.model_name == model_name and r.version == version
+            r for r in self._records.values() if r.model_name == model_name and r.version == version
         ]
 
     def verify(self, artifact_id: str) -> bool:
@@ -253,9 +342,7 @@ def build_model_registry_evidence(
     ):
         version = model_version.version
         card = repository.get_model_card(model_name, version)
-        validation = (
-            repository.get_validation_run(card.validation_run_id) if card else None
-        )
+        validation = repository.get_validation_run(card.validation_run_id) if card else None
         artifacts = artifact_store.list_artifacts_for_version(model_name, version)
         version_entries.append(
             {
@@ -272,12 +359,8 @@ def build_model_registry_evidence(
                 "approved_by": model_version.approved_by,
                 "git_sha": model_version.git_sha,
                 "run_id": model_version.run_id,
-                "validation_run_id": (
-                    validation.validation_run_id if validation else None
-                ),
-                "validation_status": (
-                    validation.status.value if validation else None
-                ),
+                "validation_run_id": (validation.validation_run_id if validation else None),
+                "validation_status": (validation.status.value if validation else None),
                 "model_card": _model_card_evidence(card),
                 "artifacts": [artifact.to_dict() for artifact in artifacts],
             }
@@ -327,6 +410,7 @@ __all__ = [
     "ArtifactRecord",
     "ArtifactStore",
     "InMemoryArtifactStore",
+    "LocalModelArtifactStore",
     "ModelRegistryEvidence",
     "artifact_uri",
     "build_model_registry_evidence",

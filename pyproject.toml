@@ -9,6 +9,7 @@ authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
     # API
     "fastapi>=0.115",
+    "pyyaml>=6.0.3",
     "pydantic>=2.8",
     "uvicorn[standard]>=0.30",
     # ML

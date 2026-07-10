@@ -51,6 +51,8 @@ class DatasetSnapshot:
     time_range: tuple[datetime, datetime]
     source_snapshot_ids: tuple[str, ...]
     records: tuple[ModelReadyRecord, ...]
+    feature_set_id: str | None = None
+    label_set_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -197,6 +199,8 @@ def build_dataset_snapshot(
     *,
     dataset_snapshot_id: str | None = None,
     require_training_eligible: bool = False,
+    feature_set_id: str | None = None,
+    label_set_id: str | None = None,
 ) -> DatasetSnapshot:
     records = tuple(
         row if isinstance(row, ModelReadyRecord) else model_ready_record_from_mapping(row)
@@ -230,6 +234,8 @@ def build_dataset_snapshot(
         time_range=(min(feature_times), max(origin_times)),
         source_snapshot_ids=source_snapshot_ids,
         records=records,
+        feature_set_id=feature_set_id,
+        label_set_id=label_set_id,
     )
 
 

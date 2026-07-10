@@ -86,9 +86,7 @@ def _model_card(version: str, dataset_snapshot_id: str, validation_run_id: str) 
         algorithm="seasonal_baseline_plus_gradient_boosting",
         baseline="seasonal_naive_v1",
         metrics_summary={"w4_smape": 0.11, "p80_coverage": 0.82},
-        segment_metrics=(
-            {"segment_name": "region", "segment_value": "north", "w4_smape": 0.10},
-        ),
+        segment_metrics=({"segment_name": "region", "segment_value": "north", "w4_smape": 0.10},),
         calibration_summary={"p80_coverage": 0.82},
         explainability_method="feature_importance",
         limitations=("synthetic fixture validation only",),

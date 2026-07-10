@@ -5,6 +5,7 @@ from models.shared_ml.artifact_store import (
     ArtifactRecord,
     ArtifactStore,
     InMemoryArtifactStore,
+    LocalModelArtifactStore,
     ModelRegistryEvidence,
     artifact_uri,
     build_model_registry_evidence,
@@ -13,6 +14,10 @@ from models.shared_ml.artifact_store import (
 )
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import (
+    FeatureDefinition,
+    FeatureSet,
+    LabelDefinition,
+    LabelSet,
     ModelAlias,
     ModelRegistryError,
     ModelStage,
@@ -52,4 +57,9 @@ __all__ = [
     "compute_content_digest",
     "make_artifact_id",
     "validate_model_candidate",
+    "LocalModelArtifactStore",
+    "FeatureDefinition",
+    "LabelDefinition",
+    "FeatureSet",
+    "LabelSet",
 ]
