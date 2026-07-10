@@ -3,8 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from models.shared_ml.model_card import ModelCard
-from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
+from models.shared_ml import (
+    FeatureDefinition,
+    FeatureSet,
+    LabelDefinition,
+    LabelSet,
+    ModelAlias,
+    ModelCard,
+    ModelRegistryError,
+    ModelVersion,
+)
 from models.shared_ml.validation import ValidationRun
 from modules.learninghub.domain import DatasetSnapshot
 
@@ -50,6 +58,10 @@ class InMemoryLearningHubRepository:
     _validation_runs: dict[str, ValidationRun] = field(default_factory=dict)
     _aliases: dict[str, dict[ModelAlias, str]] = field(default_factory=dict)
     _release_decisions: dict[str, object] = field(default_factory=dict)
+    _features: dict[tuple[str, str], FeatureDefinition] = field(default_factory=dict)
+    _labels: dict[tuple[str, str], LabelDefinition] = field(default_factory=dict)
+    _feature_sets: dict[str, FeatureSet] = field(default_factory=dict)
+    _label_sets: dict[str, LabelSet] = field(default_factory=dict)
 
     def save_dataset_snapshot(self, snapshot: DatasetSnapshot) -> DatasetSnapshot:
         self._datasets[snapshot.dataset_snapshot_id] = snapshot
@@ -126,6 +138,52 @@ class InMemoryLearningHubRepository:
 
     def list_release_decisions(self) -> list[object]:
         return list(self._release_decisions.values())
+
+    def save_feature(self, feature: FeatureDefinition) -> FeatureDefinition:
+        self._features[(feature.feature_name, feature.version)] = feature
+        return feature
+
+    def get_feature(
+        self, feature_name: str, version: str | None = None
+    ) -> FeatureDefinition | None:
+        if version:
+            return self._features.get((feature_name, version))
+        matches = [f for (name, _), f in self._features.items() if name == feature_name]
+        if not matches:
+            return None
+        return max(matches, key=lambda f: f.version)
+
+    def list_features(self) -> list[FeatureDefinition]:
+        return list(self._features.values())
+
+    def save_label(self, label: LabelDefinition) -> LabelDefinition:
+        self._labels[(label.label_name, label.version)] = label
+        return label
+
+    def get_label(self, label_name: str, version: str | None = None) -> LabelDefinition | None:
+        if version:
+            return self._labels.get((label_name, version))
+        matches = [lbl for (name, _), lbl in self._labels.items() if name == label_name]
+        if not matches:
+            return None
+        return max(matches, key=lambda lbl: lbl.version)
+
+    def list_labels(self) -> list[LabelDefinition]:
+        return list(self._labels.values())
+
+    def save_feature_set(self, feature_set: FeatureSet) -> FeatureSet:
+        self._feature_sets[feature_set.feature_set_id] = feature_set
+        return feature_set
+
+    def get_feature_set(self, feature_set_id: str) -> FeatureSet | None:
+        return self._feature_sets.get(feature_set_id)
+
+    def save_label_set(self, label_set: LabelSet) -> LabelSet:
+        self._label_sets[label_set.label_set_id] = label_set
+        return label_set
+
+    def get_label_set(self, label_set_id: str) -> LabelSet | None:
+        return self._label_sets.get(label_set_id)
 
 
 __all__ = ["InMemoryLearningHubRepository", "LearningHubRepository", "ReleaseDecisionRecord"]

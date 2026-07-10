@@ -9,6 +9,7 @@ authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
     # API
     "fastapi>=0.115",
+    "pyyaml>=6.0.3",
     "pydantic>=2.8",
     "uvicorn[standard]>=0.30",
     # ML
@@ -46,7 +47,15 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501", "E402"]
 
 [tool.pytest.ini_options]
-testpaths = [".orchestrator", "scripts", "tests"]
+testpaths = [
+    ".orchestrator",
+    "scripts",
+    "tests",
+    "modules",
+    "apps",
+    "shared",
+    "models",
+]
 python_files = ["test_*.py"]
 addopts = "-q"
 pythonpath = ["."]

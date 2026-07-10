@@ -149,6 +149,62 @@ else:
             handoffs = forecast_repository.list_handoffs()
             return {"items": [handoff.to_dict() for handoff in handoffs], "count": len(handoffs)}
 
+        @router.get("/prediction-runs/{prediction_run_id}")
+        def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
+            from fastapi import HTTPException
+            run = forecast_repository.get_prediction_run(prediction_run_id)
+            if run is None:
+                raise HTTPException(
+                    status_code=404, detail="prediction run not found"
+                )
+            predictions = forecast_repository.get_predictions(prediction_run_id)
+            return {
+                "prediction_run": {
+                    "prediction_run_id": run.prediction_run_id,
+                    "model_version_id": run.model_version_id,
+                    "feature_snapshot_time": run.feature_snapshot_time.isoformat(),
+                    "prediction_origin_time": run.prediction_origin_time.isoformat(),
+                    "prediction_horizon": run.prediction_horizon,
+                    "run_status": run.run_status,
+                },
+                "predictions": [
+                    {
+                        "prediction_id": p.prediction_id,
+                        "prediction_run_id": p.prediction_run_id,
+                        "entity_type": p.entity_type,
+                        "entity_id": p.entity_id,
+                        "target_name": p.target_name,
+                        "p10_value": p.p10_value,
+                        "p50_value": p.p50_value,
+                        "p90_value": p.p90_value,
+                        "unit": p.unit,
+                    }
+                    for p in predictions
+                ]
+            }
+
+        @router.get("/forecast-outputs/{forecast_output_id}")
+        def get_forecast_output(forecast_output_id: str) -> dict[str, Any]:
+            from fastapi import HTTPException
+            forecast = forecast_repository.get_canonical_forecast(forecast_output_id)
+            if forecast is None:
+                raise HTTPException(
+                    status_code=404, detail="forecast output not found"
+                )
+            return {
+                "forecast_output_id": forecast.forecast_output_id,
+                "store_id": forecast.store_id,
+                "prediction_run_id": forecast.prediction_run_id,
+                "horizon_days": forecast.horizon_days,
+                "target_metric": forecast.target_metric,
+                "p10": forecast.p10,
+                "p50": forecast.p50,
+                "p90": forecast.p90,
+                "trajectory_class": forecast.trajectory_class,
+                "turning_point_probability": forecast.turning_point_probability,
+                "sitescore_gap_ratio": forecast.sitescore_gap_ratio,
+            }
+
         return router
 
 

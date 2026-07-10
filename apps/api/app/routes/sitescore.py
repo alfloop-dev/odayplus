@@ -184,6 +184,69 @@ else:
                 "count": len(realized),
             }
 
+        @router.get("/prediction-runs/{prediction_run_id}")
+        def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
+            run = site_repository.get_prediction_run(prediction_run_id)
+            if run is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="prediction run not found"
+                )
+            predictions = site_repository.get_predictions(prediction_run_id)
+            return {
+                "prediction_run": {
+                    "prediction_run_id": run.prediction_run_id,
+                    "model_version_id": run.model_version_id,
+                    "feature_snapshot_time": run.feature_snapshot_time.isoformat(),
+                    "prediction_origin_time": run.prediction_origin_time.isoformat(),
+                    "prediction_horizon": run.prediction_horizon,
+                    "run_status": run.run_status,
+                },
+                "predictions": [
+                    {
+                        "prediction_id": p.prediction_id,
+                        "prediction_run_id": p.prediction_run_id,
+                        "entity_type": p.entity_type,
+                        "entity_id": p.entity_id,
+                        "target_name": p.target_name,
+                        "p10_value": p.p10_value,
+                        "p50_value": p.p50_value,
+                        "p90_value": p.p90_value,
+                        "unit": p.unit,
+                        "confidence": p.confidence,
+                    }
+                    for p in predictions
+                ]
+            }
+
+        @router.get("/runs/{sitescore_run_id}")
+        def get_sitescore_run(sitescore_run_id: str) -> dict[str, Any]:
+            run = site_repository.get_sitescore_run(sitescore_run_id)
+            if run is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="sitescore run not found"
+                )
+            return {
+                "sitescore_run_id": run.sitescore_run_id,
+                "candidate_site_id": run.candidate_site_id,
+                "target_format_code": run.target_format_code,
+                "prediction_run_id": run.prediction_run_id,
+                "m1_p10": run.m1_p10,
+                "m1_p50": run.m1_p50,
+                "m1_p90": run.m1_p90,
+                "m3_p10": run.m3_p10,
+                "m3_p50": run.m3_p50,
+                "m3_p90": run.m3_p90,
+                "m6_p10": run.m6_p10,
+                "m6_p50": run.m6_p50,
+                "m6_p90": run.m6_p90,
+                "m12_p10": run.m12_p10,
+                "m12_p50": run.m12_p50,
+                "m12_p90": run.m12_p90,
+                "payback_p50_months": run.payback_p50_months,
+                "decision_recommendation": run.decision_recommendation,
+                "report_uri": run.report_uri,
+            }
+
         return router
 
     def _parse_origin(value: str | None) -> Any:
