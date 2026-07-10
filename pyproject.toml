@@ -18,7 +18,7 @@ dependencies = [
     "statsmodels>=0.14",
     # Solver / geospatial
     "h3>=4.1",
-    "ortools>=9.10",
+    "ortools>=9.15.6755",
     # Data
     "duckdb>=1.0",
     "sqlalchemy>=2.0",
