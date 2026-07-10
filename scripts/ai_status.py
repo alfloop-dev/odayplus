@@ -92,6 +92,21 @@ KNOWN_AGENTS = {
         "default_branch": "feat/antigravity2-research-runtime",
         "target_workload": 5,
     },
+    "Antigravity3": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity3-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity6": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity6-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity7": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity7-research-runtime",
+        "target_workload": 5,
+    },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
@@ -1020,9 +1035,20 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
+    import re
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
-        raise SystemExit(f"Unknown agent: {name}")
+        m = re.match(r"^([a-zA-Z]+)(\d+)$", canonical)
+        if m:
+            base_name, num = m.groups()
+            if base_name in KNOWN_AGENTS:
+                KNOWN_AGENTS[canonical] = {
+                    "capability_lane": KNOWN_AGENTS[base_name]["capability_lane"],
+                    "default_branch": KNOWN_AGENTS[base_name]["default_branch"].replace(base_name.lower(), canonical.lower()),
+                    "target_workload": KNOWN_AGENTS[base_name]["target_workload"],
+                }
+        if canonical not in KNOWN_AGENTS:
+            raise SystemExit(f"Unknown agent: {name}")
     return KNOWN_AGENTS[canonical]
 
 
