@@ -9,6 +9,7 @@ from modules.forecastops.domain.forecasting import (
     ForecastSeries,
     InterventionHandoff,
 )
+from shared.domain import PredictionRun, Prediction, ForecastOutput as CanonicalForecastOutput
 
 
 @dataclass
@@ -17,6 +18,9 @@ class InMemoryForecastOpsRepository:
     _forecast_history: dict[str, list[ForecastOutput]] = field(default_factory=dict)
     _alerts: dict[str, Alert] = field(default_factory=dict)
     _handoffs: dict[str, InterventionHandoff] = field(default_factory=dict)
+    _prediction_runs: dict[str, PredictionRun] = field(default_factory=dict)
+    _predictions: dict[str, list[Prediction]] = field(default_factory=dict)
+    _canonical_forecasts: dict[str, CanonicalForecastOutput] = field(default_factory=dict)
 
     def save_series(self, series: ForecastSeries) -> ForecastSeries:
         self._series[series.store_id] = series
@@ -56,6 +60,27 @@ class InMemoryForecastOpsRepository:
 
     def list_handoffs(self) -> list[InterventionHandoff]:
         return list(self._handoffs.values())
+
+    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
+        self._prediction_runs[run.prediction_run_id] = run
+        return run
+
+    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
+        return self._prediction_runs.get(prediction_run_id)
+
+    def save_prediction(self, prediction: Prediction) -> Prediction:
+        self._predictions.setdefault(prediction.prediction_run_id, []).append(prediction)
+        return prediction
+
+    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
+        return list(self._predictions.get(prediction_run_id, []))
+
+    def save_canonical_forecast(self, forecast: CanonicalForecastOutput) -> CanonicalForecastOutput:
+        self._canonical_forecasts[forecast.forecast_output_id] = forecast
+        return forecast
+
+    def get_canonical_forecast(self, forecast_output_id: str) -> CanonicalForecastOutput | None:
+        return self._canonical_forecasts.get(forecast_output_id)
 
 
 __all__ = ["InMemoryForecastOpsRepository"]
