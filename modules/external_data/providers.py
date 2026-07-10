@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
+
 
 @dataclass(frozen=True)
 class ProviderMetadata:
@@ -48,7 +49,7 @@ class FixtureWeatherProvider:
             fixture_path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "source_data" / "external" / "weather_daily_snapshot.valid.json"
             if fixture_path.exists():
                 try:
-                    with open(fixture_path, "r", encoding="utf-8") as f:
+                    with open(fixture_path, encoding="utf-8") as f:
                         content = json.load(f)
                         for record in content.get("records", []):
                             key = (record["station_id"], record["date"])
@@ -65,16 +66,10 @@ class LiveWeatherProvider:
         self.api_key = api_key
 
     def get_daily_weather(self, station_id: str, date_str: str) -> dict[str, Any] | None:
-        # Simulate live API request
-        try:
-            import httpx
-            # In a real environment, we'd do:
-            # response = httpx.get(f"{self.api_url}/stations/{station_id}/daily/{date_str}", headers={"Authorization": f"Bearer {self.api_key}"})
-            # response.raise_for_status()
-            # return response.json()
-        except ImportError:
-            pass
-
+        # Live HTTP call is intentionally stubbed for the offline/dev profile.
+        # In a wired environment this method would issue an authenticated GET
+        # against f"{self.api_url}/stations/{station_id}/daily/{date_str}" and
+        # return response.json().
         # Return simulated live data that changes deterministically based on inputs
         import hashlib
         h = int(hashlib.md5(f"{station_id}:{date_str}".encode()).hexdigest(), 16)
@@ -102,7 +97,7 @@ class FixtureDemographicsProvider:
             fixture_path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "source_data" / "external" / "demographics_snapshot.valid.json"
             if fixture_path.exists():
                 try:
-                    with open(fixture_path, "r", encoding="utf-8") as f:
+                    with open(fixture_path, encoding="utf-8") as f:
                         content = json.load(f)
                         for record in content.get("records", []):
                             self.data_map[record["h3_index"]] = record

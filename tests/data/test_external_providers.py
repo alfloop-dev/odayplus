@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-import h3
+
 from modules.external_data import (
     FixtureDemographicsProvider,
     FixtureWeatherProvider,
@@ -12,6 +12,7 @@ from modules.external_data import (
     ProviderRegistry,
     provider_registry,
 )
+
 
 def test_weather_providers() -> None:
     # Test Fixture Mode (using default valid JSON loading)
