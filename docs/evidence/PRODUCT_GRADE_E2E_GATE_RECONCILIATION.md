@@ -21,7 +21,7 @@ command above to refresh it.
 | Open blockers / pending pickup ACKs | 7 | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
 | Closure packets (lifecycle actions) | 8 | `PRODUCT_RELEASE_CLOSEOUT_QUEUE.json` |
 | Handback bundle status | `pending_external_handbacks` | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
-| Fleet completion | 72.5% (29/40 done) | `ai-status.json` @ 2026-07-11T03:00:30Z |
+| Fleet completion | 58.0% (29/50 done) | `ai-status.json` @ 2026-07-11T03:38:22Z |
 
 ## Open Blockers (pending pickup ACK)
 
@@ -38,9 +38,10 @@ command above to refresh it.
 ## Fleet Completion
 
 - `done`: 29
-- `in_progress`: 6
-- `review`: 3
-- `todo`: 2
+- `in_progress`: 4
+- `review`: 6
+- `review_approved`: 1
+- `todo`: 10
 
 ## Runtime Drift Findings
 
@@ -51,8 +52,8 @@ command above to refresh it.
 | `orphaned_closure_packet` | `ODP-FE-R0-001` | closure packet points at a task absent from ai-status.json |
 | `orphaned_closure_packet` | `ODP-FE-XCUT-001` | closure packet points at a task absent from ai-status.json |
 | `orphaned_closure_packet` | `ODP-FE-XCUT-DOMAIN-001` | closure packet points at a task absent from ai-status.json |
-| `blocker_has_active_implementation` | `ODP-PV-STAGE-001` | blocker now has an active in-repo task (live status 'in_progress') |
-| `blocker_has_active_implementation` | `ODP-PV-STAGE-002` | blocker now has an active in-repo task (live status 'todo') |
+| `blocker_has_active_implementation` | `ODP-PV-STAGE-001` | blocker now has an active in-repo task (live status 'review') |
+| `blocker_has_active_implementation` | `ODP-PV-STAGE-002` | blocker now has an active in-repo task (live status 'review') |
 
 ## Drift Kinds
 
