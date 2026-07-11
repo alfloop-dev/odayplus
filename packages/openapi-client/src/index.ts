@@ -233,6 +233,50 @@ export class OdpApiClient {
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
   }
+
+  getOperatorBootstrap(): Promise<any> {
+    return this.request("/api/v1/operator/bootstrap");
+  }
+
+  transitionOperatorIssue(
+    issueId: string,
+    actionType: string,
+    payload: any,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/issues/${issueId}/${actionType}`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
+    });
+  }
+
+  decideOperatorApproval(
+    approvalId: string,
+    payload: any,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/approvals/${approvalId}/decision`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
+    });
+  }
+
+  confirmOperatorEvidencePurpose(
+    evidenceId: string,
+    payload: any,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/evidence/${evidenceId}/purpose`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
+    });
+  }
 }
 
 /**

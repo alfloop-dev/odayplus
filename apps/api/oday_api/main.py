@@ -182,6 +182,7 @@ else:
         from apps.api.app.routes.learninghub import create_learninghub_router
         from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
+        from apps.api.app.routes.operator import create_operator_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
@@ -237,6 +238,7 @@ else:
                 label_registry=label_registry,
             )
         )
+        api.include_router(create_operator_router(audit_log=audit_log), prefix="/api/v1")
 
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
