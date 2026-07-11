@@ -12,6 +12,8 @@ from models.shared_ml.artifact_store import (
     compute_content_digest,
     make_artifact_id,
 )
+from models.shared_ml.backtest import run_rolling_backtest
+from models.shared_ml.drift import calculate_psi, monitor_drift
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import (
     FeatureDefinition,
@@ -68,6 +70,9 @@ __all__ = [
     "compute_content_digest",
     "make_artifact_id",
     "validate_model_candidate",
+    "run_rolling_backtest",
+    "calculate_psi",
+    "monitor_drift",
     "LocalModelArtifactStore",
     "FeatureDefinition",
     "LabelDefinition",
@@ -83,3 +88,4 @@ __all__ = [
     "resolve_production_binding",
     "seed_scoring_models",
 ]
+
