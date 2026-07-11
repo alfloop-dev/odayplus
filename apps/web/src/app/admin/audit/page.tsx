@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminAuditPage() {
   const liveEvents = await loadApiBinding({
-    client: getServerApiClient(),
+    client: await getServerApiClient(),
     fetcher: (client) => client.listAuditEvents().then((response) => response.events),
   });
   return <AuditWorkspace view="admin" liveEvents={liveEvents} />;
