@@ -34,6 +34,7 @@ from shared.auth import (
     Role,
     Scope,
     default_registry,
+    rbac_allows,
 )
 
 try:  # pragma: no cover - exercised only when FastAPI is installed
@@ -136,26 +137,47 @@ def require_permission(
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
 ):
-    """FastAPI dependency factory enforcing ``action`` on ``resource_type``.
+    """FastAPI dependency factory enforcing RBAC on a route.
 
-    Resource-instance attributes (tenant/region/store of the specific object)
-    are not known at dependency time; this guards the route at the type level.
-    Per-object ABAC is enforced by calling :func:`authorize_request` inside the
-    handler once the target object is loaded.
+    This guards a route at the **type level**: it answers only "does the
+    caller's role permit ``action`` on ``resource_type``" (RBAC, ODP-SA-04 §6).
+    A denial returns HTTP 403 and writes a security audit event
+    (ODP-AC-AUTH-005 / "403 paths write security audit events").
+
+    Object-level policy is intentionally *not* evaluated here. Resource-instance
+    attributes (tenant/region/store scope, proposer identity, risk level) are
+    unknown at dependency time, so scope ABAC and the high-risk feature-flag /
+    separation-of-duties hooks (SD-09 §5, which fail closed without object
+    context) are enforced inside the handler and the domain workflow once the
+    target object is loaded — call :func:`authorize_request` there for the full
+    engine evaluation. Running the whole engine at type level would deny every
+    high-risk verb (approve/execute/publish/override/rollback) unconditionally.
     """
 
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        from shared.audit.policy import build_security_event
+
         principal = principal_from_headers(request.headers)
+        if rbac_allows(principal, resource_type, action):
+            return principal
+
         source_ip = request.client.host if request.client else None
-        resource = ResourceDescriptor(
-            type=resource_type, data_classification=data_classification
+        decision = Decision.deny(
+            f"role does not permit {action.value} on {resource_type}",
+            policy_id="rbac",
         )
-        authorize_request(
-            active_engine, principal, action, resource, source_ip=source_ip
+        access = AccessRequest(
+            principal=principal,
+            action=action,
+            resource=ResourceDescriptor(
+                type=resource_type, data_classification=data_classification
+            ),
+            environment=Environment(source_ip=source_ip),
         )
-        return principal
+        active_engine.audit_log.record(build_security_event(access, decision))
+        _raise_forbidden(decision)
 
     return dependency
 

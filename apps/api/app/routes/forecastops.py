@@ -5,7 +5,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -60,13 +60,17 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_store: ForecastOpsJobStore | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/forecastops", tags=["forecastops"])
         forecast_repository = repository or InMemoryForecastOpsRepository()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or ForecastOpsJobStore()
         service = ForecastOpsService(repository=forecast_repository)
 
-        @router.post("/timeseries", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/timeseries", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))])
         def ingest_timeseries(body: ForecastOpsTimeseriesPayload) -> dict[str, Any]:
             series = service.ingest_timeseries(body.observations)
             return {
@@ -74,12 +78,12 @@ else:
                 "count": len(series),
             }
 
-        @router.get("/timeseries")
+        @router.get("/timeseries", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_timeseries() -> dict[str, Any]:
             series = forecast_repository.list_series()
             return {"items": [item.to_dict() for item in series], "count": len(series)}
 
-        @router.post("/forecast-jobs", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/forecast-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("forecastops", Action.EXECUTE, engine=authz_engine))])
         def create_forecast_job(
             body: ForecastOpsForecastJobPayload,
             request: Request,
@@ -119,19 +123,19 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/forecast-jobs/{job_id}")
+        @router.get("/forecast-jobs/{job_id}", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def get_forecast_job(job_id: str) -> dict[str, Any] | None:
             result = jobs.get(job_id)
             if result is None:
                 return None
             return result.to_dict()
 
-        @router.get("/forecasts")
+        @router.get("/forecasts", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_forecasts() -> dict[str, Any]:
             forecasts = forecast_repository.latest_forecasts()
             return {"items": [forecast.to_dict() for forecast in forecasts], "count": len(forecasts)}
 
-        @router.get("/alerts")
+        @router.get("/alerts", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_alerts(level: str | None = None) -> dict[str, Any]:
             alerts = [
                 alert
@@ -140,10 +144,66 @@ else:
             ]
             return {"items": [alert.to_dict() for alert in alerts], "count": len(alerts)}
 
-        @router.get("/intervention-handoffs")
+        @router.get("/intervention-handoffs", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_handoffs() -> dict[str, Any]:
             handoffs = forecast_repository.list_handoffs()
             return {"items": [handoff.to_dict() for handoff in handoffs], "count": len(handoffs)}
+
+        @router.get("/prediction-runs/{prediction_run_id}")
+        def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
+            from fastapi import HTTPException
+            run = forecast_repository.get_prediction_run(prediction_run_id)
+            if run is None:
+                raise HTTPException(
+                    status_code=404, detail="prediction run not found"
+                )
+            predictions = forecast_repository.get_predictions(prediction_run_id)
+            return {
+                "prediction_run": {
+                    "prediction_run_id": run.prediction_run_id,
+                    "model_version_id": run.model_version_id,
+                    "feature_snapshot_time": run.feature_snapshot_time.isoformat(),
+                    "prediction_origin_time": run.prediction_origin_time.isoformat(),
+                    "prediction_horizon": run.prediction_horizon,
+                    "run_status": run.run_status,
+                },
+                "predictions": [
+                    {
+                        "prediction_id": p.prediction_id,
+                        "prediction_run_id": p.prediction_run_id,
+                        "entity_type": p.entity_type,
+                        "entity_id": p.entity_id,
+                        "target_name": p.target_name,
+                        "p10_value": p.p10_value,
+                        "p50_value": p.p50_value,
+                        "p90_value": p.p90_value,
+                        "unit": p.unit,
+                    }
+                    for p in predictions
+                ]
+            }
+
+        @router.get("/forecast-outputs/{forecast_output_id}")
+        def get_forecast_output(forecast_output_id: str) -> dict[str, Any]:
+            from fastapi import HTTPException
+            forecast = forecast_repository.get_canonical_forecast(forecast_output_id)
+            if forecast is None:
+                raise HTTPException(
+                    status_code=404, detail="forecast output not found"
+                )
+            return {
+                "forecast_output_id": forecast.forecast_output_id,
+                "store_id": forecast.store_id,
+                "prediction_run_id": forecast.prediction_run_id,
+                "horizon_days": forecast.horizon_days,
+                "target_metric": forecast.target_metric,
+                "p10": forecast.p10,
+                "p50": forecast.p50,
+                "p90": forecast.p90,
+                "trajectory_class": forecast.trajectory_class,
+                "turning_point_probability": forecast.turning_point_probability,
+                "sitescore_gap_ratio": forecast.sitescore_gap_ratio,
+            }
 
         return router
 

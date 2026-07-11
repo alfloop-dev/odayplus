@@ -7,3 +7,4 @@ export * from "./common.ts";
 export * from "./roles.ts";
 export * from "./nav.ts";
 export * from "./heatzone.ts";
+export * from "./frontend-contracts.ts";

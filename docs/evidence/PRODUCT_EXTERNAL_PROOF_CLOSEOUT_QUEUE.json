@@ -1,0 +1,361 @@
+{
+  "schema_version": 1,
+  "generated": "2026-06-30",
+  "release_target": {
+    "pr": 82,
+    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "must_not_hardcode_dev_hash": true
+  },
+  "global_preflight": [
+    "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+    "python3 scripts/e2e/check_product_release_gate.py",
+    "python3 scripts/e2e/check_external_proof_closeout_queue.py",
+    "python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees"
+  ],
+  "proof_boundaries": [
+    {
+      "topic": "external_data_sources",
+      "repo_proof": "deterministic fixtures, source-stub, approved mock-live providers, provider registry fail-closed behavior, scheduled fetch, quota/freshness/licensing gates, and external source product E2E",
+      "external_proof_required": [
+        "provider credential/OAuth provisioning",
+        "provider-specific production license approval",
+        "provider production listing snapshot",
+        "provider production geocoder response"
+      ]
+    },
+    {
+      "topic": "maps",
+      "repo_proof": "local MapLibre/deck/H3 E2E, live boundary configuration, direct picking, semantic pixels, resilience, tooltip/evidence, and a11y",
+      "external_proof_required": [
+        "remote staging live tile endpoint smoke",
+        "remote staging live geocoder endpoint smoke",
+        "map provider attribution/terms approval for staging"
+      ]
+    },
+    {
+      "topic": "remote_staging",
+      "repo_proof": "fail-closed Deploy/Verify Staging workflow and remote staging proof checker",
+      "external_proof_required": [
+        "staging host/API URL/secret owner configuration",
+        "ODAY_RELEASE_SHA injection",
+        "remote /platform/health smoke",
+        "remote /platform/version release_sha match",
+        "staging product smoke",
+        "staging backup/restore/rollback drill"
+      ]
+    }
+  ],
+  "queue": [
+    {
+      "task_id": "ODP-EXT-PROD-001",
+      "title": "Provision production external provider credentials without committing secrets",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "provider_credentials",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/132",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops external provider fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 132 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns environment-specific secret provisioning; Product Validation reviews redacted proof before closure."
+      },
+      "required_evidence": [
+        "secret inventory names configured in the deployment environment",
+        "secret owner and rotation policy recorded",
+        "live-mode startup validation passes without printing secret values",
+        "failure cases still fail closed for missing/placeholder/expired/revoked credentials"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"live_provider_mode_product_e2e or auth_quota_and_freshness\" -q"
+      ],
+      "evidence_refs": [
+        "docs/evidence/fleet_dispatch/ODP-EXT-001-003_WORKER_EVIDENCE.md",
+        "docs/evidence/fleet_dispatch/ODP-EXT-004-008_WORKER_EVIDENCE.md",
+        "tests/e2e/test_external_source_product_e2e.py"
+      ],
+      "completion_rule": "Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-001 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-EXT-PROD-002",
+      "title": "Attach provider-specific production listing and license proof",
+      "owner": "Data Partnerships / Legal",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "provider_license_and_snapshot",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/133",
+      "fleet_routing": {
+        "dispatch_lane": "Data Partnerships / Legal external provider fleet",
+        "pickup_label": "data-partnerships",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "data-partnerships",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 133 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Data Partnerships / Legal owns provider allowed-use evidence; Product Validation reviews redacted lineage proof before closure."
+      },
+      "required_evidence": [
+        "provider allowed-use/license attestation for production",
+        "redacted production listing raw snapshot id",
+        "canonical snapshot id and lineage",
+        "freshness SLA result",
+        "export restriction/watermark behavior for licensed data"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/e2e/test_external_source_product_e2e.py -q"
+      ],
+      "evidence_refs": [
+        "docs/evidence/fleet_dispatch/ODP-EXT-004-008_WORKER_EVIDENCE.md",
+        "modules/external_data/providers/live.py",
+        "modules/external_data/workers/scheduled_fetch.py"
+      ],
+      "completion_rule": "Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-002 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-EXT-PROD-003",
+      "title": "Attach production geocoder response and low-confidence handling proof",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "provider_geocoder",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/134",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops external provider fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 134 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns production geocoder proof capture; Product Validation reviews redacted response and fail-closed evidence before closure."
+      },
+      "required_evidence": [
+        "redacted production geocoder request/response id",
+        "provider observed timestamp",
+        "confidence mapping",
+        "low-confidence flag proof",
+        "timeout/unauthorized/rate-limit fail-closed behavior remains covered"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "uv run pytest tests/data/test_geo_pipeline.py -q"
+      ],
+      "evidence_refs": [
+        "docs/evidence/fleet_dispatch/ODP-EXT-001-003_WORKER_EVIDENCE.md",
+        "modules/external_data/providers/live.py",
+        "tests/data/test_geo_pipeline.py"
+      ],
+      "completion_rule": "Do not close from replay fixture alone; close only with redacted production geocoder proof.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-003 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-001",
+      "title": "Verify remote staging live tile endpoint",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "live_map_endpoint",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/135",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops live map fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 135 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns staging tile endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."
+      },
+      "required_evidence": [
+        "staging map tile URL configured",
+        "provider attribution and terms URL visible",
+        "remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage",
+        "proof report references current PR #82 headRefOid"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1"
+      ],
+      "evidence_refs": [
+        "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
+        "tests/e2e/e2e-map-live-boundary.spec.ts",
+        "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
+      ],
+      "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-002",
+      "title": "Verify remote staging live geocoder endpoint",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "live_map_geocoder",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/136",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops live map fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 136 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns staging geocoder endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."
+      },
+      "required_evidence": [
+        "staging geocoder URL configured",
+        "geocoder outage fallback remains usable",
+        "attribution/terms approval is visible",
+        "proof report references current PR #82 headRefOid"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1"
+      ],
+      "evidence_refs": [
+        "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
+        "tests/e2e/e2e-map-live-boundary.spec.ts",
+        "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
+      ],
+      "completion_rule": "Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-002 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-PV-STAGE-001",
+      "title": "Configure and prove remote staging health/version",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "remote_staging_configuration",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/137",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops remote staging fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 137 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns staging URL and secret-owner configuration; Product Validation reviews release-sha proof before closure."
+      },
+      "required_evidence": [
+        "ODP_STAGING_DEPLOY_URL configured",
+        "ODP_STAGING_API_URL configured",
+        "ODP_STAGING_SECRET_OWNER configured",
+        "ODAY_RELEASE_SHA injected",
+        "/platform/health reachable",
+        "/platform/version.release_sha equals current PR #82 headRefOid",
+        "redacted remote staging proof report artifact"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "python3 scripts/e2e/check_remote_staging_proof.py --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --correlation-id \"corr-odp-pv-stage-001\""
+      ],
+      "evidence_refs": [
+        "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
+        ".github/workflows/deploy-staging.yml",
+        "scripts/e2e/check_remote_staging_proof.py",
+        "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001-002_WORKER_EVIDENCE.md"
+      ],
+      "completion_rule": "Do not close until the checker passes against the configured remote staging target.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    },
+    {
+      "task_id": "ODP-PV-STAGE-002",
+      "title": "Run remote staging product smoke and backup/restore/rollback drill",
+      "owner": "Platform/Ops",
+      "reviewer": "Product Validation",
+      "status": "external_blocked",
+      "blocking_type": "remote_staging_drill",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/138",
+      "fleet_routing": {
+        "dispatch_lane": "Platform/Ops remote staging fleet",
+        "pickup_label": "platform-ops",
+        "required_issue_labels": [
+          "product-e2e",
+          "external-proof",
+          "platform-ops",
+          "release-blocker"
+        ],
+        "pickup_command": "gh issue view 138 --json number,title,labels,body,url",
+        "release_authority": "PR #82 headRefOid and attached checks",
+        "escalation": "Platform/Ops owns staging smoke and backup/restore/rollback execution; Product Validation reviews attached drill artifacts before closure."
+      },
+      "required_evidence": [
+        "ODP-PV-STAGE-001 passed against the same target",
+        "product E2E smoke runs against ODP_STAGING_DEPLOY_URL",
+        "API smoke runs against ODP_STAGING_API_URL",
+        "backup artifact id and timestamp",
+        "restore target and timestamp",
+        "rollback command/result",
+        "post-drill health/version proof with correlation id"
+      ],
+      "allowed_commands": [
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+        "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" ODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
+        "python3 scripts/e2e/check_remote_staging_proof.py --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --correlation-id \"corr-odp-pv-stage-002-version\""
+      ],
+      "evidence_refs": [
+        "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
+        "scripts/e2e/verify_deployment_health_backup_rollback.py",
+        "tests/e2e/product-e2e-env.spec.ts"
+      ],
+      "completion_rule": "Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached.",
+      "handback_commands": [
+        "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-002 --release-sha-from-pr82 --output <handback.json>",
+        "python3 scripts/e2e/check_external_proof_handback_template.py",
+        "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\""
+      ]
+    }
+  ]
+}

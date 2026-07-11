@@ -3,24 +3,26 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from shared.infrastructure.persistence import (
+    MigrationStep,
+    build_migration_manifest_checksum,
+    discover_migration_steps,
+)
+
 DEFAULT_MIGRATIONS_DIR = Path("infra/db/migrations/versions")
+DEFAULT_ALEMBIC_CONFIG = Path("infra/db/migrations/alembic.ini")
 DEFAULT_DBT_MODEL_DIR = Path("pipelines/dbt/models/model_ready")
 
 
 class OpsPlanError(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class MigrationStep:
-    revision: str
-    path: str
-    sha256: str
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class MigrationPlan:
     target_revision: str
     dry_run: bool
     steps: tuple[MigrationStep, ...]
+    manifest_sha256: str
     rollback: dict[str, str]
     generated_at: str
 
@@ -37,6 +40,34 @@ class MigrationPlan:
         return {
             **asdict(self),
             "steps": [asdict(step) for step in self.steps],
+        }
+
+
+@dataclass(frozen=True)
+class MigrationRun:
+    environment: str
+    database_url_env: str
+    target_revision: str
+    dry_run: bool
+    manifest_sha256: str
+    checksum_status: str
+    command: tuple[str, ...]
+    returncode: int | None
+    generated_at: str
+    plan: MigrationPlan
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "environment": self.environment,
+            "database_url_env": self.database_url_env,
+            "target_revision": self.target_revision,
+            "dry_run": self.dry_run,
+            "manifest_sha256": self.manifest_sha256,
+            "checksum_status": self.checksum_status,
+            "command": list(self.command),
+            "returncode": self.returncode,
+            "generated_at": self.generated_at,
+            "plan": self.plan.to_dict(),
         }
 
 
@@ -61,31 +92,6 @@ def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def discover_migration_steps(migrations_dir: Path = DEFAULT_MIGRATIONS_DIR) -> tuple[MigrationStep, ...]:
-    if not migrations_dir.exists():
-        raise OpsPlanError(f"migrations directory not found: {migrations_dir}")
-
-    steps: list[MigrationStep] = []
-    for path in sorted(migrations_dir.glob("*.py")):
-        if path.name.startswith("__"):
-            continue
-        revision = path.stem.split("_", 1)[0]
-        steps.append(
-            MigrationStep(
-                revision=revision,
-                path=path.as_posix(),
-                sha256=_sha256(path),
-            )
-        )
-    if not steps:
-        raise OpsPlanError(f"no migration files found in {migrations_dir}")
-    return tuple(steps)
-
-
 def build_migration_plan(
     *,
     environment: str,
@@ -94,18 +100,71 @@ def build_migration_plan(
     dry_run: bool = True,
     migrations_dir: Path = DEFAULT_MIGRATIONS_DIR,
 ) -> MigrationPlan:
-    steps = discover_migration_steps(migrations_dir)
+    try:
+        steps = discover_migration_steps(migrations_dir)
+    except FileNotFoundError as exc:
+        raise OpsPlanError(str(exc)) from exc
+    if not steps:
+        raise OpsPlanError(f"no migration files found in {migrations_dir}")
     return MigrationPlan(
         environment=environment,
         database_url_env=database_url_env,
         target_revision=target_revision,
         dry_run=dry_run,
         steps=steps,
+        manifest_sha256=build_migration_manifest_checksum(steps),
         rollback={
             "command": "alembic downgrade -1",
             "requires": "approved rollback window, fresh backup, and migration owner",
         },
         generated_at=_utc_now(),
+    )
+
+
+def build_migration_run(
+    *,
+    environment: str,
+    target_revision: str = "head",
+    database_url_env: str = "ODAY_DATABASE_URL",
+    dry_run: bool = True,
+    migrations_dir: Path = DEFAULT_MIGRATIONS_DIR,
+    alembic_config: Path = DEFAULT_ALEMBIC_CONFIG,
+    expected_manifest_sha256: str | None = None,
+) -> MigrationRun:
+    plan = build_migration_plan(
+        environment=environment,
+        target_revision=target_revision,
+        database_url_env=database_url_env,
+        dry_run=dry_run,
+        migrations_dir=migrations_dir,
+    )
+    if expected_manifest_sha256 and expected_manifest_sha256 != plan.manifest_sha256:
+        raise OpsPlanError(
+            "migration checksum mismatch: "
+            f"expected {expected_manifest_sha256}, found {plan.manifest_sha256}"
+        )
+
+    command = ("alembic", "-c", alembic_config.as_posix(), "upgrade", target_revision)
+    returncode: int | None = None
+    if not dry_run:
+        if not os.environ.get(database_url_env):
+            raise OpsPlanError(f"{database_url_env} must be set before executing migrations")
+        result = subprocess.run(command, check=False)
+        returncode = result.returncode
+        if result.returncode != 0:
+            raise OpsPlanError(f"migration runner failed with exit code {result.returncode}")
+
+    return MigrationRun(
+        environment=environment,
+        database_url_env=database_url_env,
+        target_revision=target_revision,
+        dry_run=dry_run,
+        manifest_sha256=plan.manifest_sha256,
+        checksum_status="verified",
+        command=command,
+        returncode=returncode,
+        generated_at=_utc_now(),
+        plan=plan,
     )
 
 
@@ -174,6 +233,19 @@ def build_parser() -> argparse.ArgumentParser:
     migration.add_argument("--migrations-dir", type=Path, default=DEFAULT_MIGRATIONS_DIR)
     _add_common_output(migration)
 
+    runner = subparsers.add_parser(
+        "migration-runner",
+        help="Validate migration checksums and render or execute the Alembic upgrade command.",
+    )
+    runner.add_argument("--environment", required=True, choices=("local", "dev", "staging", "prod"))
+    runner.add_argument("--target-revision", default="head")
+    runner.add_argument("--database-url-env", default="ODAY_DATABASE_URL")
+    runner.add_argument("--migrations-dir", type=Path, default=DEFAULT_MIGRATIONS_DIR)
+    runner.add_argument("--alembic-config", type=Path, default=DEFAULT_ALEMBIC_CONFIG)
+    runner.add_argument("--expected-manifest-sha256")
+    runner.add_argument("--execute", action="store_true", help="Run Alembic after checksum validation.")
+    _add_common_output(runner)
+
     backfill = subparsers.add_parser("backfill-plan", help="Render an idempotent backfill plan.")
     backfill.add_argument("--environment", required=True, choices=("local", "dev", "staging", "prod"))
     backfill.add_argument("--job-type", required=True)
@@ -198,6 +270,18 @@ def main(argv: list[str] | None = None) -> int:
                 migrations_dir=args.migrations_dir,
             )
             write_json(plan.to_dict(), args.output)
+            return 0
+        if args.command == "migration-runner":
+            run = build_migration_run(
+                environment=args.environment,
+                target_revision=args.target_revision,
+                database_url_env=args.database_url_env,
+                dry_run=not args.execute,
+                migrations_dir=args.migrations_dir,
+                alembic_config=args.alembic_config,
+                expected_manifest_sha256=args.expected_manifest_sha256,
+            )
+            write_json(run.to_dict(), args.output)
             return 0
         if args.command == "backfill-plan":
             plan = build_backfill_plan(

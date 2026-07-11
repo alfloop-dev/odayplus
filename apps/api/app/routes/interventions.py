@@ -16,7 +16,7 @@ from modules.intervention.domain.lifecycle import InterventionError
 from modules.intervention.infrastructure.repositories import InMemoryLabelRegistry
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -88,8 +88,12 @@ else:
         workflow: InterventionWorkflow | None = None,
         label_registry: InMemoryLabelRegistry | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/interventions", tags=["interventions"])
         active_workflow = workflow or InterventionWorkflow()
+        authz_engine = build_engine(audit_log=active_workflow.audit_log)
         registry = label_registry or InMemoryLabelRegistry()
         if registry not in active_workflow.label_hooks:
             active_workflow.register_label_hook(registry)
@@ -103,7 +107,7 @@ else:
                 )
             return intervention
 
-        @router.post("", status_code=status.HTTP_201_CREATED)
+        @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def open_case(
             body: OpenCasePayload,
             request: Request,
@@ -137,7 +141,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("")
+        @router.get("", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def list_interventions(store_id: str | None = None) -> dict[str, Any]:
             items = (
                 active_workflow.list_by_store(store_id)
@@ -146,11 +150,11 @@ else:
             )
             return {"items": [i.to_dict() for i in items], "count": len(items)}
 
-        @router.get("/{intervention_id}")
+        @router.get("/{intervention_id}", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def get_intervention(intervention_id: str) -> dict[str, Any]:
             return _get_or_404(intervention_id).to_dict()
 
-        @router.post("/{intervention_id}/eligibility")
+        @router.post("/{intervention_id}/eligibility", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def check_eligibility(
             intervention_id: str, body: EligibilityPayload, request: Request
         ) -> dict[str, Any]:
@@ -164,7 +168,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/action")
+        @router.post("/{intervention_id}/action", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def propose_action(
             intervention_id: str, body: ActionPayload, request: Request
         ) -> dict[str, Any]:
@@ -177,7 +181,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/conflict-check")
+        @router.post("/{intervention_id}/conflict-check", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def check_conflict(
             intervention_id: str, body: ConflictCheckPayload, request: Request
         ) -> dict[str, Any]:
@@ -191,7 +195,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/submit")
+        @router.post("/{intervention_id}/submit", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def submit_for_approval(
             intervention_id: str, body: SubmitPayload, request: Request
         ) -> dict[str, Any]:
@@ -203,7 +207,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/approve")
+        @router.post("/{intervention_id}/approve", dependencies=[Depends(require_permission("intervention", Action.APPROVE, engine=authz_engine))])
         def decide(
             intervention_id: str, body: DecisionPayload, request: Request
         ) -> dict[str, Any]:
@@ -223,7 +227,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/execute")
+        @router.post("/{intervention_id}/execute", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
         def execute(
             intervention_id: str, body: ExecutePayload, request: Request
         ) -> dict[str, Any]:
@@ -237,7 +241,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/outcomes")
+        @router.post("/{intervention_id}/outcomes", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
         def collect_outcome(
             intervention_id: str, body: OutcomePayload, request: Request
         ) -> dict[str, Any]:
@@ -259,7 +263,7 @@ else:
                 )
             )
 
-        @router.post("/{intervention_id}/evaluate")
+        @router.post("/{intervention_id}/evaluate", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
         def evaluate_effect(
             intervention_id: str, body: EvaluatePayload, request: Request
         ) -> dict[str, Any]:
@@ -280,7 +284,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/{intervention_id}/label")
+        @router.get("/{intervention_id}/label", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def get_label(intervention_id: str) -> dict[str, Any]:
             _get_or_404(intervention_id)
             label = registry.get(intervention_id)

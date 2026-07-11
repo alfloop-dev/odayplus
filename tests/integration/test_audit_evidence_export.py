@@ -11,6 +11,7 @@ from modules.opsboard.audit import (
     EvidenceExportRequest,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
+from tests.integration._authz import AUDIT_HEADERS
 
 NOW = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 
@@ -123,7 +124,7 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
         )
     )
     app = create_app(audit_log=audit_log)
-    client = TestClient(app)
+    client = TestClient(app, headers=AUDIT_HEADERS)
 
     response = client.post(
         "/audit/evidence/export",

@@ -9,6 +9,7 @@ from apps.api.oday_api.main import create_app
 from modules.external_data.geo import GeoFeatureSnapshot
 from modules.heatzone.domain import HeatZoneFeatureInput, HeatZoneState, score_heatzones
 from modules.heatzone.workers import run_heatzone_batch_score
+from tests.integration._authz import HEATZONE_HEADERS
 
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
@@ -162,11 +163,15 @@ def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target
     response = client.post(
         "/heatzones/score-jobs",
         json=payload,
-        headers={"x-correlation-id": "corr-hz-1", "Idempotency-Key": "hz-idem-1"},
+        headers={
+            **HEATZONE_HEADERS,
+            "x-correlation-id": "corr-hz-1",
+            "Idempotency-Key": "hz-idem-1",
+        },
     )
     elapsed = perf_counter() - start
-    listing = client.get("/heatzones")
-    map_response = client.get("/heatzones/map")
+    listing = client.get("/heatzones", headers=HEATZONE_HEADERS)
+    map_response = client.get("/heatzones/map", headers=HEATZONE_HEADERS)
 
     assert response.status_code == 202
     body = response.json()

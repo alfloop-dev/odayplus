@@ -21,7 +21,21 @@ from solver.netplan.model import (
     NetworkAction,
 )
 
-SOLVER_VERSION = "netplan-exhaustive-cpsat-compatible-v1"
+
+def _pywraplp():  # noqa: D401
+    """Import ortools lazily.
+
+    ortools is a heavy optional dependency only needed to *run* a solve. Importing
+    this module must not require it: it is pulled transitively into the API startup
+    path (persistence -> modules.netplan -> solver.netplan) and the API container
+    ships without ortools. Deferring the import keeps API boot independent of it.
+    """
+    from ortools.linear_solver import pywraplp
+
+    return pywraplp
+
+
+SOLVER_VERSION = "netplan-ortools-mip-v1"
 STATUS_OPTIMAL = "optimal"
 STATUS_FEASIBLE = "feasible"
 STATUS_INFEASIBLE = "infeasible"
@@ -94,6 +108,36 @@ class NetworkPlanSolveResult:
         }
 
 
+def _candidate_from_selected(
+    selected: list[ActionOption],
+    constraints: NetPlanConstraints,
+    risk_penalty: float,
+) -> NetworkPlanCandidate:
+    expected_gm = round(sum(option.expected_gross_margin for option in selected), 4)
+    budget = round(sum(option.budget_cost for option in selected), 4)
+    average_risk = round(sum(option.risk_score for option in selected) / len(selected), 4) if selected else 0.0
+    capacity = sum(option.capacity_delta for option in selected)
+    counts = Counter(option.action for option in selected)
+    objective = round(expected_gm - risk_penalty * average_risk, 4)
+    return NetworkPlanCandidate(
+        actions=tuple(selected),
+        objective_value=objective,
+        expected_gross_margin=expected_gm,
+        budget_usage=budget,
+        average_risk=average_risk,
+        capacity_delta=capacity,
+        action_counts=dict(counts),
+        binding_constraints=_binding_constraints(
+            budget=budget,
+            expected_gm=expected_gm,
+            average_risk=average_risk,
+            capacity=capacity,
+            counts=counts,
+            constraints=constraints,
+        ),
+    )
+
+
 def solve_network_plan(
     *,
     options_by_entity: dict[str, tuple[ActionOption, ...]],
@@ -101,12 +145,8 @@ def solve_network_plan(
     risk_penalty: float = 100_000.0,
     alternative_limit: int = 3,
 ) -> NetworkPlanSolveResult:
-    candidates = build_feasible_candidates(
-        options_by_entity=options_by_entity,
-        constraints=constraints,
-        risk_penalty=risk_penalty,
-    )
-    if not candidates:
+    # Handle empty/missing inputs
+    if not options_by_entity or any(not options for options in options_by_entity.values()):
         return NetworkPlanSolveResult(
             solver_status=STATUS_INFEASIBLE,
             objective_value=0.0,
@@ -121,34 +161,206 @@ def solve_network_plan(
             diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
         )
 
-    ordered = sorted(
-        candidates,
-        key=lambda item: (
-            item.objective_value,
-            item.expected_gross_margin,
-            -item.budget_usage,
-            -item.average_risk,
-        ),
-        reverse=True,
+    # Initialize SCIP solver
+    solver = _pywraplp().Solver.CreateSolver("SCIP")
+    if not solver:
+        # Fallback to exhaustive if SCIP is not available
+        candidates = build_feasible_candidates(
+            options_by_entity=options_by_entity,
+            constraints=constraints,
+            risk_penalty=risk_penalty,
+        )
+        if not candidates:
+            return NetworkPlanSolveResult(
+                solver_status=STATUS_INFEASIBLE,
+                objective_value=0.0,
+                selected_actions=(),
+                expected_gross_margin=0.0,
+                budget_usage=0.0,
+                average_risk=0.0,
+                capacity_delta=0,
+                action_counts={},
+                binding_constraints=(),
+                infeasible=True,
+                diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
+            )
+        ordered = sorted(
+            candidates,
+            key=lambda item: (
+                item.objective_value,
+                item.expected_gross_margin,
+                -item.budget_usage,
+                -item.average_risk,
+            ),
+            reverse=True,
+        )
+        best = ordered[0]
+        alternatives = tuple(
+            candidate
+            for candidate in ordered[1:]
+            if candidate.action_signature != best.action_signature
+        )[:alternative_limit]
+        status = STATUS_OPTIMAL if best.objective_value >= ordered[-1].objective_value else STATUS_FEASIBLE
+        return NetworkPlanSolveResult(
+            solver_status=status,
+            objective_value=best.objective_value,
+            selected_actions=best.actions,
+            expected_gross_margin=best.expected_gross_margin,
+            budget_usage=best.budget_usage,
+            average_risk=best.average_risk,
+            capacity_delta=best.capacity_delta,
+            action_counts=best.action_counts,
+            binding_constraints=best.binding_constraints,
+            alternatives=alternatives,
+        )
+
+    # Create variables
+    x = {}
+    for entity_id, options in options_by_entity.items():
+        x[entity_id] = []
+        for j, _option in enumerate(options):
+            var = solver.BoolVar(f"x_{entity_id}_{j}")
+            x[entity_id].append(var)
+
+    # Constraints
+    # 1. Exactly one option is selected for each entity
+    for entity_id in options_by_entity:
+        solver.Add(sum(x[entity_id]) == 1)
+
+    # 2. Budget constraint
+    solver.Add(
+        sum(
+            x[entity_id][j] * option.budget_cost
+            for entity_id, options in options_by_entity.items()
+            for j, option in enumerate(options)
+        )
+        <= constraints.max_budget
     )
-    best = ordered[0]
-    alternatives = tuple(
-        candidate
-        for candidate in ordered[1:]
-        if candidate.action_signature != best.action_signature
-    )[:alternative_limit]
-    status = STATUS_OPTIMAL if best.objective_value >= ordered[-1].objective_value else STATUS_FEASIBLE
+
+    # 3. Min expected gross margin
+    if constraints.min_expected_gross_margin is not None:
+        solver.Add(
+            sum(
+                x[entity_id][j] * option.expected_gross_margin
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+            )
+            >= constraints.min_expected_gross_margin
+        )
+
+    # 4. Min capacity delta
+    if constraints.min_capacity_delta is not None:
+        solver.Add(
+            sum(
+                x[entity_id][j] * option.capacity_delta
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+            )
+            >= constraints.min_capacity_delta
+        )
+
+    # 5. Max average risk
+    N = len(options_by_entity)
+    if constraints.max_average_risk is not None:
+        solver.Add(
+            sum(
+                x[entity_id][j] * option.risk_score
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+            )
+            <= constraints.max_average_risk * N
+        )
+
+    # 6. Action count constraints
+    for action, minimum in constraints.min_action_counts.items():
+        solver.Add(
+            sum(
+                x[entity_id][j]
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+                if option.action == action
+            )
+            >= minimum
+        )
+
+    for action, maximum in constraints.max_action_counts.items():
+        solver.Add(
+            sum(
+                x[entity_id][j]
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+                if option.action == action
+            )
+            <= maximum
+        )
+
+    # Objective
+    objective = solver.Objective()
+    for entity_id, options in options_by_entity.items():
+        for j, option in enumerate(options):
+            coef = option.expected_gross_margin - (risk_penalty * option.risk_score / N)
+            objective.SetCoefficient(x[entity_id][j], coef)
+    objective.SetMaximization()
+
+    # Solve primary
+    status = solver.Solve()
+    if status not in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
+        return NetworkPlanSolveResult(
+            solver_status=STATUS_INFEASIBLE,
+            objective_value=0.0,
+            selected_actions=(),
+            expected_gross_margin=0.0,
+            budget_usage=0.0,
+            average_risk=0.0,
+            capacity_delta=0,
+            action_counts={},
+            binding_constraints=(),
+            infeasible=True,
+            diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
+        )
+
+    def get_selected_actions():
+        selected = []
+        for entity_id, options in options_by_entity.items():
+            for j, option in enumerate(options):
+                if x[entity_id][j].solution_value() > 0.5:
+                    selected.append(option)
+        return selected
+
+    selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
+    best_candidate = _candidate_from_selected(selected, constraints, risk_penalty)
+
+    # Find alternatives
+    alternatives = []
+    for _ in range(alternative_limit):
+        current_selected_vars = []
+        for entity_id, options in options_by_entity.items():
+            for j, _option in enumerate(options):
+                if x[entity_id][j].solution_value() > 0.5:
+                    current_selected_vars.append(x[entity_id][j])
+        
+        solver.Add(sum(current_selected_vars) <= N - 1)
+        alt_status = solver.Solve()
+        if alt_status in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
+            alt_selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
+            alt_candidate = _candidate_from_selected(alt_selected, constraints, risk_penalty)
+            if alt_candidate.action_signature not in [best_candidate.action_signature] + [a.action_signature for a in alternatives]:
+                alternatives.append(alt_candidate)
+        else:
+            break
+
+    solver_status = STATUS_OPTIMAL if status == _pywraplp().Solver.OPTIMAL else STATUS_FEASIBLE
     return NetworkPlanSolveResult(
-        solver_status=status,
-        objective_value=best.objective_value,
-        selected_actions=best.actions,
-        expected_gross_margin=best.expected_gross_margin,
-        budget_usage=best.budget_usage,
-        average_risk=best.average_risk,
-        capacity_delta=best.capacity_delta,
-        action_counts=best.action_counts,
-        binding_constraints=best.binding_constraints,
-        alternatives=alternatives,
+        solver_status=solver_status,
+        objective_value=best_candidate.objective_value,
+        selected_actions=best_candidate.actions,
+        expected_gross_margin=best_candidate.expected_gross_margin,
+        budget_usage=best_candidate.budget_usage,
+        average_risk=best_candidate.average_risk,
+        capacity_delta=best_candidate.capacity_delta,
+        action_counts=best_candidate.action_counts,
+        binding_constraints=best_candidate.binding_constraints,
+        alternatives=tuple(alternatives),
     )
 
 

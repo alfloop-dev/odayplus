@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
 from modules.listing import InMemoryListingRepository, ListingPipeline
+from tests.integration._authz import LISTING_HEADERS
 
 
 def _geo_pipeline() -> GeoPipeline:
@@ -162,6 +163,7 @@ def test_listing_api_import_endpoint_and_candidate_inbox() -> None:
                 }
             ],
         },
+        headers=LISTING_HEADERS,
     )
 
     assert response.status_code == 202
@@ -169,7 +171,7 @@ def test_listing_api_import_endpoint_and_candidate_inbox() -> None:
     assert body["accepted_count"] == 1
     assert body["candidates"][0]["status"] == "CANDIDATE"
 
-    inbox = client.get("/listings/candidates")
+    inbox = client.get("/listings/candidates", headers=LISTING_HEADERS)
 
     assert inbox.status_code == 200
     assert len(inbox.json()["candidates"]) == 1

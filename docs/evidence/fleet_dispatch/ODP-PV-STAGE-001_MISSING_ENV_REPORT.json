@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "detail": "missing",
+      "name": "env:ODP_STAGING_DEPLOY_URL",
+      "ok": false
+    },
+    {
+      "detail": "missing",
+      "name": "env:ODP_STAGING_API_URL",
+      "ok": false
+    },
+    {
+      "detail": "missing",
+      "name": "env:ODP_STAGING_SECRET_OWNER",
+      "ok": false
+    },
+    {
+      "detail": "fca45b70ee7c0e58278bcf734f82e2d5e83e373a",
+      "name": "expected_sha",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-odp-pv-stage-001",
+  "expected_sha": "fca45b70ee7c0e58278bcf734f82e2d5e83e373a",
+  "generated_at": "2026-06-30T00:15:56Z",
+  "ok": false,
+  "schema_version": 1,
+  "staging": {
+    "api_url": null,
+    "deploy_url": null,
+    "secret_owner": null,
+    "secret_values_redacted": true
+  }
+}

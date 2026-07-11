@@ -1,9 +1,10 @@
 import { AvmWorkspace } from "../../../../../../features/avm/AvmWorkspace.tsx";
 
 type PageProps = {
-  params: { caseId: string };
+  params: Promise<{ caseId: string }>;
 };
 
-export default function DealRoomCaseDetailPage({ params }: PageProps) {
-  return <AvmWorkspace view="caseDetail" caseId={params.caseId} />;
+export default async function DealRoomCaseDetailPage({ params }: PageProps) {
+  const { caseId } = await params;
+  return <AvmWorkspace view="caseDetail" caseId={caseId} />;
 }
