@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "idempotency_key": "c9541532e8d0de58a91740dd58d4ccd2b1f3e0dc21e61d87a22fc8602f6e4c64",
+  "snapshot_id": "listing-fixture-replay",
+  "accepted_count": 1,
+  "duplicate_count": 0,
+  "rejected_count": 4,
+  "quarantined_count": 4,
+  "raw_snapshot_path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-ext-002/data/snapshots/raw_listing-fixture-replay.json",
+  "canonical_snapshot_path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-ext-002/data/snapshots/canonical_listing-fixture-replay.json",
+  "quarantine_path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-ext-002/data/quarantine/quarantine_listing-fixture-replay.json"
+}
