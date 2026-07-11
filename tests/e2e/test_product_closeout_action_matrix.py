@@ -33,8 +33,8 @@ def test_closeout_action_matrix_marks_ready_and_waiting_rows() -> None:
     )
     by_key = {(row["task_id"], row["actor"], row["action_type"]): row for row in rows}
 
-    assert by_key[("ODP-FE-XCUT-001", "Claude2", "owner_handoff")]["readiness"] == "ready"
-    assert by_key[("ODP-FE-XCUT-001", "Codex", "reviewer_approve_or_reopen")]["readiness"] == "waiting"
+    assert by_key[("ODP-FE-XCUT-001", "Antigravity3", "owner_handoff")]["readiness"] == "ready"
+    assert by_key[("ODP-FE-XCUT-001", "Antigravity2", "reviewer_approve_or_reopen")]["readiness"] == "waiting"
 
 
 def test_closeout_action_matrix_blocks_on_pr_checks() -> None:
@@ -60,7 +60,7 @@ def test_closeout_action_matrix_cli_reports_markdown(tmp_path: Path) -> None:
             {
                 "tasks": [
                     {"id": "ODP-PV-008", "status": "review", "owner": "Codex2", "reviewer": "Human/Ops"},
-                    {"id": "ODP-FE-XCUT-001", "status": "in_progress", "owner": "Claude2", "reviewer": "Codex"},
+                    {"id": "ODP-FE-XCUT-001", "status": "in_progress", "owner": "Antigravity3", "reviewer": "Antigravity2"},
                     {"id": "ODP-FE-R0-001", "status": "review_approved", "owner": "Claude", "reviewer": "Codex"},
                     {"id": "ODP-FE-EXP-001", "status": "review", "owner": "Codex", "reviewer": "Claude"},
                     {"id": "ODP-FE-ASSET-001", "status": "in_progress", "owner": "Claude", "reviewer": "Codex2"},
