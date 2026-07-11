@@ -22,6 +22,7 @@ export type HeatZone = {
   district: string;
   h3: string;
   centroid: [number, number];
+  h3Resolution: number;
   score: number;
   confidence: number;
   state:
@@ -36,7 +37,22 @@ export type HeatZone = {
   warnings: string[];
   reasons: string[];
   modelVersion: string;
+  featureVersion: string;
   featureSnapshotTime: string;
+  predictionOriginTime: string;
+  lastScoredAt: string;
+  sourceSnapshotIds: string[];
+  unmetDemandScore: number;
+  formatFitScore: number;
+  cannibalizationRisk: number;
+  rentFeasibility: number;
+  listingAvailability: number;
+  poiCount: number;
+  competitorCount: number;
+  competitorCapacity: number;
+  medianListingRent: number;
+  existingStoreCount: number;
+  dataQualityScore: number;
 };
 
 export type Listing = {
@@ -120,6 +136,7 @@ export const heatZones: HeatZone[] = [
     district: "台北市信義區",
     h3: "894ba0a4e23ffff",
     centroid: [121.5638, 25.033],
+    h3Resolution: 9,
     score: 91,
     confidence: 0.86,
     state: "STILL_EXPANDABLE",
@@ -128,13 +145,29 @@ export const heatZones: HeatZone[] = [
     warnings: ["租金接近政策上限", "同商圈 1 家成熟門市"],
     reasons: ["需求缺口高", "ODay G2 format fit 高", "步行人流與晚餐 POI 密度佳"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100", "snap-poi-20260628"],
+    unmetDemandScore: 0.91,
+    formatFitScore: 0.78,
+    cannibalizationRisk: 0.22,
+    rentFeasibility: 0.74,
+    listingAvailability: 0.85,
+    poiCount: 18,
+    competitorCount: 2,
+    competitorCapacity: 10,
+    medianListingRent: 85000,
+    existingStoreCount: 1,
+    dataQualityScore: 0.95,
   },
   {
     id: "hz-0881",
     district: "新北市板橋區",
     h3: "894ba0a5413ffff",
     centroid: [121.4629, 25.0116],
+    h3Resolution: 9,
     score: 84,
     confidence: 0.74,
     state: "UNDER_REALIZED",
@@ -143,13 +176,29 @@ export const heatZones: HeatZone[] = [
     warnings: ["公車站點資料 PARTIAL"],
     reasons: ["既有門市覆蓋不足", "候選房源坪數集中於目標區間"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100"],
+    unmetDemandScore: 0.82,
+    formatFitScore: 0.69,
+    cannibalizationRisk: 0.15,
+    rentFeasibility: 0.88,
+    listingAvailability: 0.62,
+    poiCount: 12,
+    competitorCount: 4,
+    competitorCapacity: 15,
+    medianListingRent: 55000,
+    existingStoreCount: 2,
+    dataQualityScore: 0.85,
   },
   {
     id: "hz-0773",
     district: "桃園市中壢區",
     h3: "894ba0b817bffff",
     centroid: [121.2248, 24.9566],
+    h3Resolution: 9,
     score: 69,
     confidence: 0.62,
     state: "SUPPRESSED_LOW_CONFIDENCE",
@@ -158,7 +207,22 @@ export const heatZones: HeatZone[] = [
     warnings: ["geocode confidence 低於 0.7", "comparable sample size 低"],
     reasons: ["租金可行性佳", "晚間外送需求有缺口"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100"],
+    unmetDemandScore: 0.58,
+    formatFitScore: 0.51,
+    cannibalizationRisk: 0.35,
+    rentFeasibility: 0.92,
+    listingAvailability: 0.38,
+    poiCount: 6,
+    competitorCount: 6,
+    competitorCapacity: 20,
+    medianListingRent: 38000,
+    existingStoreCount: 0,
+    dataQualityScore: 0.7,
   },
 ];
 
