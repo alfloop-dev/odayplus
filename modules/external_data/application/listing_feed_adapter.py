@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import httpx
 
-from modules.listing.application.pipeline import ListingPipeline, ListingImportResult
+from modules.listing.application.pipeline import ListingPipeline
 
 
 class ListingFeedClientError(Exception):
@@ -64,7 +64,7 @@ class ListingFeedClient:
             # )
             # response.raise_for_status()
             # return response.json()
-            
+
             # In CI default testing, we raise Client Error if not mocked or replayed
             raise ListingFeedClientError("Live HTTP network request not permitted under CI defaults.")
         except httpx.TimeoutException as exc:
@@ -131,7 +131,7 @@ class LiveListingFeedAdapter:
             snapshot_id = raw_feed["records"][0].get("snapshot_id")
         if not snapshot_id:
             snapshot_id = f"feed-{int(datetime.now(UTC).timestamp())}"
-        
+
         raw_path = self.snapshot_dir / f"raw_{snapshot_id}.json"
         raw_path.write_text(json.dumps(raw_feed, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 

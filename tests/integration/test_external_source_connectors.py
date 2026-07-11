@@ -8,19 +8,18 @@ from pathlib import Path
 
 import pytest
 
+from modules.external_data.application.listing_feed_adapter import (
+    ListingFeedClient,
+    LiveListingFeedAdapter,
+    TimeoutError,
+    UnauthorizedError,
+)
 from modules.external_data.connectors import build_external_connectors
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
 from modules.integration.connectors import build_internal_connectors
-from shared.domain import AddressLocation, CompetitorStore, GeoCell, Listing, Poi
-from modules.external_data.application.listing_feed_adapter import (
-    LiveListingFeedAdapter,
-    ListingFeedClient,
-    ListingFeedClientError,
-    UnauthorizedError,
-    TimeoutError,
-)
 from modules.listing.application.pipeline import ListingPipeline
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
+from shared.domain import AddressLocation, CompetitorStore, GeoCell, Listing, Poi
 
 FIXTURES_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "source_data"
 INGESTION_TIME = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)

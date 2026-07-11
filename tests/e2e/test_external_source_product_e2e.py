@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import pytest
-
+from modules.external_data.application.listing_feed_adapter import (
+    ListingFeedClient,
+    LiveListingFeedAdapter,
+)
 from modules.external_data.connectors import (
     ExternalProviderConfigError,
     ExternalProviderMode,
@@ -38,13 +40,13 @@ from modules.external_data.workers import (
     freshness_evidence_from_run,
     write_external_fetch_lineage_evidence,
 )
-from modules.external_data.application.listing_feed_adapter import (
-    LiveListingFeedAdapter,
-    ListingFeedClient,
-)
 from modules.listing.application.pipeline import ListingPipeline
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
-from modules.sitescore import SiteScoreFeatureInput, SiteScoreReportService, InMemorySiteScoreRepository
+from modules.sitescore import (
+    InMemorySiteScoreRepository,
+    SiteScoreFeatureInput,
+    SiteScoreReportService,
+)
 from shared.audit import InMemoryAuditLog
 from shared.workflow.sitescore import (
     CandidateSiteRealizationHook,
