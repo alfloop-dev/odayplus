@@ -1,6 +1,6 @@
 # Domain API Service & Server-Side RBAC (ODP-GAP-API-001)
 
-Status: delivered · Owner: Claude2 · Reviewer: Claude
+Status: finalized · Owner: Antigravity · Reviewer: Claude2
 Source: `docs/evidence/PROJECT_WIDE_GAP_AUDIT.md`, ODP-SD-06 (API design),
 ODP-SD-08 (workflow/state), ODP-SD-09 (identity/security).
 
