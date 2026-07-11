@@ -14,6 +14,13 @@ from modules.external_data.providers import (
     WeatherProvider,
     provider_registry,
 )
+from modules.external_data.application.listing_feed_adapter import (
+    LiveListingFeedAdapter,
+    ListingFeedClient,
+    ListingFeedClientError,
+    UnauthorizedError,
+    TimeoutError,
+)
 
 __all__ = [
     "DemographicsProvider",
@@ -26,4 +33,9 @@ __all__ = [
     "ProviderRegistry",
     "WeatherProvider",
     "provider_registry",
+    "LiveListingFeedAdapter",
+    "ListingFeedClient",
+    "ListingFeedClientError",
+    "UnauthorizedError",
+    "TimeoutError",
 ]

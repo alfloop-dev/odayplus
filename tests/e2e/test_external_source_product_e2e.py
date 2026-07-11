@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from modules.external_data.connectors import (
     ExternalProviderConfigError,
@@ -35,6 +38,22 @@ from modules.external_data.workers import (
     freshness_evidence_from_run,
     write_external_fetch_lineage_evidence,
 )
+from modules.external_data.application.listing_feed_adapter import (
+    LiveListingFeedAdapter,
+    ListingFeedClient,
+)
+from modules.listing.application.pipeline import ListingPipeline
+from modules.listing.infrastructure.repositories import InMemoryListingRepository
+from modules.sitescore import SiteScoreFeatureInput, SiteScoreReportService, InMemorySiteScoreRepository
+from shared.audit import InMemoryAuditLog
+from shared.workflow.sitescore import (
+    CandidateSiteRealizationHook,
+    DecisionAction,
+    DecisionStatus,
+    SiteScoreDecisionWorkflow,
+)
+
+FIXTURES_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "source_data" / "external"
 
 
 def test_live_provider_mode_product_e2e_with_approved_mock_persists_lineage(tmp_path) -> None:
@@ -381,6 +400,24 @@ def _geo_pipeline() -> GeoPipeline:
     )
 
 
+def _get_geo_pipeline() -> GeoPipeline:
+    return GeoPipeline(
+        StaticGeocodeProvider(
+            {
+                "台北市大安區復興南路二段100號": GeocodeCandidate(
+                    latitude=25.026,
+                    longitude=121.543,
+                    precision="rooftop",
+                    confidence=0.92,
+                    provider="fixture",
+                    admin_city="台北市",
+                    admin_district="大安區",
+                )
+            }
+        )
+    )
+
+
 def _valid_listing(source_listing_id: str) -> dict[str, Any]:
     return {
         "source_listing_id": source_listing_id,
@@ -421,3 +458,106 @@ class _RateLimitListingClient:
             correlation_id=str(kwargs["correlation_id"]),
             code="quota_exhausted",
         )
+
+
+def test_external_source_product_e2e_flow(tmp_path) -> None:
+    """E2E Test exercising the complete flow:
+
+    1. Live listing feed Ingestion
+    2. Listing Ingest, Deduplication, Hard Rules filter, and Candidate conversion
+    3. SiteScore scoring and closed-loop decision workflow
+    4. Freezing inputs and realization updates.
+    """
+    # Initialize components
+    listing_repo = InMemoryListingRepository()
+    geo_pipeline = _get_geo_pipeline()
+    listing_pipeline = ListingPipeline(repository=listing_repo, geo_pipeline=geo_pipeline)
+
+    client = ListingFeedClient(api_url="mock://api", api_key="valid_token")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=listing_pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    valid_fixture = json.loads((FIXTURES_ROOT / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+
+    # Step 1 & 2: Ingest live listing feed and process to CandidateSite
+    result = adapter.process_feed(replay_payload=valid_fixture)
+
+    assert result["status"] == "success"
+    assert result["accepted_count"] == 1  # LST-001 is active and 1F, so converted
+    assert result["quarantined_count"] == 1  # LST-002 stale goes to quarantine
+    assert len(listing_repo.listings) == 2
+    assert len(listing_repo.candidates) == 1
+
+    candidate_draft = listing_repo.candidates[0]
+    assert candidate_draft.listing.source_listing_id == "LST-001"
+    assert candidate_draft.candidate_site.listing_id == candidate_draft.listing.listing_id
+
+    # Step 3: Integrate data and construct Model Feature Input
+    feature_input = SiteScoreFeatureInput(
+        candidate_site_id=candidate_draft.candidate_site.candidate_site_id,
+        feature_snapshot_time=datetime.now(UTC),
+        heat_zone_id=candidate_draft.heat_zone_id,
+        heat_zone_score=85.0,
+        monthly_rent=candidate_draft.listing.rent_amount,
+        area_ping=candidate_draft.listing.area_ping,
+        comparable_store_count=3,
+        comparable_monthly_revenue_p50=450_000.0,
+        buildout_capex=2_000_000.0,
+        gross_margin_ratio=0.62,
+        average_confidence=candidate_draft.address.geocode_confidence,
+        data_quality_score=0.96,
+        source_snapshot_ids=(result["snapshot_id"],),
+    )
+
+    # Step 4: Run SiteScore Model scoring
+    sitescore_repo = InMemorySiteScoreRepository()
+    report_service = SiteScoreReportService(repository=sitescore_repo)
+    report = report_service.score_candidates([feature_input], scored_at=datetime.now(UTC))[0]
+
+    assert report.candidate_site_id == candidate_draft.candidate_site.candidate_site_id
+    assert report.report_version == 1
+    assert report.m12.p50 > report.m1.p50
+
+    # Step 5: Decision loop with Realization Hook and Audit trail
+    audit_log = InMemoryAuditLog()
+    realization_hook = CandidateSiteRealizationHook()
+    workflow = SiteScoreDecisionWorkflow(audit_log=audit_log, hooks=[realization_hook])
+
+    decision = workflow.open_decision(report, created_by="agent-antigravity5")
+    assert decision.status is DecisionStatus.SYSTEM_RECOMMENDED
+
+    decision = workflow.submit_for_review(decision.decision_id, submitted_by="agent-antigravity5")
+    assert decision.status is DecisionStatus.PENDING_REVIEW
+
+    # Approve with explicit business reason
+    outcome = workflow.decide(
+        decision.decision_id,
+        action=DecisionAction.APPROVE,
+        actor="ops-director",
+        reason="Excellent SiteScore metrics and reasonable rent per ping.",
+    )
+
+    assert outcome.decision.status is DecisionStatus.APPROVED
+    assert outcome.decision.decision_id == decision.decision_id
+    assert outcome.audit_event_id
+
+    # Step 6: Verify frozen inputs & realization status updates
+    event = outcome.realization_events[0]
+    assert event.model_version == report.model_version
+    assert event.policy_version == decision.policy_version
+    assert event.input_snapshot_ids == report.source_snapshot_ids
+
+    # Realization hook check: status set to 'approved'
+    realized_site = realization_hook.get(candidate_draft.candidate_site.candidate_site_id)
+    assert realized_site is not None
+    assert realized_site.site_status == "approved"
+    assert realized_site.baseline_trajectory == report.baseline_trajectory()
+
+    # Audit log validation
+    approve_events = [e for e in audit_log.list_events() if e.action == "approve"]
+    assert len(approve_events) == 1
+    assert approve_events[0].metadata["reason"] == "Excellent SiteScore metrics and reasonable rent per ping."
