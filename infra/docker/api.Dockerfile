@@ -10,8 +10,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
-# Runtime deps: fastapi is declared in pyproject; uvicorn is the ASGI server.
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30" "pyyaml>=6.0.3" "pydantic>=2.8" "numpy>=2.0" "scikit-learn>=1.5" "statsmodels>=0.14" "h3>=4.5.0" "ortools>=9.15.6755" "duckdb>=1.0" "sqlalchemy>=2.0"
+# Runtime deps are installed straight from pyproject's [project] dependencies so
+# this image can never drift out of sync with the code. A hand-maintained list
+# here previously omitted deps that product code imported (e.g. httpx via the
+# listing-feed adapter), crashing the API on boot and failing the E2E gate.
+COPY pyproject.toml ./
+RUN python -c "import tomllib, pathlib; deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; pathlib.Path('/tmp/req.txt').write_text(chr(10).join(deps))" \
+    && pip install --no-cache-dir -r /tmp/req.txt \
+    && rm -f /tmp/req.txt
 
 # App source (node_modules/.next/etc. excluded via .dockerignore).
 COPY . .
