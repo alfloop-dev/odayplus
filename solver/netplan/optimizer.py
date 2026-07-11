@@ -14,13 +14,13 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
-
 from solver.netplan.model import (
     ActionOption,
     InfeasibilityDiagnosis,
     NetPlanConstraints,
     NetworkAction,
 )
+
 
 def _pywraplp():  # noqa: D401
     """Import ortools lazily.
