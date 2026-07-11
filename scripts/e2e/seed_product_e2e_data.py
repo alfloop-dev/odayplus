@@ -176,7 +176,15 @@ def wait_for_url(url: str, *, timeout_seconds: int = 120) -> None:
 
 
 def get_json(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=10) as response:
+    request = Request(
+        url,
+        headers={
+            "x-correlation-id": CORRELATION_ID,
+            "x-subject-id": "product-e2e-seed",
+            "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
+        }
+    )
+    with urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -187,6 +195,8 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers={
             "content-type": "application/json",
             "x-correlation-id": CORRELATION_ID,
+            "x-subject-id": "product-e2e-seed",
+            "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
         },
         method="POST",
     )

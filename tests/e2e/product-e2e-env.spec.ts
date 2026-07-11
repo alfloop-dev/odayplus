@@ -3,7 +3,12 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 
 test("Product E2E environment exposes durable API, seeded evidence, and source stub state", async () => {
-  const api = await playwrightRequest.newContext();
+  const api = await playwrightRequest.newContext({
+    extraHTTPHeaders: {
+      "x-subject-id": "product-e2e-tester",
+      "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
+    }
+  });
 
   const health = await api.get(`${API_BASE_URL}/platform/health`);
   expect(health.status()).toBe(200);
