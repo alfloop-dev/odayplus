@@ -1,10 +1,17 @@
-name: Deploy Staging
+name: Deploy/Verify Staging
 
 # Ladder step: main branch -> staging environment.
-# Auto-deploys on every push to main (main is reached via the dev -> main promote PR).
+# Runs on every push to main (main is reached via the dev -> main promote PR)
+# and fails closed until a real staging target proves the promoted SHA.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Release SHA expected at /platform/version; defaults to the workflow SHA."
+        required: false
+        type: string
 
 concurrency:
   group: deploy-staging
@@ -19,10 +26,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TODO(infra): wire the real staging deployment here.
-      # The staging environment / ODP_STAGING_DEPLOY_URL target does not exist yet,
-      # so this is a placeholder that documents the ladder rule.
-      - name: Deploy to staging environment
+      - name: Resolve release authority
         run: |
-          echo "Deploying commit ${GITHUB_SHA} (branch main) to the STAGING environment."
-          echo "TODO: replace with real deploy to ${{ vars.ODP_STAGING_DEPLOY_URL }}"
+          expected_sha="${{ inputs.expected_sha }}"
+          if [ -z "$expected_sha" ]; then
+            expected_sha="${GITHUB_SHA}"
+          fi
+          echo "ODAY_RELEASE_SHA=${expected_sha}" >> "$GITHUB_ENV"
+          echo "Resolved staging release SHA."
+
+      - name: Verify staging configuration and release SHA
+        env:
+          ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
+          ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
+          ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
+        run: |
+          python3 scripts/e2e/check_remote_staging_proof.py \
+            --expected-sha "$ODAY_RELEASE_SHA" \
+            --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
+            --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
+
+      - name: Upload staging proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-staging-proof
+          path: .odp_data/remote-staging-proof/*.json
+          if-no-files-found: ignore

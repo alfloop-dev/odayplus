@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 import unicodedata
 from collections import defaultdict
@@ -42,6 +41,9 @@ class GeocodeCandidate:
     provider: str
     admin_city: str = ""
     admin_district: str = ""
+    provider_request_id: str = ""
+    provider_observed_at: datetime | None = None
+    quality_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,8 @@ class GeocodeResult:
     admin_match_flag: bool
     quality_flags: tuple[str, ...] = ()
     h3_resolution_map: Mapping[int, str] = field(default_factory=dict)
+    provider_request_id: str = ""
+    provider_observed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -110,19 +114,13 @@ def coordinates_in_market(latitude: float, longitude: float) -> bool:
 
 
 def stable_h3_index(latitude: float, longitude: float, resolution: int) -> str:
-    """Return a stable H3-compatible cell key without adding a runtime dependency.
-
-    The value is intentionally prefixed and resolution-scoped so downstream code
-    can depend on the canonical fields today and swap in the official H3 encoder
-    later without changing pipeline boundaries.
+    """Return a stable H3 cell key.
     """
+    import h3
 
     if not coordinates_in_market(latitude, longitude):
         raise ValueError("coordinates are outside the configured market bounds")
-    cell_size = 1 / (2 ** (resolution - 3))
-    lat_bucket = math.floor((latitude - TAIWAN_LATITUDE_RANGE[0]) / cell_size)
-    lon_bucket = math.floor((longitude - TAIWAN_LONGITUDE_RANGE[0]) / cell_size)
-    return f"h3r{resolution}_{lat_bucket:04d}_{lon_bucket:04d}"
+    return h3.latlng_to_cell(latitude, longitude, resolution)
 
 
 def build_geo_cell(result: GeocodeResult, *, resolution: int = 9) -> GeoCell:
@@ -165,6 +163,7 @@ class GeoPipeline:
         if candidate is None:
             candidate = GeocodeCandidate(0.0, 0.0, "manual", 0.0, "unresolved")
             flags.append("missing_geocode")
+        flags.extend(candidate.quality_flags)
 
         if not coordinates_in_market(candidate.latitude, candidate.longitude):
             flags.append("coordinates_out_of_market")
@@ -202,6 +201,8 @@ class GeoPipeline:
             admin_match_flag=admin_match,
             quality_flags=tuple(flags),
             h3_resolution_map=h3_map,
+            provider_request_id=candidate.provider_request_id,
+            provider_observed_at=candidate.provider_observed_at,
         )
 
     def build_feature_snapshots(
@@ -292,6 +293,8 @@ class GeoPipeline:
             str(record.get("geocode_provider") or "source_coordinates"),
             str(record.get("city") or ""),
             str(record.get("district") or ""),
+            str(record.get("provider_request_id") or ""),
+            _parse_datetime(record.get("provider_observed_at")),
         )
 
     def _h3_for_record(self, record: Mapping[str, Any], resolution: int, as_of: datetime) -> str | None:

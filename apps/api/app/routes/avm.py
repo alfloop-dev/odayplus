@@ -6,7 +6,7 @@ from modules.avm.application.valuation import AVMError
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -67,9 +67,13 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         case_store: AVMCaseStore | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/avm", tags=["avm"])
         service = AVMService(repository=repository or InMemoryAVMRepository())
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         idempotency = case_store or AVMCaseStore()
 
         def _audit(
@@ -103,7 +107,7 @@ else:
                     detail=str(exc),
                 ) from exc
 
-        @router.post("/cases", status_code=status.HTTP_201_CREATED)
+        @router.post("/cases", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def create_case(
             body: AVMCasePayload,
             request: Request,
@@ -136,19 +140,19 @@ else:
             )
             return payload
 
-        @router.get("/cases")
+        @router.get("/cases", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
         def list_cases() -> dict[str, Any]:
             items = service.repository.list_cases()
             return {"items": [item.to_dict() for item in items], "count": len(items)}
 
-        @router.get("/cases/{case_id}")
+        @router.get("/cases/{case_id}", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
         def get_case(case_id: str) -> dict[str, Any]:
             case = service.get_case(case_id)
             if case is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
             return case.to_dict()
 
-        @router.post("/cases/{case_id}/normalize")
+        @router.post("/cases/{case_id}/normalize", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def normalize(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
             margin = _run(
                 lambda: service.normalize(
@@ -165,7 +169,7 @@ else:
             )
             return margin.to_dict()
 
-        @router.post("/cases/{case_id}/value")
+        @router.post("/cases/{case_id}/value", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def value(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
             report = _run(
                 lambda: service.value(
@@ -183,7 +187,7 @@ else:
             )
             return payload
 
-        @router.post("/cases/{case_id}/finance-approval")
+        @router.post("/cases/{case_id}/finance-approval", dependencies=[Depends(require_permission("avm", Action.APPROVE, engine=authz_engine))])
         def approve_finance(
             case_id: str, body: FinanceApprovalPayload, request: Request
         ) -> dict[str, Any]:
@@ -208,7 +212,7 @@ else:
             )
             return payload
 
-        @router.post("/cases/{case_id}/dataroom")
+        @router.post("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def build_dataroom(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
             dataroom = _run(
                 lambda: service.build_dataroom(
@@ -226,7 +230,7 @@ else:
             )
             return payload
 
-        @router.post("/cases/{case_id}/dataroom/export")
+        @router.post("/cases/{case_id}/dataroom/export", dependencies=[Depends(require_permission("avm", Action.EXPORT, engine=authz_engine))])
         def export_dataroom(
             case_id: str, body: DataRoomExportPayload, request: Request
         ) -> dict[str, Any]:
@@ -250,7 +254,7 @@ else:
             )
             return payload
 
-        @router.get("/cases/{case_id}/report")
+        @router.get("/cases/{case_id}/report", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
         def report(case_id: str) -> dict[str, Any]:
             latest = service.latest_report(case_id)
             if latest is None:

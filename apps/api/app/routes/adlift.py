@@ -5,7 +5,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -53,12 +53,16 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_store: AdLiftJobStore | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/adlift", tags=["adlift"])
         adlift_repository = repository or InMemoryAdLiftRepository()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or AdLiftJobStore()
 
-        @router.post("/incrementality-jobs", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/incrementality-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("adlift", Action.CREATE, engine=authz_engine))])
         def create_incrementality_job(
             body: AdLiftIncrementalityJobPayload,
             request: Request,
@@ -98,14 +102,14 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/incrementality-jobs/{job_id}")
+        @router.get("/incrementality-jobs/{job_id}", dependencies=[Depends(require_permission("adlift", Action.VIEW, engine=authz_engine))])
         def get_incrementality_job(job_id: str) -> dict[str, Any] | None:
             result = jobs.get(job_id)
             if result is None:
                 return None
             return result.to_dict()
 
-        @router.get("/reports")
+        @router.get("/reports", dependencies=[Depends(require_permission("adlift", Action.VIEW, engine=authz_engine))])
         def list_reports(evidence_level: str | None = None) -> dict[str, Any]:
             reports = [
                 report
@@ -114,7 +118,7 @@ else:
             ]
             return {"items": [report.to_dict() for report in reports], "count": len(reports)}
 
-        @router.get("/reports/{campaign_id}")
+        @router.get("/reports/{campaign_id}", dependencies=[Depends(require_permission("adlift", Action.VIEW, engine=authz_engine))])
         def get_report(campaign_id: str) -> dict[str, Any] | None:
             report = adlift_repository.latest_for_campaign(campaign_id)
             if report is None:

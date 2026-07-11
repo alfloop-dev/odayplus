@@ -22,6 +22,9 @@ def test_model_ready_dbt_baseline_views_are_versioned() -> None:
         "intervention_panel_view",
         "valuation_view",
         "network_plan_view",
+        "brand_transfer_view",
+        "ramp_curve_view",
+        "matched_control_view",
     }
 
     for view_name in expected_views:

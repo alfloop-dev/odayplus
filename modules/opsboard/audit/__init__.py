@@ -11,13 +11,19 @@ from modules.opsboard.audit.domain.evidence import (
     EvidenceExportRequest,
     SubsidyEvidenceRow,
 )
+from modules.opsboard.audit.evidence_store import (
+    DurableEvidenceBundleStore,
+    retained_evidence_from_bundle,
+)
 
 __all__ = [
     "AuditEvidenceBundle",
     "AuditEvidenceExportError",
     "AuditEvidenceExportService",
     "DecisionCard",
+    "DurableEvidenceBundleStore",
     "EvidenceArtifact",
     "EvidenceExportRequest",
     "SubsidyEvidenceRow",
+    "retained_evidence_from_bundle",
 ]

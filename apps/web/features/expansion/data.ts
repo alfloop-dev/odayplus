@@ -21,6 +21,8 @@ export type HeatZone = {
   id: string;
   district: string;
   h3: string;
+  centroid: [number, number];
+  h3Resolution: number;
   score: number;
   confidence: number;
   state:
@@ -35,7 +37,22 @@ export type HeatZone = {
   warnings: string[];
   reasons: string[];
   modelVersion: string;
+  featureVersion: string;
   featureSnapshotTime: string;
+  predictionOriginTime: string;
+  lastScoredAt: string;
+  sourceSnapshotIds: string[];
+  unmetDemandScore: number;
+  formatFitScore: number;
+  cannibalizationRisk: number;
+  rentFeasibility: number;
+  listingAvailability: number;
+  poiCount: number;
+  competitorCount: number;
+  competitorCapacity: number;
+  medianListingRent: number;
+  existingStoreCount: number;
+  dataQualityScore: number;
 };
 
 export type Listing = {
@@ -49,6 +66,7 @@ export type Listing = {
   geocode: string;
   duplicate: string;
   heatZoneId: string;
+  coordinates: [number, number];
   updatedAt: string;
   action: string;
 };
@@ -58,6 +76,7 @@ export type CandidateSite = {
   address: string;
   status: "new" | "screened" | "scored" | "visited" | "rejected" | "approved" | "opened";
   heatZoneId: string;
+  coordinates: [number, number];
   heatZoneScore: number;
   rentArea: string;
   geocode: string;
@@ -103,16 +122,21 @@ export type SiteScoreReport = {
 export const freshness = {
   status: "FRESH" as DataStatus,
   updatedAt: "2026-06-28 09:12",
+  providerObservedAt: "2026-06-28T09:00:00Z",
+  ingestedAt: "2026-06-28T09:12:00Z",
   modelVersion: "hz-score-v2.1.0",
   featureSnapshotTime: "2026-06-28T01:00:00Z",
   sourceSnapshotId: "snap-expansion-20260628-0100",
+  correlationId: "corr-expansion-freshness-001",
 };
 
 export const heatZones: HeatZone[] = [
   {
     id: "hz-1049",
     district: "台北市信義區",
-    h3: "8930e1d8b0fffff",
+    h3: "894ba0a4e23ffff",
+    centroid: [121.5638, 25.033],
+    h3Resolution: 9,
     score: 91,
     confidence: 0.86,
     state: "STILL_EXPANDABLE",
@@ -121,12 +145,29 @@ export const heatZones: HeatZone[] = [
     warnings: ["租金接近政策上限", "同商圈 1 家成熟門市"],
     reasons: ["需求缺口高", "ODay G2 format fit 高", "步行人流與晚餐 POI 密度佳"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100", "snap-poi-20260628"],
+    unmetDemandScore: 0.91,
+    formatFitScore: 0.78,
+    cannibalizationRisk: 0.22,
+    rentFeasibility: 0.74,
+    listingAvailability: 0.85,
+    poiCount: 18,
+    competitorCount: 2,
+    competitorCapacity: 10,
+    medianListingRent: 85000,
+    existingStoreCount: 1,
+    dataQualityScore: 0.95,
   },
   {
     id: "hz-0881",
     district: "新北市板橋區",
-    h3: "8930e1d9157ffff",
+    h3: "894ba0a5413ffff",
+    centroid: [121.4629, 25.0116],
+    h3Resolution: 9,
     score: 84,
     confidence: 0.74,
     state: "UNDER_REALIZED",
@@ -135,12 +176,29 @@ export const heatZones: HeatZone[] = [
     warnings: ["公車站點資料 PARTIAL"],
     reasons: ["既有門市覆蓋不足", "候選房源坪數集中於目標區間"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100"],
+    unmetDemandScore: 0.82,
+    formatFitScore: 0.69,
+    cannibalizationRisk: 0.15,
+    rentFeasibility: 0.88,
+    listingAvailability: 0.62,
+    poiCount: 12,
+    competitorCount: 4,
+    competitorCapacity: 15,
+    medianListingRent: 55000,
+    existingStoreCount: 2,
+    dataQualityScore: 0.85,
   },
   {
     id: "hz-0773",
     district: "桃園市中壢區",
-    h3: "8930e36a237ffff",
+    h3: "894ba0b817bffff",
+    centroid: [121.2248, 24.9566],
+    h3Resolution: 9,
     score: 69,
     confidence: 0.62,
     state: "SUPPRESSED_LOW_CONFIDENCE",
@@ -149,7 +207,22 @@ export const heatZones: HeatZone[] = [
     warnings: ["geocode confidence 低於 0.7", "comparable sample size 低"],
     reasons: ["租金可行性佳", "晚間外送需求有缺口"],
     modelVersion: "hz-score-v2.1.0",
+    featureVersion: "geo-grid-view-v1",
     featureSnapshotTime: "2026-06-28T01:00:00Z",
+    predictionOriginTime: "2026-06-28T02:00:00Z",
+    lastScoredAt: "2026-06-28T09:12:00Z",
+    sourceSnapshotIds: ["snap-expansion-20260628-0100"],
+    unmetDemandScore: 0.58,
+    formatFitScore: 0.51,
+    cannibalizationRisk: 0.35,
+    rentFeasibility: 0.92,
+    listingAvailability: 0.38,
+    poiCount: 6,
+    competitorCount: 6,
+    competitorCapacity: 20,
+    medianListingRent: 38000,
+    existingStoreCount: 0,
+    dataQualityScore: 0.7,
   },
 ];
 
@@ -165,6 +238,7 @@ export const listings: Listing[] = [
     geocode: "0.94 / rooftop / 8930e1d8b0fffff",
     duplicate: "無高信心重複",
     heatZoneId: "hz-1049",
+    coordinates: [121.5651, 25.0337],
     updatedAt: "2026-06-28 08:44",
     action: "建立候選點",
   },
@@ -179,6 +253,7 @@ export const listings: Listing[] = [
     geocode: "0.88 / parcel / 8930e1d9157ffff",
     duplicate: "dg-77 / address+phone / 0.91",
     heatZoneId: "hz-0881",
+    coordinates: [121.4636, 25.0122],
     updatedAt: "2026-06-28 08:20",
     action: "解重複",
   },
@@ -193,6 +268,7 @@ export const listings: Listing[] = [
     geocode: "0.64 / street / 8930e36a237ffff",
     duplicate: "無",
     heatZoneId: "hz-0773",
+    coordinates: [121.2255, 24.9573],
     updatedAt: "2026-06-28 07:58",
     action: "請求修正",
   },
@@ -204,6 +280,7 @@ export const candidates: CandidateSite[] = [
     address: "台北市信義區信義路五段 22 號 1F",
     status: "screened",
     heatZoneId: "hz-1049",
+    coordinates: [121.5654, 25.034],
     heatZoneScore: 91,
     rentArea: "租金遮罩 / 34 坪 / frontage 8m",
     geocode: "0.94 rooftop",
@@ -217,6 +294,7 @@ export const candidates: CandidateSite[] = [
     address: "新北市板橋區縣民大道二段 91 號",
     status: "new",
     heatZoneId: "hz-0881",
+    coordinates: [121.4642, 25.012],
     heatZoneScore: 84,
     rentArea: "租金遮罩 / 29 坪 / frontage 6m",
     geocode: "0.88 parcel",
@@ -230,6 +308,7 @@ export const candidates: CandidateSite[] = [
     address: "桃園市中壢區中正路 188 號 B1",
     status: "rejected",
     heatZoneId: "hz-0773",
+    coordinates: [121.226, 24.957],
     heatZoneScore: 69,
     rentArea: "租金遮罩 / 18 坪 / frontage unknown",
     geocode: "0.64 street",

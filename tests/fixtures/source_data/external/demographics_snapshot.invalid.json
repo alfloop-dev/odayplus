@@ -1,0 +1,23 @@
+{
+  "contract_id": "demographics_snapshot",
+  "cases": [
+    {
+      "label": "missing required population_total",
+      "record": {
+        "h3_index": "89263064c2fffff",
+        "household_total": 1800,
+        "snapshot_id": "demographics-2026-q2"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "negative population_total value",
+      "record": {
+        "h3_index": "89263064c2fffff",
+        "population_total": -5,
+        "snapshot_id": "demographics-2026-q2"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}
