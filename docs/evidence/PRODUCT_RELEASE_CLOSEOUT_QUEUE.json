@@ -68,10 +68,10 @@
         {
             "task_id": "ODP-FE-XCUT-001",
             "status": "in_progress",
-            "actor": "Claude2",
+            "actor": "Antigravity3",
             "action_type": "owner_handoff",
             "allowed_commands": [
-                "AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Codex \"<handoff message>\""
+                "AI_NAME=Antigravity3 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Antigravity2 \"<handoff message>\""
             ],
             "evidence_refs": [
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",
@@ -83,11 +83,11 @@
         {
             "task_id": "ODP-FE-XCUT-001",
             "status": "waiting_for_review_after_handoff",
-            "actor": "Codex",
+            "actor": "Antigravity2",
             "action_type": "reviewer_approve_or_reopen",
             "allowed_commands": [
-                "AI_NAME=Codex REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 \"<approval message>\"",
-                "AI_NAME=Codex python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 \"<missing evidence>\""
+                "AI_NAME=Antigravity2 REVIEW_NOTES_ZH=\"<review summary>\" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 \"<approval message>\"",
+                "AI_NAME=Antigravity2 python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 \"<missing evidence>\""
             ],
             "evidence_refs": [
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md",

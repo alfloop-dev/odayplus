@@ -46,8 +46,8 @@ review/closeout.
 - `ODP-PV-008` remains in Human/Ops review.
 - PR #82 remains draft until Human/Ops records go/no-go in
   `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
-- `ODP-FE-XCUT-001` remains owner-held by Claude2; Codex reviewer closeout is
-  queued only after Claude2 hands off the parent cross-cutting lane.
+- `ODP-FE-XCUT-001` remains owner-held by Antigravity3; Antigravity2 reviewer closeout is
+  queued only after Antigravity3 hands off the parent cross-cutting lane.
 - `ODP-FE-R0-001` and `ODP-FE-XCUT-DOMAIN-001` are `review_approved` and need
   Claude owner finalization.
 - `ODP-FE-EXP-001` is in Claude reviewer closeout.
@@ -69,7 +69,7 @@ review/closeout.
 - Do not move completed lanes back into active review. Their evidence is kept
   under `completed_closeouts` for lineage only.
 - Ask assigned active owners/reviewers to finish only the queued lifecycle
-  actions: Human/Ops go/no-go for `ODP-PV-008`, Claude2 handoff and Codex
+  actions: Human/Ops go/no-go for `ODP-PV-008`, Antigravity3 handoff and Antigravity2
   review for `ODP-FE-XCUT-001`, Claude finalization for `ODP-FE-R0-001`,
   Claude review for `ODP-FE-EXP-001`, Claude handoff and Codex2 review for
   `ODP-FE-ASSET-001`, and Claude finalization for
