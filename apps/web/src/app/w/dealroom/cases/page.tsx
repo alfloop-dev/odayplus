@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function DealRoomCasesPage({ searchParams }: PageProps) {
   const liveCases = await loadApiBinding({
-    client: getServerApiClient(),
+    client: await getServerApiClient(),
     fetcher: (client) => client.listAvmCases().then((response) => response.items),
   });
   return <AvmWorkspace view="cases" searchParams={await searchParams} liveCases={liveCases} />;

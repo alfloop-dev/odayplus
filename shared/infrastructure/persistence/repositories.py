@@ -62,7 +62,7 @@ from modules.priceops.domain.pricing import (
 )
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain import ForecastOutput as CanonicalForecastOutput
-from shared.domain import Prediction, PredictionRun
+from shared.domain import Prediction, PredictionRun, SiteScoreRun
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
 
@@ -70,6 +70,9 @@ class DurableSiteScoreRepository:
     """Durable mirror of ``InMemorySiteScoreRepository``."""
 
     _C = "sitescore.reports"
+    _PREDICTION_RUNS = "sitescore.prediction_runs"
+    _PREDICTIONS = "sitescore.predictions"
+    _SITESCORE_RUNS = "sitescore.sitescore_runs"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -99,6 +102,32 @@ class DurableSiteScoreRepository:
 
     def list_latest(self) -> list[SiteScoreReport]:
         return self._store.latest_per_group(self._C)
+
+    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
+        self._store.put(self._PREDICTION_RUNS, run.prediction_run_id, run)
+        return run
+
+    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
+        return self._store.get(self._PREDICTION_RUNS, prediction_run_id)
+
+    def save_prediction(self, prediction: Prediction) -> Prediction:
+        self._store.append_version(
+            self._PREDICTIONS,
+            f"prediction-{uuid4()}",
+            prediction,
+            group_key=prediction.prediction_run_id,
+        )
+        return prediction
+
+    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
+        return self._store.list_by_group(self._PREDICTIONS, prediction_run_id)
+
+    def save_sitescore_run(self, run: SiteScoreRun) -> SiteScoreRun:
+        self._store.put(self._SITESCORE_RUNS, run.sitescore_run_id, run)
+        return run
+
+    def get_sitescore_run(self, sitescore_run_id: str) -> SiteScoreRun | None:
+        return self._store.get(self._SITESCORE_RUNS, sitescore_run_id)
 
 
 class DurableAVMRepository:
