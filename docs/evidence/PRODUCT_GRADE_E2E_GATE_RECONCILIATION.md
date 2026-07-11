@@ -21,7 +21,7 @@ command above to refresh it.
 | Open blockers / pending pickup ACKs | 7 | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
 | Closure packets (lifecycle actions) | 8 | `PRODUCT_RELEASE_CLOSEOUT_QUEUE.json` |
 | Handback bundle status | `pending_external_handbacks` | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
-| Fleet completion | 58.0% (29/50 done) | `ai-status.json` @ 2026-07-11T03:38:22Z |
+| Fleet completion | 58.0% (29/50 done) | `ai-status.json` @ 2026-07-11T04:38:06Z |
 
 ## Open Blockers (pending pickup ACK)
 
@@ -38,10 +38,10 @@ command above to refresh it.
 ## Fleet Completion
 
 - `done`: 29
-- `in_progress`: 4
-- `review`: 6
-- `review_approved`: 1
-- `todo`: 10
+- `in_progress`: 9
+- `review`: 5
+- `review_approved`: 3
+- `todo`: 4
 
 ## Runtime Drift Findings
 
