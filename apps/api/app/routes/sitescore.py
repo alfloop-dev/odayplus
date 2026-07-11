@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -43,6 +44,7 @@ else:
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        model_binding: ModelBinding | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -74,11 +76,25 @@ else:
                 payload["created"] = False
                 return payload
 
+            # Fail closed: refuse a fresh run when live inputs are absent.
+            try:
+                require_live_inputs(body.features, service="sitescore")
+            except ScoringInputUnavailableError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+
             reports = service.score_candidates(
                 body.features,
                 prediction_origin_time=_parse_origin(body.prediction_origin_time),
             )
             job_id = f"sitescore-score-{uuid4()}"
+            metadata: dict[str, Any] = {
+                "idempotency_key": effective_key,
+                "candidate_count": len(reports),
+            }
+            if model_binding is not None:
+                metadata["model_binding"] = model_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="sitescore.scored.v1",
@@ -88,10 +104,7 @@ else:
                     outcome="accepted",
                     correlation_id=request.state.correlation_id,
                     job_id=job_id,
-                    metadata={
-                        "idempotency_key": effective_key,
-                        "candidate_count": len(reports),
-                    },
+                    metadata=metadata,
                 )
             )
             payload = {
@@ -103,6 +116,8 @@ else:
                 "correlation_id": request.state.correlation_id,
                 "created": True,
             }
+            if model_binding is not None:
+                payload["model_binding"] = model_binding.to_audit_metadata()
             jobs[job_id] = payload
             if effective_key:
                 idempotency_index[effective_key] = job_id

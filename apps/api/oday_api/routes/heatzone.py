@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Depends, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -60,6 +61,7 @@ else:
         *,
         store: HeatZoneResultStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        model_binding: ModelBinding | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -105,6 +107,13 @@ else:
                     idempotency_key=effective_idempotency_key,
                 )
             else:
+                # Fail closed: refuse a fresh run when live inputs are absent.
+                try:
+                    require_live_inputs(body.features, service="heatzone")
+                except ScoringInputUnavailableError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    ) from exc
                 result, created = result_store.put(
                     run_heatzone_batch_score(
                         features=body.features,
@@ -112,6 +121,13 @@ else:
                     ),
                     idempotency_key=effective_idempotency_key,
                 )
+            metadata: dict[str, Any] = {
+                "idempotency_key": effective_idempotency_key,
+                "feature_count": len(body.features),
+                "created": created,
+            }
+            if model_binding is not None:
+                metadata["model_binding"] = model_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.scored.v1",
@@ -121,17 +137,15 @@ else:
                     outcome="accepted" if created else "idempotent_replay",
                     correlation_id=request.state.correlation_id,
                     job_id=result.job_id,
-                    metadata={
-                        "idempotency_key": effective_idempotency_key,
-                        "feature_count": len(body.features),
-                        "created": created,
-                    },
+                    metadata=metadata,
                 )
             )
             payload = result.to_dict()
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
+            if model_binding is not None:
+                payload["model_binding"] = model_binding.to_audit_metadata()
             return payload
 
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])

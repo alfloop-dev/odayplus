@@ -204,7 +204,27 @@ else:
             label_hooks=[label_registry],
         )
 
-        api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
+        # ODP-GAP-ML-002: register the baseline production model for each
+        # scoring/forecast service in the durable registry (idempotent) and bind
+        # each router to its resolved PRODUCTION ModelVersion so runs carry
+        # auditable governance metadata and fail closed when the model or the
+        # live inputs are absent.
+        from models.shared_ml import seed_scoring_models
+
+        release_sha = (
+            os.environ.get("ODAY_RELEASE_SHA")
+            or os.environ.get("GITHUB_SHA")
+            or os.environ.get("COMMIT_SHA")
+        )
+        scoring_bindings = seed_scoring_models(learning_repo, git_sha=release_sha)
+
+        api.include_router(
+            create_heatzone_router(
+                store=heatzone_store,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("heatzone"),
+            )
+        )
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
@@ -212,7 +232,11 @@ else:
         api.include_router(create_listings_router(audit_log=audit_log))
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
-            create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
+            create_forecastops_router(
+                repository=forecast_repository,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("forecastops"),
+            )
         )
         api.include_router(create_netplan_router(repository=netplan_repo, audit_log=audit_log))
         api.include_router(
@@ -228,6 +252,7 @@ else:
                 repository=site_repository,
                 workflow=decision_workflow,
                 audit_log=audit_log,
+                model_binding=scoring_bindings.get("sitescore"),
             )
         )
         api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
@@ -246,6 +271,7 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.netplan_repository = netplan_repo
         api.state.learninghub_repository = learning_repo
+        api.state.scoring_bindings = scoring_bindings
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository
