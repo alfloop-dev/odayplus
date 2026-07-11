@@ -30,8 +30,8 @@ def status_payload(*, xcut_status: str = "in_progress") -> dict:
             {
                 "id": "ODP-FE-XCUT-001",
                 "status": xcut_status,
-                "owner": "Claude2",
-                "reviewer": "Codex",
+                "owner": "Antigravity3",
+                "reviewer": "Antigravity2",
             },
             {
                 "id": "ODP-FE-EXP-001",
@@ -64,7 +64,7 @@ def test_validate_closeout_action_accepts_ready_owner_handoff() -> None:
         queue_payload(),
         status_payload(),
         task_id="ODP-FE-XCUT-001",
-        actor="Claude2",
+        actor="Antigravity3",
         action_type="owner_handoff",
         pr_payload=pr_payload(),
     )
@@ -79,7 +79,7 @@ def test_validate_closeout_action_rejects_reviewer_before_handoff() -> None:
         queue_payload(),
         status_payload(xcut_status="in_progress"),
         task_id="ODP-FE-XCUT-001",
-        actor="Codex",
+        actor="Antigravity2",
         action_type="reviewer_approve_or_reopen",
         pr_payload=pr_payload(),
     )
@@ -109,7 +109,7 @@ def test_validate_closeout_action_rejects_failed_pr_check() -> None:
         queue_payload(),
         status_payload(),
         task_id="ODP-FE-XCUT-001",
-        actor="Claude2",
+        actor="Antigravity3",
         action_type="owner_handoff",
         pr_payload=pr_payload(conclusion="FAILURE"),
     )
@@ -130,7 +130,7 @@ def test_product_closeout_action_checker_cli_uses_fixture_inputs(tmp_path: Path)
             "--task",
             "ODP-FE-XCUT-001",
             "--actor",
-            "Claude2",
+            "Antigravity3",
             "--action-type",
             "owner_handoff",
             "--status-path",
