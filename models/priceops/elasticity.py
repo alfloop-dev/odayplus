@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
+
 from modules.priceops.domain.pricing import PriceElasticityEstimate
 
 DEFAULT_ELASTICITY = -1.2
@@ -47,7 +48,7 @@ def estimate_elasticity(
     
     # Calculate variance and covariance
     var_x = sum((x - mean_x) ** 2 for x in log_prices) / n
-    cov_xy = sum((x - mean_x) * (y - mean_y) for x, y in zip(log_prices, log_demands)) / n
+    cov_xy = sum((x - mean_x) * (y - mean_y) for x, y in zip(log_prices, log_demands, strict=False)) / n
     
     # Safety Check: no price variation
     std_x = math.sqrt(var_x)

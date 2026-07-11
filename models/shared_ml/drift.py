@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+
 def calculate_psi(
     baseline: list[float],
     target: list[float],
@@ -49,7 +50,7 @@ def calculate_psi(
     total_target = len(target)
     
     psi_value = 0.0
-    for b_count, t_count in zip(baseline_counts, target_counts):
+    for b_count, t_count in zip(baseline_counts, target_counts, strict=False):
         # Calculate percentages
         b_pct = b_count / total_baseline
         t_pct = t_count / total_target

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import math
-from typing import Callable
+from collections.abc import Callable
+
 
 def calculate_mape(actuals: list[float], predictions: list[float]) -> float:
     """Calculate Mean Absolute Percentage Error (MAPE)."""
     valid_count = 0
     total_abs_pct_error = 0.0
-    for act, pred in zip(actuals, predictions):
+    for act, pred in zip(actuals, predictions, strict=False):
         if abs(act) > 1e-9:
             total_abs_pct_error += abs((act - pred) / act)
             valid_count += 1
@@ -18,7 +19,7 @@ def calculate_rmse(actuals: list[float], predictions: list[float]) -> float:
     n = len(actuals)
     if n == 0:
         return 0.0
-    mse = sum((act - pred) ** 2 for act, pred in zip(actuals, predictions)) / n
+    mse = sum((act - pred) ** 2 for act, pred in zip(actuals, predictions, strict=False)) / n
     return math.sqrt(mse)
 
 def calculate_mae(actuals: list[float], predictions: list[float]) -> float:
@@ -26,7 +27,7 @@ def calculate_mae(actuals: list[float], predictions: list[float]) -> float:
     n = len(actuals)
     if n == 0:
         return 0.0
-    return sum(abs(act - pred) for act, pred in zip(actuals, predictions)) / n
+    return sum(abs(act - pred) for act, pred in zip(actuals, predictions, strict=False)) / n
 
 def run_rolling_backtest(
     model_predict_fn: Callable[[list[float], int], list[float]],
