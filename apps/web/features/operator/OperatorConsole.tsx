@@ -287,13 +287,31 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveNotifications, setLiveNotifications] = useState(notifications);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
 
+  const getSecurityHeaders = (roleId: string) => {
+    let systemRole = "operations_manager";
+    if (roleId === "opsLead") systemRole = "operations_manager";
+    else if (roleId === "supportLead") systemRole = "operations_manager";
+    else if (roleId === "facilitiesLead") systemRole = "regional_supervisor";
+    else if (roleId === "marketingManager") systemRole = "marketing_manager";
+    else if (roleId === "expansionManager") systemRole = "expansion_user";
+    else if (roleId === "auditPm") systemRole = "auditor";
+
+    return {
+      "X-Subject-Id": `operator-${roleId}`,
+      "X-Roles": systemRole,
+      "X-Tenant-Id": "tenant-a",
+    };
+  };
+
   const activeRole = getOperatorRole(activeRoleId);
   const activeWorkspace = getWorkspace(activeWorkspaceId);
 
   useEffect(() => {
     async function loadBootstrap() {
       try {
-        const res = await fetch("/api/v1/operator/bootstrap");
+        const res = await fetch("/api/v1/operator/bootstrap", {
+          headers: getSecurityHeaders(activeRoleId),
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.kpis) setLiveKpis(data.kpis);
@@ -360,12 +378,15 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
           "X-Correlation-Id": correlationId,
+          ...getSecurityHeaders(activeRoleId),
         },
         body: JSON.stringify({ status, ...payload }),
       });
       if (res.ok) {
         showToast("決策已送出");
-        const freshRes = await fetch("/api/v1/operator/bootstrap");
+        const freshRes = await fetch("/api/v1/operator/bootstrap", {
+          headers: getSecurityHeaders(activeRoleId),
+        });
         if (freshRes.ok) {
           const freshData = await freshRes.json();
           if (freshData.decisions) setLiveDecisions(freshData.decisions);
@@ -423,61 +444,6 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
     setSelectedStoreOpsIssue(issue);
     setActiveStoreOpsDialog(dialog);
-
-    // Proactively send API POST write proof for E2E productization gate
-    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
-    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
-    let endpoint = "";
-    if (dialog === "triage") endpoint = "triage";
-    else if (dialog === "assign") endpoint = "assign";
-    else if (dialog === "action") endpoint = "actions";
-    else if (dialog === "fieldReport") endpoint = "field-report";
-    else if (dialog === "outcome") endpoint = "outcome";
-    else if (dialog === "escalate") endpoint = "escalate";
-    else if (dialog === "cameraPurpose") endpoint = "purpose";
-
-    let path = "";
-    if (endpoint === "purpose") {
-      path = `/api/v1/operator/evidence/EVD-101/purpose`;
-    } else if (endpoint && issue) {
-      path = `/api/v1/operator/issues/${issue.id}/${endpoint}`;
-    }
-
-    if (path) {
-      fetch(path, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-          "X-Correlation-Id": correlationId,
-        },
-        body: JSON.stringify({
-          issueId: issue?.id,
-          status: "In Progress",
-          notes: "Auto-initiated write proof",
-          purpose: "E2E verification",
-        }),
-      }).then(async (res) => {
-        if (res.ok) {
-          const data = await res.json();
-          if (data.workQueue) setLiveWorkQueue(data.workQueue);
-          if (data.decisions) setLiveDecisions(data.decisions);
-          if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
-          // Refresh bootstrap
-          fetch("/api/v1/operator/bootstrap").then(async (freshRes) => {
-            if (freshRes.ok) {
-              const freshData = await freshRes.json();
-              if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
-              if (freshData.decisions) setLiveDecisions(freshData.decisions);
-              if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
-              if (freshData.issues) setLiveIssues(freshData.issues);
-            }
-          });
-        }
-      }).catch((err) => {
-        console.error("Error sending proactive workflow write:", err);
-      });
-    }
   }
 
   return (
@@ -697,6 +663,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                     "Content-Type": "application/json",
                     "Idempotency-Key": idempotencyKey,
                     "X-Correlation-Id": correlationId,
+                    ...getSecurityHeaders(activeRoleId),
                   },
                   body: JSON.stringify(event.payload),
                 });
@@ -706,7 +673,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                   if (data.decisions) setLiveDecisions(data.decisions);
                   if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
                   // Refresh bootstrap
-                  const freshRes = await fetch("/api/v1/operator/bootstrap");
+                  const freshRes = await fetch("/api/v1/operator/bootstrap", {
+                    headers: getSecurityHeaders(activeRoleId),
+                  });
                   if (freshRes.ok) {
                     const freshData = await freshRes.json();
                     if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);

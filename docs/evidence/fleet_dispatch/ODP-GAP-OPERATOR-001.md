@@ -33,10 +33,10 @@ Route the React `OperatorConsole` as the product `/operator` surface and bind op
   ```bash
   ODP_OPERATOR_PRODUCT_GATE=1 npx playwright test tests/e2e/e2e-operator-console.spec.ts
   ```
-  Result: All 4 tests PASS. The productization gate check successfully verifies that no static design iframe is used and that all bootstrap API reads and workflow writes (carrying idempotency-key and x-correlation-id headers) hit the correct endpoints.
+  Result: All 4 tests PASS. The modified productization gate check `ODP-OC-PROD-014` successfully asserts that no static design iframe is used, that all bootstrap API reads are verified, and that the workflow write (via Submit Triage dialog click) correctly triggers a submit-time API POST.
 
 ## Handoff Artifacts
 
-- API Routes definition: [operator.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/apps/api/app/routes/operator.py)
-- Web console client: [OperatorConsole.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/apps/web/features/operator/OperatorConsole.tsx)
-- E2E Tests suite: [e2e-operator-console.spec.ts](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/tests/e2e/e2e-operator-console.spec.ts)
+- **New Backend API Router**: [operator.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/apps/api/app/routes/operator.py)
+- **Modified Console Frontend**: [OperatorConsole.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/apps/web/features/operator/OperatorConsole.tsx)
+- **Modified Pre-existing E2E Tests**: [e2e-operator-console.spec.ts](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-gap-operator-001/tests/e2e/e2e-operator-console.spec.ts) (Originally created via ODP-OC-FE-04/05; updated in this task to assert submit-time write behavior instead of write-on-open).

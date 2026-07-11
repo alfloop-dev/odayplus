@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
-from fastapi import APIRouter, Depends, Header, Request, status, HTTPException
+
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
+
 from shared.audit import InMemoryAuditLog
+
 
 class TransitionPayload(BaseModel):
     issueId: str | None = None
@@ -36,6 +39,7 @@ def create_operator_router(
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
+    idempotency_cache: dict[str, Any] = {}
 
     router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -199,7 +203,10 @@ def create_operator_router(
         return {"items": state["decisions"], "count": len(state["decisions"])}
 
     # Workflow write transitions
-    @router.post("/issues/{issue_id}/{action_type}")
+    @router.post(
+        "/issues/{issue_id}/{action_type}",
+        dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))]
+    )
     def transition_issue(
         issue_id: str,
         action_type: str,
@@ -207,9 +214,12 @@ def create_operator_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
+        import copy
+        if idempotency_key and idempotency_key in idempotency_cache:
+            return idempotency_cache[idempotency_key]
+
         # Perform state update or record audit
         # Find issue in workQueue and update status
-        found = False
         for issue in state["workQueue"]:
             if issue["id"] == issue_id:
                 # E.g. triage maps to "triaged"
@@ -223,7 +233,6 @@ def create_operator_router(
                 elif action_type == "outcome":
                     new_status = "Closed"
                 issue["status"] = new_status
-                found = True
                 break
         
         # Add to audit feed
@@ -234,15 +243,25 @@ def create_operator_router(
             "time": datetime.now(UTC).strftime("%H:%M")
         })
 
-        return state
+        res_state = copy.deepcopy(state)
+        if idempotency_key:
+            idempotency_cache[idempotency_key] = res_state
+        return res_state
 
-    @router.post("/approvals/{approval_id}/decision")
+    @router.post(
+        "/approvals/{approval_id}/decision",
+        dependencies=[Depends(require_permission("intervention", Action.APPROVE, engine=authz_engine))]
+    )
     def decide_approval(
         approval_id: str,
         body: ApprovalDecisionPayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
+        import copy
+        if idempotency_key and idempotency_key in idempotency_cache:
+            return idempotency_cache[idempotency_key]
+
         # Update approval status in decisions list
         for dec in state["decisions"]:
             if dec["id"] == approval_id:
@@ -254,22 +273,37 @@ def create_operator_router(
             "detail": f"Approval {approval_id} decided: {body.status}. Reason: {body.reason or ''}",
             "time": datetime.now(UTC).strftime("%H:%M")
         })
-        return state
 
-    @router.post("/evidence/{evidence_id}/purpose")
+        res_state = copy.deepcopy(state)
+        if idempotency_key:
+            idempotency_cache[idempotency_key] = res_state
+        return res_state
+
+    @router.post(
+        "/evidence/{evidence_id}/purpose",
+        dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))]
+    )
     def confirm_evidence_purpose(
         evidence_id: str,
         body: EvidencePurposePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
+        import copy
+        if idempotency_key and idempotency_key in idempotency_cache:
+            return idempotency_cache[idempotency_key]
+
         state["auditFeed"].insert(0, {
             "actor": "Operator",
             "category": "Audit trail",
             "detail": f"Unlocked evidence {evidence_id} with purpose: {body.purpose}",
             "time": datetime.now(UTC).strftime("%H:%M")
         })
-        return state
+
+        res_state = copy.deepcopy(state)
+        if idempotency_key:
+            idempotency_cache[idempotency_key] = res_state
+        return res_state
 
     return router
 
