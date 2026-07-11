@@ -5,6 +5,8 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from modules.external_data.connectors import (
     ExternalProviderConfigError,
     ExternalProviderMode,
@@ -16,7 +18,12 @@ from modules.external_data.connectors.provider_registry import (
     validate_external_providers,
     validate_external_providers_or_raise,
 )
-from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
+from modules.external_data.geo import (
+    GeocodeCandidate,
+    GeoPipeline,
+    StaticGeocodeProvider,
+    normalize_address,
+)
 from modules.external_data.providers import (
     MOCK_PROVIDER_API_KEY,
     ListingPartnerFeedProvider,
@@ -24,8 +31,12 @@ from modules.external_data.providers import (
 )
 from modules.external_data.providers.live import (
     LISTING_FEED_ENDPOINT_ENV_VAR,
+    GeocodeProviderAuthError,
+    GeocodeProviderRateLimitError,
+    GeocodeProviderTimeoutError,
     ListingProviderRateLimitError,
     ListingProviderTimeoutError,
+    PrimaryGeocodeProvider,
 )
 from modules.external_data.workers import (
     ExternalFetchJobSpec,
@@ -421,3 +432,221 @@ class _RateLimitListingClient:
             correlation_id=str(kwargs["correlation_id"]),
             code="quota_exhausted",
         )
+
+
+class MockGeocodeClient:
+    def __init__(self, responses: dict[str, Mapping[str, Any]] | None = None, exceptions: list[Exception | None] | None = None) -> None:
+        self.responses = responses or {}
+        self.exceptions = exceptions or []
+        self.calls: list[dict[str, Any]] = []
+
+    def geocode(
+        self,
+        *,
+        provider: Any,
+        credential: Any,
+        normalized_address: Any,
+        correlation_id: str,
+        retry_budget: int,
+    ) -> Mapping[str, Any]:
+        self.calls.append({
+            "provider": provider,
+            "credential": credential,
+            "normalized_address": normalized_address,
+            "correlation_id": correlation_id,
+            "retry_budget": retry_budget,
+        })
+        if self.exceptions:
+            exc = self.exceptions.pop(0)
+            if exc is not None:
+                raise exc
+        addr = normalized_address.normalized_address
+        return self.responses.get(addr, {})
+
+
+def test_geocode_provider_success() -> None:
+    # 1. recorded response success test
+    raw_address = "台北市信義區信義路五段7號"
+    norm = normalize_address(raw_address)
+    
+    mock_response = {
+        "provider_request_id": "geo-req-123",
+        "provider_observed_at": "2026-07-11T12:00:00Z",
+        "latitude": 25.0339,
+        "longitude": 121.5644,
+        "precision": "rooftop",
+        "confidence": 0.95,
+        "city": "台北市",
+        "district": "信義區",
+        "provider_id": "geocode.primary_api",
+    }
+    
+    client = MockGeocodeClient(responses={norm.normalized_address: mock_response})
+    env = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+    }
+    provider = PrimaryGeocodeProvider(client=client, env=env)
+    
+    candidate = provider.lookup(norm)
+    
+    assert candidate is not None
+    assert candidate.latitude == 25.0339
+    assert candidate.longitude == 121.5644
+    assert candidate.precision == "rooftop"
+    assert candidate.confidence == 0.95
+    assert candidate.provider_request_id == "geo-req-123"
+    assert candidate.provider_observed_at is not None
+    assert candidate.provider_observed_at.hour == 12
+    assert candidate.admin_city == "台北市"
+    assert candidate.admin_district == "信義區"
+    
+    # Also verify integration with GeoPipeline
+    pipeline = GeoPipeline(provider)
+    result = pipeline.geocode_record({"address_raw": raw_address})
+    assert result.address.latitude == 25.0339
+    assert result.address.longitude == 121.5644
+    assert result.address.geocode_confidence == 0.95
+    assert result.provider_request_id == "geo-req-123"
+    assert result.provider_observed_at == candidate.provider_observed_at
+    assert "low_geocode_confidence" not in result.quality_flags
+    assert "missing_geocode" not in result.quality_flags
+
+
+def test_geocode_provider_low_confidence() -> None:
+    # 2. low confidence test
+    raw_address = "台北市信義區信義路五段7號"
+    norm = normalize_address(raw_address)
+    
+    mock_response = {
+        "provider_request_id": "geo-req-low",
+        "provider_observed_at": "2026-07-11T12:00:00Z",
+        "latitude": 25.0339,
+        "longitude": 121.5644,
+        "precision": "street",
+        "confidence": 0.50, # low confidence (< 0.7)
+        "city": "台北市",
+        "district": "信義區",
+        "provider_id": "geocode.primary_api",
+    }
+    
+    client = MockGeocodeClient(responses={norm.normalized_address: mock_response})
+    env = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+    }
+    provider = PrimaryGeocodeProvider(client=client, env=env)
+    
+    pipeline = GeoPipeline(provider)
+    result = pipeline.geocode_record({"address_raw": raw_address})
+    
+    assert result.address.geocode_confidence == 0.50
+    assert "low_geocode_confidence" in result.quality_flags
+
+
+def test_geocode_provider_rate_limit_retry() -> None:
+    # 3. rate-limit retry test
+    raw_address = "台北市信義區信義路五段7號"
+    norm = normalize_address(raw_address)
+    
+    mock_response = {
+        "latitude": 25.0339,
+        "longitude": 121.5644,
+        "precision": "rooftop",
+        "confidence": 0.95,
+        "city": "台北市",
+        "district": "信義區",
+    }
+    
+    # 1st try: rate limit, 2nd try: success
+    client = MockGeocodeClient(
+        responses={norm.normalized_address: mock_response},
+        exceptions=[
+            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c1", code="rate_limited"),
+            None,
+        ]
+    )
+    env = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+    }
+    # Set retry_budget to 1 to allow 1 retry
+    provider = PrimaryGeocodeProvider(client=client, env=env, retry_budget=1)
+    
+    candidate = provider.lookup(norm)
+    assert candidate is not None
+    assert candidate.latitude == 25.0339
+    assert len(client.calls) == 2
+    
+    # Exhaust budget: 1st try rate limit, 2nd try rate limit, budget 1 -> raises exception
+    client_fail = MockGeocodeClient(
+        responses={norm.normalized_address: mock_response},
+        exceptions=[
+            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c1", code="rate_limited"),
+            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c2", code="rate_limited"),
+        ]
+    )
+    provider_fail = PrimaryGeocodeProvider(client=client_fail, env=env, retry_budget=1)
+    with pytest.raises(GeocodeProviderRateLimitError):
+        provider_fail.lookup(norm)
+    assert len(client_fail.calls) == 2
+
+
+def test_geocode_provider_timeout_fails_closed() -> None:
+    # 4. timeout test
+    raw_address = "台北市信義區信義路五段7號"
+    norm = normalize_address(raw_address)
+    
+    client = MockGeocodeClient(
+        exceptions=[
+            GeocodeProviderTimeoutError("timeout", provider_id="geocode.primary_api", correlation_id="c1", code="timeout")
+        ]
+    )
+    env = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+    }
+    provider = PrimaryGeocodeProvider(client=client, env=env)
+    
+    with pytest.raises(GeocodeProviderTimeoutError):
+        provider.lookup(norm)
+
+
+def test_geocode_provider_unauthorized_fails_closed() -> None:
+    # 5. unauthorized test
+    raw_address = "台北市信義區信義路五段7號"
+    norm = normalize_address(raw_address)
+    
+    # Case A: Missing credentials env var
+    env_missing = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+    }
+    provider_missing = PrimaryGeocodeProvider(client=MockGeocodeClient(), env=env_missing)
+    with pytest.raises(ExternalProviderConfigError) as exc_info:
+        provider_missing.lookup(norm)
+    assert exc_info.value.result.errors[0].code == "missing_credential"
+    
+    # Case B: Expired status
+    env_expired = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS": "expired",
+    }
+    provider_expired = PrimaryGeocodeProvider(client=MockGeocodeClient(), env=env_expired)
+    with pytest.raises(ExternalProviderConfigError) as exc_info:
+        provider_expired.lookup(norm)
+    assert exc_info.value.result.errors[0].code == "credential_expired"
+    
+    # Case C: Auth error from client
+    client_auth_err = MockGeocodeClient(
+        exceptions=[
+            GeocodeProviderAuthError("unauthorized", provider_id="geocode.primary_api", correlation_id="c1", code="unauthorized")
+        ]
+    )
+    env_ok = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
+    }
+    provider_auth_err = PrimaryGeocodeProvider(client=client_auth_err, env=env_ok)
+    with pytest.raises(GeocodeProviderAuthError):
+        provider_auth_err.lookup(norm)
