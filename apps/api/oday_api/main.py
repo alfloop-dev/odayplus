@@ -1,9 +1,18 @@
+"""ODay Plus Domain API Service (FastAPI).
+
+Exposes integration, opsboard, data, and ML domain endpoints wired to durable
+repositories, mapping components, and the artifact store. Also sets up the
+correlation ID tracking middleware, job queues, and the audit log.
+"""
+
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
+from modules.external_data.connectors import validate_external_providers_or_raise
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
@@ -19,6 +28,22 @@ def health_detail_payload(*, correlation_id: str) -> dict[str, str]:
     return {
         **health_payload(),
         "version": API_VERSION,
+        "time": datetime.now(UTC).isoformat(),
+        "correlation_id": correlation_id,
+    }
+
+
+def release_version_payload(*, correlation_id: str) -> dict[str, str]:
+    release_sha = (
+        os.environ.get("ODAY_RELEASE_SHA")
+        or os.environ.get("GITHUB_SHA")
+        or os.environ.get("COMMIT_SHA")
+        or "local"
+    )
+    return {
+        **health_payload(),
+        "api_version": API_VERSION,
+        "release_sha": release_sha,
         "time": datetime.now(UTC).isoformat(),
         "correlation_id": correlation_id,
     }
@@ -55,6 +80,7 @@ else:
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
         persistence: Any = None,
+        external_provider_validation: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
@@ -62,6 +88,7 @@ else:
         # tests can inject hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
 
+        provider_validation = external_provider_validation or validate_external_providers_or_raise()
         bundle = persistence or build_persistence()
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
@@ -88,6 +115,10 @@ else:
         @api.get("/platform/health", tags=["platform"])
         def platform_health(request: Request) -> dict[str, str]:
             return health_detail_payload(correlation_id=request.state.correlation_id)
+
+        @api.get("/platform/version", tags=["platform"])
+        def platform_version(request: Request) -> dict[str, str]:
+            return release_version_payload(correlation_id=request.state.correlation_id)
 
         @api.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
@@ -145,10 +176,11 @@ else:
         from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.audit import create_audit_router
         from apps.api.app.routes.avm import create_avm_router
+        from apps.api.app.routes.external_data import create_external_data_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.learninghub import create_learninghub_router
-        from apps.api.app.routes.listings import router as listings_router
+        from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
@@ -176,7 +208,8 @@ else:
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(listings_router)
+        api.include_router(create_external_data_router(audit_log=audit_log))
+        api.include_router(create_listings_router(audit_log=audit_log))
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
             create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
@@ -222,6 +255,7 @@ else:
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
         api.state.persistence = bundle
+        api.state.external_provider_validation = provider_validation
         return api
 
     app = create_app()

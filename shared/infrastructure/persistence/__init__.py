@@ -1,11 +1,4 @@
-"""Durable persistence layer for ODay Plus (ODP-PV-009).
-
-Takes the product API off in-memory repositories and onto restart-survivable
-SQLite storage for Product-Grade E2E validation, while keeping the exact
-repository interfaces the domain/application layers already depend on.
-
-Entry point: :func:`build_persistence` (env-driven backend selection).
-"""
+"""Durable persistence and migration helpers for ODay Plus."""
 
 from __future__ import annotations
 
@@ -18,6 +11,12 @@ from shared.infrastructure.persistence.factory import (
     build_persistence,
 )
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
+from shared.infrastructure.persistence.migrations import (
+    MigrationAsset,
+    MigrationStep,
+    build_migration_manifest_checksum,
+    discover_migration_steps,
+)
 from shared.infrastructure.persistence.repositories import (
     DurableAdLiftRepository,
     DurableArtifactStore,
@@ -45,8 +44,12 @@ __all__ = [
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
+    "MigrationAsset",
+    "MigrationStep",
     "PersistenceBundle",
     "SqliteDocumentStore",
     "SqliteEngine",
+    "build_migration_manifest_checksum",
     "build_persistence",
+    "discover_migration_steps",
 ]

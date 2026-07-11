@@ -12,6 +12,7 @@ from modules.avm import (
     run_avm_batch_valuation,
 )
 from modules.avm.application import AVMService
+from tests.integration._authz import AVM_HEADERS
 
 
 def _valuation_payload() -> dict:
@@ -84,7 +85,7 @@ def test_finance_approval_requires_reason_and_updates_report() -> None:
 
 
 def test_avm_api_runs_e2e_valuation_dataroom_export_and_audit() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=AVM_HEADERS)
     payload = {**_valuation_payload(), "created_by": "ops-lead"}
 
     created = client.post(

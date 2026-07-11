@@ -7,7 +7,21 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
 dependencies = [
+    # API
     "fastapi>=0.115",
+    "pyyaml>=6.0.3",
+    "pydantic>=2.8",
+    "uvicorn[standard]>=0.30",
+    # ML
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    # Solver / geospatial
+    "h3>=4.5.0",
+    "ortools>=9.15.6755",
+    # Data
+    "duckdb>=1.0",
+    "sqlalchemy>=2.0",
 ]
 
 [dependency-groups]
@@ -33,7 +47,15 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501", "E402"]
 
 [tool.pytest.ini_options]
-testpaths = [".orchestrator", "scripts", "tests"]
+testpaths = [
+    ".orchestrator",
+    "scripts",
+    "tests",
+    "modules",
+    "apps",
+    "shared",
+    "models",
+]
 python_files = ["test_*.py"]
 addopts = "-q"
 pythonpath = ["."]

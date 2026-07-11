@@ -12,20 +12,30 @@ Maps to the task acceptance criteria and ODP-SD-11 §12 / ODP-SD-10 §12:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.observability import (
+    AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
     E2E_TRACE_KINDS,
+    AuditCompletenessRule,
+    AuditPipeline,
+    AuditPipelineError,
     ListSink,
     MetricCategory,
     StructuredLogger,
     Telemetry,
     TraceContext,
+    build_audit_event,
+    build_evidence_bundle,
+    check_audit_completeness,
     default_registry,
     redact,
 )
+from shared.observability.audit import AuditValidationError
 from shared.observability.metrics import PLATFORM_METRICS
 from shared.observability.tracing import SpanKind, SpanStatus
 
@@ -208,6 +218,179 @@ def test_operation_marks_span_error_and_logs_error_code() -> None:
     assert sink.records[-1].result == "error"
 
 
+# --- AC3 / AC5: audit event pipeline and evidence export -------------------
+
+
+def test_audit_pipeline_records_export_event_with_metrics_and_log() -> None:
+    audit_log = InMemoryAuditLog()
+    log_sink = ListSink()
+    metrics = default_registry()
+    pipeline = AuditPipeline(
+        sink=audit_log,
+        metrics=metrics,
+        logger=StructuredLogger("audit-pipeline", sink=log_sink),
+    )
+
+    event = pipeline.record_export(
+        actor_id="auditor-1",
+        resource="decision/site-1",
+        correlation_id="corr-audit-1",
+        reason="monthly subsidy evidence packet",
+        scope="decision",
+    )
+
+    assert event.event_type == AUDIT_EVIDENCE_EXPORT_EVENT_TYPE
+    assert audit_log.list_events(correlation_id="corr-audit-1") == [event]
+    snapshot = metrics.snapshot()
+    assert snapshot["audit_event_record_count"][0]["value"] == 1.0
+    assert snapshot["audit_evidence_export_count"][0]["labels"] == {
+        "result": "success",
+        "scope": "decision",
+    }
+    assert snapshot["audit_evidence_export_count"][0]["value"] == 1.0
+    log = log_sink.dicts[0]
+    assert log["correlation_id"] == "corr-audit-1"
+    assert log["resource"] == "decision/site-1"
+    assert log["action"] == "export"
+
+
+def test_audit_pipeline_rejects_high_risk_event_without_reason() -> None:
+    pipeline = AuditPipeline(
+        metrics=default_registry(),
+        logger=StructuredLogger("audit-pipeline", sink=ListSink()),
+    )
+    event = AuditEvent(
+        event_type="netplan.approved.v1",
+        actor="manager-1",
+        action="approve",
+        resource="netplan/plan-1",
+        outcome="success",
+        correlation_id="corr-audit-2",
+    )
+
+    with pytest.raises(AuditValidationError):
+        pipeline.record(event)
+
+    assert pipeline.dead_letter[0].retryable is False
+    assert pipeline.metrics.snapshot()["audit_event_write_failure_count"][0]["value"] == 1.0
+
+
+def test_audit_pipeline_dead_letters_and_replays_failed_writes() -> None:
+    class FlakySink:
+        def __init__(self) -> None:
+            self.fail_next = True
+            self.events: list[AuditEvent] = []
+
+        def record(self, event: AuditEvent) -> AuditEvent:
+            if self.fail_next:
+                self.fail_next = False
+                raise RuntimeError("audit store unavailable")
+            self.events.append(event)
+            return event
+
+    sink = FlakySink()
+    pipeline = AuditPipeline(
+        sink=sink,
+        metrics=default_registry(),
+        logger=StructuredLogger("audit-pipeline", sink=ListSink()),
+    )
+    event = build_audit_event(
+        event_type="priceops.plan.executed.v1",
+        actor_id="pricing-manager",
+        action="execute",
+        entity_type="priceops",
+        entity_id="plan-7",
+        result="success",
+        correlation_id="corr-audit-3",
+        reason_code="approved-plan",
+        policy_version="price-policy-v1",
+    )
+
+    with pytest.raises(AuditPipelineError):
+        pipeline.record(event)
+
+    assert len(pipeline.dead_letter) == 1
+    assert pipeline.metrics.snapshot()["audit_event_write_failure_count"][0]["value"] == 1.0
+
+    assert pipeline.replay_failed() == 1
+    assert pipeline.dead_letter == ()
+    assert sink.events == [event]
+    assert pipeline.metrics.snapshot()["audit_event_replay_count"][0]["value"] == 1.0
+
+
+def test_evidence_bundle_and_completeness_report_are_deterministic() -> None:
+    first = datetime(2026, 6, 28, 1, 0, tzinfo=UTC)
+    second = datetime(2026, 6, 28, 1, 1, tzinfo=UTC)
+    events = [
+        build_audit_event(
+            event_type="decision.prediction_generated.v1",
+            actor_id="model-service",
+            action="create",
+            entity_type="site",
+            entity_id="site-1",
+            result="success",
+            correlation_id="corr-audit-4",
+            actor_type="service",
+            policy_version="sitescore-policy-v1",
+            occurred_at=first,
+        ),
+        build_audit_event(
+            event_type="decision.approved.v1",
+            actor_id="expansion-manager",
+            action="approve",
+            entity_type="site",
+            entity_id="site-1",
+            result="success",
+            correlation_id="corr-audit-4",
+            reason_code="meets-threshold",
+            policy_version="sitescore-policy-v1",
+            occurred_at=second,
+        ),
+    ]
+
+    bundle_a = build_evidence_bundle(
+        reversed(events),
+        correlation_id="corr-audit-4",
+        generated_by="auditor-1",
+        reason="subsidy audit",
+    )
+    bundle_b = build_evidence_bundle(
+        events,
+        correlation_id="corr-audit-4",
+        generated_by="auditor-1",
+        reason="subsidy audit",
+    )
+    assert bundle_a.bundle_checksum == bundle_b.bundle_checksum
+    assert len(bundle_a.bundle_checksum) == 64
+    assert [event["event_type"] for event in bundle_a.events] == [
+        "decision.prediction_generated.v1",
+        "decision.approved.v1",
+    ]
+
+    rule = AuditCompletenessRule(
+        name="decision-timeline",
+        correlation_id="corr-audit-4",
+        resource="site/site-1",
+        required_event_types=(
+            "decision.prediction_generated.v1",
+            "decision.approved.v1",
+            "decision.executed.v1",
+        ),
+    )
+    report = check_audit_completeness(events, rule)
+    assert not report.complete
+    assert report.missing_event_types == ("decision.executed.v1",)
+
+    pipeline = AuditPipeline(
+        metrics=default_registry(),
+        logger=StructuredLogger("audit-pipeline", sink=ListSink()),
+    )
+    pipeline.record_completeness_report(report)
+    gap = pipeline.metrics.snapshot()["audit_completeness_gap_count"][0]
+    assert gap["labels"]["missing_event_type"] == "decision.executed.v1"
+    assert gap["value"] == 1.0
+
+
 # --- AC4: runbooks exist ---------------------------------------------------
 
 
@@ -247,6 +430,19 @@ def test_dashboards_cover_five_audiences() -> None:
     assert len(dashboards) >= 6
 
 
+def test_audit_dashboard_uses_audit_pipeline_metrics() -> None:
+    dashboards = _load("dashboards.json")["dashboards"]
+    audit_dashboard = next(dashboard for dashboard in dashboards if dashboard["id"] == "audit-compliance")
+    metrics = {panel["metric"] for panel in audit_dashboard["panels"]}
+    assert {
+        "audit_event_record_count",
+        "audit_event_write_failure_count",
+        "audit_event_pipeline_lag_seconds",
+        "audit_evidence_export_count",
+        "audit_completeness_gap_count",
+    }.issubset(metrics)
+
+
 def test_dashboard_panels_reference_known_metrics() -> None:
     known = {m.name for m in PLATFORM_METRICS}
     dashboards = _load("dashboards.json")["dashboards"]
@@ -263,6 +459,13 @@ def test_alerts_reference_known_metrics_and_cover_p1() -> None:
     for alert in alerts:
         assert alert["metric"] in known, alert["id"]
         assert alert["runbook"].startswith("docs/runbooks/")
+
+
+def test_alerts_include_audit_write_failure() -> None:
+    alerts = _load("alerts.json")["alerts"]
+    audit_alert = next(alert for alert in alerts if alert["id"] == "audit-write-failure")
+    assert audit_alert["severity"] == "P1"
+    assert audit_alert["metric"] == "audit_event_write_failure_count"
 
 
 def test_slo_defines_recovery_objectives() -> None:

@@ -16,6 +16,22 @@ from modules.external_data.connectors.external import (
     PoiConnector,
     build_external_connectors,
 )
+from modules.external_data.connectors.provider_registry import (
+    ExternalProviderConfigError,
+    ExternalProviderDefinition,
+    ExternalProviderMode,
+    ProviderAuthMode,
+    ProviderCategory,
+    ProviderCredential,
+    ProviderLicense,
+    ProviderValidationResult,
+    provider_downstream_use_flags,
+    provider_export_allowed,
+    provider_registry,
+    provider_secret_inventory,
+    validate_external_providers,
+    validate_external_providers_or_raise,
+)
 
 __all__ = [
     "AdminBoundaryConnector",
@@ -24,4 +40,18 @@ __all__ = [
     "ListingConnector",
     "PoiConnector",
     "build_external_connectors",
+    "ExternalProviderConfigError",
+    "ExternalProviderDefinition",
+    "ExternalProviderMode",
+    "ProviderAuthMode",
+    "ProviderCategory",
+    "ProviderCredential",
+    "ProviderLicense",
+    "ProviderValidationResult",
+    "provider_downstream_use_flags",
+    "provider_export_allowed",
+    "provider_registry",
+    "provider_secret_inventory",
+    "validate_external_providers",
+    "validate_external_providers_or_raise",
 ]

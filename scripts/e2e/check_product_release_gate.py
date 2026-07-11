@@ -10,6 +10,8 @@ product environment smoke.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,10 +24,55 @@ REQUIRED_FILES = {
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
+    "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
+    "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
+    "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
+    "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
+    "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
+    "closeout pickup board checker": "scripts/e2e/check_product_closeout_pickup_board.py",
+    "closeout action checker": "scripts/e2e/check_product_closeout_action.py",
+    "closeout action matrix checker": "scripts/e2e/check_product_closeout_action_matrix.py",
+    "product closeout fleet comment syncer": "scripts/e2e/sync_product_closeout_fleet_comment.py",
+    "product closeout fleet notification checker": "scripts/e2e/check_product_closeout_fleet_notification.py",
+    "release fleet dispatch status checker": "scripts/e2e/check_release_fleet_dispatch_status.py",
+    "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+    "external proof handback status board": "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
+    "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
+    "external proof handback example": "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json",
+    "external proof fleet pickup board": "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md",
+    "remote staging runbook": "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
+    "product grade gap execution tasks": "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md",
+    "product grade e2e fleet dispatch": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md",
+    "product grade e2e fleet dispatch packet": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json",
+    "product grade e2e fleet assignment ledger": "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md",
+    "external provider foundation worker evidence": "docs/evidence/fleet_dispatch/ODP-EXT-001-003_WORKER_EVIDENCE.md",
+    "external source operations worker evidence": "docs/evidence/fleet_dispatch/ODP-EXT-004-008_WORKER_EVIDENCE.md",
+    "live map provider gate worker evidence": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
+    "remote staging worker evidence": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001-002_WORKER_EVIDENCE.md",
+    "remote staging missing env report": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001_MISSING_ENV_REPORT.json",
     "listing source fixture": "tests/fixtures/source_data/external/listing_raw_snapshot.valid.json",
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
+    "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
+    "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
+    "external proof fleet pickup board checker": "scripts/e2e/check_external_proof_fleet_pickup_board.py",
+    "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
+    "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
+    "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
+    "external proof handback status board checker": "scripts/e2e/check_external_proof_handback_status_board.py",
+    "external proof handback status board updater": "scripts/e2e/update_external_proof_handback_status_board.py",
+    "external proof acceptance readiness checker": "scripts/e2e/check_external_proof_acceptance_readiness.py",
+    "external proof live blocker checker": "scripts/e2e/check_external_proof_live_blockers.py",
+    "external proof fleet notification checker": "scripts/e2e/check_external_proof_fleet_notifications.py",
+    "external proof fleet issue syncer": "scripts/e2e/sync_external_proof_fleet_issues.py",
+    "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
+    "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
+    "external proof issue handback scanner": "scripts/e2e/check_external_proof_issue_handback_scan.py",
+    "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
+    "external proof follow-up workflow checker": "scripts/e2e/check_external_proof_followup_workflow.py",
+    "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
+    "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
 
 REQUIRED_RUNNER_SPECS = (
@@ -63,6 +110,76 @@ def main() -> int:
         if not path.exists():
             errors.append(f"missing {label}: {relative_path}")
 
+    assignment_ledger = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+    assignment_text = assignment_ledger.read_text(encoding="utf-8") if assignment_ledger.exists() else ""
+    for required_token in (
+        "External provider foundation",
+        "External source operations",
+        "Live map provider gate",
+        "Remote staging rollout",
+        "handback received",
+        "rejected handback",
+        "externally blocked",
+    ):
+        if required_token not in assignment_text:
+            errors.append(f"fleet assignment ledger missing token: {required_token}")
+
+    staging_workflow = ROOT / ".github/workflows/deploy-staging.yml"
+    staging_workflow_text = staging_workflow.read_text(encoding="utf-8") if staging_workflow.exists() else ""
+    for required_token in (
+        "Deploy/Verify Staging",
+        "workflow_dispatch",
+        "ODAY_RELEASE_SHA",
+        "ODP_STAGING_DEPLOY_URL",
+        "ODP_STAGING_API_URL",
+        "ODP_STAGING_SECRET_OWNER",
+        "scripts/e2e/check_remote_staging_proof.py",
+        "actions/upload-artifact@v4",
+    ):
+        if required_token not in staging_workflow_text:
+            errors.append(f"remote staging workflow missing token: {required_token}")
+    if "TODO: replace with real deploy" in staging_workflow_text:
+        errors.append("remote staging workflow still contains placeholder deploy TODO")
+
+    external_followup_workflow = ROOT / ".github/workflows/external-proof-followup.yml"
+    external_followup_workflow_text = (
+        external_followup_workflow.read_text(encoding="utf-8")
+        if external_followup_workflow.exists()
+        else ""
+    )
+    for required_token in (
+        "External Proof Follow-up",
+        "workflow_dispatch",
+        "schedule:",
+        "GH_TOKEN",
+        "gh pr view 82",
+        "check_external_proof_issue_sync.py --require-assignees",
+        "check_external_proof_fleet_notifications.py",
+        "check_external_proof_live_blockers.py --require-assignees",
+        "check_external_proof_handback_status_board.py",
+        "check_external_proof_issue_handback_scan.py",
+        "--fail-on-escalation",
+        "sync_external_proof_escalation_comments.py",
+        "actions/upload-artifact@v4",
+    ):
+        if required_token not in external_followup_workflow_text:
+            errors.append(f"external proof follow-up workflow missing token: {required_token}")
+
+    external_followup_workflow_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_followup_workflow.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_followup_workflow_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_followup_workflow_check.stdout + external_followup_workflow_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof follow-up workflow check failed: {output}")
+
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
     for spec in REQUIRED_RUNNER_SPECS:
@@ -74,6 +191,221 @@ def main() -> int:
     for token in REQUIRED_REPORT_TOKENS:
         if token not in readiness_text:
             errors.append(f"readiness report does not mention {token}")
+
+    closeout_queue_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if closeout_queue_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (closeout_queue_check.stdout + closeout_queue_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"closeout queue check failed: {output}")
+
+    closeout_pickup_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if closeout_pickup_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (closeout_pickup_board_check.stdout + closeout_pickup_board_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"closeout pickup board check failed: {output}")
+
+    fleet_dispatch_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if fleet_dispatch_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (fleet_dispatch_check.stdout + fleet_dispatch_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"product-grade fleet dispatch check failed: {output}")
+
+    external_proof_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_closeout_queue.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_proof_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_proof_check.stdout + external_proof_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof closeout queue check failed: {output}")
+
+    external_pickup_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_fleet_pickup_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_pickup_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_pickup_board_check.stdout + external_pickup_board_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof fleet pickup board check failed: {output}")
+
+    external_handback_template_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_handback_template_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (external_handback_template_check.stdout + external_handback_template_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof handback template check failed: {output}")
+
+    external_handback_status_board_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_status_board.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if external_handback_status_board_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (
+                external_handback_status_board_check.stdout + external_handback_status_board_check.stderr
+            ).splitlines()
+            if line.strip()
+        )
+        errors.append(f"external proof handback status board check failed: {output}")
+
+    go_no_go_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if go_no_go_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (go_no_go_check.stdout + go_no_go_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"product go/no-go guard check failed: {output}")
+
+    for doc_label, relative_path in (
+        ("closeout manifest", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"),
+        ("go/no-go packet", "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"),
+        ("closeout playbook", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"),
+        ("closeout pickup board", "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"),
+        ("external proof fleet pickup board", "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"),
+    ):
+        doc_path = ROOT / relative_path
+        doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+        for required_token in (
+            "check_external_proof_issue_sync.py",
+            "--require-assignees",
+            "check_external_proof_handback_artifact.py",
+            "check_external_proof_handback_bundle.py",
+            "check_external_proof_handback_status_board.py",
+            "update_external_proof_handback_status_board.py",
+            "check_external_proof_live_blockers.py",
+            "check_external_proof_fleet_notifications.py",
+            "check_external_proof_issue_handback_scan.py",
+            "--fail-on-escalation",
+            "sync_external_proof_escalation_comments.py",
+            "check_product_go_no_go.py",
+        ):
+            if required_token not in doc_text:
+                errors.append(f"{doc_label} missing external proof issue sync token: {required_token}")
+
+    pickup_board = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
+    pickup_text = pickup_board.read_text(encoding="utf-8") if pickup_board.exists() else ""
+    for required_token in (
+        "External Proof Fleet Pickup Board",
+        "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+        "generate_external_proof_handback_skeleton.py",
+        "check_external_proof_fleet_pickup_board.py",
+        "check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
+        "sync_external_proof_escalation_comments.py --apply",
+        "--force --comment-dir",
+        "ODP-EXT-PROD-001",
+        "ODP-EXT-PROD-002",
+        "ODP-EXT-PROD-003",
+        "ODP-MAP-STAGE-001",
+        "ODP-MAP-STAGE-002",
+        "ODP-PV-STAGE-001",
+        "ODP-PV-STAGE-002",
+        "#132",
+        "#133",
+        "#134",
+        "#135",
+        "#136",
+        "#137",
+        "#138",
+        "mock://",
+        "localhost",
+        "127.0.0.1",
+        "check_external_proof_handback_bundle.py",
+    ):
+        if required_token not in pickup_text:
+            errors.append(f"external proof fleet pickup board missing token: {required_token}")
+
+    closeout_pickup_board = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
+    closeout_pickup_text = closeout_pickup_board.read_text(encoding="utf-8") if closeout_pickup_board.exists() else ""
+    for required_token in (
+        "Product Release Closeout Pickup Board",
+        "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
+        "check_product_closeout_queue.py --report",
+        "ODP-PV-008",
+        "ODP-FE-XCUT-001",
+        "ODP-FE-R0-001",
+        "ODP-FE-XCUT-UI-001",
+        "ODP-FE-EXP-001",
+        "ODP-FE-OPS-001",
+        "ODP-FE-PRICE-001",
+        "ODP-FE-ASSET-001",
+        "ODP-FE-LEARN-001",
+        "ODP-FE-XCUT-DOMAIN-001",
+        "ODP-FE-XCUT-TYPES-001",
+        "Human/Ops",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2",
+        "owner_status_closeout",
+        "reviewer_status_closeout",
+        "human_signoff",
+        "scripts/ai_status.py approve",
+        "scripts/ai_status.py reopen",
+        "scripts/ai_status.py done",
+        "provider-specific production credential",
+        "remote-staging live tile",
+        "remote staging host/url/secret",
+    ):
+        if required_token not in closeout_pickup_text:
+            errors.append(f"closeout pickup board missing token: {required_token}")
 
     if errors:
         print("Product release gate failed:")

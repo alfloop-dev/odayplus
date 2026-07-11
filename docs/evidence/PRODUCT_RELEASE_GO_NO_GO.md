@@ -5,19 +5,28 @@ Decision status: conditional go for deterministic product E2E and E2E backup/res
 Decision date: 2026-06-29  
 Decision owner: Human/Ops  
 Prepared by: Codex2 manual implementation by Codex
-Reference verification evidence: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` passed GitHub `CI` and `Deploy Dev`; evidence refresh PR #80 passed GitHub `CI` and `product-e2e-gate` on 2026-06-29. Final Human/Ops sign-off must verify the GitHub checks attached to the target release commit.
+Current release candidate: draft release PR #82 head commit. GitHub PR #82
+`headRefOid` and attached checks are the authoritative release target because
+evidence-only merges intentionally create new `dev` commits. Reference
+verification evidence: GitHub `ci`, `product-e2e-gate`,
+`e2e-operational-evidence`, API/web image builds, and `deploy` checks passed on
+2026-06-29 after frontend evidence refresh PRs #87, #88, #89, #90, #91, and
+fleet handback evidence PR #127.
+Final Human/Ops sign-off must verify the GitHub checks attached to the target
+release commit before promoting the draft release.
 
 ## Decision
 
 | Gate | Status | Evidence |
 |---|---|---|
 | Code/security CI | passed for reference baseline; must pass on target release commit | `make ci` in GitHub `CI`, security high/critical dependency gate |
-| Product E2E static release gate | passed when `python3 scripts/e2e/check_product_release_gate.py` passes | checks required specs, evidence docs, deterministic env, source stub, map coverage |
+| Product E2E static release gate | passed when `python3 scripts/e2e/check_product_release_gate.py` passes | checks required specs, evidence docs, deterministic env, source/external-data gates, map coverage, and closeout queue |
 | Product Docker E2E | passed when `scripts/e2e/run_product_e2e.sh` passes | Docker API/web/worker/source-stub stack, 9 Playwright tests after PV-014 |
-| Map gate | passed | `tests/e2e/e2e-map.spec.ts` nonblank MapLibre canvas and deck overlay assertions |
-| External/source stub gate | passed for deterministic E2E | `tests/fixtures/source_data/external/*.valid.json`, source stub readiness in `product-e2e-env.spec.ts` |
+| Map gate | passed | `tests/e2e/e2e-map.spec.ts`, `e2e-map-live-boundary.spec.ts`, `e2e-map-resilience.spec.ts`, `e2e-map-tooltip-evidence.spec.ts`, and `e2e-map-a11y.spec.ts` |
+| External/source gate | passed for deterministic and mock-live E2E | `tests/fixtures/source_data/external/*.valid.json`, source stub readiness, live adapter tests, scheduled fetch tests, quota/freshness/licensing gates, and external source product E2E |
 | Audit evidence gate | passed for deterministic E2E | retained bundle checksum and audit correlations in product specs |
 | Deployment/backup/rollback gate | passed for deterministic E2E reference baseline; must pass on target release commit | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`, `python3 scripts/e2e/verify_deployment_health_backup_rollback.py`, GitHub `Deploy Dev` |
+| Shared frontend contract gate | passed on current draft release PR #82 head | PR #87 domain type contracts, PR #88 `packages/ui-domain`, PR #89 `packages/ui`, PR #90 evidence refresh, PR #91 release-candidate evidence refresh, PR #127 fleet handback evidence refresh, and contract tests under `tests/contract/` |
 
 ## Go Criteria
 
@@ -33,11 +42,11 @@ Release is blocked if any of these are true:
 
 - `scripts/e2e/run_product_e2e.sh` omits map, API-bound UI, deterministic environment, PV-006, or PV-007 specs.
 - the external source fixtures under `tests/fixtures/source_data/external/*.valid.json` or the Docker source-stub stack are missing.
-- `tests/e2e/e2e-map.spec.ts` fails its nonblank canvas/deck overlay checks.
+- map E2E/a11y specs fail canvas/deck, live boundary, resilience, tooltip/evidence, direct picking, layer persistence, or axe/keyboard checks.
 - `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` fails to export retained audit evidence or loses `corr-pv007-avm-netplan-learning-audit`.
 - `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` loses `corr-pv006-ops-intervention-price-ad`.
 - Any P0 scenario in `tests/e2e/test_acceptance_coverage.py` lacks executable automation, deterministic data, or audit evidence.
-- remote staging host/url variables are required and still unset for live staging rollout.
+- remote staging host/url/secret owner variables are required and still unset for live staging rollout, or `/platform/version.release_sha` does not match PR #82 `headRefOid`.
 
 ## Human/Ops Checklist
 
@@ -46,9 +55,37 @@ Release is blocked if any of these are true:
 | Product E2E report reviewed | Confirm every P0 row in `PRODUCT_E2E_READINESS_REPORT.md` has a test, data source, screenshot/trace, and audit/evidence id | pending-human |
 | CI release gate reviewed | Confirm GitHub `product-e2e-gate` ran `make product-release-gate` | pending-human |
 | Deterministic environment accepted | Confirm deterministic source stub is acceptable for PV readiness | pending-human |
-| Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url configuration | pending-human |
+| Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url/secret owner configuration and `check_remote_staging_proof.py` evidence | pending-human |
+| External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` remains open for provider credential/license/geocoder, remote live map endpoint, and remote staging proof | pending-human |
+| External proof handback format reviewed | Confirm fleets use `EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for redacted runtime proof artifacts and that `check_external_proof_handback_template.py` passes | pending-human |
+| External proof handback intake reviewed | Confirm `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` reflects pending/submitted/needs-revision/accepted state for #132-#138, that updates use `update_external_proof_handback_status_board.py`, and that `check_external_proof_handback_status_board.py` passes | pending-human |
+| External proof handback artifacts validated | For each submitted #132-#138 handback, run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing the issue; the checker must verify required evidence, redaction, accepted attestation, and queue-required command fragments in `commands_run` | pending-human |
+| External proof handback bundle validated | After all #132-#138 handbacks are submitted, run `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` to prove the complete set is present, unique, accepted, and tied to the same release head | pending-human |
+| External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
+| External proof live blocker state reviewed | Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` and confirm unaccepted #132-#138 handbacks still have open, labeled, assigned release-blocker issues | pending-human |
+| External proof fleet notification reviewed | Run `python3 scripts/e2e/check_external_proof_fleet_notifications.py` and confirm #132-#138 have pickup comments for the current PR #82 `headRefOid` | pending-human |
+| External proof handback scan reviewed | Run `python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation` and confirm #132-#138 show candidate handbacks only after the latest current-SHA pickup, with pickup age and escalation due state visible; overdue no-handback rows must block release-owner dispatch | pending-human |
+| External proof escalation reviewed | Run `python3 scripts/e2e/sync_external_proof_escalation_comments.py --apply` only when the handback scan marks rows escalation due; use `--force --comment-dir <dir>` to render manual drafts without posting | pending-human |
+| Product go/no-go guard reviewed | Run `python3 scripts/e2e/check_product_go_no_go.py` and confirm this packet still keeps live provider, live map, and remote staging proof conditional until #132-#138 are accepted | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
+
+## External Proof Blocking Tasks
+
+These tasks must stay `external_blocked` in
+`PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` until Product Validation accepts
+the redacted handback artifact for each issue and the full #132-#138 bundle
+passes `check_external_proof_handback_bundle.py` against PR #82 `headRefOid`.
+
+| Task | Issue | Owner | Reviewer | Blocking type | Completion rule |
+|---|---|---|---|---|---|
+| `ODP-EXT-PROD-001` | #132 | Platform/Ops | Product Validation | `provider_credentials` | Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs. |
+| `ODP-EXT-PROD-002` | #133 | Data Partnerships / Legal | Product Validation | `provider_license_and_snapshot` | Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient. |
+| `ODP-EXT-PROD-003` | #134 | Platform/Ops | Product Validation | `provider_geocoder` | Do not close from replay fixture alone; close only with redacted production geocoder proof. |
+| `ODP-MAP-STAGE-001` | #135 | Platform/Ops | Product Validation | `live_map_endpoint` | Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke. |
+| `ODP-MAP-STAGE-002` | #136 | Platform/Ops | Product Validation | `live_map_geocoder` | Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke. |
+| `ODP-PV-STAGE-001` | #137 | Platform/Ops | Product Validation | `remote_staging_configuration` | Do not close until the checker passes against the configured remote staging target. |
+| `ODP-PV-STAGE-002` | #138 | Platform/Ops | Product Validation | `remote_staging_drill` | Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached. |
 
 ## Current Recommendation
 
-Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure a real staging target before claiming live remote staging rollout.
+Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure a real staging target, deploy with `ODAY_RELEASE_SHA`, and pass `scripts/e2e/check_remote_staging_proof.py` before claiming live remote staging rollout.

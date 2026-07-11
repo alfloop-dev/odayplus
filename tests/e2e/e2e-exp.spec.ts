@@ -17,6 +17,10 @@ test("Expansion workflow routes render inside the OpsBoard shell", async ({ page
     await expect(page.getByTestId("page-header")).toBeVisible();
     await expect(page.getByTestId("expansion-data-status")).toBeVisible();
   }
+
+  await page.goto("/expansion");
+  await expect(page.getByTestId("external-freshness-lineage")).toContainText("snap-expansion-20260628-0100");
+  await expect(page.getByTestId("external-freshness-lineage")).toContainText("corr-expansion-freshness-001");
 });
 
 test("HeatZone Radar exposes map, ranked list, drawer, freshness, and low confidence guard", async ({ page }) => {

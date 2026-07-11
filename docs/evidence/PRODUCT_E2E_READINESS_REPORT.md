@@ -3,7 +3,13 @@
 Task: ODP-PV-008  
 Status: release-gate candidate  
 Generated: 2026-06-29  
-Reference verification baseline: `dev@8834cc819051c2ebda8f531f467a67b07cc547e4` passed GitHub `CI` and `Deploy Dev`; evidence refresh PR #80 passed GitHub `CI` and `product-e2e-gate` on 2026-06-29.
+Current release candidate: draft release PR #82 head commit. GitHub PR #82
+`headRefOid` and attached checks are the authoritative release target because
+evidence-only merges intentionally create new `dev` commits.
+Reference verification baseline: GitHub `ci`, `product-e2e-gate`,
+`e2e-operational-evidence`, API/web image builds, and `deploy` checks passed on
+2026-06-29 after frontend evidence refresh PRs #87, #88, #89, #90, #91, and
+fleet handback evidence PR #127.
 Final release verification must use the GitHub checks attached to the target release commit, because every evidence-only merge creates a newer commit hash.
 
 ## Gate Result
@@ -29,10 +35,11 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 |---|---|---|---|
 | Deterministic environment | `tests/e2e/product-e2e-env.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, `infra/docker/docker-compose.e2e.yml` | API health, retained audit evidence, source stub state, `seed-summary.json` |
 | Web/API binding | `tests/e2e/e2e-api-bound-ui.spec.ts` | API-created AVM case and audit events | UI renders live backend state, not edited fixtures |
-| Map | `tests/e2e/e2e-map.spec.ts` | seeded HeatZone/H3 data | MapLibre canvas nonblank pixel check, deck overlay check, list/drawer synchronization |
+| Map | `tests/e2e/e2e-map.spec.ts`, `tests/e2e/e2e-map-live-boundary.spec.ts`, `tests/e2e/e2e-map-resilience.spec.ts`, `tests/e2e/e2e-map-tooltip-evidence.spec.ts`, `tests/e2e/e2e-map-a11y.spec.ts` | seeded HeatZone/H3 data | MapLibre canvas nonblank and semantic pixel checks, live tile/geocoder boundary config, URL layer persistence, direct picking, resilience states, tooltip/evidence detail, axe scan, keyboard-only selection/layer/drawer proof |
 | Expansion | `tests/e2e/e2e-expansion-product.spec.ts` | `tests/fixtures/source_data/external/listing_raw_snapshot.valid.json`, `poi_snapshot.valid.json`, `competitor_store_snapshot.valid.json`, and deterministic API seed | HeatZone/listing/site-score product path, screenshot/trace attachment |
 | Ops, intervention, price, AdLift | `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` | generated forecast/intervention/price/adlift payloads | correlation id `corr-pv006-ops-intervention-price-ad`, audit events, screenshot attachment |
 | AVM, NetPlan, Learning Hub, Audit | `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts` | generated AVM/NetPlan/Learning payloads and model artifact bytes | correlation id `corr-pv007-avm-netplan-learning-audit`, audit evidence export, retained bundle checksum, screenshot attachment |
+| Shared frontend UI contracts | `tests/contract/test_frontend_domain_type_coverage.py`, `tests/contract/test_ui_core_component_exports.py` | TypeScript domain contracts plus `packages/ui-domain` and `packages/ui` scaffolds | PR #87, PR #88, PR #89, PR #90, PR #91, and PR #127 protect documented component, domain UI, release evidence, and fleet handback coverage |
 
 ## P0 Scenario Traceability
 
@@ -57,6 +64,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 The `product-e2e-gate` CI job fails if:
 
 - the MapLibre/deck.gl map spec is removed from `scripts/e2e/run_product_e2e.sh`;
+- map follow-up specs for live boundary, resilience, tooltip/evidence, or a11y are removed from the product-grade follow-up evidence packet;
 - the deterministic product environment or source stub fixture is missing;
 - PV-005/PV-006/PV-007 product specs or evidence documents are missing;
 - this readiness report omits the required P0 scenario or audit correlation IDs;
@@ -64,7 +72,8 @@ The `product-e2e-gate` CI job fails if:
 
 ## Residual Release Risk
 
-- Remote staging rollout is still a deployment environment configuration item because staging host/url variables are placeholders.
+- Remote staging rollout is still a deployment environment configuration item because staging host/url/secret owner variables are not configured. The API now exposes `/platform/version`, and `scripts/e2e/check_remote_staging_proof.py` is the required smoke/version checker once staging exists.
+- Live external proof closeout is tracked in `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`; provider credentials/licensing/geocoder proof, remote live map endpoint smoke, and remote staging smoke/drill evidence remain external tasks.
 - Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - Moderate dependency audit findings remain below the existing high/critical release-blocking threshold and are tracked by the security gate output.

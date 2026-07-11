@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "generated": "2026-06-30",
+  "purpose": "Machine-checkable intake board for external proof handbacks attached to #132-#138.",
+  "release_target": {
+    "pr": 82,
+    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "must_not_hardcode_dev_hash": true
+  },
+  "source_of_truth": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
+  "status_values": [
+    "pending_external_handback",
+    "handback_submitted",
+    "needs_revision",
+    "accepted"
+  ],
+  "global_rules": [
+    "Do not mark a task accepted unless its handback artifact passed check_external_proof_handback_artifact.py with the current PR #82 headRefOid.",
+    "Use update_external_proof_handback_status_board.py for intake status changes instead of manual JSON edits.",
+    "Do not mark the complete set accepted unless check_external_proof_handback_bundle.py passed for all #132-#138 handbacks with the same PR #82 headRefOid.",
+    "Do not use this board as runtime proof; it only tracks intake status.",
+    "Issues #132-#138 must remain open until Product Validation accepts the matching handback."
+  ],
+  "bundle_status": {
+    "status": "pending_external_handbacks",
+    "handback_bundle_path": null,
+    "accepted_release_head_ref_oid": null,
+    "validated_by_command": "python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+    "last_validated_at": null,
+    "notes": "No complete accepted #132-#138 handback bundle has been submitted."
+  },
+  "tasks": [
+    {
+      "task_id": "ODP-EXT-PROD-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/132",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must attach redacted production credential proof to #132."
+    },
+    {
+      "task_id": "ODP-EXT-PROD-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/133",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Data Partnerships / Legal must attach provider license and production listing lineage proof to #133."
+    },
+    {
+      "task_id": "ODP-EXT-PROD-003",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/134",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must attach redacted production geocoder proof to #134."
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/135",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must attach remote staging live tile endpoint smoke proof to #135."
+    },
+    {
+      "task_id": "ODP-MAP-STAGE-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/136",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must attach remote staging live geocoder endpoint smoke proof to #136."
+    },
+    {
+      "task_id": "ODP-PV-STAGE-001",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/137",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must configure remote staging and attach health/version proof to #137."
+    },
+    {
+      "task_id": "ODP-PV-STAGE-002",
+      "tracking_issue": "https://github.com/alfloop-dev/odayplus/issues/138",
+      "status": "pending_external_handback",
+      "handback_artifact_path": null,
+      "artifact_check_command": "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+      "artifact_check_passed": false,
+      "accepted_release_head_ref_oid": null,
+      "accepted_at": null,
+      "accepted_by": null,
+      "next_action": "Platform/Ops must attach remote staging smoke and backup/restore/rollback drill proof to #138."
+    }
+  ]
+}

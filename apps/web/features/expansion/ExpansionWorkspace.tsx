@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
+import { AccessibleDrawer } from "./AccessibleDrawer.tsx";
 import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
 import {
   candidates,
@@ -52,7 +53,7 @@ function ExpansionOverview() {
         summary="HeatZone 探勘、Listing 去重、候選點比較與 SiteScore 核准流程。"
         status="FRESH"
       />
-      <main className="odp-content">
+      <section aria-label="Expansion overview" className="odp-content">
         <WorkspaceNav active="overview" />
         <section className={styles.flowGrid} aria-label="Expansion decision flow">
           {pages.map((page, index) => (
@@ -67,7 +68,7 @@ function ExpansionOverview() {
           <StatusCard />
           <DecisionSeparation />
         </section>
-      </main>
+      </section>
     </>
   );
 }
@@ -156,6 +157,7 @@ function FilterBar({ children }: { children: React.ReactNode }) {
 
 function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
   const selected = selectedFromQuery(searchParams.selected) ?? heatZones[0].id;
+  const layerQuery = selectedFromQuery(searchParams.layers);
   const selectedZone = heatZones.find((zone) => zone.id === selected) ?? heatZones[0];
 
   return (
@@ -165,7 +167,7 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
         summary="依需求缺口、ODay G2 Fit、租金可行性與 cannibalization risk 排序展店熱區。"
         status="FRESH"
       />
-      <main className="odp-content" data-testid="exp-heatzone-page">
+      <section aria-label="HeatZone Radar workspace" className="odp-content" data-testid="exp-heatzone-page">
         <WorkspaceNav active="heatzone" />
         <FilterBar>
           <label>
@@ -196,6 +198,7 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
           <HeatZoneMap
             candidates={candidates}
             freshness={freshness}
+            layerQuery={layerQuery}
             listings={listings}
             selectedZoneId={selectedZone.id}
             zones={heatZones}
@@ -221,10 +224,14 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
             />
           </aside>
         </section>
-        <Drawer title={`${selectedZone.id} · ${selectedZone.district}`} testId="heatzone-drawer">
+        <Drawer
+          returnFocusTestId={`heatzone-row-${selectedZone.id}`}
+          title={`${selectedZone.id} · ${selectedZone.district}`}
+          testId="heatzone-drawer"
+        >
           <HeatZoneScoreCard zone={selectedZone} />
         </Drawer>
-      </main>
+      </section>
     </>
   );
 }
@@ -265,7 +272,7 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
         summary="處理外部房源匯入、解析、去重、硬規則與候選點轉換。"
         status="FRESH"
       />
-      <main className="odp-content" data-testid="exp-listings-page">
+      <section aria-label="Listing inbox workspace" className="odp-content" data-testid="exp-listings-page">
         <WorkspaceNav active="listings" />
         <ImportSummary />
         <FilterBar>
@@ -305,7 +312,7 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
           <DrawerSection title="Candidate conversion" body={listing.action === "建立候選點" ? "顯示 CandidateSiteCard preview，成功後回傳 job_id。" : "需先處理阻擋問題，不做 optimistic update。"} />
           <DrawerSection title="Audit" body={`source snapshot ${freshness.sourceSnapshotId} · correlation_id corr-${listing.id}`} />
         </Drawer>
-      </main>
+      </section>
     </>
   );
 }
@@ -320,7 +327,7 @@ function CandidatesPage({ searchParams }: { searchParams: SearchParams }) {
         summary="比較候選點可行性並送出 SiteScore，缺必要資料時明確 disabled reason。"
         status="FRESH"
       />
-      <main className="odp-content" data-testid="exp-candidates-page">
+      <section aria-label="Candidate sites workspace" className="odp-content" data-testid="exp-candidates-page">
         <WorkspaceNav active="candidates" />
         <FilterBar>
           <label>
@@ -355,7 +362,7 @@ function CandidatesPage({ searchParams }: { searchParams: SearchParams }) {
         <Drawer title={`${candidate.id} · ${candidate.address}`} testId="candidate-drawer">
           <CandidateSiteCard candidate={candidate} />
         </Drawer>
-      </main>
+      </section>
     </>
   );
 }
@@ -370,7 +377,7 @@ function SiteScoreListPage({ searchParams }: { searchParams: SearchParams }) {
         summary="掃描評分報告、待審狀態、模型新鮮度與 M1/M3/M6/M12 預測區間。"
         status="FRESH"
       />
-      <main className="odp-content" data-testid="exp-sitescore-page">
+      <section aria-label="SiteScore reports workspace" className="odp-content" data-testid="exp-sitescore-page">
         <WorkspaceNav active="sitescore" />
         <FilterBar>
           <label>
@@ -404,7 +411,7 @@ function SiteScoreListPage({ searchParams }: { searchParams: SearchParams }) {
         <Drawer title={`${report.id} preview`} testId="sitescore-preview-drawer">
           <ReportPreview report={report} />
         </Drawer>
-      </main>
+      </section>
     </>
   );
 }
@@ -419,7 +426,7 @@ function SiteScoreDetailPage({ reportId }: { reportId?: string }) {
         status={report.dataStatus}
         reportId={report.id}
       />
-      <main className="odp-content" data-testid="exp-sitescore-detail-page">
+      <section aria-label="SiteScore report detail workspace" className="odp-content" data-testid="exp-sitescore-detail-page">
         <WorkspaceNav active="sitescoreDetail" />
         <nav className={styles.anchorTabs} aria-label="Report anchors">
           {["summary", "status", "evidence", "recommendation", "decision", "execution", "audit"].map((id) => (
@@ -439,7 +446,7 @@ function SiteScoreDetailPage({ reportId }: { reportId?: string }) {
             <ApprovalPanel report={report} />
           </aside>
         </section>
-      </main>
+      </section>
     </>
   );
 }
@@ -480,20 +487,21 @@ function DenseTable({
   );
 }
 
-function Drawer({ title, children, testId }: { title: string; children: React.ReactNode; testId: string }) {
+function Drawer({
+  title,
+  children,
+  testId,
+  returnFocusTestId,
+}: {
+  title: string;
+  children: React.ReactNode;
+  testId: string;
+  returnFocusTestId?: string;
+}) {
   return (
-    <aside className={styles.drawer} aria-label={title} data-testid={testId}>
-      <div className={styles.drawerHeader}>
-        <h2>{title}</h2>
-        <a href="?">Esc</a>
-      </div>
+    <AccessibleDrawer returnFocusTestId={returnFocusTestId} title={title} testId={testId}>
       {children}
-      <div className={styles.drawerFooter}>
-        <a href="#prev">上一筆</a>
-        <a href="#next">下一筆</a>
-        <a href="#deep-link">Deep link</a>
-      </div>
-    </aside>
+    </AccessibleDrawer>
   );
 }
 
@@ -719,6 +727,16 @@ function StatusCard() {
         <Badge label="read-only permission" tone="blue" marker="▣" />
       </div>
       <p>Filter、sort、page、selected entity 與 drawer state 皆以 URL query 還原。</p>
+      <dl className={styles.metaGrid} data-testid="external-freshness-lineage">
+        <dt>source snapshot</dt>
+        <dd className={styles.mono}>{freshness.sourceSnapshotId}</dd>
+        <dt>provider observed</dt>
+        <dd className={styles.mono}>{freshness.providerObservedAt}</dd>
+        <dt>ingested at</dt>
+        <dd className={styles.mono}>{freshness.ingestedAt}</dd>
+        <dt>correlation_id</dt>
+        <dd className={styles.mono}>{freshness.correlationId}</dd>
+      </dl>
     </section>
   );
 }

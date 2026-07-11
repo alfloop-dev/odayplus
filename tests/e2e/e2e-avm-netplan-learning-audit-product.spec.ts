@@ -180,6 +180,11 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   await page.goto("/w/dealroom/cases/vc-5101");
   await expect(page.getByTestId("avm-case-detail-page")).toBeVisible();
   await expect(page.getByTestId("valuation-range-chart")).toContainText("Three-Lens Valuation");
+  await expect(page.getByTestId("valuation-range-chart")).toContainText("MASKED_BY_PERMISSION");
+  await expect(page.getByTestId("valuation-range-chart")).not.toContainText("17,654");
+  await expect(page.getByTestId("valuation-range-chart")).not.toContainText("33,390");
+  await expect(page.getByTestId("avm-reserve-marker")).toHaveCount(0);
+  await expect(page.getByTestId("avm-asking-marker")).toHaveCount(0);
   await expect(page.getByTestId("avm-approval-panel")).toContainText("never optimistic");
   await expect(page.getByTestId("avm-dataroom")).toContainText("Valuation card");
 

@@ -24,8 +24,16 @@ test("DealRoomAVM case list scans status, masked reserve/asking, approval and Da
   await page.goto("/w/dealroom/cases?selected=vc-5101&drawer=case");
   await expect(page.getByTestId("avm-cases-page")).toContainText("DATAROOM_READY");
   await expect(page.getByTestId("avm-cases-page")).toContainText("Reserve / Asking");
+  await expect(page.getByTestId("avm-cases-page")).toContainText("MASKED_BY_PERMISSION");
   await expect(page.getByTestId("avm-case-drawer")).toContainText("依權限遮罩");
+  await expect(page.getByTestId("avm-case-drawer")).toContainText("MASKED_BY_PERMISSION");
   await expect(page.getByTestId("avm-case-drawer")).toContainText("開啟案件詳情");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("17,654");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("33,390");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("12,028");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("23,730");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("7,954");
+  await expect(page.getByTestId("avm-cases-page")).not.toContainText("16,590");
 });
 
 test("DealRoomAVM case detail shows three-lens chart, finance approval, and DataRoom checklist", async ({ page }) => {
@@ -36,6 +44,11 @@ test("DealRoomAVM case detail shows three-lens chart, finance approval, and Data
   await expect(chart).toContainText("Three-Lens Valuation");
   await expect(chart).toContainText("blended");
   await expect(chart).toContainText("永不只顯示 P50");
+  await expect(chart).toContainText("MASKED_BY_PERMISSION");
+  await expect(chart).not.toContainText("17,654");
+  await expect(chart).not.toContainText("33,390");
+  await expect(page.getByTestId("avm-reserve-marker")).toHaveCount(0);
+  await expect(page.getByTestId("avm-asking-marker")).toHaveCount(0);
   await expect(page.getByTestId("avm-approval-panel")).toContainText("never optimistic");
   await expect(page.getByText("decision_id dec-avm-5101")).toBeVisible();
   await expect(page.getByTestId("avm-dataroom")).toContainText("Valuation card");
@@ -45,6 +58,9 @@ test("DealRoomAVM case detail shows three-lens chart, finance approval, and Data
 test("DealRoomAVM blocks DataRoom before finance approval and allows approval at REVIEW_REQUIRED", async ({ page }) => {
   await page.goto("/w/dealroom/cases/vc-5102");
   await expect(page.getByTestId("avm-dataroom")).toContainText("不得建立 DataRoom 或匯出");
+  await expect(page.getByLabel("masked reserve price")).toHaveValue("MASKED_BY_PERMISSION");
+  await expect(page.getByTestId("avm-case-detail-page")).not.toContainText("12,028");
+  await expect(page.getByTestId("avm-case-detail-page")).not.toContainText("23,730");
   await expect(page.getByTestId("avm-approval-panel").getByRole("button")).toBeEnabled();
 });
 
