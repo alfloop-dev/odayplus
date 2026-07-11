@@ -24,6 +24,17 @@ from models.shared_ml.registry import (
     ModelVersion,
     RegisteredModel,
 )
+from models.shared_ml.scoring_binding import (
+    SCORING_MODEL_SPECS,
+    SCORING_MODEL_SPECS_BY_SERVICE,
+    ModelBinding,
+    ProductionModelUnavailableError,
+    ScoringInputUnavailableError,
+    ScoringModelSpec,
+    require_live_inputs,
+    resolve_production_binding,
+    seed_scoring_models,
+)
 from models.shared_ml.validation import (
     MetricThreshold,
     SegmentMetric,
@@ -62,4 +73,13 @@ __all__ = [
     "LabelDefinition",
     "FeatureSet",
     "LabelSet",
+    "ModelBinding",
+    "ProductionModelUnavailableError",
+    "SCORING_MODEL_SPECS",
+    "SCORING_MODEL_SPECS_BY_SERVICE",
+    "ScoringInputUnavailableError",
+    "ScoringModelSpec",
+    "require_live_inputs",
+    "resolve_production_binding",
+    "seed_scoring_models",
 ]
