@@ -346,6 +346,144 @@ def test_immature_window_cannot_claim_effect() -> None:
     assert outcome.effect.recommendation is Recommendation.INCONCLUSIVE
     assert "observation_window_not_mature" in outcome.effect.limitations
     assert registry.get(case.intervention_id).can_claim_effect is False
+    # KEY: an immature evaluate_effect must NOT advance the case to COMPLETED.
+    # It must stay in EVALUATING so close_case cannot be called prematurely.
+    assert outcome.intervention.status is InterventionStatus.EVALUATING
+
+
+def test_immature_evaluate_then_close_is_rejected() -> None:
+    """Regression: Codex2 review — immature evaluate_effect must not allow close.
+
+    Reproduction sequence:
+        1. Drive a case to OBSERVING with an outcome collected.
+        2. Call evaluate_effect with now=IMMATURE_TIME (window not settled).
+        3. Attempt close_case with KEEP.
+
+    Before the fix evaluate_effect always advanced to COMPLETED even when
+    observation_mature=False, which let close_case slip through to CLOSED.
+    After the fix:
+        - evaluate_effect with an immature window stays in EVALUATING (not COMPLETED);
+        - a close_case attempt at that point raises InterventionError because the
+          status check (requires COMPLETED) fails.
+    """
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        case.intervention_id,
+        actor="analyst-a",
+        incremental_revenue=50_000.0,
+        incremental_gross_margin=20_000.0,
+        has_control_group=False,
+        pretrend_status=PretrendStatus.INCONCLUSIVE,
+        treatment_store_count=1,
+        control_store_count=0,
+        evaluation_method=EvaluationMethod.BEFORE_AFTER,
+    )
+
+    # Immature evaluation: window has not settled.
+    outcome = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
+    )
+    assert outcome.effect.observation_mature is False
+    # Must stay in EVALUATING — NOT COMPLETED.
+    assert outcome.intervention.status is InterventionStatus.EVALUATING
+
+    # close_case must be rejected because the status is EVALUATING, not COMPLETED.
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="attempted close on immature outcome",
+        )
+
+
+def test_close_defence_in_depth_rejects_immature_effect() -> None:
+    """Defence-in-depth: close_case must guard effect.observation_mature even if
+    the status check is somehow satisfied (e.g. via a future alternative code path).
+
+    Simulated by creating a workflow state where the case is in COMPLETED but the
+    effect has observation_mature=False — which cannot happen through the normal
+    workflow after the primary fix, but we verify the guard independently.
+    """
+    from dataclasses import replace as dc_replace
+
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    completed = workflow.get(case.intervention_id)
+    assert completed.status is InterventionStatus.COMPLETED
+
+    # Fabricate an immature effect on an otherwise COMPLETED case to test the
+    # defence-in-depth guard independently of the primary fix.
+    assert completed.effect is not None
+    immature_effect = dc_replace(completed.effect, observation_mature=False)
+    tampered = dc_replace(completed, effect=immature_effect)
+    workflow.repository.save(tampered)
+
+    with pytest.raises(InterventionError, match="observation window has not matured"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="attempting close with fabricated immature effect",
+        )
+
+
+def test_immature_evaluate_then_mature_retry_reaches_completed() -> None:
+    """Regression: Codex2 review — mature retry after immature evaluate must work.
+
+    Full reproduction sequence from the task brief:
+        1. Drive a case to OBSERVING with an outcome collected.
+        2. Call evaluate_effect(now=IMMATURE_TIME) → EVALUATING, observation_mature=False.
+        3. Call evaluate_effect(now=MATURE_TIME) → must succeed (NOT raise) and
+           advance the case to COMPLETED so the operator can close it.
+
+    Before the fix step 3 raised:
+        InterventionError: cannot evaluate effect on intervention in status EVALUATING
+    because _require_status only allowed OBSERVING.  After the fix EVALUATING is
+    also accepted, making the mature-retry path reachable.
+    """
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        case.intervention_id,
+        actor="analyst-a",
+        incremental_revenue=50_000.0,
+        incremental_gross_margin=20_000.0,
+        has_control_group=True,
+        pretrend_status=PretrendStatus.PASS,
+        treatment_store_count=5,
+        control_store_count=5,
+        evaluation_method=EvaluationMethod.DID,
+    )
+
+    # Step 2: immature first evaluate — case stays in EVALUATING.
+    first = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
+    )
+    assert first.effect.observation_mature is False
+    assert first.intervention.status is InterventionStatus.EVALUATING
+
+    # Step 3: mature retry — must NOT raise, must advance to COMPLETED.
+    second = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=MATURE_TIME
+    )
+    assert second.effect.observation_mature is True
+    assert second.intervention.status is InterventionStatus.COMPLETED
+
+    # Verify the case can now be closed.
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="positive effect confirmed after mature retry",
+    )
+    assert closed.status is InterventionStatus.CLOSED
 
 
 def test_mature_without_control_is_before_after_not_causal() -> None:

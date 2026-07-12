@@ -523,7 +523,16 @@ class InterventionWorkflow:
         correlation_id: str = "",
     ) -> EffectEvaluationOutcome:
         intervention = self._require(intervention_id)
-        self._require_status(intervention, {InterventionStatus.OBSERVING}, "evaluate effect")
+        # Also allow EVALUATING so that an immature-evaluate can be retried once
+        # the observation window has settled.  When evaluate_effect is first called
+        # with an immature window the case stays in EVALUATING (not COMPLETED).  The
+        # operator must be able to call evaluate_effect again later — this is the
+        # canonical "mature retry" path described in ODP-MOD-05 §7.
+        self._require_status(
+            intervention,
+            {InterventionStatus.OBSERVING, InterventionStatus.EVALUATING},
+            "evaluate effect",
+        )
         if intervention.outcome is None:
             raise InterventionError("cannot evaluate effect before an outcome is collected")
         if intervention.observation_window is None:
@@ -584,19 +593,26 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             effect=effect,
         )
-        completed = evaluating.with_transition(
-            to_status=InterventionStatus.COMPLETED,
-            actor=actor,
-            action="complete",
-            reason=f"evidence {evidence.value}",
-            correlation_id=correlation_id,
-        )
-        self.repository.save(completed)
+        if mature:
+            # Window is mature: advance to COMPLETED so the operator can close.
+            saved = evaluating.with_transition(
+                to_status=InterventionStatus.COMPLETED,
+                actor=actor,
+                action="complete",
+                reason=f"evidence {evidence.value}",
+                correlation_id=correlation_id,
+            )
+        else:
+            # Window not yet mature: record the evaluation in EVALUATING but do
+            # NOT advance to COMPLETED — the operator must not be able to close a
+            # case whose outcome window has not settled (ODP-MOD-05 §7, ODP-ML-05 §6).
+            saved = evaluating
+        self.repository.save(saved)
 
         label = LabelRecord(
-            intervention_id=completed.intervention_id,
-            store_id=completed.store_id,
-            treatment_type=completed.kind.value,
+            intervention_id=saved.intervention_id,
+            store_id=saved.store_id,
+            treatment_type=saved.kind.value,
             outcome_window_start=window.opened_at,
             outcome_window_end=window.outcome_window_end,
             label_maturity_time=window.maturity_time,
@@ -613,9 +629,9 @@ class InterventionWorkflow:
             hook(label)
 
         audit_event = self._audit(
-            completed,
+            saved,
             action="evaluate_effect",
-            outcome="completed",
+            outcome="completed" if mature else "evaluating",
             actor=actor,
             correlation_id=correlation_id,
             reason=f"evidence {evidence.value}",
@@ -629,7 +645,7 @@ class InterventionWorkflow:
             },
         )
         return EffectEvaluationOutcome(
-            intervention=completed,
+            intervention=saved,
             effect=effect,
             label=label,
             audit_event_id=audit_event.event_id,
@@ -660,6 +676,17 @@ class InterventionWorkflow:
         """
         intervention = self._require(intervention_id)
         self._require_status(intervention, {InterventionStatus.COMPLETED}, "close")
+        # Closing is only permitted once the effect evaluation is mature — an
+        # operator must never disposition a case whose outcome window has not
+        # settled, because the effect figures are not yet reliable (ODP-MOD-05 §7,
+        # ODP-ML-05 §6). If evaluate_effect correctly guards COMPLETED behind
+        # maturity, this check is defence-in-depth; it also guards any future code
+        # path that reaches COMPLETED through an alternative route.
+        if intervention.effect is not None and not intervention.effect.observation_mature:
+            raise InterventionError(
+                "cannot close: observation window has not matured "
+                "(effect.observation_mature=False); wait until the window settles"
+            )
         if not reason.strip():
             raise InterventionError("closing an intervention requires a reason")
         resolved_disposition = CloseDisposition(disposition)
