@@ -88,6 +88,29 @@ Evidence: `docs/evidence/completion/ODP-FLOW-001/implementation.md` and
 `verification.md` (focused suite 6 passed; related surface 161 passed; ruff
 clean; `tsc --noEmit` clean for web + openapi-client).
 
+## ODP-FLOW-003 — ForecastOps alert and handoff (ready for review)
+
+ForecastOps now closes timeseries snapshot → versioned forecast + uncertainty
+→ four-light alert → **acknowledge** → **executable intervention handoff**.
+
+- **State machine:** alert `open → acknowledged` is once-only and rejects closed
+  alerts; handoff `proposed → dispatched` records execution metadata and rejects
+  double-dispatch.
+- **Persistence:** versioned `save_forecast` remains intact; `save_alert` and
+  `save_handoff` persist acknowledgement and dispatch state in place.
+- **Audit:** lifecycle actions emit `forecastops.alert.acknowledged.v1` and
+  `forecastops.handoff.executed.v1` alongside the existing
+  `forecastops.forecasted.v1` event.
+- **UI/API:** Overview and Alert center bind to live `GET /forecastops/alerts`
+  through `loadApiBinding` and `DataSourceBadge`, with fixture fallback for cold
+  or unconfigured stores.
+- **E2E:** `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts` drives
+  forecast → acknowledge → execute handoff → linked InterventionOps case.
+
+Evidence: `docs/evidence/completion/ODP-FLOW-003/implementation.md` and
+`verification.md` (integration 8 passed; smoke 2 passed / 1 deselected; ruff
+clean; `npm run typecheck` clean; targeted Playwright E2E 1 passed).
+
 ## ODP-FLOW-005 — PriceOps sim, approval, and rollback (done)
 
 PriceOps now compares current and candidate price schemes, blocks unsafe

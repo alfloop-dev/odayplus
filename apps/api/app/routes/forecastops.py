@@ -12,12 +12,23 @@ except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
     from modules.forecastops.application import ForecastOpsService
+    from modules.forecastops.domain import ForecastOpsError, ForecastOpsNotFoundError
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.forecastops.workers import ForecastOpsBatchResult, run_forecastops_batch_forecast
 
 
     class ForecastOpsTimeseriesPayload(BaseModel):
         observations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+    class ForecastOpsAlertAcknowledgePayload(BaseModel):
+        actor: str
+        note: str | None = None
+
+
+    class ForecastOpsHandoffExecutePayload(BaseModel):
+        actor: str
+        intervention_id: str | None = None
 
 
     class ForecastOpsForecastJobPayload(BaseModel):
@@ -158,10 +169,76 @@ else:
             ]
             return {"items": [alert.to_dict() for alert in alerts], "count": len(alerts)}
 
+        @router.post("/alerts/{alert_id}/acknowledge", dependencies=[Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))])
+        def acknowledge_alert(
+            alert_id: str, body: ForecastOpsAlertAcknowledgePayload, request: Request
+        ) -> dict[str, Any]:
+            try:
+                alert = service.acknowledge_alert(alert_id, actor=body.actor, note=body.note)
+            except ForecastOpsNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.alert.acknowledged.v1",
+                    actor=body.actor,
+                    action="acknowledge",
+                    resource=f"forecastops/alert/{alert_id}",
+                    outcome="acknowledged",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "alert_level": alert.alert_level.value,
+                        "store_id": alert.store_id,
+                        "note": body.note,
+                    },
+                )
+            )
+            payload = alert.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
         @router.get("/intervention-handoffs", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_handoffs() -> dict[str, Any]:
             handoffs = forecast_repository.list_handoffs()
             return {"items": [handoff.to_dict() for handoff in handoffs], "count": len(handoffs)}
+
+        @router.post("/intervention-handoffs/{handoff_id}/execute", dependencies=[Depends(require_permission("forecastops", Action.EXECUTE, engine=authz_engine))])
+        def execute_handoff(
+            handoff_id: str, body: ForecastOpsHandoffExecutePayload, request: Request
+        ) -> dict[str, Any]:
+            try:
+                handoff = service.execute_handoff(
+                    handoff_id, actor=body.actor, intervention_id=body.intervention_id
+                )
+            except ForecastOpsNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.handoff.executed.v1",
+                    actor=body.actor,
+                    action="execute",
+                    resource=f"forecastops/intervention-handoff/{handoff_id}",
+                    outcome="dispatched",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "store_id": handoff.store_id,
+                        "intervention_type": handoff.intervention_type,
+                        "intervention_id": body.intervention_id,
+                    },
+                )
+            )
+            payload = handoff.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
 
         @router.get("/prediction-runs/{prediction_run_id}")
         def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
@@ -221,7 +298,9 @@ else:
 
 
     __all__ = [
+        "ForecastOpsAlertAcknowledgePayload",
         "ForecastOpsForecastJobPayload",
+        "ForecastOpsHandoffExecutePayload",
         "ForecastOpsJobStore",
         "ForecastOpsTimeseriesPayload",
         "create_forecastops_router",

@@ -35,6 +35,7 @@ from shared.infrastructure.persistence import (
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobRequest
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 
@@ -112,6 +113,80 @@ def test_forecast_service_writes_survive_restart(db_path) -> None:
         assert latest[0].forecast_output_id == first_id
         assert len(repo.history("store-001")) == 1
         assert len(repo.list_alerts()) >= 1
+    finally:
+        reopened.engine.close()
+
+
+def test_durable_forecastops_acknowledge_and_handoff_api_survive_restart(db_path) -> None:
+    bundle = _durable_bundle(db_path)
+    correlation_id = "corr-durable-forecastops-ack-exec"
+    try:
+        client = TestClient(create_app(persistence=bundle), headers=FORECASTOPS_HEADERS)
+        created = client.post(
+            "/forecastops/forecast-jobs",
+            json={
+                "prediction_origin_time": PREDICTION_TIME.isoformat(),
+                "inputs": [
+                    {
+                        "store_id": "store-durable-ack-001",
+                        "observations": [
+                            {
+                                "business_date": "2026-06-25",
+                                "actual_revenue": 120_000,
+                                "site_score_baseline_p50": 120_000,
+                            },
+                            {
+                                "business_date": "2026-06-26",
+                                "actual_revenue": 72_000,
+                                "site_score_baseline_p50": 120_000,
+                            },
+                        ],
+                    }
+                ],
+            },
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert created.status_code == 202
+        payload = created.json()
+        alert_id = payload["alerts"][0]["alert_id"]
+        handoff_id = payload["handoffs"][0]["handoff_id"]
+
+        acknowledged = client.post(
+            f"/forecastops/alerts/{alert_id}/acknowledge",
+            json={"actor": "ops-manager-durable", "note": "durable triage"},
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert acknowledged.status_code == 200
+        assert acknowledged.json()["status"] == "acknowledged"
+
+        executed = client.post(
+            f"/forecastops/intervention-handoffs/{handoff_id}/execute",
+            json={
+                "actor": "ops-dispatcher-durable",
+                "intervention_id": "intervention-durable-001",
+            },
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert executed.status_code == 200
+        assert executed.json()["status"] == "dispatched"
+
+        audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+        event_types = {event["event_type"] for event in audit.json()["events"]}
+        assert "forecastops.alert.acknowledged.v1" in event_types
+        assert "forecastops.handoff.executed.v1" in event_types
+    finally:
+        bundle.engine.close()
+
+    reopened = _durable_bundle(db_path)
+    try:
+        alert = reopened.forecastops_repository.get_alert(alert_id)
+        handoff = reopened.forecastops_repository.get_handoff(handoff_id)
+        assert alert is not None
+        assert alert.status == "acknowledged"
+        assert alert.acknowledged_by == "ops-manager-durable"
+        assert handoff is not None
+        assert handoff.status == "dispatched"
+        assert handoff.intervention_id == "intervention-durable-001"
     finally:
         reopened.engine.close()
 
