@@ -15,7 +15,7 @@ router, worker/job, web feature, and completion evidence. The capstone
 | FLOW-004 InterventionOps lifecycle | ODP-MOD-05 | `modules/intervention` | `interventions_router` | eligibility / effect-eval | `features/interventions` | `completion/ODP-FLOW-004/` |
 | FLOW-005 PriceOps sim/approval/rollback | ODP-MOD-06 | `modules/priceops` | `priceops_router` | pricing optimizer | `features/pricing` | `completion/ODP-FLOW-005/` |
 | FLOW-006 AdLift campaign & incrementality | ODP-MOD-07 | `modules/adlift` | `adlift_router` | control-match / DiD | `features/growth` | `completion/ODP-FLOW-006/` |
-| FLOW-007 DealRoom AVM valuation | ODP-MOD-08 | `modules/avm` | `avm_router` | valuation worker | `features/assets` | `completion/ODP-FLOW-007/` |
+| FLOW-007 DealRoom AVM valuation | ODP-MOD-08 | `modules/avm` | `avm_router` | valuation worker | `features/avm` | `completion/ODP-FLOW-007/` |
 | FLOW-008 NetPlan scenario solver | ODP-MOD-09 | `modules/netplan` | `netplan_router` | solver job | `features/netplan` | `completion/ODP-FLOW-008/` |
 | FLOW-009 Learning Hub validation/release | ODP-MOD-10 | `modules/learninghub`, `models/` | `learninghub_router` | backtest / drift / release | Learning Hub | `completion/ODP-FLOW-009/` |
 | FLOW-010 OpsBoard & Governance operator | ODP-MOD-11 | `modules/opsboard` | `operator_router` | notification | OpsBoard | `completion/ODP-FLOW-010/` |
