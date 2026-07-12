@@ -68,6 +68,22 @@ export type AuditEventsResponse = {
   events: AuditEvent[];
 };
 
+export type SourceFreshnessEvidence = {
+  provider_id: string;
+  source_snapshot_id: string;
+  data_status: string;
+  provider_observed_at?: string | null;
+  ingested_at?: string | null;
+  freshness_sla_seconds: number;
+  correlation_id: string;
+  quality_flags?: string[];
+};
+
+export type ExternalDataFreshnessResponse = {
+  freshness: SourceFreshnessEvidence[];
+  correlation_id: string;
+};
+
 export type InterventionSummary = {
   intervention_id: string;
   status?: string;
@@ -216,6 +232,10 @@ export class OdpApiClient {
       body: input,
       correlationId: options.correlationId,
     });
+  }
+
+  listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
+    return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
   }
 
   listAuditEvents(
