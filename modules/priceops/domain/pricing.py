@@ -311,6 +311,10 @@ class PlanOptimization:
     def is_feasible(self) -> bool:
         return all(not item.result.infeasible for item in self.items)
 
+    @property
+    def is_approvable(self) -> bool:
+        return self.is_constraint_safe and self.is_feasible
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "plan_id": self.plan_id,
@@ -319,6 +323,7 @@ class PlanOptimization:
             "hard_constraint_violation_count": self.hard_constraint_violation_count,
             "is_constraint_safe": self.is_constraint_safe,
             "is_feasible": self.is_feasible,
+            "is_approvable": self.is_approvable,
             "solver_status": self.solver_status,
             "requires_approval": self.requires_approval,
             "solver_version": self.solver_version,
@@ -574,6 +579,96 @@ class PricingEffectEvaluation:
         }
 
 
+@dataclass(frozen=True)
+class ItemPlanComparison:
+    """Current-vs-candidate price view for approval and operator UI."""
+
+    item_id: str
+    store_id: str
+    machine_type: str
+    current_price: float
+    candidate_price: float
+    price_changed: bool
+    baseline_simulation: SimulationResult
+    candidate_simulation: SimulationResult
+    expected_demand_change: float
+    expected_revenue_change: float
+    expected_gross_margin_change: float
+    risk_level: str
+    constraint_status: str
+    requires_approval: bool
+    binding_constraints: tuple[str, ...]
+    constraint_violations: tuple[ConstraintViolation, ...]
+    safe_action_set: tuple[float, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "item_id": self.item_id,
+            "store_id": self.store_id,
+            "machine_type": self.machine_type,
+            "current_price": self.current_price,
+            "candidate_price": self.candidate_price,
+            "price_changed": self.price_changed,
+            "baseline_simulation": self.baseline_simulation.to_dict(),
+            "candidate_simulation": self.candidate_simulation.to_dict(),
+            "expected_demand_change": self.expected_demand_change,
+            "expected_revenue_change": self.expected_revenue_change,
+            "expected_gross_margin_change": self.expected_gross_margin_change,
+            "risk_level": self.risk_level,
+            "constraint_status": self.constraint_status,
+            "requires_approval": self.requires_approval,
+            "binding_constraints": list(self.binding_constraints),
+            "constraint_violations": [v.to_dict() for v in self.constraint_violations],
+            "safe_action_set": list(self.safe_action_set),
+        }
+
+
+@dataclass(frozen=True)
+class PricingPlanComparison:
+    """Plan-level snapshot used for scheme comparison, approval, monitoring and rollback."""
+
+    plan_id: str
+    plan_status: PlanStatus
+    generated_at: datetime
+    items: tuple[ItemPlanComparison, ...]
+    total_current_gross_margin: float
+    total_candidate_gross_margin: float
+    total_expected_incremental_gross_margin: float
+    hard_constraint_violation_count: int
+    is_constraint_safe: bool
+    is_feasible: bool
+    is_approvable: bool
+    requires_approval: bool
+    approval_status: str
+    rollback_ready: bool
+    execution_status: str | None = None
+    monitoring_status: str | None = None
+    outcome_status: str | None = None
+    rollback_recommended: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "plan_status": self.plan_status.value,
+            "generated_at": self.generated_at.isoformat(),
+            "items": [item.to_dict() for item in self.items],
+            "total_current_gross_margin": self.total_current_gross_margin,
+            "total_candidate_gross_margin": self.total_candidate_gross_margin,
+            "total_expected_incremental_gross_margin": self.total_expected_incremental_gross_margin,
+            "hard_constraint_violation_count": self.hard_constraint_violation_count,
+            "is_constraint_safe": self.is_constraint_safe,
+            "is_feasible": self.is_feasible,
+            "is_approvable": self.is_approvable,
+            "requires_approval": self.requires_approval,
+            "approval_status": self.approval_status,
+            "rollback_ready": self.rollback_ready,
+            "execution_status": self.execution_status,
+            "monitoring_status": self.monitoring_status,
+            "outcome_status": self.outcome_status,
+            "rollback_recommended": self.rollback_recommended,
+        }
+
+
 def build_observation_window(
     *,
     plan_id: str,
@@ -746,11 +841,13 @@ __all__ = [
     "InterventionTreatmentHandoff",
     "InvalidTransitionError",
     "ItemOptimization",
+    "ItemPlanComparison",
     "ItemRevert",
     "ItemSimulation",
     "LabelRegistryEntry",
     "ObservationWindow",
     "PlanOptimization",
+    "PricingPlanComparison",
     "PlanSimulation",
     "PlanStatus",
     "PriceConstraints",
