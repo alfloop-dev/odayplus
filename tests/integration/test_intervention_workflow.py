@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.intervention import (
+    CloseDisposition,
     EvaluationMethod,
     EvidenceLevel,
     InMemoryInterventionRepository,
@@ -78,6 +79,24 @@ def _drive_to_approved(workflow: InterventionWorkflow, intervention_id: str) -> 
     )
 
 
+def _drive_to_completed(workflow: InterventionWorkflow, intervention_id: str) -> None:
+    """Drive a case all the way to COMPLETED with a matured, causal outcome."""
+    _drive_to_approved(workflow, intervention_id)
+    workflow.execute(intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        intervention_id,
+        actor="analyst-a",
+        incremental_revenue=120_000.0,
+        incremental_gross_margin=48_000.0,
+        has_control_group=True,
+        pretrend_status=PretrendStatus.PASS,
+        treatment_store_count=1,
+        control_store_count=4,
+        evaluation_method=EvaluationMethod.DID,
+    )
+    workflow.evaluate_effect(intervention_id, actor="analyst-a", now=MATURE_TIME)
+
+
 def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> None:
     workflow, registry = _new_workflow()
     case = _open_case(workflow)
@@ -126,6 +145,99 @@ def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> No
     assert label.evidence_level is EvidenceLevel.L3_DID_VALIDATED
     assert registry.intervened_windows("store-001") == [label]
     assert label.label_maturity_time == observing.observation_window.maturity_time
+
+
+def test_close_completed_case_records_disposition_and_is_terminal() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    completed = workflow.get(case.intervention_id)
+    assert completed.status is InterventionStatus.COMPLETED
+    # A matured-but-unclosed case is NOT terminal: it still awaits close/follow-up.
+    assert completed.is_terminal is False
+
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="positive causal effect; keep the change, no follow-up needed",
+    )
+    assert closed.status is InterventionStatus.CLOSED
+    assert closed.is_terminal is True
+    assert closed.close is not None
+    assert closed.close.disposition is CloseDisposition.KEEP
+    assert closed.close.has_follow_up is False
+    # The effect recommendation is snapshotted onto the close record for audit.
+    assert closed.close.recommendation == closed.effect.recommendation.value
+
+
+def test_close_requires_reason_and_completed_state() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+
+    # Cannot close a case that has not reached COMPLETED (rejects invalid state).
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="too early",
+        )
+
+    _drive_to_completed(workflow, case.intervention_id)
+
+    # Closing is high-risk: a reason is mandatory.
+    with pytest.raises(InterventionError, match="requires a reason"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.REVERT,
+            reason="   ",
+        )
+
+    # A closed case cannot be closed again (CLOSED is terminal).
+    workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="keep the change after positive matured effect",
+    )
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="double close attempt",
+        )
+
+
+def test_close_with_follow_up_opens_linked_candidate_after_maturity() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    original = workflow.get(case.intervention_id)
+
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.ITERATE,
+        reason="inconclusive channel mix; schedule a follow-up iteration",
+        follow_up=True,
+        follow_up_kind=InterventionKind.AD_CAMPAIGN,
+    )
+    assert closed.status is InterventionStatus.CLOSED
+    assert closed.close.has_follow_up is True
+
+    follow_up_id = closed.close.follow_up_intervention_id
+    follow_up = workflow.get(follow_up_id)
+    assert follow_up is not None
+    # The follow-up is a fresh CANDIDATE for the same store, linked back and
+    # scheduled after the original's observation window matures (no overlap).
+    assert follow_up.status is InterventionStatus.CANDIDATE
+    assert follow_up.store_id == original.store_id
+    assert follow_up.kind is InterventionKind.AD_CAMPAIGN
+    assert follow_up.trigger_ref == f"follow-up:{case.intervention_id}"
+    assert follow_up.planned_start == original.observation_window.maturity_time
 
 
 def test_conflict_blocks_approval_until_resolved() -> None:
@@ -508,3 +620,88 @@ def test_api_conflict_blocks_submit() -> None:
 
     blocked = client.post(f"/interventions/{second}/submit", json={"actor": "p"})
     assert blocked.status_code == 422
+
+
+def test_api_close_case_with_follow_up_and_audit() -> None:
+    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
+    corr = {"x-correlation-id": "corr-iv-close"}
+
+    create = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-close",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "recover GM",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "s",
+        },
+        headers=corr,
+    )
+    iid = create.json()["intervention_id"]
+    for path, payload in (
+        ("eligibility", {"eligible": True, "actor": "s"}),
+        ("action", {"action_spec": {"pct": -5}, "actor": "p"}),
+        ("conflict-check", {"actor": "p"}),
+        ("submit", {"actor": "p"}),
+        ("approve", {"action": "APPROVE", "actor": "m", "reason": "ok"}),
+        ("execute", {"executor": "r", "executed_at": EXEC_TIME.isoformat()}),
+        (
+            "outcomes",
+            {
+                "actor": "a",
+                "incremental_revenue": 100_000,
+                "incremental_gross_margin": 40_000,
+                "has_control_group": True,
+                "pretrend_status": "PASS",
+                "treatment_store_count": 1,
+                "control_store_count": 4,
+                "evaluation_method": "DID",
+            },
+        ),
+    ):
+        assert (
+            client.post(f"/interventions/{iid}/{path}", json=payload, headers=corr).status_code
+            == 200
+        )
+    assert (
+        client.post(
+            f"/interventions/{iid}/evaluate",
+            json={"actor": "a", "now": MATURE_TIME.isoformat()},
+            headers=corr,
+        ).status_code
+        == 200
+    )
+
+    # Closing requires a valid disposition; an unknown one is a domain 422.
+    bad = client.post(
+        f"/interventions/{iid}/close",
+        json={"actor": "m", "disposition": "NOT_A_DISPOSITION", "reason": "x"},
+    )
+    assert bad.status_code == 422
+
+    close = client.post(
+        f"/interventions/{iid}/close",
+        json={
+            "actor": "ops-manager",
+            "disposition": "ITERATE",
+            "reason": "iterate with a follow-up campaign after positive matured effect",
+            "follow_up": True,
+        },
+        headers=corr,
+    )
+    assert close.status_code == 200
+    closed = close.json()
+    assert closed["status"] == "CLOSED"
+    assert closed["close"]["disposition"] == "ITERATE"
+    follow_up_id = closed["close"]["follow_up_intervention_id"]
+    assert follow_up_id
+
+    follow_up = client.get(f"/interventions/{follow_up_id}")
+    assert follow_up.status_code == 200
+    assert follow_up.json()["status"] == "CANDIDATE"
+    assert follow_up.json()["trigger_ref"] == f"follow-up:{iid}"
+
+    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-close"})
+    actions = {e["action"] for e in audit.json()["events"]}
+    assert "close" in actions
