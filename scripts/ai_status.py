@@ -147,6 +147,31 @@ KNOWN_AGENTS = {
         "default_branch": "human/ops",
         "target_workload": 0,
     },
+    "Antigravity3": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity3-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity4": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity4-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity5": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity5-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity6": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity6-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity7": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity7-research-runtime",
+        "target_workload": 5,
+    },
 }
 
 AGENT_ALIASES = {
@@ -492,12 +517,6 @@ def canonical_agent_name(name: str | None) -> str:
     if not trimmed:
         return ""
     lowered = trimmed.lower()
-    import re
-    m = re.match(r'^(antigravity|gemini|claude|codex)(\d+)$', lowered)
-    if m:
-        base, num = m.groups()
-        if int(num) > 2:
-            lowered = base
     canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
     if lowered in canonical_by_lower:
         return canonical_by_lower[lowered]
