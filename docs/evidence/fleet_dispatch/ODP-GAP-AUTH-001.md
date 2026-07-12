@@ -1,7 +1,7 @@
 # ODP-GAP-AUTH-001 — Auth / identity backend
 
 - **Owner:** Claude2
-- **Reviewer:** Codex
+- **Reviewer:** Antigravity
 - **Phase:** Product Platform Gap Closure
 - **Status source of truth:** `ai-status.json`
 
@@ -68,3 +68,19 @@ python3 -m ruff check modules/opsboard/auth tests/security tests/integration  # 
   caching is a runtime/infra follow-up (composes with ODP-GAP-RUNTIME-001).
 - Migrating `apps/api` routes off `principal_from_headers` onto this boundary:
   follow-up so existing R0-007 header-based tests are not disturbed in this PR.
+
+## Finalization / closeout
+
+- **Deliverable PR:** #215 (`task/ODP-GAP-AUTH-001` → `dev`), merged
+  2026-07-11; auth boundary durable in `dev` at commit `a14b1d6`.
+- **Review:** Reviewer **Antigravity** approved 2026-07-12 — verified the
+  boundary meets all **SEC-AUTH-001** fail-closed and audit specifications
+  (30 security/integration tests pass). Task moved to `review_approved`.
+- **Owner re-verification (closeout):** re-ran
+  `pytest tests/security/test_opsboard_auth_boundary.py tests/integration/test_auth_boundary_authz.py`
+  = **30 passed**; `ruff check modules/opsboard/auth tests/security/test_opsboard_auth_boundary.py tests/integration/test_auth_boundary_authz.py`
+  = clean.
+- **Reviewer reconciliation:** the delivery commit `a14b1d6` carries the
+  original `Reviewer: Codex` trailer (assigned before reviewer rotation);
+  this closeout records the final reviewer of record as **Antigravity**, who
+  performed the approving review.
