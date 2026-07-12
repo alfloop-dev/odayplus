@@ -1,6 +1,6 @@
 # ODP-FLOW-011 — Verification
 
-**Owner:** Claude · **Reviewer:** Antigravity
+**Owner:** Claude · **Reviewer:** Codex (review reassigned from Antigravity on 2026-07-12; Codex is the reviewer-of-record who approved with no blocking findings)
 Commands run from the task worktree with `PYTHONPATH=.`.
 
 ## 1. Cross-flow gate + runtime state machine
