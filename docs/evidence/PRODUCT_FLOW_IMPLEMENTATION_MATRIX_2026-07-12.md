@@ -59,3 +59,31 @@ The flows above are composed by the first-version deployment units of
 | Recovery: watermark survives restart | ✅ pass | same |
 
 See `docs/evidence/completion/ODP-FLOW-011/verification.md` for command output.
+
+## ODP-FLOW-001 — Integration and External Data (done)
+
+External data now flows fetch → canonical mapping → DQ/quarantine →
+lineage/freshness → **durable persistence** → API/UI, idempotent and audited.
+
+- **Persistence:** `IngestionRunRecord` + `InMemoryIngestionRunStore`
+  (`modules/external_data/application/ingestion_store.py`) with a durable SQLite
+  twin `DurableIngestionRunStore`
+  (`shared/infrastructure/persistence/external_data.py`), wired into
+  `PersistenceBundle`.
+- **Service:** `ExternalIngestionService`
+  (`modules/external_data/application/ingestion_service.py`) composes the
+  existing scheduler + provider, persists canonical output/quarantine/lineage,
+  emits `external_data.ingested.v1` audit events, and rehydrates
+  watermark/idempotency on restart. `run_scheduled()` and the manual API path
+  share it.
+- **API:** `POST /external-data/ingestion-runs` (Idempotency-Key),
+  `GET /external-data/ingestion-runs[/{id}]`, `GET /external-data/quarantine`,
+  and `GET /external-data/freshness` now reads persisted state (fixture only on
+  cold store).
+- **UI:** expansion overview freshness/lineage panel binds live via
+  `getServerApiClient` + `loadApiBinding` with a `DataSourceBadge`
+  (`apps/web/features/expansion/ExpansionWorkspace.tsx`).
+
+Evidence: `docs/evidence/completion/ODP-FLOW-001/implementation.md` and
+`verification.md` (focused suite 6 passed; related surface 161 passed; ruff
+clean; `tsc --noEmit` clean for web + openapi-client).

@@ -109,6 +109,18 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   expect(scenarioDetail.execution.actions.length).toBeGreaterThan(0);
   expect(scenarioDetail.outcome.variance).toBeGreaterThan(0);
 
+  // Solver returned an alternatives set for the side-by-side comparison view.
+  expect(solve.result.alternative_plan_available).toBe(true);
+  expect(solve.result.alternatives.length).toBeGreaterThan(0);
+  // Comparison/list endpoint the NetPlan overview UI binds to (GET /netplan/scenarios).
+  const scenarioList = await expectStatus(api.get(`${API_BASE_URL}/netplan/scenarios`), 200);
+  const listedScenario = scenarioList.items.find(
+    (item: { scenario_id: string }) => item.scenario_id === scenarioId,
+  );
+  expect(listedScenario).toBeTruthy();
+  expect(listedScenario.status).toBe("outcome_observed");
+  expect(listedScenario.solver_version).toBeTruthy();
+
   await registerLearningDataset(api);
   await registerLearningModelVersion(api, "2.3.0", {
     stage: "production",
@@ -191,6 +203,12 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   await expect(page.getByTestId("avm-asking-marker")).toHaveCount(0);
   await expect(page.getByTestId("avm-approval-panel")).toContainText("never optimistic");
   await expect(page.getByTestId("avm-dataroom")).toContainText("Valuation card");
+
+  await page.goto("/netplan");
+  // API-backed comparison region: bound to GET /netplan/scenarios with a
+  // visible DataSourceBadge; renders live rows or a documented fixture fallback.
+  await expect(page.getByTestId("netplan-live-scenarios")).toBeVisible();
+  await expect(page.getByTestId("netplan-data-source")).toBeVisible();
 
   await page.goto("/w/network/scenarios/np-6201");
   await expect(page.getByTestId("netplan-scenario-card")).toContainText("Binding constraints");

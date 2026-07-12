@@ -1,7 +1,7 @@
 # ODP-FLOW-011 — Platform runtime workers deployment and cross-flow gate
 
 **Task:** Complete platform runtime workers deployment and cross flow gate
-**Owner:** Claude · **Reviewer:** Antigravity · **Phase:** Product Flow Implementation
+**Owner:** Claude · **Reviewer:** Codex (review reassigned from Antigravity on 2026-07-12; Codex is the reviewer-of-record who approved with no blocking findings) · **Phase:** Product Flow Implementation
 
 ## Goal
 
