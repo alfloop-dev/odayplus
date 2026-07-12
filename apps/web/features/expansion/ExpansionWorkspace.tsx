@@ -159,6 +159,7 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
   const selected = selectedFromQuery(searchParams.selected) ?? heatZones[0].id;
   const layerQuery = selectedFromQuery(searchParams.layers);
   const selectedZone = heatZones.find((zone) => zone.id === selected) ?? heatZones[0];
+  const noGeometry = searchParams.noGeometry === "true";
 
   return (
     <>
@@ -194,6 +195,13 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
             <input name="confidenceMin" defaultValue="0.70" />
           </label>
         </FilterBar>
+
+        {noGeometry && (
+          <div className={styles.mapWarning} data-testid="map-geometry-warning">
+            ⚠️ 地圖 geometry 尚未可用；列表仍可用於審查。
+          </div>
+        )}
+
         <section className={styles.mapLayout}>
           <HeatZoneMap
             candidates={candidates}
@@ -206,21 +214,41 @@ function HeatZonePage({ searchParams }: { searchParams: SearchParams }) {
           <aside className={styles.sidePanel} aria-label="Ranked HeatZone list">
             <h2>Top zones</h2>
             <DenseTable
-              headers={["Rank", "Zone", "Score", "Confidence", "State"]}
-              rows={heatZones.map((zone) => [
-                `#${zone.rank}`,
-                <a
-                  aria-current={zone.id === selectedZone.id ? "true" : undefined}
-                  data-testid={`heatzone-row-${zone.id}`}
-                  href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`}
-                  key={zone.id}
-                >
-                  {zone.id}
-                </a>,
-                zone.score,
-                zone.confidence.toFixed(2),
-                zone.state,
-              ])}
+              headers={["Rank", "Area", "Score", "State", "Confidence", "Listings", "Action"]}
+              rows={heatZones.map((zone) => {
+                const isSuppressed = zone.confidence < 0.7 || zone.state === "SUPPRESSED_LOW_CONFIDENCE";
+                const isWarning = zone.confidence >= 0.7 && zone.confidence < 0.85;
+                const scoreBucket = zone.score >= 80 ? "80-100" : zone.score >= 60 ? "60-80" : zone.score >= 40 ? "40-60" : zone.score >= 20 ? "20-40" : "0-20";
+                
+                return [
+                  `#${zone.rank}`,
+                  <a
+                    aria-current={zone.id === selectedZone.id ? "true" : undefined}
+                    data-testid={`heatzone-row-${zone.id}`}
+                    href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`}
+                    key={zone.id}
+                  >
+                    {zone.district}
+                  </a>,
+                  `${zone.score} (${scoreBucket})`,
+                  <Badge
+                    key={`state-${zone.id}`}
+                    label={zone.state}
+                    tone={zone.state === "SUPPRESSED_LOW_CONFIDENCE" ? "orange" : zone.state === "UNDER_REALIZED" ? "orange" : zone.state === "STILL_EXPANDABLE" ? "green" : "gray"}
+                    marker="▧"
+                  />,
+                  <span key={`conf-${zone.id}`}>
+                    {zone.confidence.toFixed(2)}
+                    {isSuppressed ? " ⚠️ (低信心)" : isWarning ? " ⚠️" : ""}
+                  </span>,
+                  zone.listings.toString(),
+                  <div className={styles.actionLinks} key={`action-${zone.id}`}>
+                    <a href={`/w/expansion/heatzone?selected=${zone.id}&drawer=zone`}>打開 Drawer</a>
+                    {" · "}
+                    <Link href={`/w/expansion/listings?heatZone=${zone.id}`}>查看 Listing</Link>
+                  </div>
+                ];
+              })}
             />
           </aside>
         </section>
@@ -246,18 +274,56 @@ function HeatZoneScoreCard({ zone }: { zone: (typeof heatZones)[number] }) {
         <Metric label="Listings" value={zone.listings} />
       </div>
       <Badge label={zone.state} tone={isSuppressed ? "orange" : "green"} marker="▧" />
+
+      <section className={styles.softBlock}>
+        <h3>Score Breakdown</h3>
+        <dl className={styles.auditGrid}>
+          <dt>Unmet Demand</dt><dd>{zone.unmetDemandScore.toFixed(4)}</dd>
+          <dt>Format Fit (G2)</dt><dd>{zone.formatFitScore.toFixed(4)}</dd>
+          <dt>Cannibalization Risk</dt><dd>{zone.cannibalizationRisk.toFixed(4)}</dd>
+          <dt>Rent Feasibility</dt><dd>{zone.rentFeasibility.toFixed(4)}</dd>
+          <dt>Listing Availability</dt><dd>{zone.listingAvailability.toFixed(4)}</dd>
+        </dl>
+      </section>
+
+      <section className={styles.softBlock}>
+        <h3>Evidence Details</h3>
+        <dl className={styles.auditGrid}>
+          <dt>POI count</dt><dd>{zone.poiCount}</dd>
+          <dt>Competitor count</dt><dd>{zone.competitorCount}</dd>
+          <dt>Competitor capacity</dt><dd>{zone.competitorCapacity}</dd>
+          <dt>Median rent</dt><dd>NT$ {zone.medianListingRent.toLocaleString()}</dd>
+          <dt>Existing store count</dt><dd>{zone.existingStoreCount}</dd>
+        </dl>
+      </section>
+
       <SplitList title="Score reasons" items={zone.reasons} />
       <SplitList title="Warnings" items={zone.warnings} tone="warning" />
+
+      <section className={styles.softBlock}>
+        <h3>Confidence & Quality</h3>
+        <p>Data quality score: {zone.dataQualityScore.toFixed(2)}</p>
+        <p>Source snapshots: {zone.sourceSnapshotIds.join(", ")}</p>
+      </section>
+
       <p className={styles.auditLine}>
-        Snapshot {zone.featureSnapshotTime} · model {zone.modelVersion} · source {freshness.sourceSnapshotId}
+        Snapshot {zone.featureSnapshotTime} · model {zone.modelVersion} · source {freshness.sourceSnapshotId} · version {zone.featureVersion}
+        <br />
+        prediction origin {zone.predictionOriginTime} · scored {zone.lastScoredAt}
       </p>
-      {isSuppressed ? (
-        <p className={styles.blockedAction}>低信心 guard：禁止直接送 SiteScore，只能建立資料補件或人工查核任務。</p>
-      ) : (
-        <a className={styles.primaryButton} href={`/w/expansion/listings?heatZone=${zone.id}`}>
-          查看 Listing
-        </a>
-      )}
+
+      <div className={styles.actionLinks} style={{ marginTop: "var(--odp-space-2)", gap: "var(--odp-space-3)", flexWrap: "wrap" }}>
+        {isSuppressed ? (
+          <p className={styles.blockedAction}>低信心 guard：禁止直接送 SiteScore，只能建立資料補件或人工查核任務。</p>
+        ) : (
+          <a className={styles.primaryButton} href={`/w/expansion/listings?heatZone=${zone.id}`}>
+            查看 Listing
+          </a>
+        )}
+        <a className={styles.secondaryButton} href="#research-task">建立實勘/研究</a>
+        <a className={styles.secondaryButton} href="#rerun-score">重新計算</a>
+        <a className={styles.secondaryButton} href="#export-evidence">導出證據</a>
+      </div>
     </div>
   );
 }

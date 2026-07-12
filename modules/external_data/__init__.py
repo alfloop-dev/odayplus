@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from modules.external_data.application.listing_feed_adapter import (
+    ListingFeedClient,
+    ListingFeedClientError,
+    LiveListingFeedAdapter,
+    TimeoutError,
+    UnauthorizedError,
+)
 from modules.external_data.providers import (
     DemographicsProvider,
     FixtureDemographicsProvider,
@@ -26,4 +33,9 @@ __all__ = [
     "ProviderRegistry",
     "WeatherProvider",
     "provider_registry",
+    "LiveListingFeedAdapter",
+    "ListingFeedClient",
+    "ListingFeedClientError",
+    "UnauthorizedError",
+    "TimeoutError",
 ]

@@ -34,6 +34,7 @@ import styles from "./operator.module.css";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import type { Issue } from "./types";
+import { ISSUE_FIXTURES } from "./fixtures";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
@@ -278,8 +279,55 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [toast, setToast] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
 
+  const [liveKpis, setLiveKpis] = useState(kpis);
+  const [liveWorkQueue, setLiveWorkQueue] = useState(workQueue);
+  const [liveDecisions, setLiveDecisions] = useState(decisions);
+  const [liveRiskRows, setLiveRiskRows] = useState(riskRows);
+  const [liveAuditFeed, setLiveAuditFeed] = useState(auditFeed);
+  const [liveNotifications, setLiveNotifications] = useState(notifications);
+  const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+
+  const getSecurityHeaders = (roleId: string) => {
+    let systemRole = "operations_manager";
+    if (roleId === "opsLead") systemRole = "operations_manager";
+    else if (roleId === "supportLead") systemRole = "operations_manager";
+    else if (roleId === "facilitiesLead") systemRole = "regional_supervisor";
+    else if (roleId === "marketingManager") systemRole = "marketing_manager";
+    else if (roleId === "expansionManager") systemRole = "expansion_user";
+    else if (roleId === "auditPm") systemRole = "auditor";
+
+    return {
+      "X-Subject-Id": `operator-${roleId}`,
+      "X-Roles": systemRole,
+      "X-Tenant-Id": "tenant-a",
+    };
+  };
+
   const activeRole = getOperatorRole(activeRoleId);
   const activeWorkspace = getWorkspace(activeWorkspaceId);
+
+  useEffect(() => {
+    async function loadBootstrap() {
+      try {
+        const res = await fetch("/api/v1/operator/bootstrap", {
+          headers: getSecurityHeaders(activeRoleId),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.kpis) setLiveKpis(data.kpis);
+          if (data.workQueue) setLiveWorkQueue(data.workQueue);
+          if (data.decisions) setLiveDecisions(data.decisions);
+          if (data.riskRows) setLiveRiskRows(data.riskRows);
+          if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
+          if (data.notifications) setLiveNotifications(data.notifications);
+          if (data.issues) setLiveIssues(data.issues);
+        }
+      } catch (err) {
+        console.error("Error loading operator bootstrap:", err);
+      }
+    }
+    loadBootstrap();
+  }, []);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -313,11 +361,42 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   }, [toast]);
 
   const queueForRole = useMemo(() => {
-    return workQueue.filter((item) => item.workspace === "today" || isWorkspaceAllowed(activeRole, item.workspace));
-  }, [activeRole]);
+    return liveWorkQueue.filter((item) => item.workspace === "today" || isWorkspaceAllowed(activeRole, item.workspace));
+  }, [activeRole, liveWorkQueue]);
 
   function showToast(message: string) {
     setToast(message);
+  }
+
+  async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
+    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
+    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
+    try {
+      const res = await fetch(`/api/v1/operator/approvals/${approvalId}/decision`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+          "X-Correlation-Id": correlationId,
+          ...getSecurityHeaders(activeRoleId),
+        },
+        body: JSON.stringify({ status, ...payload }),
+      });
+      if (res.ok) {
+        showToast("決策已送出");
+        const freshRes = await fetch("/api/v1/operator/bootstrap", {
+          headers: getSecurityHeaders(activeRoleId),
+        });
+        if (freshRes.ok) {
+          const freshData = await freshRes.json();
+          if (freshData.decisions) setLiveDecisions(freshData.decisions);
+          if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
+          if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
+        }
+      }
+    } catch (err) {
+      console.error("Error submitting approval decision:", err);
+    }
   }
 
   function handleWorkspaceClick(workspaceId: WorkspaceId) {
@@ -507,9 +586,16 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <main className={styles.shell}>
         {activeWorkspaceId === "today" ? (
-          <DesignTodayWorkspace onQueueSelect={(workspaceId) => handleWorkspaceClick(workspaceId)} />
+          <DesignTodayWorkspace
+            onQueueSelect={(workspaceId) => handleWorkspaceClick(workspaceId)}
+            kpis={liveKpis}
+            todayRows={queueForRole}
+            decisions={liveDecisions}
+            riskStores={liveRiskRows}
+            auditFeed={liveAuditFeed}
+          />
         ) : activeWorkspaceId === "store" ? (
-          <DesignStoreOpsWorkspace onOpenWorkflow={openStoreOpsWorkflow} />
+          <DesignStoreOpsWorkspace onOpenWorkflow={openStoreOpsWorkflow} issues={liveIssues} />
         ) : activeWorkspaceId === "network" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <NetworkFindAreasWorkspace
@@ -521,7 +607,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                 onSubmitReview: (heatZone) => showToast(`${heatZone.id} review submitted to POC shell`),
                 onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
                 onDecideReview: (reviewId, status, reason) =>
-                  showToast(`已完成審核決策 (${status}) | 理由: ${reason}`),
+                  handleApprovalDecision(reviewId, status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned", { reason }),
               }}
             />
           </WorkspaceChrome>
@@ -529,9 +615,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <GovernanceWorkspace
               callbacks={{
-                onApprove: (payload) => showToast(`${payload.approvalId} approve callback recorded`),
-                onReject: (payload) => showToast(`${payload.approvalId} reject callback recorded`),
-                onReturn: (payload) => showToast(`${payload.approvalId} return callback recorded`),
+                onApprove: (payload) => handleApprovalDecision(payload.approvalId, "approved", payload),
+                onReject: (payload) => handleApprovalDecision(payload.approvalId, "rejected", payload),
+                onReturn: (payload) => handleApprovalDecision(payload.approvalId, "returned", payload),
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
               role={activeRole.label}
@@ -549,7 +635,60 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       <StoreOpsWorkflowDialogs
         activeDialog={activeStoreOpsDialog}
         callbacks={{
-          onSubmit: (event) => showToast(`${event.payload.issueId} ${event.type} submitted to POC shell`),
+          onSubmit: async (event) => {
+            showToast(`${event.payload.issueId} ${event.type} submitted to POC shell`);
+            const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
+            const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
+            let endpoint = "";
+            if (event.type === "triage") endpoint = "triage";
+            else if (event.type === "assign") endpoint = "assign";
+            else if (event.type === "action") endpoint = "actions";
+            else if (event.type === "fieldReport") endpoint = "field-report";
+            else if (event.type === "outcome") endpoint = "outcome";
+            else if (event.type === "escalate") endpoint = "escalate";
+            else if (event.type === "cameraPurpose") endpoint = "purpose";
+
+            let path = "";
+            if (endpoint === "purpose") {
+              path = `/api/v1/operator/evidence/EVD-101/purpose`;
+            } else if (endpoint) {
+              path = `/api/v1/operator/issues/${event.payload.issueId}/${endpoint}`;
+            }
+
+            if (path) {
+              try {
+                const res = await fetch(path, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Idempotency-Key": idempotencyKey,
+                    "X-Correlation-Id": correlationId,
+                    ...getSecurityHeaders(activeRoleId),
+                  },
+                  body: JSON.stringify(event.payload),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data.workQueue) setLiveWorkQueue(data.workQueue);
+                  if (data.decisions) setLiveDecisions(data.decisions);
+                  if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
+                  // Refresh bootstrap
+                  const freshRes = await fetch("/api/v1/operator/bootstrap", {
+                    headers: getSecurityHeaders(activeRoleId),
+                  });
+                  if (freshRes.ok) {
+                    const freshData = await freshRes.json();
+                    if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
+                    if (freshData.decisions) setLiveDecisions(freshData.decisions);
+                    if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
+                    if (freshData.issues) setLiveIssues(freshData.issues);
+                  }
+                }
+              } catch (err) {
+                console.error("Error submitting workflow write:", err);
+              }
+            }
+          },
         }}
         issue={selectedStoreOpsIssue}
         onClose={() => setActiveStoreOpsDialog(null)}

@@ -1,18 +1,18 @@
 {
   "backup": {
     "path": "/storage/backups/product-e2e.sqlite3.backup",
-    "sha256": "f22990c93d7822d063a9f9843cf551429b81ed1469574291b98b6f4add2810c9",
+    "sha256": "703d7a291384a847594263fb282124da2cd06e87f71f82b320c8a8d9eff5a09a",
     "size_bytes": 86016
   },
   "compose_file": "infra/docker/docker-compose.e2e.yml",
-  "diagnostics_dir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-pv-stage-001/.odp_data/deployment-health-backup-rollback",
-  "generated_at": "2026-07-11T03:00:38.173728+00:00",
+  "diagnostics_dir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-pv-stage-002/.odp_data/deployment-health-backup-rollback",
+  "generated_at": "2026-07-12T10:22:11.727875+00:00",
   "health": {
     "api": {
-      "correlation_id": "9dd8c523-612b-48ce-a291-3cec2083b66d",
+      "correlation_id": "b080dfac-c691-485a-bd42-495176c1e634",
       "service": "oday-api",
       "status": "ok",
-      "time": "2026-07-11T03:04:58.836841+00:00",
+      "time": "2026-07-12T10:24:54.551299+00:00",
       "version": "0.1.0"
     },
     "source_fixture": {
@@ -44,28 +44,28 @@
       "db_path": "/data/product-e2e.sqlite3",
       "persistence": "durable",
       "status": "alive",
-      "time": "2026-07-11T03:04:56.468449+00:00",
+      "time": "2026-07-12T10:24:52.436499+00:00",
       "worker": "product-e2e-scheduler"
     }
   },
   "project": "oday-plus-e2e-pv-stage-001",
-  "report_sha256": "334de9b0b512c32efda789279d383402d4315b6049e02c7b5f043dfbfb96ee71",
+  "report_sha256": "8113cbaa6dae6cf1bb8403a9179e2f9d381b85b0c254d0d94d49ab95ab2ea4aa",
   "result": "passed",
   "rollback": {
     "case_count_after_probe": 2,
     "case_count_after_restore": 1,
     "case_count_before_probe": 1,
-    "probe_case_id": "avm-case-2c0a2e76-e074-4980-b1c0-73efb5993e3f",
+    "probe_case_id": "avm-case-28d6c93c-7183-4e96-a43e-dfb7827deef2",
     "probe_removed": true,
-    "probe_store_id": "pv014-rollback-probe-1783739100",
+    "probe_store_id": "pv014-rollback-probe-1783851895",
     "restore": {
       "restored_path": "/data/product-e2e.sqlite3",
-      "sha256": "f22990c93d7822d063a9f9843cf551429b81ed1469574291b98b6f4add2810c9",
+      "sha256": "703d7a291384a847594263fb282124da2cd06e87f71f82b320c8a8d9eff5a09a",
       "size_bytes": 86016
     },
     "seed_case_preserved": true
   },
-  "seed_stdout": "{\n  \"api\": {\n    \"correlation_id\": \"corr-product-e2e-seed-001\",\n    \"service\": \"oday-api\",\n    \"status\": \"ok\",\n    \"time\": \"2026-07-11T03:04:58.621670+00:00\",\n    \"version\": \"0.1.0\"\n  },\n  \"avm_case_id\": \"avm-case-eabcf594-93da-4e9a-b8c2-25d1335febff\",\n  \"correlation_id\": \"corr-product-e2e-seed-001\",\n  \"evidence_export_id\": \"audit-export-0d98dc5f-7200-461b-98c5-e60f4dcf7736\",\n  \"heatzone_job_id\": \"heatzone-score-06fcef36-0176-4462-bc4b-a7c4dd744a44\",\n  \"scheduler_job_id\": \"75a709ca-49b8-4ef1-bfd1-7e9638d68bea\",\n  \"seeded_at\": \"2026-07-11T03:04:58.761807+00:00\",\n  \"source_fixture_keys\": [\n    \"contract_id\",\n    \"records\"\n  ]\n}",
+  "seed_stdout": "{\n  \"api\": {\n    \"correlation_id\": \"corr-product-e2e-seed-001\",\n    \"service\": \"oday-api\",\n    \"status\": \"ok\",\n    \"time\": \"2026-07-12T10:24:54.462786+00:00\",\n    \"version\": \"0.1.0\"\n  },\n  \"avm_case_id\": \"avm-case-0cea82ac-564f-458d-9b8f-42e8b77ae09c\",\n  \"correlation_id\": \"corr-product-e2e-seed-001\",\n  \"evidence_export_id\": \"audit-export-dbd68956-601b-4eb9-ba74-d29083b581bc\",\n  \"heatzone_job_id\": \"heatzone-score-583d0450-e245-4247-b6dc-75ca1427817d\",\n  \"scheduler_job_id\": \"60801195-56a3-4b72-acb9-413bdef5247a\",\n  \"seeded_at\": \"2026-07-12T10:24:54.522875+00:00\",\n  \"source_fixture_keys\": [\n    \"contract_id\",\n    \"records\"\n  ]\n}",
   "unsupported_or_documented": {
     "model_artifact_rollback": "not mutated by this deployment drill; Learning Hub alias rollback is covered by PV-007 product E2E",
     "policy_rollback": "policy files are immutable in the image for this E2E stack; image rollback is represented by redeploying the previous image tag",

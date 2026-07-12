@@ -181,7 +181,7 @@ def get_json(url: str) -> dict[str, Any]:
         headers={
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
-            "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
+            "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         }
     )
     with urlopen(request, timeout=10) as response:
@@ -196,7 +196,7 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             "content-type": "application/json",
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
-            "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
+            "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         },
         method="POST",
     )

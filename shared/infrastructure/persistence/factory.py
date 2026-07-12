@@ -43,6 +43,7 @@ class PersistenceBundle:
     adlift_repository: Any
     intervention_repository: Any
     intervention_label_registry: Any
+    external_fetch_state_store: Any = None
     engine: Any = None
 
     @property
@@ -54,6 +55,7 @@ def _memory_bundle() -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
+    from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
@@ -82,10 +84,12 @@ def _memory_bundle() -> PersistenceBundle:
         adlift_repository=InMemoryAdLiftRepository(),
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
+        external_fetch_state_store=InMemoryExternalFetchStateStore(),
     )
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -121,6 +125,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         adlift_repository=DurableAdLiftRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
+        external_fetch_state_store=DurableExternalFetchStateStore(store),
         engine=engine,
     )
 

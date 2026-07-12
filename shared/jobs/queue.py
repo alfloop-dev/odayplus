@@ -67,3 +67,32 @@ class InMemoryJobQueue:
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._jobs.get(job_id)
+
+    def claim_next(self) -> JobRecord | None:
+        for job_id, record in self._jobs.items():
+            if record.status == JobStatus.QUEUED:
+                updated = JobRecord(
+                    job_type=record.job_type,
+                    payload=record.payload,
+                    correlation_id=record.correlation_id,
+                    idempotency_key=record.idempotency_key,
+                    status=JobStatus.RUNNING,
+                    job_id=record.job_id,
+                    created_at=record.created_at,
+                )
+                self._jobs[job_id] = updated
+                return updated
+        return None
+
+    def update_status(self, job_id: str, status: JobStatus, payload: dict[str, Any] | None = None) -> None:
+        if job_id in self._jobs:
+            record = self._jobs[job_id]
+            self._jobs[job_id] = JobRecord(
+                job_type=record.job_type,
+                payload=payload if payload is not None else record.payload,
+                correlation_id=record.correlation_id,
+                idempotency_key=record.idempotency_key,
+                status=status,
+                job_id=record.job_id,
+                created_at=record.created_at,
+            )

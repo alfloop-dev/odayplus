@@ -190,3 +190,18 @@ def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target
     assert map_body["count"] == 20
     assert map_body["features"][0]["properties"]["h3_index"] == "h3r9_0200_0200"
     assert map_body["features"][0]["properties"]["status"] == "UNTOUCHED"
+
+
+def test_heatzone_api_fails_closed_on_absent_features() -> None:
+    client = TestClient(create_app())
+    response = client.post(
+        "/heatzones/score-jobs",
+        json={"features": []},
+        headers={
+            **HEATZONE_HEADERS,
+            "x-correlation-id": "corr-hz-empty",
+        },
+    )
+    assert response.status_code == 422
+    assert "cannot run score job with absent live inputs" in response.json()["detail"]
+

@@ -244,6 +244,8 @@ test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed 
   await tryClick(page.getByRole("button", { name: /Store Ops|門市營運/ }));
   await tryClick(page.getByRole("button", { name: /完成 Triage|Triage|triage/i }));
   await page.waitForTimeout(500);
+  await tryClick(page.getByRole("button", { name: /Submit Triage/i }));
+  await page.waitForTimeout(500);
 
   const failures: string[] = [];
   const designFrameCount = await page.getByTestId("operator-design-frame").count();
