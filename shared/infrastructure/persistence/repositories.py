@@ -10,6 +10,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -63,18 +64,17 @@ from modules.priceops.domain.pricing import (
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain import ForecastOutput as CanonicalForecastOutput
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
+from shared.domain.models import (
+    AddressLocation,
+    Brand,
+    Machine,
+    MachineCycle,
+    Store,
+    Tenant,
+    Transaction,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
-from shared.domain.models import (
-    Tenant,
-    Brand,
-    AddressLocation,
-    Store,
-    Machine,
-    Transaction,
-    MachineCycle,
-)
-from dataclasses import dataclass, field
 
 
 class DurableSiteScoreRepository:

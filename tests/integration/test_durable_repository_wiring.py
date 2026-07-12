@@ -246,9 +246,18 @@ def test_durable_job_queue_idempotency_survives_restart(db_path) -> None:
 
 
 def test_product_domain_writes_survive_restart(db_path) -> None:
-    from shared.domain.models import Tenant, Brand, AddressLocation, Store, Machine, Transaction, MachineCycle
-    from datetime import date, datetime, time, UTC
     import uuid
+    from datetime import UTC, date, datetime, time
+
+    from shared.domain.models import (
+        AddressLocation,
+        Brand,
+        Machine,
+        MachineCycle,
+        Store,
+        Tenant,
+        Transaction,
+    )
 
     # 1. Write data to the durable bundle
     bundle = _durable_bundle(db_path)

@@ -74,16 +74,16 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
-    from shared.jobs.queue import InMemoryJobQueue
     from shared.infrastructure.persistence.repositories import (
-        InMemoryTenantRepository,
-        InMemoryBrandRepository,
         InMemoryAddressLocationRepository,
-        InMemoryStoreRepository,
-        InMemoryMachineRepository,
-        InMemoryTransactionRepository,
+        InMemoryBrandRepository,
         InMemoryMachineCycleRepository,
+        InMemoryMachineRepository,
+        InMemoryStoreRepository,
+        InMemoryTenantRepository,
+        InMemoryTransactionRepository,
     )
+    from shared.jobs.queue import InMemoryJobQueue
 
     return PersistenceBundle(
         mode="memory",
@@ -119,23 +119,23 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
         DurableAVMRepository,
+        DurableBrandRepository,
         DurableForecastOpsRepository,
         DurableInterventionRepository,
         DurableLabelRegistry,
         DurableLearningHubRepository,
+        DurableMachineCycleRepository,
+        DurableMachineRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableSiteScoreRepository,
-        DurableTenantRepository,
-        DurableBrandRepository,
-        DurableAddressLocationRepository,
         DurableStoreRepository,
-        DurableMachineRepository,
+        DurableTenantRepository,
         DurableTransactionRepository,
-        DurableMachineCycleRepository,
     )
 
     engine = SqliteEngine(db_path)
