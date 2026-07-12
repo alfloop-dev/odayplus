@@ -69,3 +69,47 @@ the intervention workspace UI to the live API.
 | execution and observation jobs persist | `InMemoryInterventionRepository.save` on execute/observe; `run_observation_sweep` worker; unchanged, still covered |
 | approval outcome and rollback hooks are audited | `approve`/`reject`/`rollback`/`close` all emit `intervention.lifecycle.v1` audit events; asserted in API + E2E |
 | API backed UI idempotency and E2E pass | idempotent `POST /interventions` (Idempotency-Key); UI bound to `GET /interventions`; E2E drives the full loop through `close` |
+
+## Post-review fix (2026-07-12 · Antigravity5) — maturity guard
+
+Codex2 reopened the task because `evaluate_effect` always transitioned to
+`COMPLETED` regardless of window maturity, and `close_case` only gated on
+`COMPLETED`. This let an immature evaluation slip through to `CLOSED`.
+
+### `modules/intervention/application/workflow.py` — `evaluate_effect`
+
+```python
+# Before (always COMPLETED)
+completed = evaluating.with_transition(to_status=COMPLETED, …)
+self.repository.save(completed)
+
+# After (COMPLETED only when mature)
+if mature:
+    saved = evaluating.with_transition(to_status=COMPLETED, …)
+else:
+    saved = evaluating   # stays in EVALUATING
+self.repository.save(saved)
+```
+
+### `modules/intervention/application/workflow.py` — `close_case` (defence-in-depth)
+
+```python
+if intervention.effect is not None and not intervention.effect.observation_mature:
+    raise InterventionError(
+        "cannot close: observation window has not matured "
+        "(effect.observation_mature=False); wait until the window settles"
+    )
+```
+
+Added after the status check; protects against any future code path that reaches
+`COMPLETED` without a mature effect.
+
+### Tests
+
+Two new regression tests in `tests/integration/test_intervention_workflow.py`:
+- `test_immature_evaluate_then_close_is_rejected` — reproduces the reviewer's
+  exact sequence; verifies that an immature `evaluate_effect` stays in
+  `EVALUATING` and `close_case` raises `InterventionError("cannot close")`.
+- `test_close_defence_in_depth_rejects_immature_effect` — fabricates the
+  `COMPLETED` + `observation_mature=False` state to test the second guard layer
+  independently.
