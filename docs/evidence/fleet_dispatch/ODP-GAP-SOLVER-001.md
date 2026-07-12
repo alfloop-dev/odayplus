@@ -3,8 +3,8 @@
 - Parent: Product Platform Gap Closure
 - Status: delivered (closeout)
 - Scope boundary: solver_domain (DealRoom AVM valuation + NetPlan optimization)
-- Owner lane: Claude
-- Reviewer lane: Codex2
+- Owner lane: Antigravity (finalization; originally Claude)
+- Reviewer lane: Antigravity4 (finalization; originally Codex2)
 - Delivered branch: `task/ODP-GAP-SOLVER-001`
 - Release authority: PR #207 (merge `e3d0101`), follow-ups PR #211 (`f90ab9b`), PR #212 (`a3e2f6b`)
 
@@ -74,3 +74,13 @@ The reviewed deliverable is already durable in `dev` via PR #207 (+#211, #212).
 This document is the acceptance-evidence packet referenced by the task's
 `source_docs`; it carries no product code change beyond recording the delivered
 and verified scope so the task can be finalized to `done`.
+
+## Finalization Ownership
+
+This finalization dispatch is owned by Antigravity (reviewer: Antigravity4).
+The original implementation was completed by Claude (reviewer: Codex2) under
+the same task, with ownership transferred after reviewer approval on
+2026-07-12T10:29:07Z. This finalization commit updates the evidence record to
+carry the required agent-ownership trailers for the current task owner so that
+the `done` state transition can be recorded correctly.
+
