@@ -201,6 +201,9 @@ class DurableAVMRepository:
     def latest_report(self, case_id: str) -> ValuationReport | None:
         return self._store.latest_in_group(self._REPORTS, case_id)
 
+    def report_history(self, case_id: str) -> list[ValuationReport]:
+        return self._store.list_by_group(self._REPORTS, case_id)
+
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
         return dataroom
