@@ -31,7 +31,7 @@ This file is a fleet-level coordination artifact. Update on each flow task close
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| campaign and experiment versions persist | ✅ | `InMemoryAdLiftRepository.save_report()` assigns monotonic `report_version`; history API returns all versions |
+| campaign and experiment versions persist | ✅ | `InMemoryAdLiftRepository.save_report()` assigns monotonic `report_version` (1 → 2); latest retrievable via `GET /adlift/reports/{campaign_id}` |
 | pre trend gate rejects invalid launch | ✅ | `evaluate_pre_trend()` → FAIL caps evidence at L2 (`causal_claim_allowed=False`); E2E-AD-001 `adlift-8803` shows "Pre-trend failed" |
 | incrementality report links evidence and decision | ✅ | `IncrementalityReport` carries `evidence_level`, `causal_claim_allowed`, `recommendation`, `decision_id`; `DecisionPanel` renders full audit trail |
 | API backed Growth UI audit E2E passes | ✅ | `npx playwright test tests/e2e/e2e-intervention-price-ad.spec.ts --project=chromium`: 4 passed |
@@ -41,7 +41,7 @@ This file is a fleet-level coordination artifact. Update on each flow task close
 | Artifact | Description | Status |
 |---|---|---|
 | `modules/adlift/` | Full Python domain/application/infra/worker stack | ✅ |
-| `apps/api/app/routes/adlift.py` | FastAPI router: POST jobs, GET results, GET history | ✅ |
+| `apps/api/app/routes/adlift.py` | FastAPI router: POST jobs, GET job result, GET reports (list + by campaign) | ✅ |
 | `apps/web/features/adlift/AdLiftWorkspace.tsx` | React workspace: report table, drawer, claim guard, decision panel | ✅ |
 | `apps/web/features/adlift/data.ts` | Typed fixtures: 3 reports (PASS/CONTINUE, blocked, FAIL/STOP) | ✅ |
 | `tests/integration/test_adlift_incrementality.py` | 12 integration tests covering DiD, matching, pre-trend, contamination, API | ✅ |

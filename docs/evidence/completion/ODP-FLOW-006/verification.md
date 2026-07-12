@@ -25,11 +25,12 @@ Tests cover:
 - `test_matched_controls_pair_nearest_pre_period_level` — greedy 1:1 matching
 - `test_pre_trend_failure_caps_evidence_at_l2_and_blocks_causal_claim` — FAIL → L2, causal_claim_allowed=False
 - `test_contamination_in_window_caps_evidence_at_l2` — intervention overlap → L2
-- `test_no_control_falls_back_to_l1_before_after` — before/after L1
-- `test_report_id_is_stable_when_evaluated_twice` — idempotency
-- `test_api_route_creates_job_and_retrieves_result` — POST + GET, HTTP 202
-- `test_api_route_idempotency_key_deduplication` — second POST with same key returns same job_id
-- (2 additional edge cases)
+- `test_no_control_group_is_before_after_and_blocks_causal_claim` — before/after L1, causal claim blocked
+- `test_writeback_targets_interventionops_and_label_registry` — InterventionOps + Label Registry writeback packets
+- `test_report_card_projection_matches_component_contract` — `AdLiftReportCard` projection
+- `test_service_versions_reports_per_campaign` — re-evaluation increments `report_version` (1 → 2)
+- `test_batch_worker_succeeds_and_serialises` — batch worker job succeeds and serialises
+- `test_adlift_api_runs_incrementality_and_is_idempotent` — POST HTTP 202, `Idempotency-Key` dedup returns same `job_id`, audit event written
 
 ## 2. Ruff lint
 
@@ -63,7 +64,7 @@ Tests:
 
 | Criterion | Verified by | Result |
 |---|---|---|
-| campaign and experiment versions persist | `test_report_id_is_stable_when_evaluated_twice`; `InMemoryAdLiftRepository.save_report()` version list | ✅ |
+| campaign and experiment versions persist | `test_service_versions_reports_per_campaign` (`report_version` 1 → 2); `InMemoryAdLiftRepository.save_report()` version list | ✅ |
 | pre trend gate rejects invalid launch | `test_pre_trend_failure_caps_evidence_at_l2_and_blocks_causal_claim`; E2E `E2E-AD-001` adlift-8803 | ✅ |
-| incrementality report links evidence and decision | `test_difference_in_differences_isolates_ad_lift_from_market_movement` + `test_api_route_creates_job_and_retrieves_result`; E2E claim guard + decision_id visible | ✅ |
+| incrementality report links evidence and decision | `test_difference_in_differences_isolates_ad_lift_from_market_movement` + `test_writeback_targets_interventionops_and_label_registry` + `test_adlift_api_runs_incrementality_and_is_idempotent`; E2E claim guard + decision_id visible | ✅ |
 | API backed Growth UI audit E2E passes | E2E-AD-001 (4 of 4 tests passed) | ✅ |

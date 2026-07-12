@@ -49,9 +49,9 @@ Key algorithms:
 
 - `POST /adlift/incrementality-jobs` — runs batch, idempotency-key dedup, audit event written
 - `GET /adlift/incrementality-jobs/{job_id}` — result retrieval
-- `GET /adlift/reports/latest` — all latest per-campaign reports
-- `GET /adlift/reports/{campaign_id}/history` — versioned report history
-- RBAC: `adlift / CREATE` (authz engine + audit log wired)
+- `GET /adlift/reports` — latest per-campaign reports (optional `evidence_level` filter)
+- `GET /adlift/reports/{campaign_id}` — latest report for a campaign
+- RBAC: `adlift / CREATE` + `adlift / VIEW` (authz engine + audit log wired)
 
 ### Frontend (`apps/web/features/adlift/`)
 
@@ -75,8 +75,8 @@ Page route: `apps/web/src/app/adlift/page.tsx` → `AdLiftWorkspace`.
 - Pre-trend failure caps evidence at L2 and blocks causal claim
 - Contamination from intervention overlap caps evidence at L2
 - No-control fallback (L1 before/after)
-- Idempotency: repeated campaign evaluation produces stable result
-- API route: POST creates job, GET retrieves; idempotency-key dedup works
+- Versioning: repeated evaluation increments `report_version` (1 → 2) per campaign
+- API route: POST creates job (HTTP 202), GET retrieves reports; `Idempotency-Key` dedup returns same `job_id`; audit event written
 
 ### E2E tests (`tests/e2e/e2e-intervention-price-ad.spec.ts`)
 
