@@ -8,7 +8,6 @@ from shared.audit.events import InMemoryAuditLog
 from shared.auth import Role
 from shared.infrastructure.persistence import build_persistence
 
-
 OPERATOR_HEADERS = {
     "x-subject-id": "operator-contract-test",
     "x-roles": Role.OPERATIONS_MANAGER.value,
