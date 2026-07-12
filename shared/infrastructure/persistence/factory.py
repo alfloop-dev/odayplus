@@ -43,6 +43,7 @@ class PersistenceBundle:
     adlift_repository: Any
     intervention_repository: Any
     intervention_label_registry: Any
+    ingestion_run_store: Any
     engine: Any = None
 
     @property
@@ -58,6 +59,9 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
+    )
+    from modules.external_data.application.ingestion_store import (
+        InMemoryIngestionRunStore,
     )
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
@@ -82,12 +86,14 @@ def _memory_bundle() -> PersistenceBundle:
         adlift_repository=InMemoryAdLiftRepository(),
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
+        ingestion_run_store=InMemoryIngestionRunStore(),
     )
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
@@ -121,6 +127,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         adlift_repository=DurableAdLiftRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
+        ingestion_run_store=DurableIngestionRunStore(store),
         engine=engine,
     )
 

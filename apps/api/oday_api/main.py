@@ -81,6 +81,7 @@ else:
         intervention_label_registry: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
+        external_ingestion_service: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
@@ -94,6 +95,13 @@ else:
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or HeatZoneResultStore()
+
+        from modules.external_data.application.ingestion_service import ExternalIngestionService
+
+        ingestion_service = external_ingestion_service or ExternalIngestionService(
+            store=bundle.ingestion_run_store,
+            audit_log=audit_log,
+        )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
@@ -209,7 +217,11 @@ else:
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(create_external_data_router(audit_log=audit_log))
+        api.include_router(
+            create_external_data_router(
+                ingestion_service=ingestion_service, audit_log=audit_log
+            )
+        )
         api.include_router(create_listings_router(audit_log=audit_log))
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
