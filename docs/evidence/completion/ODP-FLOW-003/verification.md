@@ -31,6 +31,20 @@ npx playwright test tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts --pr
 # → 1 passed
 ```
 
+## Owner closeout rerun
+
+After reviewer approval and PR #242 merge, owner closeout re-verified the focused
+ForecastOps path in this worktree at `2026-07-12T23:58:00Z`:
+
+```bash
+.venv/bin/pytest tests/integration/test_forecastops_alerts.py
+# -> 8 passed, 2 warnings
+
+.venv/bin/ruff check modules/forecastops apps/api/app/routes/forecastops.py \
+  tests/integration/test_forecastops_alerts.py
+# -> All checks passed!
+```
+
 ## New/updated tests and what they prove
 
 | Test | Proves |
