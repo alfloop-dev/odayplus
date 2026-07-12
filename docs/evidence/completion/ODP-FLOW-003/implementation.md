@@ -1,9 +1,11 @@
 # ODP-FLOW-003 · Complete ForecastOps alert and handoff flow — Implementation
 
 - Task: ODP-FLOW-003 (Product Flow Implementation phase)
-- Owner: Claude · Reviewer: Claude2
-- Source design: `docs_archive/05_module_design/ODP-MOD-04_FORECASTOPS.md`
-  (four-light policy, alert lifecycle, intervention handoff)
+- Owner: Codex2 · Reviewer: Claude2
+- Source design: `oday_plus_batch_05_module_design.zip::ODP-MOD-04_FORECASTOPS.md`
+  (four-light policy, alert lifecycle, intervention handoff; the task brief's
+  extracted `docs_archive/05_module_design/...` path is not present in this
+  worktree)
 
 ## Scope
 

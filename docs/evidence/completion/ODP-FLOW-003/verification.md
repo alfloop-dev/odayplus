@@ -1,24 +1,34 @@
 # ODP-FLOW-003 · Verification
 
-- Task: ODP-FLOW-003 · Owner: Claude · Reviewer: Claude2
+- Task: ODP-FLOW-003 · Owner: Codex2 · Reviewer: Claude2
 - Worktree: `task/ODP-FLOW-003` (branched from `dev`)
 
 ## Commands run
 
 ```bash
 # Backend integration (versioning, acknowledge, executable handoff, API, audit)
-.venv/bin/pytest tests/integration/test_forecastops_alerts.py
-# → 8 passed  (5 pre-existing + 3 new acknowledge/execute/API-audit tests)
+pytest tests/integration/test_forecastops_alerts.py
+# → 8 passed, 2 warnings  (5 pre-existing + 3 acknowledge/execute/API-audit tests)
 
 # API app still builds and mounts the forecastops router
-.venv/bin/pytest tests/smoke \
+pytest tests/smoke \
   --deselect tests/smoke/test_foundation_smoke.py::test_production_dependency_stack_imports
-# → 2 passed
+# → 2 passed, 1 deselected
 
 # Lint
-.venv/bin/ruff check modules/forecastops apps/api/app/routes/forecastops.py \
+ruff check modules/forecastops apps/api/app/routes/forecastops.py \
   tests/integration/test_forecastops_alerts.py
 # → All checks passed!
+
+# Web/API typing for the live alert binding and openapi-client reader
+npm ci
+# → added 402 packages; npm audit reports 2 pre-existing moderate vulnerabilities
+npm run typecheck
+# → @oday-plus/web, design-tokens, domain-types, openapi-client, ui, ui-domain passed
+
+# Product E2E: ForecastOps alert ack + executable handoff through Ops UI binding
+npx playwright test tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts --project=chromium
+# → 1 passed
 ```
 
 ## New/updated tests and what they prove
@@ -32,15 +42,6 @@
 
 ## Not run in this worktree (documented)
 
-- **Web typecheck / Playwright E2E**: `node_modules`, `tsc`, and the Playwright
-  browsers are not installed in the worker worktree (no JS toolchain), so
-  `npm run typecheck` and `npm run test:e2e` were not executed here. The TS
-  changes reuse the existing, typed `ApiBinding` / `DataSourceBadge` /
-  `getServerApiClient` / `loadApiBinding` contracts and the new
-  `listForecastAlerts()` client method; the executable proof of the new
-  `/acknowledge` and `/execute` behavior is the Python integration suite above
-  (TestClient drives the same API surface the E2E hits). Reviewer/CI with the JS
-  toolchain runs the typecheck + Playwright gate.
 - **`tests/smoke/test_foundation_smoke.py::test_production_dependency_stack_imports`**
   fails in this worktree because the production ML stack (`duckdb`, `h3`,
   `ortools`, `sklearn`, `statsmodels`, `numpy`) is not installed in the worker
