@@ -22,6 +22,13 @@ from models.shared_ml.validation import (
     ValidationRun,
     validate_model_candidate,
 )
+from modules.learninghub.application.monitor import (
+    MonitorStatus,
+    RecommendedAction,
+    ReleaseMonitorAssessment,
+    evaluate_guardrails,
+    utcnow,
+)
 from modules.learninghub.domain import DatasetSnapshot, build_dataset_snapshot
 from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
@@ -319,6 +326,71 @@ class LearningHubService:
         )
         self.repository.save_release_decision(decision)
         return decision
+
+    def monitor_release(
+        self,
+        *,
+        release_id: str,
+        observed_metrics: Mapping[str, float],
+        guardrails: Sequence[MetricThreshold],
+        evaluated_by: str = "release-monitor",
+        correlation_id: str = "learninghub-monitor",
+    ) -> ReleaseMonitorAssessment:
+        """Evaluate a live release's guardrail metrics and record an audit event.
+
+        A breach recommends (never auto-executes) a rollback. The rollback itself
+        stays an explicit, approved ``request_release(ROLLBACK)`` action.
+        """
+
+        decision = self.repository.get_release_decision(release_id)
+        if decision is None:
+            raise LearningHubError(f"unknown release {release_id}")
+
+        model_name = decision.model_name
+        version = decision.to_version
+        monitoring_window = decision.monitoring_window
+        rollback_target = decision.rollback_target
+
+        breaches = evaluate_guardrails(observed_metrics, guardrails)
+        status = MonitorStatus.BREACHED if breaches else MonitorStatus.HEALTHY
+        recommended_action = (
+            RecommendedAction.ROLLBACK
+            if breaches and rollback_target
+            else RecommendedAction.NONE
+        )
+
+        audit_event = self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.release_monitor.v1",
+                actor=evaluated_by,
+                action="monitor",
+                resource=f"model/{model_name}:{version}",
+                outcome="breached" if breaches else "healthy",
+                correlation_id=correlation_id,
+                metadata={
+                    "release_id": release_id,
+                    "monitoring_window": monitoring_window,
+                    "observed_metrics": dict(observed_metrics),
+                    "breaches": [breach.to_dict() for breach in breaches],
+                    "recommended_action": recommended_action.value,
+                    "rollback_target": rollback_target,
+                },
+            )
+        )
+
+        return ReleaseMonitorAssessment(
+            release_id=release_id,
+            model_name=model_name,
+            version=version,
+            status=status,
+            recommended_action=recommended_action,
+            observed_metrics=dict(observed_metrics),
+            breaches=breaches,
+            monitoring_window=monitoring_window,
+            rollback_target=rollback_target,
+            evaluated_at=utcnow(),
+            audit_event_id=audit_event.event_id,
+        )
 
     def _assert_release_gate(
         self,

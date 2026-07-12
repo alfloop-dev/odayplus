@@ -1,10 +1,15 @@
 """Learning Hub public API."""
 
 from modules.learninghub.application import (
+    GuardrailBreach,
     LearningHubError,
     LearningHubService,
     ModelReleaseDecision,
+    MonitorStatus,
+    RecommendedAction,
+    ReleaseMonitorAssessment,
     ReleaseType,
+    evaluate_guardrails,
 )
 from modules.learninghub.domain import (
     DatasetSnapshot,
@@ -17,11 +22,16 @@ from modules.learninghub.domain import (
     validate_point_in_time,
 )
 from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
-from modules.learninghub.workers import LearningHubReleaseWorker, run_learninghub_release
+from modules.learninghub.workers import (
+    LearningHubReleaseWorker,
+    run_learninghub_release,
+    run_learninghub_release_monitor,
+)
 
 __all__ = [
     "DatasetSnapshot",
     "DatasetSnapshotError",
+    "GuardrailBreach",
     "InMemoryLearningHubRepository",
     "LearningHubError",
     "LearningHubReleaseWorker",
@@ -29,11 +39,16 @@ __all__ = [
     "MlflowRegistryAdapter",
     "ModelReadyRecord",
     "ModelReleaseDecision",
+    "MonitorStatus",
     "PointInTimeIssue",
     "PointInTimeViolation",
+    "RecommendedAction",
+    "ReleaseMonitorAssessment",
     "ReleaseType",
     "build_dataset_snapshot",
+    "evaluate_guardrails",
     "model_ready_record_from_mapping",
     "run_learninghub_release",
+    "run_learninghub_release_monitor",
     "validate_point_in_time",
 ]

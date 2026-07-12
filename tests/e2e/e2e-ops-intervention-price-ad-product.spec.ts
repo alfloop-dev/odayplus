@@ -83,6 +83,29 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   expect(interventionEffectPayload.effect.can_claim_causal).toBe(true);
   expect(interventionEffectPayload.label.is_mature).toBe(true);
 
+  // Close the matured case with a follow-up iteration — the loop's final step.
+  const interventionClose = await api.post(`${API_BASE_URL}/interventions/${interventionId}/close`, {
+    data: {
+      actor: "pv006-ops-director",
+      disposition: "ITERATE",
+      reason: "Positive causal effect on the red-alert store; iterate with a follow-up campaign.",
+      follow_up: true,
+      follow_up_kind: "AD_CAMPAIGN",
+    },
+  });
+  expect(interventionClose.status()).toBe(200);
+  const interventionClosePayload = await interventionClose.json();
+  expect(interventionClosePayload.status).toBe("CLOSED");
+  expect(interventionClosePayload.close.disposition).toBe("ITERATE");
+  const followUpId = interventionClosePayload.close.follow_up_intervention_id as string;
+  expect(followUpId).toBeTruthy();
+
+  const followUp = await api.get(`${API_BASE_URL}/interventions/${followUpId}`);
+  expect(followUp.status()).toBe(200);
+  const followUpPayload = await followUp.json();
+  expect(followUpPayload.status).toBe("CANDIDATE");
+  expect(followUpPayload.trigger_ref).toBe(`follow-up:${interventionId}`);
+
   const priceJob = await api.post(`${API_BASE_URL}/priceops/optimizer-jobs`, {
     data: {
       idempotency_key: "pv006-priceops-optimizer",
@@ -183,6 +206,7 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
     "run_model",
     "execute",
     "evaluate",
+    "close",
   ]));
 
   await page.goto("/w/operations/forecast/store-001");

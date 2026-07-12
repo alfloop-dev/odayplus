@@ -37,8 +37,13 @@ class AVMValuationWorker:
         job_id: str | None = None,
         actor: str = "avm-score-worker",
         correlation_id: str = "avm-worker",
-        build_dataroom: bool = True,
+        build_dataroom: bool = False,
+        finance_approver: str | None = None,
+        finance_reason: str | None = None,
     ) -> AVMBatchResult:
+        if build_dataroom and not finance_approver:
+            raise ValueError("finance_approver is required to build AVM data rooms")
+
         reports: list[ValuationReport] = []
         datarooms: list[DataRoom] = []
         for item in inputs:
@@ -46,9 +51,18 @@ class AVMValuationWorker:
             report = self.service.value(case.case_id, actor=actor, correlation_id=correlation_id)
             reports.append(report)
             if build_dataroom:
+                self.service.approve_finance(
+                    case.case_id,
+                    actor=finance_approver,
+                    reason=finance_reason or "batch finance approval for data room generation",
+                    reserve_price=report.reserve_price,
+                    correlation_id=correlation_id,
+                )
                 datarooms.append(
                     self.service.build_dataroom(
-                        case.case_id, actor=actor, correlation_id=correlation_id
+                        case.case_id,
+                        actor=finance_approver,
+                        correlation_id=correlation_id,
                     )
                 )
         return AVMBatchResult(

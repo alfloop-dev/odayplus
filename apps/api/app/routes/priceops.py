@@ -11,13 +11,14 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from models.priceops.binding import ElasticityInputError, resolve_elasticity
     from modules.priceops.application import (
         ApprovalBlockedError,
         MissingRollbackPlanError,
         PlanNotFoundError,
         PriceOpsService,
     )
-    from modules.priceops.domain import PriceConstraints, PriceElasticityEstimate, PricingPlanItem
+    from modules.priceops.domain import PriceConstraints, PricingPlanItem
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
@@ -33,8 +34,9 @@ else:
         unit_cost: float
         current_price: float
         baseline_demand: float
-        elasticity_value: float
-        confidence: float = 0.9
+        elasticity_value: float | None = None
+        confidence: float | None = None
+        price_demand_observations: list[dict[str, float]] | None = None
         margin_floor_ratio: float = 0.15
         max_increase_pct: float = 0.15
         max_decrease_pct: float = 0.15
@@ -154,9 +156,16 @@ else:
                     payload = plan.to_dict()
                     payload["created"] = False
                     return payload
+            try:
+                resolved = [_resolve_item(item) for item in body.items]
+            except ElasticityInputError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            bindings = [binding for _item, binding in resolved]
             plan = service.create_plan(
                 tenant_id=body.tenant_id,
-                items=[_item_from_payload(item) for item in body.items],
+                items=[plan_item for plan_item, _binding in resolved],
                 correlation_id=request.state.correlation_id,
                 plan_id=body.plan_id,
                 created_at=_parse_time(body.created_at),
@@ -169,10 +178,11 @@ else:
                 "priceops.plan_created.v1",
                 "create",
                 f"priceops/plans/{plan.plan_id}",
-                {"created": True},
+                {"created": True, "elasticity_bindings": bindings},
             )
             payload = plan.to_dict()
             payload["created"] = True
+            payload["elasticity_bindings"] = bindings
             return payload
 
         @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
@@ -185,17 +195,23 @@ else:
             result = jobs.get_by_idempotency_key(effective_key)
             created = result is None
             if result is None:
+                try:
+                    plan_requests = [
+                        PlanRequest(
+                            tenant_id=plan.tenant_id,
+                            correlation_id=request.state.correlation_id,
+                            items=[_item_from_payload(item) for item in plan.items],
+                            plan_id=plan.plan_id,
+                        )
+                        for plan in body.plans
+                    ]
+                except ElasticityInputError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    ) from exc
                 result, created = jobs.put(
                     run_priceops_optimizer_batch(
-                        requests=[
-                            PlanRequest(
-                                tenant_id=plan.tenant_id,
-                                correlation_id=request.state.correlation_id,
-                                items=[_item_from_payload(item) for item in plan.items],
-                                plan_id=plan.plan_id,
-                            )
-                            for plan in body.plans
-                        ],
+                        requests=plan_requests,
                         optimized_at=_parse_time(body.optimized_at),
                         repository=price_repository,
                     ),
@@ -412,8 +428,18 @@ else:
 
         return router
 
-    def _item_from_payload(item: PriceOpsPlanItemPayload) -> PricingPlanItem:
-        return PricingPlanItem.create(
+    def _resolve_item(
+        item: PriceOpsPlanItemPayload,
+    ) -> tuple[PricingPlanItem, dict[str, Any]]:
+        estimate, binding = resolve_elasticity(
+            current_price=item.current_price,
+            observations=item.price_demand_observations,
+            supplied_value=item.elasticity_value,
+            supplied_confidence=item.confidence,
+            horizon=item.horizon,
+            prediction_origin_time=_parse_time(item.prediction_origin_time),
+        )
+        plan_item = PricingPlanItem.create(
             item_id=item.item_id,
             store_id=item.store_id,
             machine_type=item.machine_type,
@@ -428,14 +454,17 @@ else:
                 max_price=item.max_price,
             ),
             baseline_demand=item.baseline_demand,
-            elasticity=PriceElasticityEstimate(
-                elasticity_value=item.elasticity_value,
-                confidence=item.confidence,
-                horizon=item.horizon,
-                prediction_origin_time=_parse_time(item.prediction_origin_time)
-                or datetime.now(UTC),
-            ),
+            elasticity=estimate,
         )
+        return plan_item, {
+            "store_id": item.store_id,
+            "machine_type": item.machine_type,
+            **binding,
+        }
+
+    def _item_from_payload(item: PriceOpsPlanItemPayload) -> PricingPlanItem:
+        plan_item, _binding = _resolve_item(item)
+        return plan_item
 
     def _parse_required_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
