@@ -38,3 +38,29 @@ python3 -m pytest tests/integration/test_durable_repository_wiring.py -q
 
 - Playwright product E2E was not run in this worker turn; the focused API and
   durable integration coverage above exercises the changed AVM loop directly.
+
+## Closeout refresh - 2026-07-12
+
+After reviewer approval, the task branch was refreshed on `origin/dev` and
+merged through PR #248 (`f46c136`). The following closeout checks were rerun
+after the dev merge:
+
+```
+python3 -m pytest tests/integration/test_avm_valuation.py -q
+# 4 passed
+
+python3 -m pytest tests/integration/test_durable_repository_wiring.py -q
+# 8 passed
+
+python3 -m ruff check modules/avm/domain/valuation.py \
+                       modules/avm/application/valuation.py \
+                       modules/avm/infrastructure/repositories.py \
+                       modules/avm/workers/valuation_worker.py \
+                       apps/api/app/routes/avm.py \
+                       shared/infrastructure/persistence/repositories.py \
+                       tests/integration/test_avm_valuation.py
+# All checks passed!
+
+git diff --check origin/dev...HEAD
+# passed
+```
