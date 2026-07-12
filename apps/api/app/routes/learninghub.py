@@ -91,6 +91,20 @@ else:
         model_card: ModelCardPayload
 
 
+    class MonitorGuardrailPayload(BaseModel):
+        metric_name: str = Field(min_length=1)
+        min_value: float | None = None
+        max_value: float | None = None
+        warning_min_value: float | None = None
+        warning_max_value: float | None = None
+
+
+    class ReleaseMonitorPayload(BaseModel):
+        observed_metrics: dict[str, float] = Field(min_length=1)
+        guardrails: list[MonitorGuardrailPayload] = Field(min_length=1)
+        evaluated_by: str = "release-monitor"
+
+
     class ReleasePayload(BaseModel):
         model_name: str = Field(min_length=1)
         version: str = Field(min_length=1)
@@ -252,6 +266,27 @@ else:
                     detail=str(exc),
                 ) from exc
             payload = decision.to_dict()
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
+        @router.post("/releases/{release_id}/monitor", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.PUBLISH, engine=authz_engine))])
+        def monitor_release(
+            release_id: str, body: ReleaseMonitorPayload, request: Request
+        ) -> dict[str, Any]:
+            try:
+                assessment = service.monitor_release(
+                    release_id=release_id,
+                    observed_metrics=body.observed_metrics,
+                    guardrails=[_threshold(item) for item in body.guardrails],
+                    evaluated_by=body.evaluated_by,
+                    correlation_id=request.state.correlation_id,
+                )
+            except (LearningHubError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            payload = assessment.to_dict()
             payload["correlation_id"] = request.state.correlation_id
             return payload
 

@@ -68,6 +68,22 @@ export type AuditEventsResponse = {
   events: AuditEvent[];
 };
 
+export type SourceFreshnessEvidence = {
+  provider_id: string;
+  source_snapshot_id: string;
+  data_status: string;
+  provider_observed_at?: string | null;
+  ingested_at?: string | null;
+  freshness_sla_seconds: number;
+  correlation_id: string;
+  quality_flags?: string[];
+};
+
+export type ExternalDataFreshnessResponse = {
+  freshness: SourceFreshnessEvidence[];
+  correlation_id: string;
+};
+
 export type InterventionSummary = {
   intervention_id: string;
   status?: string;
@@ -76,6 +92,47 @@ export type InterventionSummary = {
 
 export type AdliftReport = {
   campaign_id?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
+ * endpoint). Mirrors `NetPlanScenario.to_dict()` in
+ * modules/netplan/domain/planning.py — only the always-present summary fields
+ * are typed; the full solve/execution/outcome detail lives on the
+ * `/netplan/scenarios/{id}` response and is left open via the index signature.
+ */
+export type NetPlanScenarioSummary = {
+  scenario_id: string;
+  scenario_name?: string;
+  planning_horizon?: string;
+  status?: string;
+  solver_version?: string;
+  model_version?: string;
+  correlation_id?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A model release decision as served by `GET /learninghub/releases` (the
+ * Learning Hub release/rollback log the UI binds to). Mirrors
+ * `ModelReleaseDecision.to_dict()` in
+ * modules/learninghub/application/release.py — only the always-present summary
+ * fields are typed; the full success/fail criteria detail is left open via the
+ * index signature.
+ */
+export type ModelReleaseSummary = {
+  release_id: string;
+  model_name?: string;
+  from_version?: string | null;
+  to_version?: string;
+  release_type?: string;
+  approval_id?: string;
+  monitoring_window?: string;
+  rollback_target?: string | null;
+  approved_by?: string;
+  created_at?: string;
+  audit_event_id?: string | null;
   [key: string]: unknown;
 };
 
@@ -218,6 +275,10 @@ export class OdpApiClient {
     });
   }
 
+  listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
+    return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
+  }
+
   listAuditEvents(
     options: { correlationId?: string } = {},
   ): Promise<AuditEventsResponse> {
@@ -232,6 +293,18 @@ export class OdpApiClient {
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
+  }
+
+  listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
+    return this.request<ListResponse<NetPlanScenarioSummary>>("/netplan/scenarios");
+  }
+
+  listLearningReleases(
+    options: { modelName?: string } = {},
+  ): Promise<ListResponse<ModelReleaseSummary>> {
+    return this.request<ListResponse<ModelReleaseSummary>>("/learninghub/releases", {
+      query: { model_name: options.modelName },
+    });
   }
 
   getOperatorBootstrap(): Promise<any> {
