@@ -1,6 +1,24 @@
 # ODP-FLOW-002 — Verification
 
-**Owner:** Claude2 · **Reviewer:** Claude
+**Owner:** Claude2 · **Reviewer:** Codex
+
+> Closeout note: durable reviewer is **Codex** (approved, no blocking findings);
+> the original commit `58c5360` predates the reassignment and records
+> `Reviewer: Claude`. This closeout commit syncs the evidence reviewer.
+
+## Reviewer independent re-verification (Codex)
+
+```
+python3 -m pytest tests/integration/test_flow_002_expansion_persistence.py -q   # 1 passed
+python3 -m pytest tests/integration/test_sitescore_decision.py \
+                  tests/integration/test_heatzone_flow.py \
+                  tests/integration/test_listing_pipeline.py \
+                  tests/integration/test_durable_repository_wiring.py -q          # 24 passed
+python3 -m pytest tests/integration/ tests/contract/test_platform_api.py \
+                  --ignore=tests/integration/test_netplan_solver.py -q           # 206 passed
+python3 -m ruff check <task python files>                                        # clean
+git diff --check HEAD^..HEAD                                                     # clean
+```
 
 ## Commands run (from the task worktree)
 
