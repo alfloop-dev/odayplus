@@ -95,11 +95,6 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
-            if not body.features:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="features are required; cannot run score job with absent live inputs",
-                )
             effective_idempotency_key = body.idempotency_key or idempotency_key
             existing_job_id = (
                 result_store._idempotency_index.get(effective_idempotency_key)
