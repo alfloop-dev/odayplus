@@ -43,6 +43,12 @@ class PersistenceBundle:
     adlift_repository: Any
     intervention_repository: Any
     intervention_label_registry: Any
+    # Expansion decision-flow stores (ODP-FLOW-002): HeatZone ranking, listing
+    # dedup + candidate inbox, SiteScore decisions, and realized sites.
+    heatzone_store: Any
+    listing_repository: Any
+    sitescore_decision_store: Any
+    sitescore_realized_store: Any
     tenant_repository: Any
     brand_repository: Any
     address_location_repository: Any
@@ -64,11 +70,13 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.avm.infrastructure import InMemoryAVMRepository
     from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
+    from modules.heatzone.infrastructure import HeatZoneResultStore
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
     )
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
+    from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
@@ -84,6 +92,7 @@ def _memory_bundle() -> PersistenceBundle:
         InMemoryTransactionRepository,
     )
     from shared.jobs.queue import InMemoryJobQueue
+    from shared.workflow.sitescore import InMemoryDecisionStore, InMemoryRealizedSiteStore
 
     return PersistenceBundle(
         mode="memory",
@@ -100,6 +109,10 @@ def _memory_bundle() -> PersistenceBundle:
         adlift_repository=InMemoryAdLiftRepository(),
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
+        heatzone_store=HeatZoneResultStore(),
+        listing_repository=InMemoryListingRepository(),
+        sitescore_decision_store=InMemoryDecisionStore(),
+        sitescore_realized_store=InMemoryRealizedSiteStore(),
         tenant_repository=InMemoryTenantRepository(),
         brand_repository=InMemoryBrandRepository(),
         address_location_repository=InMemoryAddressLocationRepository(),
@@ -124,14 +137,18 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         DurableArtifactStore,
         DurableAVMRepository,
         DurableBrandRepository,
+        DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
         DurableLearningHubRepository,
+        DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
+        DurableRealizedSiteStore,
         DurableSiteScoreRepository,
         DurableStoreRepository,
         DurableTenantRepository,
@@ -155,6 +172,10 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         adlift_repository=DurableAdLiftRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
+        heatzone_store=DurableHeatZoneResultStore(store),
+        listing_repository=DurableListingRepository(store),
+        sitescore_decision_store=DurableDecisionStore(store),
+        sitescore_realized_store=DurableRealizedSiteStore(store),
         tenant_repository=DurableTenantRepository(engine),
         brand_repository=DurableBrandRepository(engine),
         address_location_repository=DurableAddressLocationRepository(engine),
