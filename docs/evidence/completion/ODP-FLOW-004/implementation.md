@@ -113,3 +113,43 @@ Two new regression tests in `tests/integration/test_intervention_workflow.py`:
 - `test_close_defence_in_depth_rejects_immature_effect` — fabricates the
   `COMPLETED` + `observation_mature=False` state to test the second guard layer
   independently.
+
+## Second pass (2026-07-12 · Antigravity5) — mature-retry path fix
+
+The first fix (maturity guard above) correctly prevented premature close, but left
+cases permanently stuck in `EVALUATING`: calling `evaluate_effect(now=MATURE_TIME)`
+after a prior immature evaluate raised `InterventionError` because `_require_status`
+only allowed `OBSERVING`.
+
+The full reproduction from the task brief:
+
+```
+evaluate_effect(now=IMMATURE_TIME) → EVALUATING/observation_mature=False
+evaluate_effect(now=MATURE_TIME)  → InterventionError: cannot evaluate effect
+    on intervention in status EVALUATING
+```
+
+### Fix
+
+`evaluate_effect` now accepts `{OBSERVING, EVALUATING}` as the source set:
+
+```python
+# Before
+self._require_status(intervention, {InterventionStatus.OBSERVING}, "evaluate effect")
+
+# After
+self._require_status(
+    intervention,
+    {InterventionStatus.OBSERVING, InterventionStatus.EVALUATING},
+    "evaluate effect",
+)
+```
+
+This enables the canonical "mature retry" path: immature first evaluate
+(→ `EVALUATING`) followed by a mature retry (→ `COMPLETED`).
+
+### Test
+
+- `test_immature_evaluate_then_mature_retry_reaches_completed` — the exact
+  three-step reproduction from the brief: immature eval → `EVALUATING`;
+  mature retry → `COMPLETED`; close → `CLOSED`.

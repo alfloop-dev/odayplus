@@ -91,3 +91,29 @@ uv run ruff check modules/intervention apps/api/app/routes/interventions.py \
   tests/integration/test_intervention_workflow.py
 # → All checks passed!
 ```
+
+## Second pass verification (2026-07-12 · Antigravity5) — mature-retry path
+
+Root cause (newly identified): the first fix correctly left immature evaluations
+in `EVALUATING`, but `_require_status` for `evaluate_effect` only allowed
+`OBSERVING`.  Calling `evaluate_effect(now=MATURE_TIME)` from `EVALUATING` raised
+`InterventionError: cannot evaluate effect on intervention in status EVALUATING`,
+leaving those cases permanently stuck.
+
+**Fix**: `evaluate_effect` status guard extended to `{OBSERVING, EVALUATING}`.
+
+**New test**:
+
+| Test | What it proves |
+| --- | --- |
+| `test_immature_evaluate_then_mature_retry_reaches_completed` | exact three-step reproduction: immature eval → `EVALUATING`; mature retry → `COMPLETED`; close → `CLOSED` |
+
+```bash
+# After second pass
+uv run pytest tests/integration/test_intervention_workflow.py -q
+# → 18 passed (+1 mature-retry regression; total now 18)
+
+uv run ruff check modules/intervention apps/api/app/routes/interventions.py \
+  tests/integration/test_intervention_workflow.py
+# → All checks passed!
+```

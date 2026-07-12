@@ -523,7 +523,16 @@ class InterventionWorkflow:
         correlation_id: str = "",
     ) -> EffectEvaluationOutcome:
         intervention = self._require(intervention_id)
-        self._require_status(intervention, {InterventionStatus.OBSERVING}, "evaluate effect")
+        # Also allow EVALUATING so that an immature-evaluate can be retried once
+        # the observation window has settled.  When evaluate_effect is first called
+        # with an immature window the case stays in EVALUATING (not COMPLETED).  The
+        # operator must be able to call evaluate_effect again later — this is the
+        # canonical "mature retry" path described in ODP-MOD-05 §7.
+        self._require_status(
+            intervention,
+            {InterventionStatus.OBSERVING, InterventionStatus.EVALUATING},
+            "evaluate effect",
+        )
         if intervention.outcome is None:
             raise InterventionError("cannot evaluate effect before an outcome is collected")
         if intervention.observation_window is None:
