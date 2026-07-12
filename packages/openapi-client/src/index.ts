@@ -113,6 +113,29 @@ export type NetPlanScenarioSummary = {
   [key: string]: unknown;
 };
 
+/**
+ * A model release decision as served by `GET /learninghub/releases` (the
+ * Learning Hub release/rollback log the UI binds to). Mirrors
+ * `ModelReleaseDecision.to_dict()` in
+ * modules/learninghub/application/release.py — only the always-present summary
+ * fields are typed; the full success/fail criteria detail is left open via the
+ * index signature.
+ */
+export type ModelReleaseSummary = {
+  release_id: string;
+  model_name?: string;
+  from_version?: string | null;
+  to_version?: string;
+  release_type?: string;
+  approval_id?: string;
+  monitoring_window?: string;
+  rollback_target?: string | null;
+  approved_by?: string;
+  created_at?: string;
+  audit_event_id?: string | null;
+  [key: string]: unknown;
+};
+
 /** Env keys checked, in priority order, when resolving the API base URL. */
 export const API_BASE_URL_ENV_KEYS = [
   "ODP_API_BASE_URL",
@@ -274,6 +297,14 @@ export class OdpApiClient {
 
   listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
     return this.request<ListResponse<NetPlanScenarioSummary>>("/netplan/scenarios");
+  }
+
+  listLearningReleases(
+    options: { modelName?: string } = {},
+  ): Promise<ListResponse<ModelReleaseSummary>> {
+    return this.request<ListResponse<ModelReleaseSummary>>("/learninghub/releases", {
+      query: { model_name: options.modelName },
+    });
   }
 
   getOperatorBootstrap(): Promise<any> {
