@@ -1,3 +1,10 @@
+"""ODay Plus Domain API Service (FastAPI).
+
+Exposes integration, opsboard, data, and ML domain endpoints wired to durable
+repositories, mapping components, and the artifact store. Also sets up the
+correlation ID tracking middleware, job queues, and the audit log.
+"""
+
 from __future__ import annotations
 
 import os
@@ -86,7 +93,7 @@ else:
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
-        heatzone_store = heatzone_store or HeatZoneResultStore()
+        heatzone_store = heatzone_store or bundle.heatzone_store
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
@@ -169,16 +176,20 @@ else:
         from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.audit import create_audit_router
         from apps.api.app.routes.avm import create_avm_router
-        from apps.api.app.routes.external_data import router as external_data_router
+        from apps.api.app.routes.external_data import create_external_data_router
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.learninghub import create_learninghub_router
-        from apps.api.app.routes.listings import router as listings_router
+        from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
+        from apps.api.app.routes.operator import create_operator_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
-        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+        from shared.workflow.sitescore import (
+            CandidateSiteRealizationHook,
+            SiteScoreDecisionWorkflow,
+        )
 
         forecast_repository = forecastops_repository or bundle.forecastops_repository
         netplan_repo = netplan_repository or bundle.netplan_repository
@@ -187,7 +198,17 @@ else:
         price_repo = priceops_repository or bundle.priceops_repository
         avm_repo = avm_repository or bundle.avm_repository
         site_repository = sitescore_repository or bundle.sitescore_repository
-        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        # ODP-FLOW-002: back the decision workflow and its realization hook with
+        # the persistence bundle so decisions and realized sites survive restart.
+        realization_hook = CandidateSiteRealizationHook(
+            store=bundle.sitescore_realized_store
+        )
+        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(
+            audit_log=audit_log,
+            hooks=[realization_hook],
+            store=bundle.sitescore_decision_store,
+        )
+        listing_repository = bundle.listing_repository
         adlift_repo = adlift_repository or bundle.adlift_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
@@ -197,15 +218,43 @@ else:
             label_hooks=[label_registry],
         )
 
-        api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
+        # ODP-GAP-ML-002: register the baseline production model for each
+        # scoring/forecast service in the durable registry (idempotent) and bind
+        # each router to its resolved PRODUCTION ModelVersion so runs carry
+        # auditable governance metadata and fail closed when the model or the
+        # live inputs are absent.
+        from models.shared_ml import seed_scoring_models
+
+        release_sha = (
+            os.environ.get("ODAY_RELEASE_SHA")
+            or os.environ.get("GITHUB_SHA")
+            or os.environ.get("COMMIT_SHA")
+        )
+        scoring_bindings = seed_scoring_models(learning_repo, git_sha=release_sha)
+
+        api.include_router(
+            create_heatzone_router(
+                store=heatzone_store,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("heatzone"),
+            )
+        )
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(external_data_router)
-        api.include_router(listings_router)
+        api.include_router(create_external_data_router(audit_log=audit_log))
+        api.include_router(
+            create_listings_router(
+                audit_log=audit_log, repository=listing_repository
+            )
+        )
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
-            create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
+            create_forecastops_router(
+                repository=forecast_repository,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("forecastops"),
+            )
         )
         api.include_router(create_netplan_router(repository=netplan_repo, audit_log=audit_log))
         api.include_router(
@@ -220,7 +269,9 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                realization_hook=realization_hook,
                 audit_log=audit_log,
+                model_binding=scoring_bindings.get("sitescore"),
             )
         )
         api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
@@ -230,6 +281,7 @@ else:
                 label_registry=label_registry,
             )
         )
+        api.include_router(create_operator_router(audit_log=audit_log), prefix="/api/v1")
 
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
@@ -239,10 +291,13 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.netplan_repository = netplan_repo
         api.state.learninghub_repository = learning_repo
+        api.state.scoring_bindings = scoring_bindings
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.sitescore_realization_hook = realization_hook
+        api.state.listing_repository = listing_repository
         api.state.adlift_repository = adlift_repo
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_repository = intervention_repo

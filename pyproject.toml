@@ -17,16 +17,17 @@ dependencies = [
     "scikit-learn>=1.5",
     "statsmodels>=0.14",
     # Solver / geospatial
-    "h3>=4.1",
+    "h3>=4.5.0",
     "ortools>=9.15.6755",
     # Data
     "duckdb>=1.0",
     "sqlalchemy>=2.0",
+    # HTTP client for the live listing-feed adapter (runtime code path).
+    "httpx>=0.27",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.27",
     "pytest>=8",
     "ruff>=0.6",
 ]

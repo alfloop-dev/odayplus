@@ -70,8 +70,8 @@ before claiming hosted follow-up is active.
 | Task | Queue status | Actor | Action type | Blocking type | Required command | Evidence refs |
 |---|---|---|---|---|---|---|
 | `ODP-PV-008` | `review` | Human/Ops | `go_no_go` | `human_signoff` | `gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url` and `python3 scripts/e2e/check_product_release_gate.py` | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`, `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md` |
-| `ODP-FE-XCUT-001` | `in_progress` | Claude2 | `owner_handoff` | `owner_status_closeout` | `AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Codex "<handoff message>"` | `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md` |
-| `ODP-FE-XCUT-001` | `waiting_for_review_after_handoff` | Codex | `reviewer_approve_or_reopen` | `reviewer_status_closeout` | `AI_NAME=Codex REVIEW_NOTES_ZH="<review summary>" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 "<approval message>"` or `AI_NAME=Codex python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 "<missing evidence>"` | `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md`, `tests/e2e/test_frontend_execution_matrix_coverage.py`, `tests/contract/test_frontend_domain_type_coverage.py`, `tests/contract/test_ui_core_component_exports.py` |
+| `ODP-FE-XCUT-001` | `in_progress` | Antigravity3 | `owner_handoff` | `owner_status_closeout` | `AI_NAME=Antigravity3 python3 scripts/ai_status.py handoff ODP-FE-XCUT-001 Antigravity2 "<handoff message>"` | `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md`, `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md` |
+| `ODP-FE-XCUT-001` | `waiting_for_review_after_handoff` | Antigravity2 | `reviewer_approve_or_reopen` | `reviewer_status_closeout` | `AI_NAME=Antigravity2 REVIEW_NOTES_ZH="<review summary>" python3 scripts/ai_status.py approve ODP-FE-XCUT-001 "<approval message>"` or `AI_NAME=Antigravity2 python3 scripts/ai_status.py reopen ODP-FE-XCUT-001 "<missing evidence>"` | `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md`, `tests/e2e/test_frontend_execution_matrix_coverage.py`, `tests/contract/test_frontend_domain_type_coverage.py`, `tests/contract/test_ui_core_component_exports.py` |
 | `ODP-FE-R0-001` | `review_approved` | Claude | `owner_done` | `owner_status_closeout` | `AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-R0-001 "<finalization message>"` | `tests/e2e/opsboard-shell.spec.ts`, `tests/e2e/e2e-api-bound-ui.spec.ts`, `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md` |
 | `ODP-FE-EXP-001` | `review` | Claude | `reviewer_approve_or_reopen` | `reviewer_status_closeout` | `AI_NAME=Claude REVIEW_NOTES_ZH="<review summary>" python3 scripts/ai_status.py approve ODP-FE-EXP-001 "<approval message>"` or `AI_NAME=Claude python3 scripts/ai_status.py reopen ODP-FE-EXP-001 "<missing evidence>"` | `tests/e2e/e2e-map.spec.ts`, `tests/e2e/e2e-expansion-product.spec.ts`, `docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md`, `docs/design/ODAY_PLUS_HEATZONE_MAP_VISUAL_SPEC.md`, `docs/design/ODAY_PLUS_SITESCORE_REPORT_UI_SPEC.md` |
 | `ODP-FE-ASSET-001` | `in_progress` | Claude | `owner_handoff` | `owner_status_closeout` | `AI_NAME=Claude python3 scripts/ai_status.py handoff ODP-FE-ASSET-001 Codex2 "<handoff message>"` | `apps/web/features/avm/AvmWorkspace.tsx`, `tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts`, `tests/e2e/e2e-avm-netplan.spec.ts`, `docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md` |
@@ -82,7 +82,7 @@ Before running any required command above, run the single-action preflight with
 the same task, actor, and action type:
 
 ```bash
-PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task ODP-FE-XCUT-001 --actor Claude2 --action-type owner_handoff
+PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action.py --task ODP-FE-XCUT-001 --actor Antigravity3 --action-type owner_handoff
 ```
 
 Use the matrix report to see all currently ready and waiting lanes:
@@ -112,6 +112,8 @@ python3 scripts/e2e/check_release_fleet_dispatch_status.py
 | `ODP-FE-XCUT-TYPES-001` | `done` | `packages/domain-types/src/frontend-contracts.ts`, `tests/contract/test_frontend_domain_type_coverage.py`, `docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md` |
 
 ## Actor Lanes
+
+- Default actors in early phases include Claude, Claude2, Codex, Codex2.
 
 ### Human/Ops
 

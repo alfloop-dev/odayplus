@@ -6,23 +6,25 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from models.priceops.binding import ElasticityInputError, resolve_elasticity
     from modules.priceops.application import (
         MissingRollbackPlanError,
         PlanNotFoundError,
         PriceOpsService,
     )
-    from modules.priceops.domain import PriceConstraints, PriceElasticityEstimate, PricingPlanItem
+    from modules.priceops.domain import PriceConstraints, PricingPlanItem
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
         PriceOpsBatchResult,
         run_priceops_optimizer_batch,
     )
+
 
     class PriceOpsPlanItemPayload(BaseModel):
         item_id: str | None = None
@@ -31,8 +33,9 @@ else:
         unit_cost: float
         current_price: float
         baseline_demand: float
-        elasticity_value: float
-        confidence: float = 0.9
+        elasticity_value: float | None = None
+        confidence: float | None = None
+        price_demand_observations: list[dict[str, float]] | None = None
         margin_floor_ratio: float = 0.15
         max_increase_pct: float = 0.15
         max_decrease_pct: float = 0.15
@@ -42,6 +45,7 @@ else:
         horizon: str = "4week"
         prediction_origin_time: str | None = None
 
+
     class PriceOpsPlanPayload(BaseModel):
         tenant_id: str = Field(min_length=1)
         items: list[PriceOpsPlanItemPayload] = Field(min_length=1)
@@ -49,21 +53,25 @@ else:
         created_at: str | None = None
         idempotency_key: str | None = None
 
+
     class PriceOpsOptimizerJobPayload(BaseModel):
         plans: list[PriceOpsPlanPayload] = Field(min_length=1)
         optimized_at: str | None = None
         idempotency_key: str | None = None
+
 
     class PriceOpsActorPayload(BaseModel):
         actor: str = Field(default="system", min_length=1)
         reason: str = ""
         occurred_at: str | None = None
 
+
     class PriceOpsApprovalPayload(BaseModel):
         actor_id: str = Field(min_length=1)
         reason: str = Field(min_length=1)
         decision: str = "approved"
         approved_at: str | None = None
+
 
     class PriceOpsActivationPayload(BaseModel):
         executor: str = Field(default="system", min_length=1)
@@ -72,10 +80,12 @@ else:
         executed_at: str | None = None
         label_maturity_time: str | None = None
 
+
     class PriceOpsObservationPayload(BaseModel):
         actor: str = Field(default="system", min_length=1)
         start_time: str | None = None
         stop_conditions: dict[str, Any] = Field(default_factory=dict)
+
 
     class PriceOpsEvaluationPayload(BaseModel):
         actual_gross_margin: float
@@ -86,6 +96,7 @@ else:
         outcome_window_start: str | None = None
         outcome_window_end: str | None = None
         generated_at: str | None = None
+
 
     class PriceOpsJobStore:
         def __init__(self) -> None:
@@ -113,20 +124,25 @@ else:
         def get(self, job_id: str) -> PriceOpsBatchResult | None:
             return self._jobs.get(job_id)
 
+
     def create_priceops_router(
         *,
         repository: InMemoryPriceOpsRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         job_store: PriceOpsJobStore | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/priceops", tags=["priceops"])
         price_repository = repository or InMemoryPriceOpsRepository()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or PriceOpsJobStore()
         service = PriceOpsService(repository=price_repository)
         idempotency_index: dict[str, str] = {}
 
-        @router.post("/plans", status_code=status.HTTP_201_CREATED)
+        @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
         def create_plan(
             body: PriceOpsPlanPayload,
             request: Request,
@@ -139,9 +155,16 @@ else:
                     payload = plan.to_dict()
                     payload["created"] = False
                     return payload
+            try:
+                resolved = [_resolve_item(item) for item in body.items]
+            except ElasticityInputError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            bindings = [binding for _item, binding in resolved]
             plan = service.create_plan(
                 tenant_id=body.tenant_id,
-                items=[_item_from_payload(item) for item in body.items],
+                items=[plan_item for plan_item, _binding in resolved],
                 correlation_id=request.state.correlation_id,
                 plan_id=body.plan_id,
                 created_at=_parse_time(body.created_at),
@@ -154,13 +177,14 @@ else:
                 "priceops.plan_created.v1",
                 "create",
                 f"priceops/plans/{plan.plan_id}",
-                {"created": True},
+                {"created": True, "elasticity_bindings": bindings},
             )
             payload = plan.to_dict()
             payload["created"] = True
+            payload["elasticity_bindings"] = bindings
             return payload
 
-        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def create_optimizer_job(
             body: PriceOpsOptimizerJobPayload,
             request: Request,
@@ -170,17 +194,23 @@ else:
             result = jobs.get_by_idempotency_key(effective_key)
             created = result is None
             if result is None:
+                try:
+                    plan_requests = [
+                        PlanRequest(
+                            tenant_id=plan.tenant_id,
+                            correlation_id=request.state.correlation_id,
+                            items=[_item_from_payload(item) for item in plan.items],
+                            plan_id=plan.plan_id,
+                        )
+                        for plan in body.plans
+                    ]
+                except ElasticityInputError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    ) from exc
                 result, created = jobs.put(
                     run_priceops_optimizer_batch(
-                        requests=[
-                            PlanRequest(
-                                tenant_id=plan.tenant_id,
-                                correlation_id=request.state.correlation_id,
-                                items=[_item_from_payload(item) for item in plan.items],
-                                plan_id=plan.plan_id,
-                            )
-                            for plan in body.plans
-                        ],
+                        requests=plan_requests,
                         optimized_at=_parse_time(body.optimized_at),
                         repository=price_repository,
                     ),
@@ -204,19 +234,19 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/optimizer-jobs/{job_id}")
+        @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def get_optimizer_job(job_id: str) -> dict[str, Any] | None:
             result = jobs.get(job_id)
             if result is None:
                 return None
             return result.to_dict()
 
-        @router.get("/plans")
+        @router.get("/plans", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def list_plans() -> dict[str, Any]:
             plans = service.repository.list_plans()
             return {"items": [plan.to_dict() for plan in plans], "count": len(plans)}
 
-        @router.get("/plans/{plan_id}")
+        @router.get("/plans/{plan_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def get_plan(plan_id: str) -> dict[str, Any]:
             plan = service.repository.get_plan(plan_id)
             if plan is None:
@@ -241,7 +271,7 @@ else:
             payload["evaluation"] = _to_dict_or_none(service.repository.get_evaluation(plan_id))
             return payload
 
-        @router.post("/plans/{plan_id}/simulate")
+        @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def simulate(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.simulate(
@@ -257,7 +287,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/optimize")
+        @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def optimize(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.optimize(
@@ -273,7 +303,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/submit")
+        @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
         def submit(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.submit_for_approval(
@@ -289,7 +319,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/approve")
+        @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
         def approve(
             plan_id: str, body: PriceOpsApprovalPayload, request: Request
         ) -> dict[str, Any]:
@@ -308,7 +338,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/activate")
+        @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def activate(
             plan_id: str, body: PriceOpsActivationPayload, request: Request
         ) -> dict[str, Any]:
@@ -329,7 +359,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/observation")
+        @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def start_observation(
             plan_id: str, body: PriceOpsObservationPayload, request: Request
         ) -> dict[str, Any]:
@@ -347,7 +377,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/evaluate")
+        @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def evaluate(
             plan_id: str, body: PriceOpsEvaluationPayload, request: Request
         ) -> dict[str, Any]:
@@ -375,7 +405,7 @@ else:
                 plan_id,
             )
 
-        @router.post("/plans/{plan_id}/rollback")
+        @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def rollback(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.rollback(
@@ -393,8 +423,18 @@ else:
 
         return router
 
-    def _item_from_payload(item: PriceOpsPlanItemPayload) -> PricingPlanItem:
-        return PricingPlanItem.create(
+    def _resolve_item(
+        item: PriceOpsPlanItemPayload,
+    ) -> tuple[PricingPlanItem, dict[str, Any]]:
+        estimate, binding = resolve_elasticity(
+            current_price=item.current_price,
+            observations=item.price_demand_observations,
+            supplied_value=item.elasticity_value,
+            supplied_confidence=item.confidence,
+            horizon=item.horizon,
+            prediction_origin_time=_parse_time(item.prediction_origin_time),
+        )
+        plan_item = PricingPlanItem.create(
             item_id=item.item_id,
             store_id=item.store_id,
             machine_type=item.machine_type,
@@ -409,14 +449,17 @@ else:
                 max_price=item.max_price,
             ),
             baseline_demand=item.baseline_demand,
-            elasticity=PriceElasticityEstimate(
-                elasticity_value=item.elasticity_value,
-                confidence=item.confidence,
-                horizon=item.horizon,
-                prediction_origin_time=_parse_time(item.prediction_origin_time)
-                or datetime.now(UTC),
-            ),
+            elasticity=estimate,
         )
+        return plan_item, {
+            "store_id": item.store_id,
+            "machine_type": item.machine_type,
+            **binding,
+        }
+
+    def _item_from_payload(item: PriceOpsPlanItemPayload) -> PricingPlanItem:
+        plan_item, _binding = _resolve_item(item)
+        return plan_item
 
     def _parse_required_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))

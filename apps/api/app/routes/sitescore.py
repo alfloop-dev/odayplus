@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -20,41 +21,57 @@ else:
         SiteScoreDecisionWorkflow,
     )
 
+
     class SiteScoreScoreJobPayload(BaseModel):
         features: list[dict[str, Any]] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         idempotency_key: str | None = None
 
+
     class OpenDecisionPayload(BaseModel):
         report_id: str
         created_by: str = Field(min_length=1)
+
 
     class DecisionPayload(BaseModel):
         action: str
         actor: str = Field(min_length=1)
         reason: str = ""
 
+
     def create_sitescore_router(
         *,
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
+        realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        model_binding: ModelBinding | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/sitescore", tags=["sitescore"])
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         site_repository = repository or InMemorySiteScoreRepository()
-        realization_hook = CandidateSiteRealizationHook()
-        decision_workflow = workflow or SiteScoreDecisionWorkflow(
-            audit_log=active_audit_log, hooks=[realization_hook]
-        )
-        if decision_workflow is workflow:
-            decision_workflow.register_hook(realization_hook)
+        # ODP-FLOW-002: the injected realization hook (durable-backed in E2E mode)
+        # is the one exposed via /sitescore/realized, so a realized approval
+        # survives a restart. Avoid double-registering it on a provided workflow.
+        active_realization_hook = realization_hook or CandidateSiteRealizationHook()
+        if workflow is None:
+            decision_workflow = SiteScoreDecisionWorkflow(
+                audit_log=active_audit_log, hooks=[active_realization_hook]
+            )
+        else:
+            decision_workflow = workflow
+            if active_realization_hook not in decision_workflow.hooks:
+                decision_workflow.register_hook(active_realization_hook)
         service = SiteScoreReportService(repository=site_repository)
         idempotency_index: dict[str, str] = {}
         jobs: dict[str, dict[str, Any]] = {}
 
-        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED)
-        @router.post("/reports", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/reports", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
         def create_score_job(
             body: SiteScoreScoreJobPayload,
             request: Request,
@@ -66,11 +83,25 @@ else:
                 payload["created"] = False
                 return payload
 
+            # Fail closed: refuse a fresh run when live inputs are absent.
+            try:
+                require_live_inputs(body.features, service="sitescore")
+            except ScoringInputUnavailableError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+
             reports = service.score_candidates(
                 body.features,
                 prediction_origin_time=_parse_origin(body.prediction_origin_time),
             )
             job_id = f"sitescore-score-{uuid4()}"
+            metadata: dict[str, Any] = {
+                "idempotency_key": effective_key,
+                "candidate_count": len(reports),
+            }
+            if model_binding is not None:
+                metadata["model_binding"] = model_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="sitescore.scored.v1",
@@ -80,10 +111,7 @@ else:
                     outcome="accepted",
                     correlation_id=request.state.correlation_id,
                     job_id=job_id,
-                    metadata={
-                        "idempotency_key": effective_key,
-                        "candidate_count": len(reports),
-                    },
+                    metadata=metadata,
                 )
             )
             payload = {
@@ -95,12 +123,14 @@ else:
                 "correlation_id": request.state.correlation_id,
                 "created": True,
             }
+            if model_binding is not None:
+                payload["model_binding"] = model_binding.to_audit_metadata()
             jobs[job_id] = payload
             if effective_key:
                 idempotency_index[effective_key] = job_id
             return payload
 
-        @router.get("/reports")
+        @router.get("/reports", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def list_reports() -> dict[str, Any]:
             reports = site_repository.list_latest()
             return {
@@ -108,7 +138,7 @@ else:
                 "count": len(reports),
             }
 
-        @router.get("/reports/{candidate_site_id}")
+        @router.get("/reports/{candidate_site_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def candidate_reports(candidate_site_id: str) -> dict[str, Any]:
             latest = site_repository.latest(candidate_site_id)
             if latest is None:
@@ -120,7 +150,7 @@ else:
                 "version_count": len(history),
             }
 
-        @router.post("/decisions", status_code=status.HTTP_201_CREATED)
+        @router.post("/decisions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
         def open_decision(body: OpenDecisionPayload, request: Request) -> dict[str, Any]:
             report = site_repository.get_report(body.report_id)
             if report is None:
@@ -137,7 +167,7 @@ else:
             )
             return decision.to_dict()
 
-        @router.post("/decisions/{decision_id}/decision")
+        @router.post("/decisions/{decision_id}/decision", dependencies=[Depends(require_permission("sitescore", Action.APPROVE, engine=authz_engine))])
         def decide(decision_id: str, body: DecisionPayload, request: Request) -> dict[str, Any]:
             try:
                 action = DecisionAction(body.action)
@@ -161,16 +191,16 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/decisions/{decision_id}")
+        @router.get("/decisions/{decision_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def get_decision(decision_id: str) -> dict[str, Any]:
             decision = decision_workflow.get(decision_id)
             if decision is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="decision not found")
             return decision.to_dict()
 
-        @router.get("/realized")
+        @router.get("/realized", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def list_realized() -> dict[str, Any]:
-            realized = realization_hook.list_realized()
+            realized = active_realization_hook.list_realized()
             return {
                 "items": [site.to_dict() for site in realized],
                 "count": len(realized),

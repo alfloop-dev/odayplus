@@ -1,17 +1,77 @@
-# Local dev stack for ODay Plus: API (FastAPI) + web (Next.js).
+# Local dev stack for ODay Plus platform runtime (ODP-FLOW-011).
 #   docker compose up --build
 #   web -> http://localhost:3000   api -> http://localhost:8000  (/healthz, /docs)
-# No database is required: the API uses in-memory stores by default.
+#
+# This composes the first-version deployment units from ODP-SD-03 §4 against ONE
+# durable SQLite database on a shared volume, so migrations, seed, api, worker
+# and scheduler run together and share the durable job model (ODP-SD-08 §3):
+#
+#   migrate   -> applies infra/db/migrations schema + primes baseline jobs, then exits
+#   api       -> core-api (FastAPI) serving domain routers + Job/Audit APIs
+#   worker    -> claims and executes durable jobs beyond a heartbeat
+#   scheduler -> periodically enqueues the baseline recurring jobs
+#   web       -> opsboard-web (Next.js), calls the API
+#
+# The api/worker/scheduler/migrate services share ODP_PERSISTENCE=durable and the
+# odp-db volume, so a job the scheduler enqueues is the job the worker claims and
+# the result survives a container restart.
+x-runtime-env: &runtime-env
+  ODP_ENV: dev
+  ODP_PERSISTENCE: durable
+  ODP_DB_PATH: /data/runtime.sqlite3
+
 services:
-  api:
+  migrate:
     build:
       context: .
       dockerfile: infra/docker/api.Dockerfile
     image: odayplus/api:dev
+    command:
+      - python
+      - -c
+      - "from apps.api.server import bootstrap_runtime; bootstrap_runtime(prime_scheduled_jobs=True)"
+    environment:
+      <<: *runtime-env
+    volumes:
+      - odp-db:/data
+    restart: "no"
+
+  api:
+    image: odayplus/api:dev
     ports:
       - "8000:8000"
     environment:
-      ODP_ENV: dev
+      <<: *runtime-env
+    volumes:
+      - odp-db:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    image: odayplus/api:dev
+    command: ["python", "-m", "apps.worker.oday_worker"]
+    environment:
+      <<: *runtime-env
+    volumes:
+      - odp-db:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    image: odayplus/api:dev
+    command: ["python", "-m", "apps.scheduler.oday_scheduler"]
+    environment:
+      <<: *runtime-env
+      ODP_SCHEDULER_INTERVAL: "30"
+    volumes:
+      - odp-db:/data
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   web:
@@ -30,3 +90,6 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  odp-db:

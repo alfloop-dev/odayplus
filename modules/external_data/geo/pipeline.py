@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 import unicodedata
 from collections import defaultdict
@@ -115,19 +114,13 @@ def coordinates_in_market(latitude: float, longitude: float) -> bool:
 
 
 def stable_h3_index(latitude: float, longitude: float, resolution: int) -> str:
-    """Return a stable H3-compatible cell key without adding a runtime dependency.
-
-    The value is intentionally prefixed and resolution-scoped so downstream code
-    can depend on the canonical fields today and swap in the official H3 encoder
-    later without changing pipeline boundaries.
+    """Return a stable H3 cell key.
     """
+    import h3
 
     if not coordinates_in_market(latitude, longitude):
         raise ValueError("coordinates are outside the configured market bounds")
-    cell_size = 1 / (2 ** (resolution - 3))
-    lat_bucket = math.floor((latitude - TAIWAN_LATITUDE_RANGE[0]) / cell_size)
-    lon_bucket = math.floor((longitude - TAIWAN_LONGITUDE_RANGE[0]) / cell_size)
-    return f"h3r{resolution}_{lat_bucket:04d}_{lon_bucket:04d}"
+    return h3.latlng_to_cell(latitude, longitude, resolution)
 
 
 def build_geo_cell(result: GeocodeResult, *, resolution: int = 9) -> GeoCell:

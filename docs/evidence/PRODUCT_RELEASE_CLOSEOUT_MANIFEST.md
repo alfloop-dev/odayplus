@@ -62,8 +62,8 @@ The authoritative release target is draft release PR #82. Use PR #82
 | Task | Current state | Required actor | Required action | Blocking type |
 |---|---|---|---|---|
 | `ODP-PV-008` | `review` | Human/Ops | Review `PRODUCT_E2E_READINESS_REPORT.md`, `PRODUCT_RELEASE_GO_NO_GO.md`, PR #82 checks, deterministic source-stub boundary, and rollout limitation; record go/no-go | human_signoff |
-| `ODP-FE-XCUT-001` | `in_progress` | Claude2 | Move parent lane to review after accepting PR #87/#88/#89/#90/#91/#92 evidence and no remaining XCUT repo gap | owner_status_closeout |
-| `ODP-FE-XCUT-001` | `waiting_for_review_after_handoff` | Codex | Approve after owner moves it to `review`; current reviewer check found no repository evidence gap | reviewer_status_closeout |
+| `ODP-FE-XCUT-001` | `in_progress` | Antigravity3 | Move parent lane to review after accepting PR #87/#88/#89/#90/#91/#92 evidence and no remaining XCUT repo gap | owner_status_closeout |
+| `ODP-FE-XCUT-001` | `waiting_for_review_after_handoff` | Antigravity2 | Approve after owner moves it to `review`; current reviewer check found no repository evidence gap | reviewer_status_closeout |
 | `ODP-FE-R0-001` | `review_approved` | Claude | Finalize owner closeout to `done` if no extra UX scope is requested | owner_status_closeout |
 | `ODP-FE-EXP-001` | `review` | Claude | Review Expansion evidence against Expansion workflow, HeatZone map, and SiteScore specs | reviewer_status_closeout |
 | `ODP-FE-ASSET-001` | `in_progress` | Claude | Hand off Asset/NetPlan evidence to Codex2 after accepting AVM reserve/asking masking and non-leakage E2E assertions | owner_status_closeout |

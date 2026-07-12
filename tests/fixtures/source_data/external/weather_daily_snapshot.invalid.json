@@ -1,0 +1,25 @@
+{
+  "contract_id": "weather_daily_snapshot",
+  "cases": [
+    {
+      "label": "missing required station_id",
+      "record": {
+        "date": "2026-07-10",
+        "temperature_max": 33.5,
+        "temperature_min": 25.0,
+        "snapshot_id": "weather-2026-07-10"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "type mismatch for humidity_avg",
+      "record": {
+        "station_id": "STA-001",
+        "date": "2026-07-10",
+        "humidity_avg": "very humid",
+        "snapshot_id": "weather-2026-07-10"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}

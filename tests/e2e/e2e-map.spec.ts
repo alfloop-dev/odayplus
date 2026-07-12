@@ -349,3 +349,78 @@ function isCandidatePurple(pixel: Rgba) {
 function isSelectedDarkBlue(pixel: Rgba) {
   return pixel.alpha > 150 && pixel.red < 90 && pixel.green < 110 && pixel.blue > 55 && pixel.blue < 190;
 }
+
+test("HeatZone map tooltip displays complete metadata on hover", async ({ page }) => {
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone");
+  await expect(page.getByTestId("exp-heatzone-page")).toBeVisible();
+
+  const trigger = page.getByTestId("map-evidence-trigger-hz-1049");
+  await trigger.hover();
+
+  const tooltip = page.getByTestId("map-evidence-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Score");
+  await expect(tooltip).toContainText("91");
+  await expect(tooltip).toContainText("STILL_EXPANDABLE");
+  await expect(tooltip).toContainText("0.86");
+});
+
+test("Fallback Ranked HeatZone table exhibits required column parity", async ({ page }) => {
+  await page.goto("/w/expansion/heatzone");
+
+  const table = page.getByLabel("Ranked HeatZone list");
+  await expect(table).toBeVisible();
+
+  // Check table headers
+  await expect(table.locator("th").nth(0)).toContainText("Rank");
+  await expect(table.locator("th").nth(1)).toContainText("Area");
+  await expect(table.locator("th").nth(2)).toContainText("Score");
+  await expect(table.locator("th").nth(3)).toContainText("State");
+  await expect(table.locator("th").nth(4)).toContainText("Confidence");
+  await expect(table.locator("th").nth(5)).toContainText("Listings");
+  await expect(table.locator("th").nth(6)).toContainText("Action");
+
+  // Check content inside a row
+  const firstRow = table.locator("tbody tr").first();
+  await expect(firstRow.locator("td").nth(0)).toContainText("#1");
+  await expect(firstRow.locator("td").nth(1)).toContainText("台北市信義區");
+  await expect(firstRow.locator("td").nth(2)).toContainText("91 (80-100)");
+  await expect(firstRow.locator("td").nth(3)).toContainText("STILL_EXPANDABLE");
+  await expect(firstRow.locator("td").nth(4)).toContainText("0.86");
+  await expect(firstRow.locator("td").nth(5)).toContainText("8");
+  await expect(firstRow.locator("td").nth(6)).toContainText("打開 Drawer");
+});
+
+test("No-geometry query parameter renders the inline warning", async ({ page }) => {
+  await page.goto("/w/expansion/heatzone?noGeometry=true");
+
+  // Verify map warning is visible
+  const warning = page.getByTestId("map-geometry-warning");
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("地圖 geometry 尚未可用；列表仍可用於審查");
+});
+
+test("HeatZoneScoreCard drawer displays full score breakdown and evidence details", async ({ page }) => {
+  await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone");
+
+  const drawer = page.getByTestId("heatzone-drawer");
+  await expect(drawer).toBeVisible();
+
+  // Verify Score Breakdown
+  await expect(drawer.getByText("Score Breakdown")).toBeVisible();
+  await expect(drawer.getByText("Unmet Demand")).toBeVisible();
+  await expect(drawer.locator("dd").nth(0)).toContainText("0.9100");
+  await expect(drawer.locator("dd").nth(1)).toContainText("0.7800");
+
+  // Verify Evidence Details
+  await expect(drawer.getByText("Evidence Details")).toBeVisible();
+  await expect(drawer.getByText("POI count")).toBeVisible();
+  await expect(drawer.getByText("Median rent")).toBeVisible();
+  await expect(drawer.getByText("NT$ 85,000")).toBeVisible();
+
+  // Verify Version/Audit and Next actions
+  await expect(drawer.getByText("Confidence & Quality")).toBeVisible();
+  await expect(drawer.getByText("建立實勘/研究")).toBeVisible();
+  await expect(drawer.getByText("重新計算")).toBeVisible();
+  await expect(drawer.getByText("導出證據")).toBeVisible();
+});

@@ -14,14 +14,26 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
-from ortools.linear_solver import pywraplp
-
 from solver.netplan.model import (
     ActionOption,
     InfeasibilityDiagnosis,
     NetPlanConstraints,
     NetworkAction,
 )
+
+
+def _pywraplp():  # noqa: D401
+    """Import ortools lazily.
+
+    ortools is a heavy optional dependency only needed to *run* a solve. Importing
+    this module must not require it: it is pulled transitively into the API startup
+    path (persistence -> modules.netplan -> solver.netplan) and the API container
+    ships without ortools. Deferring the import keeps API boot independent of it.
+    """
+    from ortools.linear_solver import pywraplp
+
+    return pywraplp
+
 
 SOLVER_VERSION = "netplan-ortools-mip-v1"
 STATUS_OPTIMAL = "optimal"
@@ -150,7 +162,7 @@ def solve_network_plan(
         )
 
     # Initialize SCIP solver
-    solver = pywraplp.Solver.CreateSolver("SCIP")
+    solver = _pywraplp().Solver.CreateSolver("SCIP")
     if not solver:
         # Fallback to exhaustive if SCIP is not available
         candidates = build_feasible_candidates(
@@ -292,7 +304,7 @@ def solve_network_plan(
 
     # Solve primary
     status = solver.Solve()
-    if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+    if status not in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
         return NetworkPlanSolveResult(
             solver_status=STATUS_INFEASIBLE,
             objective_value=0.0,
@@ -329,7 +341,7 @@ def solve_network_plan(
         
         solver.Add(sum(current_selected_vars) <= N - 1)
         alt_status = solver.Solve()
-        if alt_status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        if alt_status in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
             alt_selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
             alt_candidate = _candidate_from_selected(alt_selected, constraints, risk_penalty)
             if alt_candidate.action_signature not in [best_candidate.action_signature] + [a.action_signature for a in alternatives]:
@@ -337,7 +349,7 @@ def solve_network_plan(
         else:
             break
 
-    solver_status = STATUS_OPTIMAL if status == pywraplp.Solver.OPTIMAL else STATUS_FEASIBLE
+    solver_status = STATUS_OPTIMAL if status == _pywraplp().Solver.OPTIMAL else STATUS_FEASIBLE
     return NetworkPlanSolveResult(
         solver_status=solver_status,
         objective_value=best_candidate.objective_value,

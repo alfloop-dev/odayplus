@@ -1,18 +1,4 @@
-"""Integration tests for the external source connector completion (ODP-PV-003).
-
-These exercise the connector framework end-to-end against the golden fixtures
-and prove the four acceptance capabilities:
-
-  * source-to-canonical mapping (typed canonical entities + identity);
-  * the data-quality gate (invalid records quarantine with ODP-DATA-05 reasons);
-  * geocode / H3 enrichment for address-bearing external sources; and
-  * the lineage envelope (source id, observation / ingestion time, schema
-    version, field lineage, quarantine reason) preserved on every record.
-
-The connector matrix is also asserted to cover every source category required by
-the product-grade E2E wave (store, transaction, machine, maintenance, customer
-service, pricing, listing, POI, competitor, admin boundary, geocode).
-"""
+"""Integration tests for the external source connector completion (ODP-PV-003) and live listing feed adapter (ODP-EXT-002)."""
 
 from __future__ import annotations
 
@@ -22,9 +8,17 @@ from pathlib import Path
 
 import pytest
 
+from modules.external_data.application.listing_feed_adapter import (
+    ListingFeedClient,
+    LiveListingFeedAdapter,
+    TimeoutError,
+    UnauthorizedError,
+)
 from modules.external_data.connectors import build_external_connectors
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
 from modules.integration.connectors import build_internal_connectors
+from modules.listing.application.pipeline import ListingPipeline
+from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from shared.domain import AddressLocation, CompetitorStore, GeoCell, Listing, Poi
 
 FIXTURES_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "source_data"
@@ -180,7 +174,8 @@ def test_geocode_connector_emits_address_with_h3(connectors: dict) -> None:
     run = connectors["geocode_result_snapshot"].ingest(records)
     address = run.accepted[0].canonical
     assert isinstance(address, AddressLocation)
-    assert address.h3_res_9 and address.h3_res_9.startswith("h3r9_")
+    import h3
+    assert address.h3_res_9 and h3.is_valid_cell(address.h3_res_9)
     assert run.accepted[0].geocode.h3_resolution_map[9] == address.h3_res_9
 
 
@@ -199,7 +194,8 @@ def test_admin_boundary_canonicalizes_to_geo_cell(connectors: dict) -> None:
     cell = run.accepted[0].canonical
     assert isinstance(cell, GeoCell)
     assert cell.admin_district == "信義區"
-    assert cell.h3_index.startswith("h3r9_")
+    import h3
+    assert h3.is_valid_cell(cell.h3_index)
 
 
 # --- acceptance #4: lineage envelope ----------------------------------------
@@ -238,3 +234,164 @@ def test_schema_version_comes_from_contract_when_declared(connectors: dict) -> N
         _load("admin_boundary_snapshot", "valid")["records"]
     )
     assert run.accepted[0].lineage.schema_version == "admin-boundary-v1"
+
+
+# --- Listing Feed Adapter Tests (ODP-EXT-002) --------------------------------
+
+
+def _get_geo_pipeline() -> GeoPipeline:
+    return GeoPipeline(
+        StaticGeocodeProvider(
+            {
+                "台北市大安區復興南路二段100號": GeocodeCandidate(
+                    latitude=25.026,
+                    longitude=121.543,
+                    precision="rooftop",
+                    confidence=0.92,
+                    provider="fixture",
+                    admin_city="台北市",
+                    admin_district="大安區",
+                )
+            }
+        )
+    )
+
+
+def test_success_contract_test(tmp_path) -> None:
+    repository = InMemoryListingRepository()
+    pipeline = ListingPipeline(repository=repository, geo_pipeline=_get_geo_pipeline())
+
+    # We mock client to return valid fixture records on fetch_listings
+    client = ListingFeedClient(api_url="mock://api", api_key="valid_token")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+
+    # Test process feed with a simulated response payload
+    result = adapter.process_feed(replay_payload=valid_fixture)
+
+    assert result["status"] == "success"
+    assert result["accepted_count"] == 1  # LST-001 is active and ground floor (1F)
+    assert result["rejected_count"] == 1  # LST-002 is stale status (only active becomes candidate)
+    assert result["quarantined_count"] == 1
+    assert len(repository.listings) == 2
+    assert len(repository.candidates) == 1
+
+
+def test_duplicate_contract_test(tmp_path) -> None:
+    repository = InMemoryListingRepository()
+    pipeline = ListingPipeline(repository=repository, geo_pipeline=_get_geo_pipeline())
+
+    client = ListingFeedClient(api_url="mock://api", api_key="valid_token")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+
+    first_result = adapter.process_feed(replay_payload=valid_fixture)
+    assert first_result["status"] == "success"
+
+    # Second processing of the exact same payload should trigger the idempotency check
+    second_result = adapter.process_feed(replay_payload=valid_fixture)
+    assert second_result["status"] == "duplicate"
+    assert "already been processed" in second_result["message"]
+
+
+def test_malformed_payload_contract_test(tmp_path) -> None:
+    repository = InMemoryListingRepository()
+    pipeline = ListingPipeline(repository=repository, geo_pipeline=_get_geo_pipeline())
+
+    client = ListingFeedClient(api_url="mock://api", api_key="valid_token")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    invalid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.invalid.json").read_text(encoding="utf-8"))
+
+    # We map the invalid fixture cases into a list of records
+    records = [case["record"] for case in invalid_fixture["cases"]]
+    malformed_payload = {
+        "contract_id": "listing_raw_snapshot",
+        "snapshot_id": "malformed-test-batch",
+        "records": records,
+    }
+
+    result = adapter.process_feed(replay_payload=malformed_payload)
+
+    assert result["status"] == "success"
+    assert result["accepted_count"] == 0
+    assert result["quarantined_count"] == 3  # All three cases are invalid and enter quarantine
+    assert Path(result["quarantine_path"]).exists()
+
+    quarantine_data = json.loads(Path(result["quarantine_path"]).read_text(encoding="utf-8"))
+    assert len(quarantine_data) == 3
+    assert quarantine_data[0]["status"] == "RAW"
+    assert any(issue["code"] == "missing_required_field" for issue in quarantine_data[0]["issues"])
+
+
+def test_unauthorized_contract_test(tmp_path) -> None:
+    pipeline = ListingPipeline()
+    # Trigger client auth failure check
+    client = ListingFeedClient(api_url="mock://api", api_key="unauthorized_key")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    with pytest.raises(UnauthorizedError) as exc_info:
+        adapter.process_feed()
+
+    assert "Authentication failed" in str(exc_info.value) or "access denied" in str(exc_info.value).lower()
+
+
+def test_timeout_contract_test(tmp_path) -> None:
+    pipeline = ListingPipeline()
+    # Trigger client timeout failure check
+    client = ListingFeedClient(api_url="mock://api", api_key="timeout_trigger")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    with pytest.raises(TimeoutError) as exc_info:
+        adapter.process_feed()
+
+    assert "timed out" in str(exc_info.value).lower()
+
+
+def test_fixture_compatible_replay(tmp_path) -> None:
+    # Verify we can replay files correctly and it remains fully compatible
+    repository = InMemoryListingRepository()
+    pipeline = ListingPipeline(repository=repository, geo_pipeline=_get_geo_pipeline())
+
+    client = ListingFeedClient(api_url="mock://api", api_key="fixture_default")
+    adapter = LiveListingFeedAdapter(
+        client=client,
+        pipeline=pipeline,
+        snapshot_dir=str(tmp_path / "snapshots"),
+        quarantine_dir=str(tmp_path / "quarantine"),
+    )
+
+    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+    result = adapter.process_feed(replay_payload=valid_fixture)
+
+    assert result["status"] == "success"
+    assert result["snapshot_id"] == "listing-2026-06-26"
+    assert Path(result["raw_snapshot_path"]).exists()
+    assert Path(result["canonical_snapshot_path"]).exists()

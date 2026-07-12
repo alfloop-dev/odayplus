@@ -2,7 +2,11 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const CORRELATION_ID = "corr-pv007-avm-netplan-learning-audit";
-const headers = { "x-correlation-id": CORRELATION_ID };
+const headers = {
+  "x-correlation-id": CORRELATION_ID,
+  "x-subject-id": "product-e2e-test",
+  "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive,model_owner,release_owner,pricing_manager,marketing_manager",
+};
 
 test.setTimeout(120_000);
 

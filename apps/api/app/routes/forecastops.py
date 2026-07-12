@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -59,14 +60,19 @@ else:
         repository: InMemoryForecastOpsRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         job_store: ForecastOpsJobStore | None = None,
+        model_binding: ModelBinding | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/forecastops", tags=["forecastops"])
         forecast_repository = repository or InMemoryForecastOpsRepository()
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or ForecastOpsJobStore()
         service = ForecastOpsService(repository=forecast_repository)
 
-        @router.post("/timeseries", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/timeseries", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))])
         def ingest_timeseries(body: ForecastOpsTimeseriesPayload) -> dict[str, Any]:
             series = service.ingest_timeseries(body.observations)
             return {
@@ -74,12 +80,12 @@ else:
                 "count": len(series),
             }
 
-        @router.get("/timeseries")
+        @router.get("/timeseries", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_timeseries() -> dict[str, Any]:
             series = forecast_repository.list_series()
             return {"items": [item.to_dict() for item in series], "count": len(series)}
 
-        @router.post("/forecast-jobs", status_code=status.HTTP_202_ACCEPTED)
+        @router.post("/forecast-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("forecastops", Action.EXECUTE, engine=authz_engine))])
         def create_forecast_job(
             body: ForecastOpsForecastJobPayload,
             request: Request,
@@ -89,6 +95,13 @@ else:
             result = jobs.get_by_idempotency_key(effective_key)
             created = result is None
             if result is None:
+                # Fail closed: refuse a fresh run when live inputs are absent.
+                try:
+                    require_live_inputs(body.inputs, service="forecastops")
+                except ScoringInputUnavailableError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    ) from exc
                 result, created = jobs.put(
                     run_forecastops_batch_forecast(
                         inputs=body.inputs,
@@ -97,6 +110,13 @@ else:
                     ),
                     idempotency_key=effective_key,
                 )
+            metadata: dict[str, Any] = {
+                "idempotency_key": effective_key,
+                "store_count": len(body.inputs),
+                "created": created,
+            }
+            if model_binding is not None:
+                metadata["model_binding"] = model_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="forecastops.forecasted.v1",
@@ -106,32 +126,30 @@ else:
                     outcome="accepted" if created else "idempotent_replay",
                     correlation_id=request.state.correlation_id,
                     job_id=result.job_id,
-                    metadata={
-                        "idempotency_key": effective_key,
-                        "store_count": len(body.inputs),
-                        "created": created,
-                    },
+                    metadata=metadata,
                 )
             )
             payload = result.to_dict()
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
+            if model_binding is not None:
+                payload["model_binding"] = model_binding.to_audit_metadata()
             return payload
 
-        @router.get("/forecast-jobs/{job_id}")
+        @router.get("/forecast-jobs/{job_id}", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def get_forecast_job(job_id: str) -> dict[str, Any] | None:
             result = jobs.get(job_id)
             if result is None:
                 return None
             return result.to_dict()
 
-        @router.get("/forecasts")
+        @router.get("/forecasts", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_forecasts() -> dict[str, Any]:
             forecasts = forecast_repository.latest_forecasts()
             return {"items": [forecast.to_dict() for forecast in forecasts], "count": len(forecasts)}
 
-        @router.get("/alerts")
+        @router.get("/alerts", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_alerts(level: str | None = None) -> dict[str, Any]:
             alerts = [
                 alert
@@ -140,14 +158,13 @@ else:
             ]
             return {"items": [alert.to_dict() for alert in alerts], "count": len(alerts)}
 
-        @router.get("/intervention-handoffs")
+        @router.get("/intervention-handoffs", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])
         def list_handoffs() -> dict[str, Any]:
             handoffs = forecast_repository.list_handoffs()
             return {"items": [handoff.to_dict() for handoff in handoffs], "count": len(handoffs)}
 
         @router.get("/prediction-runs/{prediction_run_id}")
         def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
-            from fastapi import HTTPException
             run = forecast_repository.get_prediction_run(prediction_run_id)
             if run is None:
                 raise HTTPException(
@@ -181,7 +198,6 @@ else:
 
         @router.get("/forecast-outputs/{forecast_output_id}")
         def get_forecast_output(forecast_output_id: str) -> dict[str, Any]:
-            from fastapi import HTTPException
             forecast = forecast_repository.get_canonical_forecast(forecast_output_id)
             if forecast is None:
                 raise HTTPException(

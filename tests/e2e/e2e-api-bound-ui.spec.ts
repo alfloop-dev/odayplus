@@ -21,8 +21,14 @@ const SEED_CASE = {
   created_by: "e2e-pv-010",
 } as const;
 
+const headers = {
+  "x-correlation-id": "corr-pv010-api-bound-ui",
+  "x-subject-id": "product-e2e-test",
+  "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive,model_owner,release_owner,pricing_manager,marketing_manager",
+};
+
 test("API backend is reachable and healthy for the bound web app", async () => {
-  const api = await playwrightRequest.newContext();
+  const api = await playwrightRequest.newContext({ extraHTTPHeaders: headers });
   const res = await api.get(`${API_BASE_URL}/platform/health`);
   expect(res.status()).toBe(200);
   expect((await res.json()).service).toBe("oday-api");
@@ -31,7 +37,7 @@ test("API backend is reachable and healthy for the bound web app", async () => {
 
 test("E2E-PV-010 AVM cases workspace reflects a backend state change without editing data.ts", async ({ page }) => {
   const storeId = `e2e-store-${Date.now()}`;
-  const api = await playwrightRequest.newContext();
+  const api = await playwrightRequest.newContext({ extraHTTPHeaders: headers });
   const created = await api.post(`${API_BASE_URL}/avm/cases`, {
     data: { ...SEED_CASE, store_id: storeId },
   });
@@ -54,7 +60,7 @@ test("E2E-PV-010 AVM cases workspace reflects a backend state change without edi
 
 test("E2E-PV-010 admin audit workspace surfaces live backend audit events", async ({ page }) => {
   // Any backend write records an audit event; create one, then read it back.
-  const api = await playwrightRequest.newContext();
+  const api = await playwrightRequest.newContext({ extraHTTPHeaders: headers });
   const created = await api.post(`${API_BASE_URL}/avm/cases`, {
     data: { ...SEED_CASE, store_id: `audit-${Date.now()}` },
   });

@@ -34,6 +34,7 @@ from modules.intervention import (
     resolve_evidence_level,
     run_observation_sweep,
 )
+from tests.integration._authz import INTERVENTION_HEADERS
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
 END = datetime(2026, 6, 15, 9, 0, tzinfo=UTC)
@@ -366,7 +367,7 @@ def test_observation_sweep_matures_and_auto_evaluates() -> None:
 
 
 def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
 
     create = client.post(
         "/interventions",
@@ -472,7 +473,7 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
 
 
 def test_api_conflict_blocks_submit() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
 
     def _create() -> str:
         resp = client.post(

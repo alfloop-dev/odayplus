@@ -6,7 +6,7 @@ from typing import Any
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -68,11 +68,15 @@ else:
         repository: InMemoryNetPlanRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action
+
         router = APIRouter(prefix="/netplan", tags=["netplan"])
         service = NetPlanService(repository=repository or InMemoryNetPlanRepository())
         active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
 
-        @router.post("/scenarios", status_code=status.HTTP_201_CREATED)
+        @router.post("/scenarios", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
         def create_scenario(body: NetPlanScenarioPayload, request: Request) -> dict[str, Any]:
             try:
                 scenario = service.create_scenario(
@@ -104,19 +108,19 @@ else:
             )
             return payload
 
-        @router.get("/scenarios")
+        @router.get("/scenarios", dependencies=[Depends(require_permission("netplan", Action.VIEW, engine=authz_engine))])
         def list_scenarios() -> dict[str, Any]:
             scenarios = service.repository.list_scenarios()
             return {"items": [scenario.to_dict() for scenario in scenarios], "count": len(scenarios)}
 
-        @router.get("/scenarios/{scenario_id}")
+        @router.get("/scenarios/{scenario_id}", dependencies=[Depends(require_permission("netplan", Action.VIEW, engine=authz_engine))])
         def get_scenario(scenario_id: str) -> dict[str, Any]:
             scenario = service.repository.get_scenario(scenario_id)
             if scenario is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scenario not found")
             return _scenario_detail(service, scenario_id, scenario.to_dict())
 
-        @router.post("/scenarios/{scenario_id}/solve")
+        @router.post("/scenarios/{scenario_id}/solve", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
         def solve(scenario_id: str, body: NetPlanSolvePayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.solve(
@@ -135,7 +139,7 @@ else:
                 scenario_id,
             )
 
-        @router.post("/scenarios/{scenario_id}/submit")
+        @router.post("/scenarios/{scenario_id}/submit", dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
         def submit(scenario_id: str, body: NetPlanActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.submit_for_approval(
@@ -153,7 +157,7 @@ else:
                 scenario_id,
             )
 
-        @router.post("/scenarios/{scenario_id}/decide")
+        @router.post("/scenarios/{scenario_id}/decide", dependencies=[Depends(require_permission("netplan", Action.APPROVE, engine=authz_engine))])
         def decide(scenario_id: str, body: NetPlanDecisionPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.decide(
@@ -172,7 +176,7 @@ else:
                 scenario_id,
             )
 
-        @router.post("/scenarios/{scenario_id}/execute")
+        @router.post("/scenarios/{scenario_id}/execute", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
         def execute(
             scenario_id: str, body: NetPlanExecutionPayload, request: Request
         ) -> dict[str, Any]:
@@ -191,7 +195,7 @@ else:
                 scenario_id,
             )
 
-        @router.post("/scenarios/{scenario_id}/outcomes")
+        @router.post("/scenarios/{scenario_id}/outcomes", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
         def record_outcome(
             scenario_id: str, body: NetPlanOutcomePayload, request: Request
         ) -> dict[str, Any]:
@@ -212,7 +216,7 @@ else:
                 scenario_id,
             )
 
-        @router.post("/scenarios/{scenario_id}/close")
+        @router.post("/scenarios/{scenario_id}/close", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
         def close(scenario_id: str, body: NetPlanActorPayload, request: Request) -> dict[str, Any]:
             return _run(
                 lambda: service.close(

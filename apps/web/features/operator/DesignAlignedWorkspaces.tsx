@@ -24,10 +24,16 @@ import {
 
 type DesignTodayWorkspaceProps = {
   onQueueSelect: (workspaceId: "store" | "growth" | "network" | "govern") => void;
+  kpis?: any[];
+  todayRows?: any[];
+  decisions?: any[];
+  riskStores?: any[];
+  auditFeed?: any[];
 };
 
 type DesignStoreOpsWorkspaceProps = {
   onOpenWorkflow: (dialog: StoreOpsWorkflowDialogType, issue: Issue) => void;
+  issues?: Issue[];
 };
 
 const kpis = [
@@ -181,7 +187,19 @@ const storeQueue = [
   },
 ];
 
-export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProps) {
+export function DesignTodayWorkspace({
+  onQueueSelect,
+  kpis: propKpis,
+  todayRows: propTodayRows,
+  decisions: propDecisions,
+  riskStores: propRiskStores,
+  auditFeed: propAuditFeed,
+}: DesignTodayWorkspaceProps) {
+  const activeKpis = propKpis || kpis;
+  const activeTodayRows = propTodayRows || todayRows;
+  const activeDecisions = propDecisions || decisions;
+  const activeRiskStores = propRiskStores || riskStores;
+
   return (
     <div className={styles.todayWorkspace} data-screen-label="Today 今日工作">
       <header className={styles.hero}>
@@ -196,11 +214,11 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
       </header>
 
       <section className={styles.kpiGrid} aria-label="Today KPI cards">
-        {kpis.map((item) => (
+        {activeKpis.map((item) => (
           <article className={styles.kpiCard} data-tone={item.tone} key={item.label}>
             <span>{item.label}</span>
             <strong>{item.value}</strong>
-            <p>{item.note}</p>
+            <p>{item.note || item.meta}</p>
           </article>
         ))}
       </section>
@@ -212,31 +230,31 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
               <h2>今天最需要處理</h2>
               <span>依嚴重度與 SLA 排序</span>
             </div>
-            <span>6 項</span>
+            <span>{activeTodayRows.length} 項</span>
           </div>
           <div className={styles.issueTable}>
-            {todayRows.map((row) => (
+            {activeTodayRows.map((row) => (
               <button className={styles.todayRow} key={row.id} onClick={() => onQueueSelect("store")} type="button">
                 <i data-tone={row.tone} />
                 <span className={styles.rowMain}>
                   <small>{row.id}</small>
                   <strong>{row.title}</strong>
-                  <span>{row.store}</span>
+                  <span>{row.store || row.storeName}</span>
                   <span className={styles.tagLine}>
-                    {row.signals.map((signal) => (
+                    {(row.signals || row.tags || []).map((signal: string) => (
                       <b key={signal}>{signal}</b>
                     ))}
                   </span>
                 </span>
                 <span className={styles.rowState}>
-                  <b>{row.state}</b>
-                  <em>{row.due}</em>
+                  <b>{row.state || row.status}</b>
+                  <em>{row.due || row.time || ""}</em>
                 </span>
                 <span className={styles.rowOwner}>
                   <small>Owner</small>
                   <strong>{row.owner}</strong>
                 </span>
-                <span className={styles.rowCta}>{row.cta} →</span>
+                <span className={styles.rowCta}>{row.cta || row.next || "處理"} →</span>
               </button>
             ))}
           </div>
@@ -248,11 +266,11 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
               <h2>需要你決策</h2>
             </div>
             <div className={styles.decisionStack}>
-              {decisions.map((item) => (
+              {activeDecisions.map((item) => (
                 <button className={styles.decisionItem} key={item.title} onClick={() => onQueueSelect("govern")} type="button">
                   <span>
-                    <b>{item.tag}</b>
-                    {item.time}
+                    <b>{item.tag || item.cta}</b>
+                    {item.time || item.status}
                   </span>
                   <strong>{item.title}</strong>
                   <em>進行核准 →</em>
@@ -267,16 +285,16 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
               <span>12 門市・示意</span>
             </div>
             <div className={styles.riskMap} aria-label="門市風險地圖示意">
-              {riskStores.map((store, index) => (
-                <i data-tone={store.tone} key={store.name} style={{ "--x": `${18 + index * 16}%`, "--y": `${34 + (index % 3) * 14}%` } as CSSProperties} />
+              {activeRiskStores.map((store, index) => (
+                <i data-tone={store.tone} key={store.name || store.label} style={{ "--x": `${18 + index * 16}%`, "--y": `${34 + (index % 3) * 14}%` } as CSSProperties} />
               ))}
             </div>
             <div className={styles.riskList}>
-              {riskStores.map((store) => (
-                <div key={store.name}>
+              {activeRiskStores.map((store) => (
+                <div key={store.name || store.label}>
                   <i data-tone={store.tone} />
-                  <strong>{store.name}</strong>
-                  <span>{store.note}</span>
+                  <strong>{store.name || store.label}</strong>
+                  <span>{store.note || store.signal}</span>
                 </div>
               ))}
             </div>
@@ -288,9 +306,17 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
               <span>AUDIT FEED</span>
             </div>
             <div className={styles.auditMini}>
-              <p><time>09:12</time> 系統 ForecastOps 捕捉連續紅燈（90 天）</p>
-              <p><time>08:44</time> 支付異常自動併入 ISS-1024</p>
-              <p><time>08:20</time> 核准中心新增 SiteScore WAIT 76</p>
+              {propAuditFeed ? (
+                propAuditFeed.map((item, idx) => (
+                  <p key={idx}><time>{item.time}</time> {item.actor ? `${item.actor}: ` : ""}{item.detail || item.message}</p>
+                ))
+              ) : (
+                <>
+                  <p><time>09:12</time> 系統 ForecastOps 捕捉連續紅燈（90 天）</p>
+                  <p><time>08:44</time> 支付異常自動併入 ISS-1024</p>
+                  <p><time>08:20</time> 核准中心新增 SiteScore WAIT 76</p>
+                </>
+              )}
             </div>
           </section>
         </aside>
@@ -299,7 +325,7 @@ export function DesignTodayWorkspace({ onQueueSelect }: DesignTodayWorkspaceProp
   );
 }
 
-export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorkspaceProps) {
+export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: DesignStoreOpsWorkspaceProps) {
   // 1. Get current operator role from sessionStorage if available
   const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
   useEffect(() => {
@@ -321,7 +347,7 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorksp
   // 3. Apply filters and sort (by severity + SLA)
   const filteredIssues = useMemo(() => {
     return filterStoreOpsIssues(
-      ISSUE_FIXTURES,
+      propIssues || ISSUE_FIXTURES,
       {
         search: searchQuery,
         statuses: [],
@@ -566,12 +592,12 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorksp
             {filteredIssues.map((row) => {
               const next = getPrimaryActionLabel(row);
               return (
-                <button
+                <div
                   className={styles.storeQueueItem}
                   data-active={row.id === selectedIssueId}
                   key={row.id}
                   onClick={() => setSelectedIssueId(row.id)}
-                  type="button"
+                  style={{ cursor: "pointer" }}
                 >
                   <span className={styles.storeTopline}>
                     <small>{row.id}</small>
@@ -584,7 +610,7 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow }: DesignStoreOpsWorksp
                   <strong>{row.title}</strong>
                   <span>{row.storeName}・{getSourceLabel(row.source)}</span>
                   <span className={styles.nextLine}>下一步：{next}</span>
-                </button>
+                </div>
               );
             })}
             {filteredIssues.length === 0 && (
