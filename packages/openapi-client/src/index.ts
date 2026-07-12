@@ -95,6 +95,24 @@ export type AdliftReport = {
   [key: string]: unknown;
 };
 
+/**
+ * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
+ * endpoint). Mirrors `NetPlanScenario.to_dict()` in
+ * modules/netplan/domain/planning.py — only the always-present summary fields
+ * are typed; the full solve/execution/outcome detail lives on the
+ * `/netplan/scenarios/{id}` response and is left open via the index signature.
+ */
+export type NetPlanScenarioSummary = {
+  scenario_id: string;
+  scenario_name?: string;
+  planning_horizon?: string;
+  status?: string;
+  solver_version?: string;
+  model_version?: string;
+  correlation_id?: string;
+  [key: string]: unknown;
+};
+
 /** Env keys checked, in priority order, when resolving the API base URL. */
 export const API_BASE_URL_ENV_KEYS = [
   "ODP_API_BASE_URL",
@@ -252,6 +270,10 @@ export class OdpApiClient {
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
+  }
+
+  listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
+    return this.request<ListResponse<NetPlanScenarioSummary>>("/netplan/scenarios");
   }
 
   getOperatorBootstrap(): Promise<any> {
