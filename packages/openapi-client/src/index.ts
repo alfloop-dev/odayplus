@@ -74,6 +74,20 @@ export type InterventionSummary = {
   [key: string]: unknown;
 };
 
+/** A persisted four-light ForecastOps alert (see GET /forecastops/alerts). */
+export type ForecastAlert = {
+  alert_id: string;
+  store_id: string;
+  alert_level: string;
+  alert_reason_code: string;
+  status: string;
+  opened_at: string;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  acknowledgement_note?: string | null;
+  [key: string]: unknown;
+};
+
 export type AdliftReport = {
   campaign_id?: string;
   [key: string]: unknown;
@@ -228,6 +242,14 @@ export class OdpApiClient {
 
   listInterventions(): Promise<ListResponse<InterventionSummary>> {
     return this.request<ListResponse<InterventionSummary>>("/interventions");
+  }
+
+  listForecastAlerts(
+    options: { level?: string } = {},
+  ): Promise<ListResponse<ForecastAlert>> {
+    return this.request<ListResponse<ForecastAlert>>("/forecastops/alerts", {
+      query: { level: options.level },
+    });
   }
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
