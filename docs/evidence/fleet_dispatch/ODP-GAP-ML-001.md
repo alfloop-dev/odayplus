@@ -1,6 +1,6 @@
 # ODP-GAP-ML-001 ML Governance Foundation Worker Evidence
 
-Recorded: 2026-07-11
+Recorded: 2026-07-12
 Worker lane: Antigravity
 Scope: Feature/Label Registries, Model Registry Integration, Content-Addressed Artifact Store, Model Cards, Validation, Release, Rollback, and Durable Persistence.
 
