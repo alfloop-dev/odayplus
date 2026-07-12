@@ -31,9 +31,11 @@ from modules.forecastops.domain.forecasting import (
     ForecastSeries,
     InterventionHandoff,
 )
+from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import DatasetSnapshot
 from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
+from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
 from modules.netplan.domain import (
     ApprovalRecord as NetPlanApprovalRecord,
 )
@@ -67,6 +69,7 @@ from shared.domain import Prediction, PredictionRun, SiteScoreRun
 from shared.domain.models import (
     AddressLocation,
     Brand,
+    Listing,
     Machine,
     MachineCycle,
     Store,
@@ -75,6 +78,7 @@ from shared.domain.models import (
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.workflow.sitescore import RealizedSite, SiteScoreDecision
 
 
 class DurableSiteScoreRepository:
@@ -196,6 +200,9 @@ class DurableAVMRepository:
 
     def latest_report(self, case_id: str) -> ValuationReport | None:
         return self._store.latest_in_group(self._REPORTS, case_id)
+
+    def report_history(self, case_id: str) -> list[ValuationReport]:
+        return self._store.list_by_group(self._REPORTS, case_id)
 
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
@@ -1454,16 +1461,174 @@ class DurableMachineCycleRepository:
         ]
 
 
+class DurableHeatZoneResultStore:
+    """Durable mirror of ``HeatZoneResultStore`` (ODP-FLOW-002).
+
+    Persists each HeatZone batch-score result (the ranking) keyed by ``job_id``,
+    an idempotency-key -> job_id index, and a ``latest`` pointer, so the HeatZone
+    map/list/detail endpoints keep returning the last ranking — and idempotent
+    replays keep returning the original job — across a process restart.
+    """
+
+    _JOBS = "heatzone.jobs"
+    _IDEMPOTENCY = "heatzone.idempotency"
+    _META = "heatzone.meta"
+    _LATEST = "latest_job_id"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def put(
+        self,
+        result: HeatZoneBatchScoreResult,
+        *,
+        idempotency_key: str | None = None,
+    ) -> tuple[HeatZoneBatchScoreResult, bool]:
+        if idempotency_key:
+            existing_job_id = self._store.get(self._IDEMPOTENCY, idempotency_key)
+            if existing_job_id is not None:
+                return self._store.get(self._JOBS, existing_job_id), False
+        self._store.put(self._JOBS, result.job_id, result)
+        self._store.put(self._META, self._LATEST, result.job_id)
+        if idempotency_key:
+            self._store.put(self._IDEMPOTENCY, idempotency_key, result.job_id)
+        return result, True
+
+    def find_by_idempotency_key(
+        self, idempotency_key: str | None
+    ) -> HeatZoneBatchScoreResult | None:
+        if not idempotency_key:
+            return None
+        job_id = self._store.get(self._IDEMPOTENCY, idempotency_key)
+        if job_id is None:
+            return None
+        return self._store.get(self._JOBS, job_id)
+
+    def _latest(self) -> HeatZoneBatchScoreResult | None:
+        job_id = self._store.get(self._META, self._LATEST)
+        if job_id is None:
+            return None
+        return self._store.get(self._JOBS, job_id)
+
+    def list_scores(self) -> list[dict[str, Any]]:
+        latest = self._latest()
+        return [] if latest is None else [score.to_dict() for score in latest.scores]
+
+    def map_features(self) -> list[dict[str, Any]]:
+        latest = self._latest()
+        return [] if latest is None else [score.to_map_feature() for score in latest.scores]
+
+    def snapshot(self, snapshot_id: str) -> HeatZoneBatchScoreResult | None:
+        if snapshot_id == "latest":
+            return self._latest()
+        return self._store.get(self._JOBS, snapshot_id)
+
+
+class DurableListingRepository:
+    """Durable mirror of ``InMemoryListingRepository`` (ODP-FLOW-002).
+
+    Dedup keys (source and property) live in their own collection so
+    ``has_duplicate`` still rejects a re-imported listing after a restart, and
+    converted candidate sites persist so the SiteScore inbox survives one too.
+    """
+
+    _LISTINGS = "listing.listings"
+    _ADDRESSES = "listing.addresses"
+    _CANDIDATES = "listing.candidates"
+    _DEDUP = "listing.dedup_keys"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def has_duplicate(self, key: ListingDedupKey) -> bool:
+        return (
+            self._store.get(self._DEDUP, key.source_key) is not None
+            or self._store.get(self._DEDUP, key.property_key) is not None
+        )
+
+    def save_listing(
+        self, listing: Listing, address: AddressLocation, key: ListingDedupKey
+    ) -> None:
+        self._store.put(self._LISTINGS, listing.listing_id, listing)
+        self._store.put(self._ADDRESSES, address.address_id, address)
+        self._store.put(self._DEDUP, key.source_key, True)
+        self._store.put(self._DEDUP, key.property_key, True)
+
+    def save_candidate(self, candidate: CandidateSiteDraft) -> None:
+        self._store.put(
+            self._CANDIDATES, candidate.candidate_site.candidate_site_id, candidate
+        )
+
+    def list_candidates(self) -> list[CandidateSiteDraft]:
+        return self._store.list_all(self._CANDIDATES)
+
+
+class DurableDecisionStore:
+    """Durable mirror of ``InMemoryDecisionStore`` (ODP-FLOW-002).
+
+    Persists each open/terminal SiteScore decision and the frozen source report
+    it was opened against, so ``/sitescore/decisions/{id}`` and an approval's
+    realization inputs resolve correctly after a restart.
+    """
+
+    _DECISIONS = "sitescore.decisions"
+    _REPORTS = "sitescore.decision_reports"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def save_decision(self, decision: SiteScoreDecision) -> None:
+        self._store.put(self._DECISIONS, decision.decision_id, decision)
+
+    def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
+        self._store.put(self._REPORTS, decision_id, report)
+
+    def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
+        return self._store.get(self._DECISIONS, decision_id)
+
+    def get_report(self, decision_id: str) -> SiteScoreReport | None:
+        return self._store.get(self._REPORTS, decision_id)
+
+    def list_decisions(self) -> list[SiteScoreDecision]:
+        return self._store.list_all(self._DECISIONS)
+
+
+class DurableRealizedSiteStore:
+    """Durable mirror of ``InMemoryRealizedSiteStore`` (ODP-FLOW-002).
+
+    Keyed by ``candidate_site_id`` so a realized approval keeps appearing in
+    ``/sitescore/realized`` after a restart, matching the durable audit trail.
+    """
+
+    _C = "sitescore.realized"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    def put(self, site: RealizedSite) -> None:
+        self._store.put(self._C, site.candidate_site_id, site)
+
+    def get(self, candidate_site_id: str) -> RealizedSite | None:
+        return self._store.get(self._C, candidate_site_id)
+
+    def list_realized(self) -> list[RealizedSite]:
+        return self._store.list_all(self._C)
+
+
 __all__ = [
     "DurableAVMRepository",
     "DurableAdLiftRepository",
     "DurableArtifactStore",
+    "DurableDecisionStore",
     "DurableForecastOpsRepository",
+    "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
+    "DurableListingRepository",
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
+    "DurableRealizedSiteStore",
     "DurableSiteScoreRepository",
     "InMemoryTenantRepository",
     "DurableTenantRepository",

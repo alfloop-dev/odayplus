@@ -81,6 +81,7 @@ else:
         intervention_label_registry: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
+        external_ingestion_service: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
@@ -93,7 +94,14 @@ else:
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
-        heatzone_store = heatzone_store or HeatZoneResultStore()
+        heatzone_store = heatzone_store or bundle.heatzone_store
+
+        from modules.external_data.application.ingestion_service import ExternalIngestionService
+
+        ingestion_service = external_ingestion_service or ExternalIngestionService(
+            store=bundle.ingestion_run_store,
+            audit_log=audit_log,
+        )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
@@ -186,7 +194,10 @@ else:
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
-        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+        from shared.workflow.sitescore import (
+            CandidateSiteRealizationHook,
+            SiteScoreDecisionWorkflow,
+        )
 
         forecast_repository = forecastops_repository or bundle.forecastops_repository
         netplan_repo = netplan_repository or bundle.netplan_repository
@@ -195,7 +206,17 @@ else:
         price_repo = priceops_repository or bundle.priceops_repository
         avm_repo = avm_repository or bundle.avm_repository
         site_repository = sitescore_repository or bundle.sitescore_repository
-        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        # ODP-FLOW-002: back the decision workflow and its realization hook with
+        # the persistence bundle so decisions and realized sites survive restart.
+        realization_hook = CandidateSiteRealizationHook(
+            store=bundle.sitescore_realized_store
+        )
+        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(
+            audit_log=audit_log,
+            hooks=[realization_hook],
+            store=bundle.sitescore_decision_store,
+        )
+        listing_repository = bundle.listing_repository
         adlift_repo = adlift_repository or bundle.adlift_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
@@ -229,8 +250,16 @@ else:
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(create_external_data_router(audit_log=audit_log))
-        api.include_router(create_listings_router(audit_log=audit_log))
+        api.include_router(
+            create_external_data_router(
+                ingestion_service=ingestion_service, audit_log=audit_log
+            )
+        )
+        api.include_router(
+            create_listings_router(
+                audit_log=audit_log, repository=listing_repository
+            )
+        )
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
             create_forecastops_router(
@@ -252,6 +281,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
             )
@@ -278,6 +308,8 @@ else:
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.sitescore_realization_hook = realization_hook
+        api.state.listing_repository = listing_repository
         api.state.adlift_repository = adlift_repo
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_repository = intervention_repo

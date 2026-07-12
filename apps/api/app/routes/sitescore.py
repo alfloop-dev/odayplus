@@ -43,6 +43,7 @@ else:
         *,
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
+        realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
     ) -> APIRouter:
@@ -53,12 +54,18 @@ else:
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         site_repository = repository or InMemorySiteScoreRepository()
-        realization_hook = CandidateSiteRealizationHook()
-        decision_workflow = workflow or SiteScoreDecisionWorkflow(
-            audit_log=active_audit_log, hooks=[realization_hook]
-        )
-        if decision_workflow is workflow:
-            decision_workflow.register_hook(realization_hook)
+        # ODP-FLOW-002: the injected realization hook (durable-backed in E2E mode)
+        # is the one exposed via /sitescore/realized, so a realized approval
+        # survives a restart. Avoid double-registering it on a provided workflow.
+        active_realization_hook = realization_hook or CandidateSiteRealizationHook()
+        if workflow is None:
+            decision_workflow = SiteScoreDecisionWorkflow(
+                audit_log=active_audit_log, hooks=[active_realization_hook]
+            )
+        else:
+            decision_workflow = workflow
+            if active_realization_hook not in decision_workflow.hooks:
+                decision_workflow.register_hook(active_realization_hook)
         service = SiteScoreReportService(repository=site_repository)
         idempotency_index: dict[str, str] = {}
         jobs: dict[str, dict[str, Any]] = {}
@@ -193,7 +200,7 @@ else:
 
         @router.get("/realized", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
         def list_realized() -> dict[str, Any]:
-            realized = realization_hook.list_realized()
+            realized = active_realization_hook.list_realized()
             return {
                 "items": [site.to_dict() for site in realized],
                 "count": len(realized),

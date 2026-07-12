@@ -24,6 +24,8 @@ from uuid import uuid4
 from modules.intervention.domain.lifecycle import (
     POLICY_VERSION,
     ApprovalRecord,
+    CloseDisposition,
+    CloseRecord,
     ConflictResult,
     EffectEvaluation,
     EligibilityResult,
@@ -631,6 +633,110 @@ class InterventionWorkflow:
             effect=effect,
             label=label,
             audit_event_id=audit_event.event_id,
+        )
+
+    # -- close / follow-up ------------------------------------------------
+
+    def close_case(
+        self,
+        intervention_id: str,
+        *,
+        actor: str,
+        disposition: CloseDisposition | str,
+        reason: str,
+        follow_up: bool = False,
+        follow_up_kind: InterventionKind | str | None = None,
+        correlation_id: str = "",
+    ) -> Intervention:
+        """Close a completed case, recording the operator disposition.
+
+        Closing is the final human step of the loop: the operator reviews the
+        matured effect + its recommendation and records why the case is being
+        kept, reverted, iterated on, or escalated (a reason is mandatory —
+        closing is a high-risk decision). When ``follow_up`` is set, a linked
+        follow-up CANDIDATE is opened for the same store, scheduled after the
+        original's observation window matures so the two treatments do not
+        contaminate one another (ODP-ML-05 §7).
+        """
+        intervention = self._require(intervention_id)
+        self._require_status(intervention, {InterventionStatus.COMPLETED}, "close")
+        if not reason.strip():
+            raise InterventionError("closing an intervention requires a reason")
+        resolved_disposition = CloseDisposition(disposition)
+
+        follow_up_ref: str | None = None
+        if follow_up:
+            follow = self._open_follow_up(
+                intervention,
+                actor=actor,
+                follow_up_kind=follow_up_kind,
+                correlation_id=correlation_id,
+            )
+            follow_up_ref = follow.intervention_id
+
+        record = CloseRecord(
+            disposition=resolved_disposition,
+            actor=actor,
+            reason=reason,
+            closed_at=datetime.now(UTC),
+            policy_version=self.policy_version,
+            recommendation=(
+                intervention.effect.recommendation.value if intervention.effect else ""
+            ),
+            follow_up_intervention_id=follow_up_ref,
+        )
+        updated = intervention.with_transition(
+            to_status=InterventionStatus.CLOSED,
+            actor=actor,
+            action="close",
+            reason=reason,
+            correlation_id=correlation_id,
+            close=record,
+        )
+        self.repository.save(updated)
+        self._audit(
+            updated,
+            action="close",
+            outcome="closed",
+            actor=actor,
+            correlation_id=correlation_id,
+            reason=reason,
+            extra={
+                "disposition": resolved_disposition.value,
+                "recommendation": record.recommendation,
+                "follow_up_intervention_id": follow_up_ref,
+            },
+        )
+        return updated
+
+    def _open_follow_up(
+        self,
+        original: Intervention,
+        *,
+        actor: str,
+        follow_up_kind: InterventionKind | str | None,
+        correlation_id: str,
+    ) -> Intervention:
+        kind = InterventionKind(follow_up_kind) if follow_up_kind else original.kind
+        # Start after the original's window has matured (or its planned end when
+        # no window opened) so the follow-up does not overlap the original's
+        # cooldown and contaminate attribution.
+        if original.observation_window is not None:
+            start = original.observation_window.maturity_time
+        else:
+            start = original.planned_end
+        duration = original.planned_end - original.planned_start
+        return self.open_case(
+            store_id=original.store_id,
+            kind=kind,
+            trigger_ref=f"follow-up:{original.intervention_id}",
+            expected_outcome=(
+                f"follow-up of {original.intervention_id}: {original.expected_outcome}"
+            ),
+            planned_start=start,
+            planned_end=start + duration,
+            created_by=actor,
+            correlation_id=correlation_id,
         )
 
     # -- stop / rollback --------------------------------------------------
