@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
+
 from models.priceops.elasticity import estimate_elasticity
 from models.shared_ml.backtest import run_rolling_backtest
-from models.shared_ml.drift import monitor_drift, calculate_psi
+from models.shared_ml.drift import monitor_drift
 
 MOMENT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
