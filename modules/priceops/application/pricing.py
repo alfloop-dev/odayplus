@@ -21,6 +21,8 @@ from modules.priceops.domain.pricing import (
     PRICEOPS_SOLVER_VERSION,
     ApprovalRecord,
     InterventionTreatmentHandoff,
+    InvalidTransitionError,
+    ItemPlanComparison,
     ItemOptimization,
     ItemSimulation,
     LabelRegistryEntry,
@@ -32,6 +34,7 @@ from modules.priceops.domain.pricing import (
     PricingEffectEvaluation,
     PricingExecution,
     PricingPlan,
+    PricingPlanComparison,
     PricingPlanItem,
     RollbackPlan,
     build_observation_window,
@@ -54,6 +57,10 @@ class PlanNotFoundError(LookupError):
 
 class MissingRollbackPlanError(RuntimeError):
     """Raised when a plan would execute without a pre-existing rollback plan."""
+
+
+class ApprovalBlockedError(RuntimeError):
+    """Raised when approval would violate hard PriceOps safety gates."""
 
 
 @dataclass(frozen=True)
@@ -203,19 +210,139 @@ class PriceOpsService:
         approved_at: datetime | None = None,
     ) -> ApprovalRecord:
         plan = self._require_plan(plan_id)
+        normalized_decision = _normalize_approval_decision(decision)
+        target = (
+            PlanStatus.APPROVED_FOR_PILOT
+            if normalized_decision == "approved"
+            else PlanStatus.STOP
+        )
+        if not plan.can_transition_to(target):
+            raise InvalidTransitionError(
+                f"cannot move plan {plan.plan_id} from {plan.status.value} to {target.value}"
+            )
+        if normalized_decision == "approved":
+            blockers = self._approval_blockers(plan_id)
+            if blockers:
+                raise ApprovalBlockedError(
+                    f"plan {plan_id} cannot be approved: {'; '.join(blockers)}"
+                )
         now = approved_at or datetime.now(UTC)
         record = ApprovalRecord(
             decision_id=f"pricing-approval-{uuid4()}",
             plan_id=plan.plan_id,
             actor_id=actor_id,
-            decision=decision,
+            decision=normalized_decision,
             decision_reason=reason,
             approved_at=now,
         )
         self.repository.save_approval(record)
-        target = PlanStatus.APPROVED_FOR_PILOT if record.is_approved else PlanStatus.STOP
         self._advance(plan, target, actor=actor_id, reason=reason, occurred_at=now)
         return record
+
+    # -- comparison / status snapshot ------------------------------------
+    def get_plan_comparison(self, plan_id: str) -> PricingPlanComparison:
+        plan = self._require_plan(plan_id)
+        optimization = self.repository.get_optimization(plan_id)
+        if optimization is None:
+            raise PlanNotFoundError(f"plan {plan_id} has no optimization comparison")
+
+        item_by_id = {item.item_id: item for item in plan.items}
+        comparison_items: list[ItemPlanComparison] = []
+        for item_optimization in optimization.items:
+            item = item_by_id[item_optimization.item_id]
+            result = item_optimization.result
+            baseline = result.baseline_simulation
+            candidate = result.recommended_simulation
+            hard_failed = result.infeasible or bool(result.constraint_violations)
+            constraint_status = (
+                "HARD_CONSTRAINT_FAILED"
+                if hard_failed
+                else "SOFT_WARNING"
+                if result.requires_approval
+                else "PASS"
+            )
+            comparison_items.append(
+                ItemPlanComparison(
+                    item_id=item.item_id,
+                    store_id=item.store_id,
+                    machine_type=item.machine_type,
+                    current_price=result.current_price,
+                    candidate_price=result.recommended_price,
+                    price_changed=result.price_changed,
+                    baseline_simulation=baseline,
+                    candidate_simulation=candidate,
+                    expected_demand_change=result.expected_demand_change,
+                    expected_revenue_change=round(
+                        candidate.revenue.p50 - baseline.revenue.p50, 4
+                    ),
+                    expected_gross_margin_change=result.incremental_gross_margin,
+                    risk_level=result.risk_level,
+                    constraint_status=constraint_status,
+                    requires_approval=result.requires_approval,
+                    binding_constraints=result.binding_constraints,
+                    constraint_violations=result.constraint_violations,
+                    safe_action_set=result.safe_action_set,
+                )
+            )
+
+        approvals = self.repository.list_approvals(plan_id)
+        latest_approval = approvals[-1] if approvals else None
+        if latest_approval is not None:
+            approval_status = (
+                "approved" if latest_approval.is_approved else latest_approval.decision
+            )
+        elif plan.status is PlanStatus.PENDING_APPROVAL:
+            approval_status = "pending_review"
+        elif plan.status in {
+            PlanStatus.APPROVED_FOR_PILOT,
+            PlanStatus.ACTIVE,
+            PlanStatus.OBSERVING,
+            PlanStatus.EVALUATED,
+            PlanStatus.CONTINUE,
+            PlanStatus.ADJUST,
+            PlanStatus.ROLLBACK,
+        }:
+            approval_status = "approved"
+        else:
+            approval_status = "not_submitted"
+
+        rollback_plan = self.repository.get_rollback_plan(plan_id)
+        execution = self.repository.get_execution(plan_id)
+        window = self.repository.get_window(plan_id)
+        evaluation = self.repository.get_evaluation(plan_id)
+        total_current_gross_margin = round(
+            sum(item.baseline_simulation.expected_gross_margin for item in comparison_items),
+            4,
+        )
+        total_candidate_gross_margin = round(
+            sum(item.candidate_simulation.expected_gross_margin for item in comparison_items),
+            4,
+        )
+        return PricingPlanComparison(
+            plan_id=plan.plan_id,
+            plan_status=plan.status,
+            generated_at=optimization.optimized_at,
+            items=tuple(comparison_items),
+            total_current_gross_margin=total_current_gross_margin,
+            total_candidate_gross_margin=total_candidate_gross_margin,
+            total_expected_incremental_gross_margin=optimization.total_incremental_gross_margin,
+            hard_constraint_violation_count=optimization.hard_constraint_violation_count,
+            is_constraint_safe=optimization.is_constraint_safe,
+            is_feasible=optimization.is_feasible,
+            is_approvable=optimization.is_approvable and rollback_plan is not None,
+            requires_approval=optimization.requires_approval
+            or any(item.price_changed for item in comparison_items),
+            approval_status=approval_status,
+            rollback_ready=rollback_plan is not None,
+            execution_status=execution.status if execution is not None else None,
+            monitoring_status=window.status if window is not None else None,
+            outcome_status=evaluation.recommended_next_status.value
+            if evaluation is not None
+            else None,
+            rollback_recommended=evaluation.rollback.recommended
+            if evaluation is not None
+            else False,
+        )
 
     # -- activation / execution ------------------------------------------
     def activate(
@@ -433,9 +560,33 @@ class PriceOpsService:
         )
         return self.repository.save_plan(moved)
 
+    def _approval_blockers(self, plan_id: str) -> list[str]:
+        blockers: list[str] = []
+        optimization = self.repository.get_optimization(plan_id)
+        if optimization is None:
+            blockers.append("optimization result is missing")
+        else:
+            if not optimization.is_feasible:
+                blockers.append("hard pricing constraint region is infeasible")
+            if not optimization.is_constraint_safe:
+                blockers.append("recommended price has hard constraint violations")
+        if self.repository.get_rollback_plan(plan_id) is None:
+            blockers.append("rollback plan is missing")
+        return blockers
+
+
+def _normalize_approval_decision(decision: str) -> str:
+    normalized = decision.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"approve", "approved"}:
+        return "approved"
+    if normalized in {"reject", "rejected", "request_revision", "revision_requested"}:
+        return "rejected"
+    return normalized
+
 
 __all__ = [
     "DEFAULT_LABEL_MATURITY_DAYS",
+    "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
     "MissingRollbackPlanError",

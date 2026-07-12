@@ -12,6 +12,7 @@ except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
     from modules.priceops.application import (
+        ApprovalBlockedError,
         MissingRollbackPlanError,
         PlanNotFoundError,
         PriceOpsService,
@@ -255,6 +256,10 @@ else:
             payload["evaluation"] = _to_dict_or_none(service.repository.get_evaluation(plan_id))
             return payload
 
+        @router.get("/plans/{plan_id}/comparison", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        def get_plan_comparison(plan_id: str) -> dict[str, Any]:
+            return _run_read(lambda: service.get_plan_comparison(plan_id))
+
         @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def simulate(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
             return _run(
@@ -480,7 +485,7 @@ else:
             result = action()
         except PlanNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except (MissingRollbackPlanError, ValueError, RuntimeError) as exc:
+        except (ApprovalBlockedError, MissingRollbackPlanError, ValueError, RuntimeError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
@@ -496,6 +501,13 @@ else:
         payload["audit_event_id"] = audit_event.event_id
         payload["correlation_id"] = request.state.correlation_id
         return payload
+
+    def _run_read(action: Any) -> dict[str, Any]:
+        try:
+            result = action()
+        except PlanNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return result.to_dict()
 
     __all__ = [
         "PriceOpsJobStore",

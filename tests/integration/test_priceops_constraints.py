@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from modules.priceops import (
+    ApprovalBlockedError,
     PRICEOPS_SOLVER_VERSION,
     InMemoryPriceOpsRepository,
     InvalidTransitionError,
@@ -215,6 +216,30 @@ def test_full_pilot_lifecycle_records_complete_status_history() -> None:
     assert all(t.actor and t.reason and t.correlation_id for t in result.plan.status_history)
 
 
+def test_plan_comparison_snapshot_covers_approval_and_rollback_readiness() -> None:
+    service = PriceOpsService()
+    plan = service.create_plan(
+        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
+    )
+    service.simulate(plan.plan_id, generated_at=MOMENT)
+    service.optimize(plan.plan_id, optimized_at=MOMENT)
+
+    comparison = service.get_plan_comparison(plan.plan_id)
+
+    assert comparison.plan_status is PlanStatus.OPTIMIZED
+    assert comparison.rollback_ready is True
+    assert comparison.is_approvable is True
+    assert comparison.approval_status == "not_submitted"
+    assert comparison.requires_approval is True
+    assert comparison.total_candidate_gross_margin > comparison.total_current_gross_margin
+    item = comparison.items[0]
+    assert item.current_price == 5.0
+    assert item.candidate_price > item.current_price
+    assert item.constraint_status == "SOFT_WARNING"
+    assert item.baseline_simulation.demand.p10 <= item.baseline_simulation.demand.p90
+    assert item.candidate_simulation.gross_margin.p50 > item.baseline_simulation.gross_margin.p50
+
+
 def test_rejected_plan_moves_to_stop() -> None:
     service = PriceOpsService()
     plan = service.create_plan(
@@ -233,6 +258,36 @@ def test_rejected_plan_moves_to_stop() -> None:
     )
 
     assert service.repository.get_plan(plan.plan_id).status is PlanStatus.STOP
+
+
+def test_hard_constraint_failure_cannot_be_approved() -> None:
+    service = PriceOpsService()
+    plan = service.create_plan(
+        tenant_id="tenant-1",
+        items=[_item(constraints=_constraints(unit_cost=10.0, max_increase_pct=0.1))],
+        correlation_id="corr-1",
+    )
+    service.simulate(plan.plan_id, generated_at=MOMENT)
+    service.optimize(plan.plan_id, optimized_at=MOMENT)
+    service.submit_for_approval(plan.plan_id)
+
+    try:
+        service.approve(
+            plan.plan_id,
+            actor_id="ops-manager",
+            reason="should not pass hard constraints",
+            decision="APPROVE",
+            approved_at=MOMENT,
+        )
+    except ApprovalBlockedError as exc:
+        assert "hard pricing constraint region is infeasible" in str(exc)
+    else:  # pragma: no cover - guard must fire
+        raise AssertionError("expected ApprovalBlockedError")
+
+    comparison = service.get_plan_comparison(plan.plan_id)
+    assert comparison.is_approvable is False
+    assert comparison.items[0].constraint_status == "HARD_CONSTRAINT_FAILED"
+    assert service.repository.get_plan(plan.plan_id).status is PlanStatus.PENDING_APPROVAL
 
 
 def test_invalid_transition_is_rejected() -> None:

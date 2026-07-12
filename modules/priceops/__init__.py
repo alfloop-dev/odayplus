@@ -6,6 +6,7 @@ rollback (ODP-MOD-06).
 """
 
 from modules.priceops.application import (
+    ApprovalBlockedError,
     ActivationResult,
     EvaluationResult,
     MissingRollbackPlanError,
@@ -25,6 +26,7 @@ from modules.priceops.domain import (
     InterventionTreatmentHandoff,
     InvalidTransitionError,
     ItemOptimization,
+    ItemPlanComparison,
     ItemRevert,
     ItemSimulation,
     LabelRegistryEntry,
@@ -38,6 +40,7 @@ from modules.priceops.domain import (
     PricingEffectEvaluation,
     PricingExecution,
     PricingPlan,
+    PricingPlanComparison,
     PricingPlanItem,
     RollbackPlan,
     RollbackRecommendation,
@@ -67,6 +70,7 @@ __all__ = [
     "PRICEOPS_SOLVER_VERSION",
     "VALID_TRANSITIONS",
     "ActivationResult",
+    "ApprovalBlockedError",
     "ApprovalRecord",
     "ConstraintViolation",
     "EvaluationResult",
@@ -74,6 +78,7 @@ __all__ = [
     "InterventionTreatmentHandoff",
     "InvalidTransitionError",
     "ItemOptimization",
+    "ItemPlanComparison",
     "ItemRevert",
     "ItemSimulation",
     "LabelRegistryEntry",
@@ -93,6 +98,7 @@ __all__ = [
     "PricingEffectEvaluation",
     "PricingExecution",
     "PricingPlan",
+    "PricingPlanComparison",
     "PricingPlanItem",
     "RollbackPlan",
     "RollbackRecommendation",
