@@ -30,6 +30,22 @@ npx playwright test tests/e2e/e2e-intervention-price-ad.spec.ts --project=chromi
 
 Result: passed, 4 tests.
 
+## Final Closeout Refresh
+
+PR #254 merged `task/ODP-FLOW-005` into `dev` at
+`2026-07-12T16:00:21Z` with merge commit `95f4c78f`. The owner then
+fast-forwarded the task worktree to that dev tip and reran the focused gates:
+
+```bash
+uv run ruff check modules/priceops apps/api/app/routes/priceops.py tests/integration/test_priceops_constraints.py tests/integration/test_priceops_api.py
+uv run pytest tests/integration/test_priceops_constraints.py tests/integration/test_priceops_api.py -q
+npm run typecheck --workspace=@oday-plus/web
+npx playwright test tests/e2e/e2e-intervention-price-ad.spec.ts --project=chromium
+```
+
+Results: ruff clean; 18 focused PriceOps tests passed; web TypeScript check
+passed; Playwright smoke passed 4 tests.
+
 ## Covered Behaviors
 
 - Current-vs-candidate comparison exposes demand/revenue/gross-margin bands.
