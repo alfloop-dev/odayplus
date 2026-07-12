@@ -7,7 +7,6 @@ from apps.api.oday_api.main import create_app
 from shared.auth import Role
 from tests.integration._authz import auth_headers
 
-
 PRICEOPS_HEADERS = auth_headers(Role.PRICING_MANAGER)
 
 

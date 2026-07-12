@@ -6,8 +6,8 @@ rollback (ODP-MOD-06).
 """
 
 from modules.priceops.application import (
-    ApprovalBlockedError,
     ActivationResult,
+    ApprovalBlockedError,
     EvaluationResult,
     MissingRollbackPlanError,
     PlanNotFoundError,
