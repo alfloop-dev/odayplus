@@ -30,6 +30,7 @@ _MIGRATIONS_DIR = (
 _SCHEMA_FILES = (
     "000002_durable_e2e_persistence.sql",
     "000003_durable_audit_evidence.sql",
+    "000004_durable_product_domain.sql",
 )
 
 
