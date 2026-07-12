@@ -1,5 +1,8 @@
 import Link from "next/link";
+import type { NetPlanScenarioSummary } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   approvalLabel,
   formatActionCounts,
@@ -22,12 +25,19 @@ type NetPlanWorkspaceProps = {
   view?: NetPlanRouteKey;
   scenarioId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /netplan/scenarios` binding; supplied by the server route. */
+  liveScenarios?: ApiBinding<NetPlanScenarioSummary>;
 };
 
-export function NetPlanWorkspace({ view = "overview", scenarioId, searchParams = {} }: NetPlanWorkspaceProps) {
+export function NetPlanWorkspace({
+  view = "overview",
+  scenarioId,
+  searchParams = {},
+  liveScenarios,
+}: NetPlanWorkspaceProps) {
   if (view === "scenarios") return <ScenariosListPage searchParams={searchParams} />;
   if (view === "scenarioDetail") return <ScenarioDetailPage scenarioId={scenarioId} />;
-  return <NetPlanOverview />;
+  return <NetPlanOverview liveScenarios={liveScenarios} />;
 }
 
 function Header({
@@ -86,7 +96,7 @@ function WorkspaceNav({ active }: { active: NetPlanRouteKey }) {
   );
 }
 
-function NetPlanOverview() {
+function NetPlanOverview({ liveScenarios }: { liveScenarios?: ApiBinding<NetPlanScenarioSummary> }) {
   return (
     <>
       <Header
@@ -95,6 +105,7 @@ function NetPlanOverview() {
       />
       <main className="odp-content" data-testid="netplan-overview-page">
         <WorkspaceNav active="overview" />
+        {liveScenarios ? <LiveNetPlanScenarios binding={liveScenarios} /> : null}
         <section className={styles.flowGrid} aria-label="NetPlan decision flow">
           <Link className={styles.flowCard} href="/w/network/scenarios">
             <span className={styles.step}>1</span>
@@ -114,6 +125,85 @@ function NetPlanOverview() {
       </main>
     </>
   );
+}
+
+function LiveNetPlanScenarios({ binding }: { binding: ApiBinding<NetPlanScenarioSummary> }) {
+  return (
+    <section
+      className={styles.reportSection}
+      data-testid="netplan-live-scenarios"
+      aria-label="API-bound NetPlan scenario comparison"
+    >
+      <div className={styles.badgeRow}>
+        <h2>情境比較（API live）</h2>
+        <DataSourceBadge binding={binding} testId="netplan-data-source" />
+      </div>
+      <p>
+        本區直接讀取 <code>GET /netplan/scenarios</code> 的完整生命週期狀態（solved / infeasible /
+        approved / executed / outcome_observed）；下方固定情境為 documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="netplan-live-scenarios-table">
+            <caption>Live scenarios served by the backend ({binding.items.length})</caption>
+            <thead>
+              <tr>
+                <th>scenario_id</th>
+                <th>scenario</th>
+                <th>horizon</th>
+                <th>status</th>
+                <th>solver</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((item) => (
+                <tr key={item.scenario_id} data-testid="netplan-live-scenario-row">
+                  <td>{item.scenario_id}</td>
+                  <td>{stringField(item.scenario_name)}</td>
+                  <td>{stringField(item.planning_horizon) || "—"}</td>
+                  <td>
+                    <Badge
+                      label={stringField(item.status) || "—"}
+                      tone={liveScenarioTone(item.status)}
+                      marker="◆"
+                    />
+                  </td>
+                  <td>{stringField(item.solver_version) || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="netplan-live-scenarios-empty" className={styles.auditLine}>
+          {liveScenariosFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveScenariosFallbackMessage(binding: ApiBinding<NetPlanScenarioSummary>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無情境（cold store）；顯示固定情境作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定情境 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定情境渲染。";
+}
+
+function liveScenarioTone(status: unknown) {
+  if (status === "approved" || status === "executed" || status === "outcome_observed" || status === "closed") {
+    return "green" as const;
+  }
+  if (status === "infeasible" || status === "rejected") return "red" as const;
+  if (status === "solved" || status === "pending_approval") return "blue" as const;
+  return "orange" as const;
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function ScenariosListPage({ searchParams }: { searchParams: SearchParams }) {

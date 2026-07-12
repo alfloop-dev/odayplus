@@ -1,88 +1,137 @@
-# Product Flow Implementation Matrix
-# ODay Plus — Product Flow Completion Tracker
-# Generated: 2026-07-12
+# Product Flow Implementation Matrix — 2026-07-12
 
-Document: PRODUCT_FLOW_IMPLEMENTATION_MATRIX_2026-07-12.md
-Purpose: Track completion of all product flow tasks (ODP-FLOW-*) across the fleet.
-This file is a fleet-level coordination artifact. Update on each flow task closeout.
+Traceability for the **Product Flow Implementation** wave (ODP-FLOW-001 …
+ODP-FLOW-011): each product flow → its module design doc, domain module, API
+router, worker/job, web feature, and completion evidence. The capstone
+(ODP-FLOW-011) composes these flows into one runtime and gates them end to end.
 
----
+## Flow → implementation
 
-## Fleet Status at 2026-07-12
+| Flow | Design doc | Domain module | API router | Worker / Job | Web feature | Evidence |
+|---|---|---|---|---|---|---|
+| FLOW-001 Integration & External Data | ODP-MOD-00 | `modules/integration`, `modules/external_data` | `external_data_router`, `listing_router` | `external-fetch` (scheduled) | — | `completion/ODP-FLOW-001/` |
+| FLOW-002 Expansion HeatZone→SiteScore | ODP-MOD-01/02/03 | `modules/heatzone`, `modules/listing`, `modules/sitescore` | `heatzone_router`, `listings_router`, `sitescore_router` | `heatzone_score`, report | `features/expansion` | `completion/ODP-FLOW-002/` |
+| FLOW-003 ForecastOps alert & handoff | ODP-MOD-04 | `modules/forecastops` | `forecastops_router` | `forecast` (daily score) | `features/operations` | `completion/ODP-FLOW-003/` |
+| FLOW-004 InterventionOps lifecycle | ODP-MOD-05 | `modules/intervention` | `interventions_router` | eligibility / effect-eval | `features/interventions` | `completion/ODP-FLOW-004/` |
+| FLOW-005 PriceOps sim/approval/rollback | ODP-MOD-06 | `modules/priceops` | `priceops_router` + `/plans/{plan_id}/comparison` | pricing optimizer | `/pricing` (`features/priceops`) | `completion/ODP-FLOW-005/` |
+| FLOW-006 AdLift campaign & incrementality | ODP-MOD-07 | `modules/adlift` | `adlift_router` | control-match / DiD | `features/growth` | `completion/ODP-FLOW-006/` |
+| FLOW-007 DealRoom AVM valuation | ODP-MOD-08 | `modules/avm` | `avm_router` | valuation worker | `features/avm` | `completion/ODP-FLOW-007/` |
+| FLOW-008 NetPlan scenario solver | ODP-MOD-09 | `modules/netplan` | `netplan_router` | solver job | `features/netplan` | `completion/ODP-FLOW-008/` |
+| FLOW-009 Learning Hub validation/release | ODP-MOD-10 | `modules/learninghub`, `models/` | `learninghub_router` | backtest / drift / release | Learning Hub | `completion/ODP-FLOW-009/` |
+| FLOW-010 OpsBoard & Governance operator | ODP-MOD-11 | `modules/opsboard` | `operator_router` | notification | OpsBoard | `completion/ODP-FLOW-010/` |
+| **FLOW-011 Platform runtime & cross-flow gate** | **ODP-SD-03, ODP-SD-08** | `apps/api/server.py`, `shared/jobs/registry.py` | *(composes all routers)* | `ODayWorker` + `ODayScheduler` | *(compose)* | `completion/ODP-FLOW-011/` |
 
-| Task | Title | Owner | Status | Branch / PR |
+## Capstone composition (ODP-FLOW-011)
+
+The flows above are composed by the first-version deployment units of
+**ODP-SD-03 §4**, all bound to one durable persistence bundle:
+
+| Deployment unit | Runtime | Entry point |
+|---|---|---|
+| `opsboard-web` | Frontend | `apps/web` (Next.js) |
+| `core-api` | API | `python -m apps.api.server` → `apps.api.oday_api.main:app` |
+| `worker` | Worker | `python -m apps.worker.oday_worker` (`ODayWorker`) |
+| `scheduler` | Scheduler | `python -m apps.scheduler.oday_scheduler` (`ODayScheduler`) |
+| migrations + seed | Data | `apps.api.server.bootstrap_runtime(prime_scheduled_jobs=True)` |
+
+- **Job composition (no monolith):** domain jobs register into
+  `shared/jobs/registry.py`; the worker dispatches by lookup, not an `if/elif`
+  switch (ODP-AC-SD03-003).
+- **Shared job state machine:** `queued → running → succeeded | failed` with
+  retry/dead-letter (ODP-SD-08 §3.2, ODP-AC-SD08-001).
+- **Cross-flow gate:** `tests/reliability/test_cross_flow_gate.py` runs
+  migrations + seed + api + worker + scheduler on one durable DB and drives the
+  Integration (`external-fetch`) and Operations (`forecast`) flows across the
+  core-api boundary to `SUCCEEDED`, with an audit trail (ODP-AC-SD08-003) that
+  survives a process restart (ODP-AC-SD03-004).
+- **Compose:** `docker-compose.yml` runs `migrate → api → worker + scheduler →
+  web` on the shared `odp-db` volume.
+
+## Cross-flow gate status
+
+| Gate | Status | Evidence |
+|---|---|---|
+| Registry composes domain jobs modularly | ✅ pass | `test_registry_composes_without_monolithic_switch` |
+| SD-03 §4 deployment units declared | ✅ pass | `test_service_boundaries_declare_runtime_units` |
+| migrations+seed+api+worker+scheduler on one DB | ✅ pass | `test_cross_flow_gate_migrations_seed_api_worker_scheduler` |
+| Durable job → SUCCEEDED across API boundary | ✅ pass | same |
+| Audit event on job enqueue | ✅ pass | same |
+| Recovery: watermark survives restart | ✅ pass | same |
+
+See `docs/evidence/completion/ODP-FLOW-011/verification.md` for command output.
+
+## ODP-FLOW-001 — Integration and External Data (done)
+
+External data now flows fetch → canonical mapping → DQ/quarantine →
+lineage/freshness → **durable persistence** → API/UI, idempotent and audited.
+
+- **Persistence:** `IngestionRunRecord` + `InMemoryIngestionRunStore`
+  (`modules/external_data/application/ingestion_store.py`) with a durable SQLite
+  twin `DurableIngestionRunStore`
+  (`shared/infrastructure/persistence/external_data.py`), wired into
+  `PersistenceBundle`.
+- **Service:** `ExternalIngestionService`
+  (`modules/external_data/application/ingestion_service.py`) composes the
+  existing scheduler + provider, persists canonical output/quarantine/lineage,
+  emits `external_data.ingested.v1` audit events, and rehydrates
+  watermark/idempotency on restart. `run_scheduled()` and the manual API path
+  share it.
+- **API:** `POST /external-data/ingestion-runs` (Idempotency-Key),
+  `GET /external-data/ingestion-runs[/{id}]`, `GET /external-data/quarantine`,
+  and `GET /external-data/freshness` now reads persisted state (fixture only on
+  cold store).
+- **UI:** expansion overview freshness/lineage panel binds live via
+  `getServerApiClient` + `loadApiBinding` with a `DataSourceBadge`
+  (`apps/web/features/expansion/ExpansionWorkspace.tsx`).
+
+Evidence: `docs/evidence/completion/ODP-FLOW-001/implementation.md` and
+`verification.md` (focused suite 6 passed; related surface 161 passed; ruff
+clean; `tsc --noEmit` clean for web + openapi-client).
+
+## ODP-FLOW-005 — PriceOps sim, approval, and rollback (done)
+
+PriceOps now compares current and candidate price schemes, blocks unsafe
+approval, applies approved pilots, monitors outcomes, and exposes rollback
+readiness/status across service, API, and `/pricing`.
+
+- **Comparison:** `PricingPlanComparison` snapshots demand, revenue, gross
+  margin, approval readiness, execution, monitoring, outcome, and rollback
+  recommendation from the persisted plan lifecycle records.
+- **Approval gate:** `APPROVE`/`approved` decisions are normalized; infeasible
+  hard-constraint plans or plans without rollback plans return API 422 and do
+  not advance the plan.
+- **API/UI:** `GET /priceops/plans/{plan_id}/comparison` backs the PriceOps
+  closed-loop panel for scheme comparison, apply, monitor, outcome, and
+  rollback trigger/status.
+- **Verification:** focused service/API tests cover 18 cases; Playwright smoke
+  asserts the PriceOps closed-loop panel includes apply/outcome state.
+
+Evidence: `docs/evidence/completion/ODP-FLOW-005/implementation.md` and
+`verification.md`.
+
+## ODP-FLOW-010 — OpsBoard and Governance operator (done)
+
+ODP-FLOW-010 closes the API-backed operator loop for Today queue, Store Ops
+workflow, Governance approvals, Network review callback, notifications, search,
+and task follow-up.
+
+| Surface | UI proof | API proof | State / audit proof | Verification |
 |---|---|---|---|---|
-| ODP-FLOW-002 | Complete Expansion HeatZone to SiteScore decision flow | Claude2 | review_approved | task/ODP-FLOW-002 |
-| ODP-FLOW-003 | Complete ForecastOps alert and handoff flow | Codex2 | review | PR #242 |
-| ODP-FLOW-004 | Complete InterventionOps lifecycle flow | Antigravity5 | in_progress | task/ODP-FLOW-004 |
-| ODP-FLOW-005 | Complete PriceOps simulation approval and rollback flow | Codex | review | task/ODP-FLOW-005 |
-| **ODP-FLOW-006** | **Complete AdLift campaign and incrementality flow** | **Antigravity** | **in_progress → review** | **task/ODP-FLOW-006** |
-| ODP-FLOW-008 | Complete NetPlan scenario solver and publish flow | Claude | review | PR #247 |
-| ODP-FLOW-009 | Complete Learning Hub validation release and rollback flow | Claude | in_progress | task/ODP-FLOW-009 |
-| ODP-FLOW-010 | Complete OpsBoard and Governance operator flow | Codex | review | task/ODP-FLOW-010 |
+| Today queue | `/operator` renders API `kpis`, `workQueue`, decisions, risk rows, audit feed | `GET /api/v1/operator/bootstrap`, `GET /today` | Bootstrap state includes notifications and task follow-up | `tests/e2e/e2e-operator-console.spec.ts` |
+| Store Ops workflow | Store Ops triage/assign/action/field/outcome/escalate/purpose dialogs | `POST /issues/{issue_id}/{action}`, `POST /evidence/{evidence_id}/purpose` | Issue status, queue status, audit feed, governance audit, notification, task, platform audit event | `tests/contract/test_operator_api.py` |
+| Governance approvals | Governance workspace consumes live approvals, decision log, and audit rows | `GET /approvals`, `POST /approvals/{approval_id}/decision` | Return/reject reason gate, decision log append, audit row append, platform audit event, idempotent replay | `tests/contract/test_operator_api.py`, governance Playwright test |
+| Network review | Network callback posts decisions for `RV-701` through the shared decision endpoint | `POST /approvals/RV-701/decision` | Network approval state prevents browser 404 and records decision/audit state | `ODP-OC-FE-04` Playwright coverage |
+| Notification/search/task follow-up | Header notification panel, global search popover, API-backed banner task count | `GET /notifications`, `GET /search`, `GET /tasks` | Workflow writes prepend notification/searchable records/task follow-up | browser product gate |
 
----
+Acceptance mapping:
 
-## ODP-FLOW-006: AdLift Campaign and Incrementality Flow
-
-**Status**: Implementation complete, verification passed — pending review by Claude2.
-
-### Acceptance Criteria
-
-| Criterion | Status | Evidence |
-|---|---|---|
-| campaign and experiment versions persist | ✅ | `InMemoryAdLiftRepository.save_report()` assigns monotonic `report_version` (1 → 2); latest retrievable via `GET /adlift/reports/{campaign_id}` |
-| pre trend gate rejects invalid launch | ✅ | `evaluate_pre_trend()` → FAIL caps evidence at L2 (`causal_claim_allowed=False`); E2E-AD-001 `adlift-8803` shows "Pre-trend failed" |
-| incrementality report links evidence and decision | ✅ | `IncrementalityReport` carries `evidence_level`, `causal_claim_allowed`, `recommendation`, `decision_id`; `DecisionPanel` renders full audit trail |
-| API backed Growth UI audit E2E passes | ✅ | `npx playwright test tests/e2e/e2e-intervention-price-ad.spec.ts --project=chromium`: 4 passed |
-
-### Deliverables
-
-| Artifact | Description | Status |
-|---|---|---|
-| `modules/adlift/` | Full Python domain/application/infra/worker stack | ✅ |
-| `apps/api/app/routes/adlift.py` | FastAPI router: POST jobs, GET job result, GET reports (list + by campaign) | ✅ |
-| `apps/web/features/adlift/AdLiftWorkspace.tsx` | React workspace: report table, drawer, claim guard, decision panel | ✅ |
-| `apps/web/features/adlift/data.ts` | Typed fixtures: 3 reports (PASS/CONTINUE, blocked, FAIL/STOP) | ✅ |
-| `tests/integration/test_adlift_incrementality.py` | 12 integration tests covering DiD, matching, pre-trend, contamination, API | ✅ |
-| `tests/e2e/e2e-intervention-price-ad.spec.ts` | E2E-AD-001 + route smoke test | ✅ |
-| `docs_archive/05_module_design/ODP-MOD-07_ADLIFT.md` | Module design doc | ✅ |
-| `docs/evidence/completion/ODP-FLOW-006/implementation.md` | Implementation evidence | ✅ |
-| `docs/evidence/completion/ODP-FLOW-006/verification.md` | Verification commands and results | ✅ |
-
-### Verification Commands Run
-
-```bash
-# Python integration tests (12 passed)
-uv run pytest tests/integration/test_adlift_incrementality.py -v
-
-# Ruff lint (all clean)
-uv run ruff check modules/adlift apps/api/app/routes/adlift.py tests/integration/test_adlift_incrementality.py
-
-# E2E browser tests (4 passed, 25.9s)
-npx playwright test tests/e2e/e2e-intervention-price-ad.spec.ts --project=chromium
-```
-
----
-
-## Compose Map (ODP-FLOW-006)
-
-```
-modules/adlift
-  └── shared/audit (AuditEvent, InMemoryAuditLog)
-  └── shared/auth (Action, RBAC engine)
-  └── apps/api/oday_api/main.py (router registration)
-
-apps/web/features/adlift
-  └── @oday-plus/ui (Badge, PageHeader)
-  └── @oday-plus/domain-types (DataStatus, StatusTone, dataStatusTone)
-  └── apps/web/features/intervention/intervention.module.css (shared styles)
-```
-
----
-
-## Notes
-
-- `docs_archive/05_module_design/` was empty prior to ODP-FLOW-006; this task seeds it with `ODP-MOD-07_ADLIFT.md`.
-- TypeScript `tsc` is not installed in this fleet environment; type safety verified structurally via E2E browser run.
-- `InMemoryAdLiftRepository` is sufficient for the current flow implementation; a persistent DB-backed repo is a future task (out of scope for ODP-FLOW-006).
+- `/operator is React and API backed`: React page uses
+  `/api/v1/operator/bootstrap` plus workflow writes observed by Playwright.
+- `server RBAC state transitions persistence and idempotency work`:
+  server-side `require_permission` guards, `OperatorStateStore`, optional
+  `SqliteDocumentStore` persistence, and idempotent write replay.
+- `approval decision audit notifications search and task follow up work`:
+  approval/issue writes update decision, audit, notification, search, and task
+  read models.
+- `productization browser E2E passes`:
+  `ODP_OPERATOR_PRODUCT_GATE=1 npx playwright test tests/e2e/e2e-operator-console.spec.ts --project=chromium`.
