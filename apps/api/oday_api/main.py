@@ -194,6 +194,7 @@ else:
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
+        from shared.infrastructure.persistence import SqliteDocumentStore
         from shared.workflow.sitescore import (
             CandidateSiteRealizationHook,
             SiteScoreDecisionWorkflow,
@@ -220,6 +221,7 @@ else:
         adlift_repo = adlift_repository or bundle.adlift_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
+        operator_document_store = SqliteDocumentStore(bundle.engine) if bundle.is_durable else None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
@@ -293,7 +295,13 @@ else:
                 label_registry=label_registry,
             )
         )
-        api.include_router(create_operator_router(audit_log=audit_log), prefix="/api/v1")
+        api.include_router(
+            create_operator_router(
+                audit_log=audit_log,
+                document_store=operator_document_store,
+            ),
+            prefix="/api/v1",
+        )
 
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
@@ -314,6 +322,7 @@ else:
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
+        api.state.operator_document_store = operator_document_store
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         return api

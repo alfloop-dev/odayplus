@@ -87,3 +87,30 @@ lineage/freshness → **durable persistence** → API/UI, idempotent and audited
 Evidence: `docs/evidence/completion/ODP-FLOW-001/implementation.md` and
 `verification.md` (focused suite 6 passed; related surface 161 passed; ruff
 clean; `tsc --noEmit` clean for web + openapi-client).
+
+## ODP-FLOW-010 — OpsBoard and Governance operator (done)
+
+ODP-FLOW-010 closes the API-backed operator loop for Today queue, Store Ops
+workflow, Governance approvals, Network review callback, notifications, search,
+and task follow-up.
+
+| Surface | UI proof | API proof | State / audit proof | Verification |
+|---|---|---|---|---|
+| Today queue | `/operator` renders API `kpis`, `workQueue`, decisions, risk rows, audit feed | `GET /api/v1/operator/bootstrap`, `GET /today` | Bootstrap state includes notifications and task follow-up | `tests/e2e/e2e-operator-console.spec.ts` |
+| Store Ops workflow | Store Ops triage/assign/action/field/outcome/escalate/purpose dialogs | `POST /issues/{issue_id}/{action}`, `POST /evidence/{evidence_id}/purpose` | Issue status, queue status, audit feed, governance audit, notification, task, platform audit event | `tests/contract/test_operator_api.py` |
+| Governance approvals | Governance workspace consumes live approvals, decision log, and audit rows | `GET /approvals`, `POST /approvals/{approval_id}/decision` | Return/reject reason gate, decision log append, audit row append, platform audit event, idempotent replay | `tests/contract/test_operator_api.py`, governance Playwright test |
+| Network review | Network callback posts decisions for `RV-701` through the shared decision endpoint | `POST /approvals/RV-701/decision` | Network approval state prevents browser 404 and records decision/audit state | `ODP-OC-FE-04` Playwright coverage |
+| Notification/search/task follow-up | Header notification panel, global search popover, API-backed banner task count | `GET /notifications`, `GET /search`, `GET /tasks` | Workflow writes prepend notification/searchable records/task follow-up | browser product gate |
+
+Acceptance mapping:
+
+- `/operator is React and API backed`: React page uses
+  `/api/v1/operator/bootstrap` plus workflow writes observed by Playwright.
+- `server RBAC state transitions persistence and idempotency work`:
+  server-side `require_permission` guards, `OperatorStateStore`, optional
+  `SqliteDocumentStore` persistence, and idempotent write replay.
+- `approval decision audit notifications search and task follow up work`:
+  approval/issue writes update decision, audit, notification, search, and task
+  read models.
+- `productization browser E2E passes`:
+  `ODP_OPERATOR_PRODUCT_GATE=1 npx playwright test tests/e2e/e2e-operator-console.spec.ts --project=chromium`.
