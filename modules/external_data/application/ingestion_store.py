@@ -15,7 +15,7 @@ lineage and freshness are queryable"; "API and UI read persisted run state").
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 

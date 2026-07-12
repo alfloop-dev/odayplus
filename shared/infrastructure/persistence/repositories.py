@@ -10,6 +10,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -63,7 +64,17 @@ from modules.priceops.domain.pricing import (
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain import ForecastOutput as CanonicalForecastOutput
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
+from shared.domain.models import (
+    AddressLocation,
+    Brand,
+    Machine,
+    MachineCycle,
+    Store,
+    Tenant,
+    Transaction,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
 
 
 class DurableSiteScoreRepository:
@@ -730,6 +741,719 @@ class DurableArtifactStore:
         return compute_content_digest(blob) == record.content_digest
 
 
+@dataclass
+class InMemoryTenantRepository:
+    _tenants: dict[str, Tenant] = field(default_factory=dict)
+
+    def save_tenant(self, tenant: Tenant) -> Tenant:
+        self._tenants[tenant.tenant_id] = tenant
+        return tenant
+
+    def get_tenant(self, tenant_id: str) -> Tenant | None:
+        return self._tenants.get(tenant_id)
+
+    def list_tenants(self) -> list[Tenant]:
+        return list(self._tenants.values())
+
+
+class DurableTenantRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_tenant(self, tenant: Tenant) -> Tenant:
+        from datetime import datetime
+        self._engine.execute(
+            "INSERT INTO tenants (tenant_id, tenant_name, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(tenant_id) DO UPDATE SET "
+            "  tenant_name = excluded.tenant_name, "
+            "  status = excluded.status, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                tenant.tenant_id,
+                tenant.tenant_name,
+                tenant.status,
+                tenant.created_at.isoformat() if isinstance(tenant.created_at, datetime) else str(tenant.created_at),
+                datetime.now().isoformat()
+            )
+        )
+        return tenant
+
+    def get_tenant(self, tenant_id: str) -> Tenant | None:
+        from datetime import datetime
+        row = self._engine.query_one("SELECT * FROM tenants WHERE tenant_id = ?", (tenant_id,))
+        if not row:
+            return None
+        return Tenant(
+            tenant_id=row["tenant_id"],
+            tenant_name=row["tenant_name"],
+            status=row["status"],
+            created_at=datetime.fromisoformat(row["created_at"])
+        )
+
+    def list_tenants(self) -> list[Tenant]:
+        from datetime import datetime
+        rows = self._engine.query("SELECT * FROM tenants ORDER BY created_at")
+        return [
+            Tenant(
+                tenant_id=row["tenant_id"],
+                tenant_name=row["tenant_name"],
+                status=row["status"],
+                created_at=datetime.fromisoformat(row["created_at"])
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryBrandRepository:
+    _brands: dict[str, Brand] = field(default_factory=dict)
+
+    def save_brand(self, brand: Brand) -> Brand:
+        self._brands[brand.brand_id] = brand
+        return brand
+
+    def get_brand(self, brand_id: str) -> Brand | None:
+        return self._brands.get(brand_id)
+
+    def list_brands(self) -> list[Brand]:
+        return list(self._brands.values())
+
+
+class DurableBrandRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_brand(self, brand: Brand) -> Brand:
+        self._engine.execute(
+            "INSERT INTO brands (brand_id, tenant_id, brand_code, brand_name, brand_type, brand_capture_group, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(brand_id) DO UPDATE SET "
+            "  tenant_id = excluded.tenant_id, "
+            "  brand_code = excluded.brand_code, "
+            "  brand_name = excluded.brand_name, "
+            "  brand_type = excluded.brand_type, "
+            "  brand_capture_group = excluded.brand_capture_group, "
+            "  status = excluded.status, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                brand.brand_id,
+                brand.tenant_id,
+                brand.brand_code,
+                brand.brand_name,
+                brand.brand_type,
+                brand.brand_capture_group,
+                brand.status
+            )
+        )
+        return brand
+
+    def get_brand(self, brand_id: str) -> Brand | None:
+        row = self._engine.query_one("SELECT * FROM brands WHERE brand_id = ?", (brand_id,))
+        if not row:
+            return None
+        return Brand(
+            brand_id=row["brand_id"],
+            tenant_id=row["tenant_id"],
+            brand_code=row["brand_code"],
+            brand_name=row["brand_name"],
+            brand_type=row["brand_type"],
+            brand_capture_group=row["brand_capture_group"] or "",
+            status=row["status"]
+        )
+
+    def list_brands(self) -> list[Brand]:
+        rows = self._engine.query("SELECT * FROM brands")
+        return [
+            Brand(
+                brand_id=row["brand_id"],
+                tenant_id=row["tenant_id"],
+                brand_code=row["brand_code"],
+                brand_name=row["brand_name"],
+                brand_type=row["brand_type"],
+                brand_capture_group=row["brand_capture_group"] or "",
+                status=row["status"]
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryAddressLocationRepository:
+    _addresses: dict[str, AddressLocation] = field(default_factory=dict)
+
+    def save_address(self, address: AddressLocation) -> AddressLocation:
+        self._addresses[address.address_id] = address
+        return address
+
+    def get_address(self, address_id: str) -> AddressLocation | None:
+        return self._addresses.get(address_id)
+
+    def list_addresses(self) -> list[AddressLocation]:
+        return list(self._addresses.values())
+
+
+class DurableAddressLocationRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_address(self, address: AddressLocation) -> AddressLocation:
+        self._engine.execute(
+            "INSERT INTO address_locations ("
+            "  address_id, raw_address, normalized_address, city, district, village, road, "
+            "  latitude, longitude, geom, geocode_precision, geocode_confidence, "
+            "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(address_id) DO UPDATE SET "
+            "  raw_address = excluded.raw_address, "
+            "  normalized_address = excluded.normalized_address, "
+            "  city = excluded.city, "
+            "  district = excluded.district, "
+            "  village = excluded.village, "
+            "  road = excluded.road, "
+            "  latitude = excluded.latitude, "
+            "  longitude = excluded.longitude, "
+            "  geom = excluded.geom, "
+            "  geocode_precision = excluded.geocode_precision, "
+            "  geocode_confidence = excluded.geocode_confidence, "
+            "  h3_res_8 = excluded.h3_res_8, "
+            "  h3_res_9 = excluded.h3_res_9, "
+            "  h3_res_10 = excluded.h3_res_10, "
+            "  manual_override_flag = excluded.manual_override_flag, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                address.address_id,
+                address.raw_address,
+                address.normalized_address,
+                address.city,
+                address.district,
+                address.village,
+                address.road,
+                address.latitude,
+                address.longitude,
+                address.raw_address,
+                address.geocode_precision,
+                address.geocode_confidence,
+                address.h3_res_8,
+                address.h3_res_9,
+                address.h3_res_10,
+                1 if address.manual_override_flag else 0
+            )
+        )
+        return address
+
+    def get_address(self, address_id: str) -> AddressLocation | None:
+        row = self._engine.query_one("SELECT * FROM address_locations WHERE address_id = ?", (address_id,))
+        if not row:
+            return None
+        return AddressLocation(
+            address_id=row["address_id"],
+            raw_address=row["raw_address"],
+            normalized_address=row["normalized_address"] or "",
+            city=row["city"] or "",
+            district=row["district"] or "",
+            village=row["village"] or "",
+            road=row["road"] or "",
+            latitude=row["latitude"] or 0.0,
+            longitude=row["longitude"] or 0.0,
+            geocode_precision=row["geocode_precision"],
+            geocode_confidence=row["geocode_confidence"] or 0.0,
+            h3_res_8=row["h3_res_8"] or "",
+            h3_res_9=row["h3_res_9"] or "",
+            h3_res_10=row["h3_res_10"] or "",
+            manual_override_flag=bool(row["manual_override_flag"])
+        )
+
+    def list_addresses(self) -> list[AddressLocation]:
+        rows = self._engine.query("SELECT * FROM address_locations")
+        return [
+            AddressLocation(
+                address_id=row["address_id"],
+                raw_address=row["raw_address"],
+                normalized_address=row["normalized_address"] or "",
+                city=row["city"] or "",
+                district=row["district"] or "",
+                village=row["village"] or "",
+                road=row["road"] or "",
+                latitude=row["latitude"] or 0.0,
+                longitude=row["longitude"] or 0.0,
+                geocode_precision=row["geocode_precision"],
+                geocode_confidence=row["geocode_confidence"] or 0.0,
+                h3_res_8=row["h3_res_8"] or "",
+                h3_res_9=row["h3_res_9"] or "",
+                h3_res_10=row["h3_res_10"] or "",
+                manual_override_flag=bool(row["manual_override_flag"])
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryStoreRepository:
+    _stores: dict[str, Store] = field(default_factory=dict)
+
+    def save_store(self, store: Store) -> Store:
+        self._stores[store.store_id] = store
+        return store
+
+    def get_store(self, store_id: str) -> Store | None:
+        return self._stores.get(store_id)
+
+    def list_stores(self) -> list[Store]:
+        return list(self._stores.values())
+
+
+class DurableStoreRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_store(self, store: Store) -> Store:
+        from datetime import date, datetime, time
+        opened_on = store.opened_on.isoformat() if isinstance(store.opened_on, date) else store.opened_on
+        closed_on = store.closed_on.isoformat() if isinstance(store.closed_on, date) else store.closed_on
+        service_start_time = store.service_start_time.isoformat() if isinstance(store.service_start_time, time) else store.service_start_time
+        service_end_time = store.service_end_time.isoformat() if isinstance(store.service_end_time, time) else store.service_end_time
+        effective_from = store.effective_from.isoformat() if isinstance(store.effective_from, datetime) else store.effective_from
+        effective_to = store.effective_to.isoformat() if isinstance(store.effective_to, datetime) else store.effective_to
+
+        self._engine.execute(
+            "INSERT INTO stores ("
+            "  store_id, tenant_id, brand_id, source_store_id, store_name, store_status, "
+            "  ownership_type, store_format_code, opened_on, closed_on, address_id, region_code, "
+            "  service_start_time, service_end_time, effective_from, effective_to, is_current, "
+            "  created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(store_id) DO UPDATE SET "
+            "  tenant_id = excluded.tenant_id, "
+            "  brand_id = excluded.brand_id, "
+            "  source_store_id = excluded.source_store_id, "
+            "  store_name = excluded.store_name, "
+            "  store_status = excluded.store_status, "
+            "  ownership_type = excluded.ownership_type, "
+            "  store_format_code = excluded.store_format_code, "
+            "  opened_on = excluded.opened_on, "
+            "  closed_on = excluded.closed_on, "
+            "  address_id = excluded.address_id, "
+            "  region_code = excluded.region_code, "
+            "  service_start_time = excluded.service_start_time, "
+            "  service_end_time = excluded.service_end_time, "
+            "  effective_from = excluded.effective_from, "
+            "  effective_to = excluded.effective_to, "
+            "  is_current = excluded.is_current, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                store.store_id,
+                store.tenant_id,
+                store.brand_id,
+                store.source_store_id,
+                store.store_name,
+                store.store_status,
+                store.ownership_type,
+                store.store_format_code,
+                opened_on,
+                closed_on,
+                store.address_id,
+                store.region_code,
+                service_start_time,
+                service_end_time,
+                effective_from,
+                effective_to,
+                1 if store.is_current else 0
+            )
+        )
+        return store
+
+    def get_store(self, store_id: str) -> Store | None:
+        from datetime import date, datetime, time
+        row = self._engine.query_one("SELECT * FROM stores WHERE store_id = ?", (store_id,))
+        if not row:
+            return None
+        return Store(
+            store_id=row["store_id"],
+            tenant_id=row["tenant_id"],
+            brand_id=row["brand_id"],
+            source_store_id=row["source_store_id"] or "",
+            store_name=row["store_name"],
+            store_status=row["store_status"],
+            ownership_type=row["ownership_type"],
+            store_format_code=row["store_format_code"] or "",
+            opened_on=date.fromisoformat(row["opened_on"]) if row["opened_on"] else None,
+            closed_on=date.fromisoformat(row["closed_on"]) if row["closed_on"] else None,
+            address_id=row["address_id"] or "",
+            region_code=row["region_code"] or "",
+            service_start_time=time.fromisoformat(row["service_start_time"]),
+            service_end_time=time.fromisoformat(row["service_end_time"]),
+            effective_from=datetime.fromisoformat(row["effective_from"]),
+            effective_to=datetime.fromisoformat(row["effective_to"]),
+            is_current=bool(row["is_current"])
+        )
+
+    def list_stores(self) -> list[Store]:
+        from datetime import date, datetime, time
+        rows = self._engine.query("SELECT * FROM stores")
+        return [
+            Store(
+                store_id=row["store_id"],
+                tenant_id=row["tenant_id"],
+                brand_id=row["brand_id"],
+                source_store_id=row["source_store_id"] or "",
+                store_name=row["store_name"],
+                store_status=row["store_status"],
+                ownership_type=row["ownership_type"],
+                store_format_code=row["store_format_code"] or "",
+                opened_on=date.fromisoformat(row["opened_on"]) if row["opened_on"] else None,
+                closed_on=date.fromisoformat(row["closed_on"]) if row["closed_on"] else None,
+                address_id=row["address_id"] or "",
+                region_code=row["region_code"] or "",
+                service_start_time=time.fromisoformat(row["service_start_time"]),
+                service_end_time=time.fromisoformat(row["service_end_time"]),
+                effective_from=datetime.fromisoformat(row["effective_from"]),
+                effective_to=datetime.fromisoformat(row["effective_to"]),
+                is_current=bool(row["is_current"])
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryMachineRepository:
+    _machines: dict[str, Machine] = field(default_factory=dict)
+
+    def save_machine(self, machine: Machine) -> Machine:
+        self._machines[machine.machine_id] = machine
+        return machine
+
+    def get_machine(self, machine_id: str) -> Machine | None:
+        return self._machines.get(machine_id)
+
+    def list_machines(self) -> list[Machine]:
+        return list(self._machines.values())
+
+
+class DurableMachineRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_machine(self, machine: Machine) -> Machine:
+        from datetime import date, datetime
+        installed_on = machine.installed_on.isoformat() if isinstance(machine.installed_on, date) else machine.installed_on
+        removed_on = machine.removed_on.isoformat() if isinstance(machine.removed_on, date) else machine.removed_on
+        effective_from = machine.effective_from.isoformat() if isinstance(machine.effective_from, datetime) else machine.effective_from
+        effective_to = machine.effective_to.isoformat() if isinstance(machine.effective_to, datetime) else machine.effective_to
+
+        self._engine.execute(
+            "INSERT INTO machines ("
+            "  machine_id, store_id, source_machine_id, machine_serial_no, equipment_brand_id, "
+            "  machine_family, machine_type, capacity_kg, capacity_band, installed_on, removed_on, "
+            "  machine_status, effective_from, effective_to, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(machine_id) DO UPDATE SET "
+            "  store_id = excluded.store_id, "
+            "  source_machine_id = excluded.source_machine_id, "
+            "  machine_serial_no = excluded.machine_serial_no, "
+            "  equipment_brand_id = excluded.equipment_brand_id, "
+            "  machine_family = excluded.machine_family, "
+            "  machine_type = excluded.machine_type, "
+            "  capacity_kg = excluded.capacity_kg, "
+            "  capacity_band = excluded.capacity_band, "
+            "  installed_on = excluded.installed_on, "
+            "  removed_on = excluded.removed_on, "
+            "  machine_status = excluded.machine_status, "
+            "  effective_from = excluded.effective_from, "
+            "  effective_to = excluded.effective_to, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                machine.machine_id,
+                machine.store_id,
+                machine.source_machine_id,
+                machine.machine_serial_no,
+                machine.equipment_brand_id,
+                machine.machine_family,
+                machine.machine_type,
+                machine.capacity_kg,
+                machine.capacity_band,
+                installed_on,
+                removed_on,
+                machine.machine_status,
+                effective_from,
+                effective_to
+            )
+        )
+        return machine
+
+    def get_machine(self, machine_id: str) -> Machine | None:
+        from datetime import date, datetime
+        row = self._engine.query_one("SELECT * FROM machines WHERE machine_id = ?", (machine_id,))
+        if not row:
+            return None
+        return Machine(
+            machine_id=row["machine_id"],
+            store_id=row["store_id"],
+            source_machine_id=row["source_machine_id"] or "",
+            machine_serial_no=row["machine_serial_no"] or "",
+            equipment_brand_id=row["equipment_brand_id"] or "",
+            machine_family=row["machine_family"],
+            machine_type=row["machine_type"] or "",
+            capacity_kg=row["capacity_kg"] or 0.0,
+            capacity_band=row["capacity_band"],
+            installed_on=date.fromisoformat(row["installed_on"]) if row["installed_on"] else None,
+            removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
+            machine_status=row["machine_status"],
+            effective_from=datetime.fromisoformat(row["effective_from"]),
+            effective_to=datetime.fromisoformat(row["effective_to"])
+        )
+
+    def list_machines(self) -> list[Machine]:
+        from datetime import date, datetime
+        rows = self._engine.query("SELECT * FROM machines")
+        return [
+            Machine(
+                machine_id=row["machine_id"],
+                store_id=row["store_id"],
+                source_machine_id=row["source_machine_id"] or "",
+                machine_serial_no=row["machine_serial_no"] or "",
+                equipment_brand_id=row["equipment_brand_id"] or "",
+                machine_family=row["machine_family"],
+                machine_type=row["machine_type"] or "",
+                capacity_kg=row["capacity_kg"] or 0.0,
+                capacity_band=row["capacity_band"],
+                installed_on=date.fromisoformat(row["installed_on"]) if row["installed_on"] else None,
+                removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
+                machine_status=row["machine_status"],
+                effective_from=datetime.fromisoformat(row["effective_from"]),
+                effective_to=datetime.fromisoformat(row["effective_to"])
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryTransactionRepository:
+    _transactions: dict[str, Transaction] = field(default_factory=dict)
+
+    def save_transaction(self, transaction: Transaction) -> Transaction:
+        self._transactions[transaction.transaction_id] = transaction
+        return transaction
+
+    def get_transaction(self, transaction_id: str) -> Transaction | None:
+        return self._transactions.get(transaction_id)
+
+    def list_transactions(self) -> list[Transaction]:
+        return list(self._transactions.values())
+
+
+class DurableTransactionRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_transaction(self, transaction: Transaction) -> Transaction:
+        from datetime import datetime
+        event_time = transaction.event_time.isoformat() if isinstance(transaction.event_time, datetime) else transaction.event_time
+        observation_time = transaction.observation_time.isoformat() if isinstance(transaction.observation_time, datetime) else transaction.observation_time
+        payment_time = transaction.payment_time.isoformat() if isinstance(transaction.payment_time, datetime) else transaction.payment_time
+        ingested_at = transaction.ingested_at.isoformat() if isinstance(transaction.ingested_at, datetime) else transaction.ingested_at
+
+        self._engine.execute(
+            "INSERT INTO transactions ("
+            "  transaction_id, source_transaction_id, store_id, machine_id, member_id, "
+            "  event_time, observation_time, payment_time, gross_amount, discount_amount, "
+            "  net_amount, currency, payment_method, transaction_status, refund_of_transaction_id, "
+            "  price_schedule_id, promotion_id, source_system, ingested_at, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(transaction_id) DO UPDATE SET "
+            "  source_transaction_id = excluded.source_transaction_id, "
+            "  store_id = excluded.store_id, "
+            "  machine_id = excluded.machine_id, "
+            "  member_id = excluded.member_id, "
+            "  event_time = excluded.event_time, "
+            "  observation_time = excluded.observation_time, "
+            "  payment_time = excluded.payment_time, "
+            "  gross_amount = excluded.gross_amount, "
+            "  discount_amount = excluded.discount_amount, "
+            "  net_amount = excluded.net_amount, "
+            "  currency = excluded.currency, "
+            "  payment_method = excluded.payment_method, "
+            "  transaction_status = excluded.transaction_status, "
+            "  refund_of_transaction_id = excluded.refund_of_transaction_id, "
+            "  price_schedule_id = excluded.price_schedule_id, "
+            "  promotion_id = excluded.promotion_id, "
+            "  source_system = excluded.source_system, "
+            "  ingested_at = excluded.ingested_at, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                transaction.transaction_id,
+                transaction.source_transaction_id,
+                transaction.store_id,
+                transaction.machine_id,
+                transaction.member_id,
+                event_time,
+                observation_time,
+                payment_time,
+                transaction.gross_amount,
+                transaction.discount_amount,
+                transaction.net_amount,
+                transaction.currency,
+                transaction.payment_method,
+                transaction.transaction_status,
+                transaction.refund_of_transaction_id,
+                transaction.price_schedule_id,
+                transaction.promotion_id,
+                transaction.source_system,
+                ingested_at
+            )
+        )
+        return transaction
+
+    def get_transaction(self, transaction_id: str) -> Transaction | None:
+        from datetime import datetime
+        row = self._engine.query_one("SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,))
+        if not row:
+            return None
+        return Transaction(
+            transaction_id=row["transaction_id"],
+            source_transaction_id=row["source_transaction_id"] or "",
+            store_id=row["store_id"],
+            machine_id=row["machine_id"] or None,
+            member_id=row["member_id"] or None,
+            event_time=datetime.fromisoformat(row["event_time"]),
+            observation_time=datetime.fromisoformat(row["observation_time"]),
+            payment_time=datetime.fromisoformat(row["payment_time"]) if row["payment_time"] else None,
+            gross_amount=row["gross_amount"],
+            discount_amount=row["discount_amount"],
+            net_amount=row["net_amount"],
+            currency=row["currency"],
+            payment_method=row["payment_method"],
+            transaction_status=row["transaction_status"],
+            refund_of_transaction_id=row["refund_of_transaction_id"] or None,
+            price_schedule_id=row["price_schedule_id"] or None,
+            promotion_id=row["promotion_id"] or None,
+            source_system=row["source_system"],
+            ingested_at=datetime.fromisoformat(row["ingested_at"])
+        )
+
+    def list_transactions(self) -> list[Transaction]:
+        from datetime import datetime
+        rows = self._engine.query("SELECT * FROM transactions")
+        return [
+            Transaction(
+                transaction_id=row["transaction_id"],
+                source_transaction_id=row["source_transaction_id"] or "",
+                store_id=row["store_id"],
+                machine_id=row["machine_id"] or None,
+                member_id=row["member_id"] or None,
+                event_time=datetime.fromisoformat(row["event_time"]),
+                observation_time=datetime.fromisoformat(row["observation_time"]),
+                payment_time=datetime.fromisoformat(row["payment_time"]) if row["payment_time"] else None,
+                gross_amount=row["gross_amount"],
+                discount_amount=row["discount_amount"],
+                net_amount=row["net_amount"],
+                currency=row["currency"],
+                payment_method=row["payment_method"],
+                transaction_status=row["transaction_status"],
+                refund_of_transaction_id=row["refund_of_transaction_id"] or None,
+                price_schedule_id=row["price_schedule_id"] or None,
+                promotion_id=row["promotion_id"] or None,
+                source_system=row["source_system"],
+                ingested_at=datetime.fromisoformat(row["ingested_at"])
+            )
+            for row in rows
+        ]
+
+
+@dataclass
+class InMemoryMachineCycleRepository:
+    _cycles: dict[str, MachineCycle] = field(default_factory=dict)
+
+    def save_machine_cycle(self, machine_cycle: MachineCycle) -> MachineCycle:
+        self._cycles[machine_cycle.cycle_id] = machine_cycle
+        return machine_cycle
+
+    def get_machine_cycle(self, cycle_id: str) -> MachineCycle | None:
+        return self._cycles.get(cycle_id)
+
+    def list_machine_cycles(self) -> list[MachineCycle]:
+        return list(self._cycles.values())
+
+
+class DurableMachineCycleRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+
+    def save_machine_cycle(self, machine_cycle: MachineCycle) -> MachineCycle:
+        from datetime import datetime
+        cycle_start_time = machine_cycle.cycle_start_time.isoformat() if isinstance(machine_cycle.cycle_start_time, datetime) else machine_cycle.cycle_start_time
+        cycle_end_time = machine_cycle.cycle_end_time.isoformat() if isinstance(machine_cycle.cycle_end_time, datetime) else machine_cycle.cycle_end_time
+
+        self._engine.execute(
+            "INSERT INTO machine_cycles ("
+            "  cycle_id, store_id, machine_id, transaction_id, cycle_start_time, "
+            "  cycle_end_time, cycle_type, duration_sec, cycle_status, error_code, "
+            "  created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(cycle_id) DO UPDATE SET "
+            "  store_id = excluded.store_id, "
+            "  machine_id = excluded.machine_id, "
+            "  transaction_id = excluded.transaction_id, "
+            "  cycle_start_time = excluded.cycle_start_time, "
+            "  cycle_end_time = excluded.cycle_end_time, "
+            "  cycle_type = excluded.cycle_type, "
+            "  duration_sec = excluded.duration_sec, "
+            "  cycle_status = excluded.cycle_status, "
+            "  error_code = excluded.error_code, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (
+                machine_cycle.cycle_id,
+                machine_cycle.store_id,
+                machine_cycle.machine_id,
+                machine_cycle.transaction_id,
+                cycle_start_time,
+                cycle_end_time,
+                machine_cycle.cycle_type,
+                machine_cycle.duration_sec,
+                machine_cycle.cycle_status,
+                machine_cycle.error_code
+            )
+        )
+        return machine_cycle
+
+    def get_machine_cycle(self, cycle_id: str) -> MachineCycle | None:
+        from datetime import datetime
+        row = self._engine.query_one("SELECT * FROM machine_cycles WHERE cycle_id = ?", (cycle_id,))
+        if not row:
+            return None
+        return MachineCycle(
+            cycle_id=row["cycle_id"],
+            store_id=row["store_id"],
+            machine_id=row["machine_id"],
+            transaction_id=row["transaction_id"] or None,
+            cycle_start_time=datetime.fromisoformat(row["cycle_start_time"]),
+            cycle_end_time=datetime.fromisoformat(row["cycle_end_time"]),
+            cycle_type=row["cycle_type"],
+            duration_sec=row["duration_sec"],
+            cycle_status=row["cycle_status"],
+            error_code=row["error_code"] or None
+        )
+
+    def list_machine_cycles(self) -> list[MachineCycle]:
+        from datetime import datetime
+        rows = self._engine.query("SELECT * FROM machine_cycles")
+        return [
+            MachineCycle(
+                cycle_id=row["cycle_id"],
+                store_id=row["store_id"],
+                machine_id=row["machine_id"],
+                transaction_id=row["transaction_id"] or None,
+                cycle_start_time=datetime.fromisoformat(row["cycle_start_time"]),
+                cycle_end_time=datetime.fromisoformat(row["cycle_end_time"]),
+                cycle_type=row["cycle_type"],
+                duration_sec=row["duration_sec"],
+                cycle_status=row["cycle_status"],
+                error_code=row["error_code"] or None
+            )
+            for row in rows
+        ]
+
+
 __all__ = [
     "DurableAVMRepository",
     "DurableAdLiftRepository",
@@ -741,4 +1465,18 @@ __all__ = [
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
+    "InMemoryTenantRepository",
+    "DurableTenantRepository",
+    "InMemoryBrandRepository",
+    "DurableBrandRepository",
+    "InMemoryAddressLocationRepository",
+    "DurableAddressLocationRepository",
+    "InMemoryStoreRepository",
+    "DurableStoreRepository",
+    "InMemoryMachineRepository",
+    "DurableMachineRepository",
+    "InMemoryTransactionRepository",
+    "DurableTransactionRepository",
+    "InMemoryMachineCycleRepository",
+    "DurableMachineCycleRepository",
 ]

@@ -19,13 +19,14 @@ duplicate windows and keeps advancing from the persisted watermark.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 from modules.external_data.application.ingestion_store import (
-    InMemoryIngestionRunStore,
     IngestionRunRecord,
+    InMemoryIngestionRunStore,
     build_ingestion_run_record,
 )
 from modules.external_data.providers import ListingPartnerFeedProvider

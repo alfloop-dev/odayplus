@@ -491,8 +491,8 @@ def canonical_agent_name(name: str | None) -> str:
     trimmed = str(name).strip()
     if not trimmed:
         return ""
-    canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
     lowered = trimmed.lower()
+    canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
     if lowered in canonical_by_lower:
         return canonical_by_lower[lowered]
     alias_target = AGENT_ALIASES.get(lowered)

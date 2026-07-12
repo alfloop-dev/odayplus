@@ -44,6 +44,14 @@ class PersistenceBundle:
     intervention_repository: Any
     intervention_label_registry: Any
     ingestion_run_store: Any
+    tenant_repository: Any
+    brand_repository: Any
+    address_location_repository: Any
+    store_repository: Any
+    machine_repository: Any
+    transaction_repository: Any
+    machine_cycle_repository: Any
+    external_fetch_state_store: Any = None
     engine: Any = None
 
     @property
@@ -55,13 +63,14 @@ def _memory_bundle() -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
+    from modules.external_data.application.ingestion_store import (
+        InMemoryIngestionRunStore,
+    )
+    from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
-    )
-    from modules.external_data.application.ingestion_store import (
-        InMemoryIngestionRunStore,
     )
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
@@ -69,6 +78,15 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.infrastructure.persistence.repositories import (
+        InMemoryAddressLocationRepository,
+        InMemoryBrandRepository,
+        InMemoryMachineCycleRepository,
+        InMemoryMachineRepository,
+        InMemoryStoreRepository,
+        InMemoryTenantRepository,
+        InMemoryTransactionRepository,
+    )
     from shared.jobs.queue import InMemoryJobQueue
 
     return PersistenceBundle(
@@ -87,27 +105,43 @@ def _memory_bundle() -> PersistenceBundle:
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
         ingestion_run_store=InMemoryIngestionRunStore(),
+        tenant_repository=InMemoryTenantRepository(),
+        brand_repository=InMemoryBrandRepository(),
+        address_location_repository=InMemoryAddressLocationRepository(),
+        store_repository=InMemoryStoreRepository(),
+        machine_repository=InMemoryMachineRepository(),
+        transaction_repository=InMemoryTransactionRepository(),
+        machine_cycle_repository=InMemoryMachineCycleRepository(),
+        external_fetch_state_store=InMemoryExternalFetchStateStore(),
     )
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
-    from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
         DurableAVMRepository,
+        DurableBrandRepository,
         DurableForecastOpsRepository,
         DurableInterventionRepository,
         DurableLabelRegistry,
         DurableLearningHubRepository,
+        DurableMachineCycleRepository,
+        DurableMachineRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableSiteScoreRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+        DurableTransactionRepository,
     )
 
     engine = SqliteEngine(db_path)
@@ -128,6 +162,14 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
+        tenant_repository=DurableTenantRepository(engine),
+        brand_repository=DurableBrandRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(engine),
+        store_repository=DurableStoreRepository(engine),
+        machine_repository=DurableMachineRepository(engine),
+        transaction_repository=DurableTransactionRepository(engine),
+        machine_cycle_repository=DurableMachineCycleRepository(engine),
+        external_fetch_state_store=DurableExternalFetchStateStore(store),
         engine=engine,
     )
 
