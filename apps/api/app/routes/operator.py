@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from threading import RLock
 from typing import Any
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -41,6 +42,34 @@ class EvidencePurposePayload(BaseModel):
     auditNote: str | None = None
     actorRoleId: str | None = None
     actorName: str | None = None
+
+
+# Growth workspace payloads
+# ---------------------------------------------------------------------------
+
+class GrowthDraftPayload(BaseModel):
+    """Payload for creating a Growth Action draft from a PriceOps recommendation."""
+    name: str = Field(min_length=1)
+    segmentId: str = Field(min_length=1)
+    sourceRecommendationId: str | None = None
+    objective: str = Field(min_length=1)
+    targetLift: float
+    observationWindowDays: int = Field(default=14, ge=1)
+    rationale: str = ""
+    rollbackPlan: str = ""
+    actorName: str | None = None
+    idempotency_key: str | None = None
+
+
+class GrowthOutcomePayload(BaseModel):
+    """Writeback payload for effectiveness verdict + closeout."""
+    outcome: str  # EFFECTIVE | INEFFECTIVE | INCONCLUSIVE | PENDING
+    observedLift: float | None = None
+    evidenceLevel: str = "medium"  # high | medium | low
+    rationale: str = ""
+    requiredAction: str = "CLOSE"  # CLOSE | ROLLBACK | CONTINUE_OBSERVATION | STRENGTHEN_EVIDENCE
+    actorName: str | None = None
+    idempotency_key: str | None = None
 
 
 def create_operator_router(
@@ -171,6 +200,351 @@ def create_operator_router(
             idempotency_key=idempotency_key,
         )
         _remember(idempotency_cache, cache_key, result)
+        return result
+
+    # -----------------------------------------------------------------------
+    # Growth workspace — segments / recommendations / actions / draft / outcome
+    # -----------------------------------------------------------------------
+
+    # In-memory growth store — seeded from the canonical fixture set so reads
+    # reflect real domain data; writes (draft + outcome) mutate this store.
+    growth_segments: list[dict[str, Any]] = [
+        {
+            "id": "seg-metro-dinner",
+            "name": "都會晚餐高潛力組",
+            "definition": "六都 · 晚餐時段營收占比 > 45% · 近 8 週交易量成長",
+            "storeCount": 42,
+            "revenueShare": "31.4%",
+            "trend": "up",
+            "opportunity": "晚餐客單價仍低於同商圈基準，具備定價上調空間。",
+            "dataStatus": "FRESH",
+        },
+        {
+            "id": "seg-suburb-lunch",
+            "name": "郊區午餐守成組",
+            "definition": "非六都 · 午餐時段營收占比 > 50% · 交易量持平",
+            "storeCount": 28,
+            "revenueShare": "18.7%",
+            "trend": "flat",
+            "opportunity": "午餐主力商品需求彈性高，調價風險大，優先觀察。",
+            "dataStatus": "FRESH",
+        },
+        {
+            "id": "seg-latenight-delivery",
+            "name": "宵夜外送流失組",
+            "definition": "外送占比 > 60% · 近 12 週宵夜時段營收下滑",
+            "storeCount": 17,
+            "revenueShare": "9.2%",
+            "trend": "down",
+            "opportunity": "外送費結構偏高，可測試小幅下調搭配廣告增量。",
+            "dataStatus": "LOW_CONFIDENCE",
+        },
+    ]
+
+    growth_recommendations: list[dict[str, Any]] = [
+        {
+            "id": "rec-9001",
+            "segmentId": "seg-metro-dinner",
+            "title": "晚餐套餐 +3% 加權調價",
+            "currentPrice": "現行 NT$ 168 / 198 / 238",
+            "candidatePrice": "候選 NT$ 173 / 204 / 245",
+            "expectedRevenueLift": 2.1,
+            "expectedMarginLift": 2.8,
+            "constraintStatus": "PASS",
+            "confidenceScore": 0.81,
+            "validUntil": "2026-07-20T00:00:00Z",
+            "rationale": "近 8 週晚餐時段需求彈性 -0.34（低彈性），基準商圈定價高 4.2%，調幅在 constraint 範圍內。",
+        },
+        {
+            "id": "rec-9002",
+            "segmentId": "seg-latenight-delivery",
+            "title": "宵夜外送 -5% 試降",
+            "currentPrice": "現行 NT$ 45 / 外送費",
+            "candidatePrice": "候選 NT$ 43 / 外送費",
+            "expectedRevenueLift": -0.8,
+            "expectedMarginLift": 1.2,
+            "constraintStatus": "WATCH",
+            "confidenceScore": 0.61,
+            "validUntil": "2026-07-18T00:00:00Z",
+            "rationale": "宵夜外送需求彈性 -1.12，小幅降費可能回拉流失單量；信心分數偏低，建議先限量測試。",
+        },
+    ]
+
+    growth_actions: list[dict[str, Any]] = [
+        {
+            "id": "growth-7001",
+            "name": "晚餐套餐加權調價 · 第一批",
+            "segmentId": "seg-metro-dinner",
+            "sourceRecommendationId": "rec-9001",
+            "status": "ACTIVE",
+            "objective": "提升晚餐時段套餐客單價",
+            "targetLift": 2.1,
+            "observationWindowDays": 14,
+            "rationale": "低彈性時段可承受溫和調幅",
+            "rollbackPlan": "若 7 日內 conversion 下滑 > 5%，回復原價。",
+            "createdAt": "2026-07-01T09:00:00Z",
+            "metadata": {
+                "decisionId": "dec-growth-7001",
+                "correlationId": "corr-growth-7001",
+                "modelVersion": "growth-uplift-v1.4.0",
+                "policyVersion": "growth-policy-2026.07",
+                "featureSnapshotTime": "2026-07-01T06:00:00Z",
+            },
+        },
+        {
+            "id": "growth-7002",
+            "name": "宵夜外送試降 · A 組",
+            "segmentId": "seg-latenight-delivery",
+            "sourceRecommendationId": "rec-9002",
+            "status": "ACTIVE",
+            "objective": "回拉宵夜外送流失單量",
+            "targetLift": 1.2,
+            "observationWindowDays": 14,
+            "rationale": "限量測試低費率對單量的回拉效果",
+            "rollbackPlan": "若 GMV 淨負，立即回復。",
+            "createdAt": "2026-07-03T11:00:00Z",
+            "metadata": {
+                "decisionId": "dec-growth-7002",
+                "correlationId": "corr-growth-7002",
+                "modelVersion": "growth-uplift-v1.4.0",
+                "policyVersion": "growth-policy-2026.07",
+                "featureSnapshotTime": "2026-07-03T08:00:00Z",
+            },
+        },
+        {
+            "id": "growth-7003",
+            "name": "午餐觀察期延長 · 郊區組",
+            "segmentId": "seg-suburb-lunch",
+            "sourceRecommendationId": None,
+            "status": "PENDING_EVIDENCE",
+            "objective": "等待更多需求彈性數據再決策",
+            "targetLift": 0.5,
+            "observationWindowDays": 28,
+            "rationale": "現有數據信心不足，延長觀察期",
+            "rollbackPlan": "N/A（純觀察，無價格動作）",
+            "createdAt": "2026-07-05T14:00:00Z",
+            "metadata": {
+                "decisionId": "dec-growth-7003",
+                "correlationId": "corr-growth-7003",
+                "modelVersion": "growth-uplift-v1.4.0",
+                "policyVersion": "growth-policy-2026.07",
+                "featureSnapshotTime": "2026-07-05T10:00:00Z",
+            },
+        },
+        {
+            "id": "growth-7004",
+            "name": "晚餐調價第一批成效驗收",
+            "segmentId": "seg-metro-dinner",
+            "sourceRecommendationId": "rec-9001",
+            "status": "EFFECTIVE",
+            "objective": "驗收加權調價的實際增益",
+            "targetLift": 2.1,
+            "observationWindowDays": 14,
+            "rationale": "觀察期已結束，數據顯示正向增益",
+            "rollbackPlan": "已達標，維持現價。",
+            "createdAt": "2026-06-17T09:00:00Z",
+            "growth_outcome": "EFFECTIVE",
+            "required_action": "CLOSE",
+            "metadata": {
+                "decisionId": "dec-growth-7004",
+                "correlationId": "corr-growth-7004",
+                "modelVersion": "growth-uplift-v1.4.0",
+                "policyVersion": "growth-policy-2026.07",
+                "featureSnapshotTime": "2026-06-17T06:00:00Z",
+            },
+        },
+    ]
+
+    growth_freshness: dict[str, Any] = {
+        "modelVersion": "growth-uplift-v1.4.0",
+        "policyVersion": "growth-policy-2026.07",
+        "featureSnapshotTime": "2026-07-13T06:00:00Z",
+        "dataStatus": "FRESH",
+        "lastRefreshed": "2026-07-13T06:05:00Z",
+    }
+
+    growth_idempotency: dict[str, Any] = {}
+
+    growth_rbac = Depends(
+        require_permission("growth", Action.CREATE, engine=authz_engine)
+    )
+
+    @router.get(
+        "/growth/freshness",
+        dependencies=[read_guard],
+        tags=["growth"],
+    )
+    def get_growth_freshness() -> dict[str, Any]:
+        """Return data freshness metadata for the Growth workspace."""
+        return growth_freshness
+
+    @router.get(
+        "/growth/segments",
+        dependencies=[read_guard],
+        tags=["growth"],
+    )
+    def get_growth_segments() -> dict[str, Any]:
+        """List available growth segments."""
+        return {"items": growth_segments, "count": len(growth_segments)}
+
+    @router.get(
+        "/growth/recommendations",
+        dependencies=[read_guard],
+        tags=["growth"],
+    )
+    def get_growth_recommendations(
+        segment_id: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """Return PriceOps recommendations, optionally filtered by segment_id."""
+        items = (
+            [r for r in growth_recommendations if r["segmentId"] == segment_id]
+            if segment_id
+            else growth_recommendations
+        )
+        return {"items": items, "count": len(items)}
+
+    @router.get(
+        "/growth/actions",
+        dependencies=[read_guard],
+        tags=["growth"],
+    )
+    def get_growth_actions(
+        segment_id: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """Return Growth actions, optionally filtered by segment_id."""
+        items = (
+            [a for a in growth_actions if a["segmentId"] == segment_id]
+            if segment_id
+            else growth_actions
+        )
+        return {"items": items, "count": len(items)}
+
+    @router.post(
+        "/growth/actions",
+        dependencies=[growth_rbac],
+        tags=["growth"],
+    )
+    def create_growth_draft(
+        body: GrowthDraftPayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        """Create a Growth Action draft (DRAFT status). Idempotent on Idempotency-Key."""
+        effective_key = idempotency_key or body.idempotency_key
+        if effective_key and effective_key in growth_idempotency:
+            return growth_idempotency[effective_key]
+
+        correlation_id = x_correlation_id or f"corr-{uuid.uuid4().hex[:12]}"
+        action_id = f"growth-{uuid.uuid4().hex[:8]}"
+        new_action: dict[str, Any] = {
+            "id": action_id,
+            "name": body.name,
+            "segmentId": body.segmentId,
+            "sourceRecommendationId": body.sourceRecommendationId,
+            "status": "DRAFT",
+            "objective": body.objective,
+            "targetLift": body.targetLift,
+            "observationWindowDays": body.observationWindowDays,
+            "rationale": body.rationale,
+            "rollbackPlan": body.rollbackPlan,
+            "createdAt": datetime.now(UTC).isoformat(),
+            "metadata": {
+                "decisionId": f"dec-{action_id}",
+                "correlationId": correlation_id,
+                "modelVersion": growth_freshness["modelVersion"],
+                "policyVersion": growth_freshness["policyVersion"],
+                "featureSnapshotTime": growth_freshness["featureSnapshotTime"],
+            },
+        }
+
+        growth_actions.append(new_action)
+        if audit_log is not None:
+            audit_log.append(
+                AuditEvent(
+                    event_type="growth.draft_created.v1",
+                    actor=body.actorName or "operator",
+                    action="create",
+                    resource=f"growth/actions/{action_id}",
+                    outcome="accepted",
+                    correlation_id=correlation_id,
+                    metadata={
+                        "action_id": action_id,
+                        "segment_id": body.segmentId,
+                        "source_recommendation_id": body.sourceRecommendationId,
+                        "idempotency_key": effective_key,
+                    },
+                )
+            )
+
+        result = {**new_action, "correlation_id": correlation_id}
+        if effective_key:
+            growth_idempotency[effective_key] = result
+        return result
+
+    @router.post(
+        "/growth/actions/{action_id}/outcome",
+        dependencies=[growth_rbac],
+        tags=["growth"],
+    )
+    def write_growth_outcome(
+        action_id: str,
+        body: GrowthOutcomePayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        """Record effectiveness verdict and required action for a Growth Action.
+
+        Idempotent: repeat POST with same Idempotency-Key returns cached response.
+        """
+        outcome_key = idempotency_key or body.idempotency_key
+        if idempotency_key and outcome_key in growth_idempotency:
+            return growth_idempotency[outcome_key]
+
+        action = next((a for a in growth_actions if a["id"] == action_id), None)
+        if action is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"growth action {action_id!r} not found",
+            )
+
+        correlation_id = x_correlation_id or f"corr-{uuid.uuid4().hex[:12]}"
+        action["growth_outcome"] = body.outcome
+        action["required_action"] = body.requiredAction
+        action["status"] = {
+            "EFFECTIVE": "EFFECTIVE",
+            "INEFFECTIVE": "INEFFECTIVE",
+            "INCONCLUSIVE": "PENDING_EVIDENCE",
+            "PENDING": "PENDING_EVIDENCE",
+        }.get(body.outcome, "PENDING_EVIDENCE")
+
+        if audit_log is not None:
+            audit_log.append(
+                AuditEvent(
+                    event_type="growth.outcome_written.v1",
+                    actor=body.actorName or "system",
+                    action="evaluate",
+                    resource=f"growth/actions/{action_id}",
+                    outcome="accepted",
+                    correlation_id=correlation_id,
+                    metadata={
+                        "action_id": action_id,
+                        "growth_outcome": body.outcome,
+                        "required_action": body.requiredAction,
+                        "observed_lift": body.observedLift,
+                        "evidence_level": body.evidenceLevel,
+                        "idempotency_key": idempotency_key,
+                    },
+                )
+            )
+
+        result = {
+            **action,
+            "growth_outcome": body.outcome,
+            "required_action": body.requiredAction,
+            "correlation_id": correlation_id,
+        }
+        if idempotency_key:
+            growth_idempotency[outcome_key] = result
         return result
 
     return router
