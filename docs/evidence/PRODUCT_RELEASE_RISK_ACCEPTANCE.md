@@ -1,205 +1,190 @@
 # Product Release Risk Acceptance
 
-Task: ODP-FIN-LIVE-001
-Generated: 2026-07-13
-Owner: Antigravity6
-Reviewer: Antigravity7
-Status: pending-human-signoff
+Task: ODP-PV-008  
+Decision: **GO — with explicit residual-risk acceptance**  
+Decision scope: internal / POC / deterministic product-E2E milestone only  
+Decision owner: Human/Ops  
+Decision recorded: 2026-07-12  
+Prepared by: Claude (owner), reviewed by Claude2 (reviewer)
 
-This document records the live-readiness wiring state and formal risk
-acceptance for the three PV-008 P0 gaps that could not be closed by code
-alone. The code paths are wired and fail-closed. Activation requires real
-keys, hosts, and explicit human sign-off.
+This document is the durable, auditable record of the Human/Ops release
+decision for the product-grade E2E validation wave. It sits on top of the
+conditional go/no-go packet in
+`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` and the traceability packet in
+`docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`, and formally states which
+residual risks Human/Ops has accepted and which claims remain prohibited.
 
----
+## Decision Statement
 
-## 1. Live-Readiness Summary
+Human/Ops accepts the current release candidate **for the deterministic
+product-E2E / internal / proof-of-concept milestone only**. Development for
+every P0 product flow is complete at the fixture / deterministic-environment
+level and is merged into `dev`. The remaining P0 gaps are **live-evidence
+gaps, not missing code**: they require running against real external
+providers, a live map endpoint, and a configured remote staging target.
 
-| Gap | Code path | Gate | Missing to activate | Risk acceptance required |
-|---|---|---|---|---|
-| Live external provider (listing / POI / geocoder backend) | `modules/external_data/providers/live.py` + `provider_registry.py` | `ODP_EXTERNAL_PROVIDER_MODE=live` + `validate_external_providers_or_raise()` | Real API keys in named env vars (see §2) | Yes — Human/Ops |
-| Live map tile / geocoder (frontend) | `apps/web/features/map/HeatZoneMap.tsx` `readMapBoundaryConfig()` | Missing env vars yield empty string → MapLibre falls back to local style | Provider-issued tile URL + geocoder URL + attribution/terms text (see §3) | Yes — Human/Ops |
-| Remote staging | `.github/workflows/deploy-staging.yml` + `scripts/e2e/check_remote_staging_proof.py` | Workflow is fail-closed; missing host/url/secret owner produce a failed check, not a fabricated pass | GitHub `staging` environment variables and secrets (see §4) | Yes — Human/Ops |
+This decision **does not** authorize any external, customer-facing, or
+"production-ready" claim. Live remote rollout stays blocked until the live
+proof below is captured and accepted.
 
-No evidence has been fabricated. All three gaps remain **open** until the
-human/ops sign-off rows in §5 are completed.
+## What Is Accepted
 
----
+| Area | Accepted basis | Evidence |
+|---|---|---|
+| Product E2E readiness | Deterministic Docker product stack, seeded API/source data, Playwright P0 specs (PV-005/006/007), map canvas/a11y specs | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`, `scripts/e2e/run_product_e2e.sh` |
+| Go/No-Go boundary | Conditional-go packet keeps live provider, live map, and remote staging explicitly conditional | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`, `scripts/e2e/check_product_go_no_go.py` |
+| Audit evidence | Retained audit bundle checksums and correlation IDs in product specs | `corr-pv006-ops-intervention-price-ad`, `corr-pv007-avm-netplan-learning-audit`, `corr-product-e2e-seed-001` |
+| Deployment/backup/rollback | Deterministic E2E backup/restore/rollback proof | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md` |
 
-## 2. Live External Provider: Wiring and Required Secrets
+## Residual Risks Explicitly Accepted (Deferred, Not Waived)
 
-### Code Path
+The following three P0 live-evidence gaps remain open. They are accepted as
+**deferred to their tracked external-proof tasks** and must be closed with
+environment-specific live evidence before any production claim. They are
+**not** waived and must **not** be closed from deterministic fixtures or
+mock-live evidence.
 
-```
-ODP_EXTERNAL_PROVIDER_MODE=live
-    └─ external_provider_mode(os.environ)          [provider_registry.py:271]
-         └─ validate_external_providers_or_raise()  [provider_registry.py:367]
-              └─ per-provider credential check      [provider_registry.py:325-357]
-                   ├─ missing/placeholder value → ProviderValidationError (code=missing_credential)
-                   └─ invalid status value      → ProviderValidationError (code=credential_<status>)
-```
-
-In fixture mode (`ODP_EXTERNAL_PROVIDER_MODE=fixture` or unset) all three
-provider adapters run against deterministic replay fixtures. No live network
-calls are made. The gate is **fail-closed**: setting `live` without the
-required env vars raises `ExternalProviderConfigError` at startup.
-
-### Required Environment Variables (live mode only)
-
-| Provider | Required env var | Auth mode | Status env var | Notes |
-|---|---|---|---|---|
-| `listing.partner_feed` | `ODP_LISTING_PROVIDER_API_KEY` | `api_key` | `ODP_LISTING_PROVIDER_AUTH_STATUS` | Status must not be `expired / unauthorized / revoked / invalid` |
-| `listing.partner_feed` | `ODP_LISTING_PROVIDER_FEED_URL` | (endpoint URL, not a credential) | — | Used by `HttpListingFeedClient`; required when mode=live |
-| `poi.commercial_api` | `ODP_POI_PROVIDER_API_KEY` | `api_key` | `ODP_POI_PROVIDER_AUTH_STATUS` | Status must not be invalid |
-| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_API_KEY` | `api_key` | `ODP_GEOCODE_PROVIDER_AUTH_STATUS` | Status must not be invalid |
-| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_URL` | (endpoint URL, not a credential) | — | Used by `HttpGeocodeClient`; required when mode=live |
-| `admin_boundary.official_dataset` | `ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN` | `bearer_token` | `ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS` | Status must not be invalid |
-| `competitor.manual_source` | `ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION` | `manual_attestation` | `ODP_COMPETITOR_MANUAL_SOURCE_STATUS` | `allowed_in_production=False`; blocked by license gate in production |
-
-> **Note:** `competitor.manual_source` is blocked for automated production use
-> by its license metadata (`allowed_in_production=False`). Attempting live mode
-> in a production-like deploy env raises `license_blocked`.
-
-### Placeholder Values Rejected at Startup
-
-The following values are treated as missing by `_is_missing_or_placeholder()`:
-
-```
-"" | "changeme" | "change-me" | "todo" | "placeholder" | "dummy" | "example"
-```
-
-### Licensing Constraints
-
-All live providers require license review before production activation.
-`competitor.manual_source` is explicitly excluded from production automated use.
-See `ProviderLicense.allowed_in_production` and `downstream_use_flags` in
-`modules/external_data/connectors/provider_registry.py`.
-
----
-
-## 3. Live Map Tile / Geocoder: Wiring and Required Config
-
-### Code Path
-
-```
-apps/web/features/map/HeatZoneMap.tsx
-    └─ readMapBoundaryConfig()                      [line ~350]
-         ├─ tileUrl:    process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL    ?? ""
-         ├─ geocoderUrl: process.env.NEXT_PUBLIC_ODP_GEOCODER_URL   ?? ""
-         ├─ attribution: process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? "ODay Plus local fixture"
-         └─ termsUrl:   process.env.NEXT_PUBLIC_ODP_MAP_TERMS_URL   ?? ""
-```
-
-When `NEXT_PUBLIC_ODP_MAP_TILE_URL` is empty, the map component falls back to
-the local MapLibre style (fixture mode). The status indicator reads
-`"local MapLibre style"`. When a URL is provided and the tile layer loads, it
-reads `"live tile endpoint configured"`. A `tileFault` flag triggers the
-resilience state for E2E testing without requiring a real provider outage.
-
-### Required Build-Time Environment Variables (live map activation)
-
-| Variable | Type | Purpose | Required at build |
+| Residual risk | Tracked closeout | Blocking type | Close only with |
 |---|---|---|---|
-| `NEXT_PUBLIC_ODP_MAP_TILE_URL` | URL (public, baked at build) | MapLibre/deck.gl tile provider base URL | Yes |
-| `NEXT_PUBLIC_ODP_GEOCODER_URL` | URL (public, baked at build) | Geocoder API URL used by address search | Yes |
-| `NEXT_PUBLIC_ODP_MAP_ATTRIBUTION` | string (public) | Provider attribution text displayed in map footer | Yes (must match provider license terms) |
-| `NEXT_PUBLIC_ODP_MAP_TERMS_URL` | URL (public) | Provider terms-of-service URL linked from attribution | Yes (if provider requires it) |
+| Live external provider proof (credentials / license / geocoder) | `ODP-EXT-PROD-001/002/003` — issues #132, #133, #134 | `external_blocked` | Redacted production credential/license/geocoder runtime proof |
+| Live map endpoint proof (remote tile + geocoder smoke) | `ODP-MAP-STAGE-001/002` — issues #135, #136 | `external_blocked` | Remote staging map endpoint + geocoder smoke |
+| Remote staging rollout proof | `ODP-PV-STAGE-001/002` — issues #137, #138 | `external_blocked` | Configured remote staging target passing `scripts/e2e/check_remote_staging_proof.py` + staging drill |
 
-> **Note:** `NEXT_PUBLIC_*` variables are baked into the Next.js production
-> build. They are **not secrets** and appear in the browser bundle. The tile
-> URL and geocoder URL may contain provider-issued keys embedded in the URL
-> path (e.g., MapTiler style URLs). If the provider embeds a key in the URL,
-> treat the full URL as sensitive and do not commit it.
+Live closeout state for all of the above is tracked in
+`docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`, and each redacted
+handback must pass
+`scripts/e2e/check_external_proof_handback_bundle.py` against the release
+target PR #82 `headRefOid` before its issue may be closed.
 
-### Fail-Closed Behaviour
+## Automated Gate Posture (Deliberately Fail-Closed)
 
-An empty `tileUrl` is not an error state; the component degrades gracefully to
-the local MapLibre style. The E2E tests
-`tests/e2e/e2e-map-live-boundary.spec.ts` and
-`tests/e2e/e2e-map-resilience.spec.ts` verify both the live-configured and the
-fault/fallback states. Live tile proof requires a real provider URL.
+The automated static release gate stays **fail-closed** on purpose. This risk
+acceptance is a **human** decision layered on top of the machine gate; it does
+**not** flip the machine gate to pass, and no code change may be made to force
+the gate green for the deferred live items.
+
+- `make product-release-gate` (`scripts/e2e/check_product_release_gate.py` +
+  `scripts/e2e/run_product_e2e.sh`) remains the release-blocking command and
+  continues to fail-closed until the deferred live proof and closeout-queue
+  reconciliation are satisfied. It is intentionally not overridden for this
+  internal milestone.
+- `scripts/e2e/check_product_go_no_go.py` verifies the go/no-go packet still
+  keeps live provider, live map, and remote staging **conditional** until
+  issues #132–#138 are accepted. This guard passing is the required proof that
+  this risk acceptance did not silently promote a live claim.
+
+## Prohibited Claims Under This Decision
+
+- No statement that the platform is "production-ready" or generally available.
+- No closing of `ODP-EXT-PROD-*`, `ODP-MAP-STAGE-*`, or `ODP-PV-STAGE-*` from
+  deterministic or mock-live evidence.
+- No promotion of the draft release (PR #82) as a live rollout without the
+  live proof above and a fresh Human/Ops sign-off against the target release
+  commit's GitHub checks.
+
+## Required Follow-Up Before Any Production Claim
+
+1. Configure a real staging target and deploy with `ODAY_RELEASE_SHA`.
+2. Capture and accept the #132–#138 redacted live-proof handbacks.
+3. Re-run `make product-release-gate` and confirm it passes on the target
+   release commit (not a stale `dev` hash).
+4. Record a new Human/Ops go/no-go against that commit's attached checks.
+
+## References
+
+- `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`
+- `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`
+- `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
+- `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`
+- `scripts/e2e/check_product_release_gate.py`
+- `scripts/e2e/check_product_go_no_go.py`
 
 ---
 
-## 4. Remote Staging: Wiring and Required Config
+## Live-Readiness Wiring Addendum (ODP-FIN-LIVE-001)
 
-### Code Path
+Task: ODP-FIN-LIVE-001  
+Recorded: 2026-07-13  
+Prepared by: Antigravity6 (owner), reviewed by Antigravity7 (reviewer)
 
-```
-.github/workflows/deploy-staging.yml
-    └─ scripts/e2e/check_remote_staging_proof.py
-         ├─ checks env: ODP_STAGING_DEPLOY_URL, ODP_STAGING_API_URL, ODP_STAGING_SECRET_OWNER
-         ├─ GET /platform/health → status=ok
-         └─ GET /platform/version → release_sha matches expected SHA
-```
+This addendum documents the code-layer wiring for the three deferred P0
+live-evidence gaps above and precisely lists the env vars / secrets needed
+to activate each live path. No fabricated live evidence is added. The
+gates remain fail-closed.
 
-The workflow is fail-closed: missing variables produce a failed check, not a
-fabricated pass. See `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` for the
-full execution sequence.
+### Live External Provider: Code Path and Required Secrets
 
-### Required GitHub Environment Configuration
+The live mode switch is `ODP_EXTERNAL_PROVIDER_MODE=live`. In fixture mode
+(default or `ODP_EXTERNAL_PROVIDER_MODE=fixture`) all adapters use
+deterministic replay. Setting `live` without the required env vars raises
+`ExternalProviderConfigError` at startup (`validate_external_providers_or_raise()`
+in `modules/external_data/connectors/provider_registry.py`).
 
-| Name | Type | Owner | Purpose |
+**Required env vars for live external provider activation:**
+
+| Provider | Required env var | Auth mode | Status env var |
 |---|---|---|---|
-| `ODP_STAGING_DEPLOY_URL` | variable | Platform/Ops | Public staging web URL |
-| `ODP_STAGING_API_URL` | variable | Platform/Ops | Staging API base URL for smoke checks |
-| `ODP_STAGING_HOST` | variable | Platform/Ops | Remote host or orchestrator target |
-| `ODP_STAGING_SECRET_OWNER` | variable | Platform/Ops | Human/team accountable for secret rotation |
-| `ODP_STAGING_DEPLOY_USER` | secret | Platform/Ops | SSH/remote deploy user (if SSH-based) |
-| `ODP_STAGING_SSH_PRIVATE_KEY` | secret | Platform/Ops | SSH private key (if SSH-based) |
-| `ODP_STAGING_DATABASE_URL` | secret | Platform/Ops | Staging database connection string |
+| `listing.partner_feed` | `ODP_LISTING_PROVIDER_API_KEY` | `api_key` | `ODP_LISTING_PROVIDER_AUTH_STATUS` |
+| `listing.partner_feed` | `ODP_LISTING_PROVIDER_FEED_URL` | (endpoint URL) | — |
+| `poi.commercial_api` | `ODP_POI_PROVIDER_API_KEY` | `api_key` | `ODP_POI_PROVIDER_AUTH_STATUS` |
+| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_API_KEY` | `api_key` | `ODP_GEOCODE_PROVIDER_AUTH_STATUS` |
+| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_URL` | (endpoint URL) | — |
+| `admin_boundary.official_dataset` | `ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN` | `bearer_token` | `ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS` |
+| `competitor.manual_source` | `ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION` | `manual_attestation` | `ODP_COMPETITOR_MANUAL_SOURCE_STATUS` |
 
-The deployed API container must set `ODAY_RELEASE_SHA=<release commit SHA>` so
-that `GET /platform/version` returns the correct `release_sha`.
+Status env vars must not be `expired / unauthorized / revoked / invalid`.
+Placeholder values (`""`, `changeme`, `todo`, etc.) are rejected.
+`competitor.manual_source` is `allowed_in_production=False` — blocked by
+license gate in a `production`-like deploy env.
 
----
+### Live Map Tile / Geocoder: Code Path and Required Config
 
-## 5. Risk Acceptance Table
+`apps/web/features/map/HeatZoneMap.tsx` — `readMapBoundaryConfig()` reads
+four `NEXT_PUBLIC_*` build-time env vars. An empty `NEXT_PUBLIC_ODP_MAP_TILE_URL`
+is a safe no-op: the map falls back to local MapLibre style with status
+`"local MapLibre style"`.
 
-The three P0 gaps are **not blocking the deterministic product-E2E gate**.
-They are blocking live-provider activation and remote staging.
+**Required build-time env vars for live map activation:**
 
-| Risk | Owner | Accepted? | Due date | Notes |
-|---|---|---|---|---|
-| Live external provider not activated | Human/Ops | ☐ PENDING | — | Set `ODP_EXTERNAL_PROVIDER_MODE=live` + all §2 env vars; run `validate_external_providers_or_raise()` smoke before go-live |
-| Live map tile / geocoder not configured | Human/Ops | ☐ PENDING | — | Set all §3 `NEXT_PUBLIC_*` vars at Next.js build time; confirm attribution matches provider license |
-| Remote staging not configured | Human/Ops | ☐ PENDING | — | Configure GitHub `staging` environment per §4; run `check_remote_staging_proof.py` and attach report |
-
-Until all three rows are `✅ ACCEPTED`, the product is approved only for
-the **deterministic product-E2E environment** (fixture mode, local Docker
-stack). Production or remote-staging rollout is explicitly blocked.
-
----
-
-## 6. Feature Flag Gate
-
-High-risk production features (SiteScore approval, PriceOps execution,
-model publish, etc.) are governed by `shared/auth/feature_flags.py`.
-`default_registry()` seeds all high-risk flags as **disabled**. Enabling
-them requires dual approval (`DUAL_APPROVAL_MINIMUM = 2`) and is an
-independent admin action from live provider activation.
-
-Live external provider activation (`ODP_EXTERNAL_PROVIDER_MODE=live`) and
-live map tile configuration are **not** feature flags — they are runtime
-environment configuration. The feature flag system governs high-risk product
-decisions, not infrastructure credential injection.
-
----
-
-## 7. Traceability
-
-| Artifact | Reference |
+| Variable | Purpose |
 |---|---|
-| Provider registry + credential definitions | `modules/external_data/connectors/provider_registry.py` |
-| Live listing adapter | `modules/external_data/providers/live.py` |
-| Geo pipeline + geocoder wiring | `modules/external_data/geo/pipeline.py` |
-| Feature flags | `shared/auth/feature_flags.py` |
-| Map tile config wiring | `apps/web/features/map/HeatZoneMap.tsx` (lines 350–375) |
-| Remote staging runbook | `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` |
-| E2E readiness report | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md` |
-| Production readiness package | `docs/evidence/PRODUCTION_READINESS_PACKAGE.md` |
-| Go/no-go decision | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` |
-| External provider proof queue | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` |
+| `NEXT_PUBLIC_ODP_MAP_TILE_URL` | MapLibre/deck.gl tile provider base URL |
+| `NEXT_PUBLIC_ODP_GEOCODER_URL` | Geocoder API URL for address search |
+| `NEXT_PUBLIC_ODP_MAP_ATTRIBUTION` | Provider attribution text (must match license terms) |
+| `NEXT_PUBLIC_ODP_MAP_TERMS_URL` | Provider terms-of-service URL |
+
+`NEXT_PUBLIC_*` vars are baked into the Next.js production build. If the
+provider embeds a key in the URL (e.g., MapTiler style URLs), treat the
+full URL as sensitive and do not commit it.
+
+### Remote Staging: Code Path and Required Config
+
+`.github/workflows/deploy-staging.yml` runs
+`scripts/e2e/check_remote_staging_proof.py`. Missing host/url/secret owner
+produce a failed check, not a fabricated pass.
+
+**Required GitHub `staging` environment configuration:**
+
+| Name | Type |
+|---|---|
+| `ODP_STAGING_DEPLOY_URL` | variable |
+| `ODP_STAGING_API_URL` | variable |
+| `ODP_STAGING_HOST` | variable |
+| `ODP_STAGING_SECRET_OWNER` | variable |
+| `ODP_STAGING_DEPLOY_USER` | secret |
+| `ODP_STAGING_SSH_PRIVATE_KEY` | secret |
+| `ODP_STAGING_DATABASE_URL` | secret |
+
+See `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` for the full
+execution sequence and closeout criteria.
+
+### Risk Acceptance Table (Pending Human/Ops Sign-Off)
+
+| Risk | Current state | Accepted? |
+|---|---|---|
+| Live external provider not activated | Wired, fail-closed. Needs real API keys. | ☐ PENDING |
+| Live map tile / geocoder not configured | Wired, safe fallback. Needs NEXT_PUBLIC_* vars at build. | ☐ PENDING |
+| Remote staging not configured | Wired, fail-closed. Needs GitHub staging environment config. | ☐ PENDING |
 
 LLM-Agent: Antigravity6
 Task-ID: ODP-FIN-LIVE-001
