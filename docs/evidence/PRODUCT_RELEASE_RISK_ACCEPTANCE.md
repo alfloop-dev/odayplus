@@ -98,3 +98,94 @@ the gate green for the deferred live items.
 - `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`
 - `scripts/e2e/check_product_release_gate.py`
 - `scripts/e2e/check_product_go_no_go.py`
+
+---
+
+## Live-Readiness Wiring Addendum (ODP-FIN-LIVE-001)
+
+Task: ODP-FIN-LIVE-001  
+Recorded: 2026-07-13  
+Prepared by: Antigravity6 (owner), reviewed by Antigravity7 (reviewer)
+
+This addendum documents the code-layer wiring for the three deferred P0
+live-evidence gaps above and precisely lists the env vars / secrets needed
+to activate each live path. No fabricated live evidence is added. The
+gates remain fail-closed.
+
+### Live External Provider: Code Path and Required Secrets
+
+The live mode switch is `ODP_EXTERNAL_PROVIDER_MODE=live`. In fixture mode
+(default or `ODP_EXTERNAL_PROVIDER_MODE=fixture`) all adapters use
+deterministic replay. Setting `live` without the required env vars raises
+`ExternalProviderConfigError` at startup (`validate_external_providers_or_raise()`
+in `modules/external_data/connectors/provider_registry.py`).
+
+**Required env vars for live external provider activation:**
+
+| Provider | Required env var | Auth mode | Status env var |
+|---|---|---|---|
+| `listing.partner_feed` | `ODP_LISTING_PROVIDER_API_KEY` | `api_key` | `ODP_LISTING_PROVIDER_AUTH_STATUS` |
+| `listing.partner_feed` | `ODP_LISTING_PROVIDER_FEED_URL` | (endpoint URL) | — |
+| `poi.commercial_api` | `ODP_POI_PROVIDER_API_KEY` | `api_key` | `ODP_POI_PROVIDER_AUTH_STATUS` |
+| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_API_KEY` | `api_key` | `ODP_GEOCODE_PROVIDER_AUTH_STATUS` |
+| `geocode.primary_api` | `ODP_GEOCODE_PROVIDER_URL` | (endpoint URL) | — |
+| `admin_boundary.official_dataset` | `ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN` | `bearer_token` | `ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS` |
+| `competitor.manual_source` | `ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION` | `manual_attestation` | `ODP_COMPETITOR_MANUAL_SOURCE_STATUS` |
+
+Status env vars must not be `expired / unauthorized / revoked / invalid`.
+Placeholder values (`""`, `changeme`, `todo`, etc.) are rejected.
+`competitor.manual_source` is `allowed_in_production=False` — blocked by
+license gate in a `production`-like deploy env.
+
+### Live Map Tile / Geocoder: Code Path and Required Config
+
+`apps/web/features/map/HeatZoneMap.tsx` — `readMapBoundaryConfig()` reads
+four `NEXT_PUBLIC_*` build-time env vars. An empty `NEXT_PUBLIC_ODP_MAP_TILE_URL`
+is a safe no-op: the map falls back to local MapLibre style with status
+`"local MapLibre style"`.
+
+**Required build-time env vars for live map activation:**
+
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_ODP_MAP_TILE_URL` | MapLibre/deck.gl tile provider base URL |
+| `NEXT_PUBLIC_ODP_GEOCODER_URL` | Geocoder API URL for address search |
+| `NEXT_PUBLIC_ODP_MAP_ATTRIBUTION` | Provider attribution text (must match license terms) |
+| `NEXT_PUBLIC_ODP_MAP_TERMS_URL` | Provider terms-of-service URL |
+
+`NEXT_PUBLIC_*` vars are baked into the Next.js production build. If the
+provider embeds a key in the URL (e.g., MapTiler style URLs), treat the
+full URL as sensitive and do not commit it.
+
+### Remote Staging: Code Path and Required Config
+
+`.github/workflows/deploy-staging.yml` runs
+`scripts/e2e/check_remote_staging_proof.py`. Missing host/url/secret owner
+produce a failed check, not a fabricated pass.
+
+**Required GitHub `staging` environment configuration:**
+
+| Name | Type |
+|---|---|
+| `ODP_STAGING_DEPLOY_URL` | variable |
+| `ODP_STAGING_API_URL` | variable |
+| `ODP_STAGING_HOST` | variable |
+| `ODP_STAGING_SECRET_OWNER` | variable |
+| `ODP_STAGING_DEPLOY_USER` | secret |
+| `ODP_STAGING_SSH_PRIVATE_KEY` | secret |
+| `ODP_STAGING_DATABASE_URL` | secret |
+
+See `docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md` for the full
+execution sequence and closeout criteria.
+
+### Risk Acceptance Table (Pending Human/Ops Sign-Off)
+
+| Risk | Current state | Accepted? |
+|---|---|---|
+| Live external provider not activated | Wired, fail-closed. Needs real API keys. | ☐ PENDING |
+| Live map tile / geocoder not configured | Wired, safe fallback. Needs NEXT_PUBLIC_* vars at build. | ☐ PENDING |
+| Remote staging not configured | Wired, fail-closed. Needs GitHub staging environment config. | ☐ PENDING |
+
+LLM-Agent: Antigravity6
+Task-ID: ODP-FIN-LIVE-001
+Reviewer: Antigravity7
