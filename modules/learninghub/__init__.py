@@ -9,10 +9,20 @@ from modules.learninghub.application import (
 from modules.learninghub.domain import (
     DatasetSnapshot,
     DatasetSnapshotError,
+    # Feature Registry domain
+    FeatureLineageEvent,
+    FeatureRegistry,
+    FeatureRegistryError,
+    FeatureStatus,
+    FeatureViewBinding,
     ModelReadyRecord,
     PointInTimeIssue,
     PointInTimeViolation,
+    active_features_for_model,
     build_dataset_snapshot,
+    create_feature_registry,
+    feature_usages_in_snapshot,
+    has_blocked_features,
     model_ready_record_from_mapping,
     validate_point_in_time,
 )
@@ -36,4 +46,14 @@ __all__ = [
     "model_ready_record_from_mapping",
     "run_learninghub_release",
     "validate_point_in_time",
+    # Feature Registry
+    "FeatureLineageEvent",
+    "FeatureRegistry",
+    "FeatureRegistryError",
+    "FeatureStatus",
+    "FeatureViewBinding",
+    "active_features_for_model",
+    "create_feature_registry",
+    "feature_usages_in_snapshot",
+    "has_blocked_features",
 ]
