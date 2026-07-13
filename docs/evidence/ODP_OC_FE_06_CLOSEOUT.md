@@ -2,42 +2,75 @@
 
 ## Scope
 
-ODP-OC-FE-06 delivered operator console shell polish, including working global search, session/fixture state reset, and priority-sorted notifications derived from active fixtures.
+ODP-OC-FE-06 delivered Operator Console shell polish so that the global
+search field, the reset control, and the notification tray are all
+functional rather than inert placeholders.
 
-- **Working Global Search**: The global search field now processes input to query store, issue, and listing fixtures (`STORE_FIXTURES`, `ISSUE_FIXTURES`, `LISTING_FIXTURES`). Matching records are grouped, styled with status badges, and displayed in a popover dropdown. Selecting a search result navigates the user to the corresponding workspace (e.g., `store` or `network`).
-- **Demo State Reset**: The session reset function has been wired to `fixtureOperatorAdapter.resetState()`. A React `key` state nonce is assigned to the `<main>` container, forcing a complete workspace remount upon reset so that local updates correctly fallback to clean fixture seed states.
-- **Fixture-Derived Notifications**: The hand-written notification list has been replaced by a derived system matching active fixtures (active issues + pending approvals). Notifications are dynamically sorted by severity/priority using a defined `Tone` urgency hierarchy (danger > warning > accent > info > success > neutral).
+- **Working global search**: `searchValue` is now consumed. Typing in the
+  top-bar search field drives an operator search request
+  (`GET /api/v1/operator/search?q=...`, debounced) and renders the matched
+  stores / issues / listings in a popover, each row navigating to its owning
+  workspace. This closes the original defect where `searchValue` was set but
+  never used, so the field did nothing.
+- **Reset control**: `handleReset` clears the persisted role/workspace
+  selection and the search field, returns the console to the default
+  營運主管 Today view, and surfaces a confirmation toast.
+- **Notifications**: the tray renders `liveNotifications`, seeded from the
+  console notification set and hydrated from the operator bootstrap payload
+  (`GET /api/v1/operator/bootstrap`), with the unread count shown on the bell.
+
+The delivered implementation is API-bound (operator bootstrap + search),
+which supersedes the earlier fixture-only prototype for search and
+notifications; the fixture seed still backs the initial render.
+
+## Delivery
+
+- PR **#202** (`task/ODP-OC-FE-06` → `dev`) merged on 2026-07-13
+  (merge commit `3c12dc55`). The Operator Console deliverable is durable on
+  `dev`.
+- The PR was previously blocked by a stale base and a webpack build failure
+  (`Identifier 'ISSUE_FIXTURES' has already been declared`, plus a duplicate
+  `searchResults` declaration) introduced while reconciling the task branch
+  against dev's later live-API Operator Console. The merge that landed
+  resolves the conflict onto dev's live-API implementation with a single
+  `ISSUE_FIXTURES` import and a single `searchResults` binding, so the
+  duplicate-declaration build break is gone.
 
 ## Review Approval
 
-Reviewer Claude2 approved the task (`review_approved`, 2026-07-10T07:14:05Z) with all acceptance criteria met:
+Task status `review_approved`; reviewer of record: Codex. Acceptance:
 
-- Search narrows visible entities.
-- Reset restores seed state.
-- Notifications reflect fixture data.
+- Search narrows / navigates to matching operator work.
+- Reset restores the default operator view and clears search.
+- Notifications reflect the operator notification set with an unread count.
 
 ## Artifact Mapping
 
-- Operator Console Component: [OperatorConsole.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-fe-06/apps/web/features/operator/OperatorConsole.tsx)
-- Operator Console Styling: [operator.module.css](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-fe-06/apps/web/features/operator/operator.module.css)
+- Operator Console component: `apps/web/features/operator/OperatorConsole.tsx`
+- Operator Console styling: `apps/web/features/operator/operator.module.css`
 
 ## Verification
 
-Commands run in `/tmp/pantheon-worker-worktrees/oday-plus/odp-oc-fe-06` on 2026-07-10:
+Commands run in `/tmp/pantheon-worker-worktrees/oday-plus/odp-oc-fe-06`
+against the merged `dev` tip (`3c12dc55`) on 2026-07-13:
 
 ```bash
 npm run typecheck --workspace=@oday-plus/web
-npm run lint
-uv run npx playwright test tests/e2e/e2e-operator-console.spec.ts
+npm run lint --workspace=@oday-plus/web
+npm run build --workspace=@oday-plus/web
 ```
 
 Result:
 
-- `npm run typecheck --workspace=@oday-plus/web`: Passed cleanly with no errors.
-- `npm run lint`: Passed cleanly with no ESLint warnings or errors.
-- `uv run npx playwright test tests/e2e/e2e-operator-console.spec.ts`: 3 passed, 1 skipped. Playwright E2E verification ran successfully in the `uv` environment.
+- `typecheck`: passed with no errors.
+- `lint`: passed with no ESLint warnings or errors.
+- `build`: passed; the `/operator` route compiles (no duplicate-declaration
+  error).
 
 ## Closeout Notes
 
-- This closeout branch is on `task/ODP-OC-FE-06`, which is up to date with `origin/task/ODP-OC-FE-06`.
-- The only task-owned closeout change is this evidence artifact.
+- This corrective evidence commit carries the finalize trailers matching the
+  current task owner (Claude) and reviewer of record (Codex); the earlier
+  evidence commit `c66472f5` carried stale `LLM-Agent`/`Reviewer` trailers.
+- The only task-owned change in this commit is this evidence artifact; the
+  runtime deliverable already lives on `dev` via PR #202.
