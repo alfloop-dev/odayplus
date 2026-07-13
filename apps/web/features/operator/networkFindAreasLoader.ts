@@ -41,7 +41,6 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   // The backend scores use h3_index as the stable zone id; we propagate it
   // directly so the frontend lens map can show real IDs.
   const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
-  const score = Number(raw["score"] ?? 0);
   const unmetDemand = Number(raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
   const confidence = Number(raw["confidence"] ?? 0);
 
@@ -120,7 +119,7 @@ function adaptCandidate(raw: Record<string, unknown>): Candidate {
 }
 
 // ---------------------------------------------------------------------------
-// Public loader — called from Next.js server components
+// Public loader — called from Next.js server components or client useEffect
 // ---------------------------------------------------------------------------
 
 export type NetworkFindAreasBindings = {
@@ -131,13 +130,25 @@ export type NetworkFindAreasBindings = {
 /**
  * Fetch live bindings for the Network Find Areas workspace.
  *
+ * Fetches:
+ *   - GET /heatzones               → heatzone lens scores
+ *   - GET /listings/candidates     → candidate sites (card format)
+ *   - GET /sitescore/reports       → latest sitescore per candidate (enrichment)
+ *
+ * SiteScore reports are merged into the candidates binding so the SiteScore
+ * Lab tab renders authoritative scores without a separate prop. Enrichment is
+ * best-effort — a report fetch failure keeps the raw candidate values.
+ *
+ * Rebalance stores have no dedicated list endpoint; the workspace always uses
+ * fixture data for that tab.
+ *
  * Pass `client: null` (e.g. when `ODP_API_BASE_URL` is unset) to get
  * `unconfigured` envelopes that tell the workspace to use fixture data.
  */
 export async function loadNetworkFindAreasBindings(
   client: OdpApiClient | null,
 ): Promise<NetworkFindAreasBindings> {
-  const [heatZones, candidates] = await Promise.all([
+  const [heatZones, rawCandidateBinding] = await Promise.all([
     loadApiBinding<OperatorHeatZone>({
       client,
       fetcher: async (c) => {
@@ -157,6 +168,38 @@ export async function loadNetworkFindAreasBindings(
       },
     }),
   ]);
+
+  // Attempt to enrich candidates with SiteScore report data. A failure here
+  // does NOT degrade the candidate binding — original unenriched values hold.
+  let candidates = rawCandidateBinding;
+  if (client && rawCandidateBinding.source === "api" && rawCandidateBinding.items.length > 0) {
+    try {
+      const reportResponse = await client.listSiteScoreReports();
+      const reportByCandidateId = new Map(
+        (reportResponse.items ?? []).map(
+          (r) => [r.candidateSiteId as string, r as unknown as Record<string, unknown>],
+        ),
+      );
+      const enrichedItems = rawCandidateBinding.items.map((candidate) => {
+        const report = reportByCandidateId.get(candidate.id);
+        if (!report) return candidate;
+        const rawRec = (report["recommendation"] as string | undefined) ?? "";
+        const recommendation: Candidate["recommendation"] =
+          rawRec === "GO" ? "GO" : rawRec === "REJECT" ? "REJECT" : "WAIT";
+        return {
+          ...candidate,
+          score: Number(report["confidence"] ?? candidate.score),
+          recommendation,
+          modelVersion: (report["modelVersion"] as string | undefined) ?? candidate.modelVersion,
+          datasetSnapshotId:
+            (report["featureSnapshotTime"] as string | undefined) ?? candidate.datasetSnapshotId,
+        };
+      });
+      candidates = { ...rawCandidateBinding, items: enrichedItems };
+    } catch {
+      // Enrichment is best-effort; keep the raw candidate binding on failure.
+    }
+  }
 
   return { heatZones, candidates };
 }
