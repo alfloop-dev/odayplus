@@ -40,6 +40,21 @@ class AuthBoundaryConfig:
 
         return bool(self.issuer) and bool(self.audiences) and bool(self.signing_keys)
 
+    @property
+    def has_live_inputs(self) -> bool:
+        """True when *any* live IdP input is present (even a partial set).
+
+        Distinct from :attr:`is_configured`: a partial config (e.g. issuer +
+        audiences but no signing keys) is *not* configured, yet it still signals
+        the deployer's **intent** to run a live auth boundary. Callers use this
+        to decide whether the boundary is active at all -- an active-but-partial
+        boundary fails closed on every request, whereas treating a partial
+        config as "no boundary" would silently re-enable the insecure
+        header-trust stub (ODP-FIN-AUTH-001).
+        """
+
+        return bool(self.issuer) or bool(self.audiences) or bool(self.signing_keys)
+
     def resolve_key(self, kid: str | None) -> SigningKey | None:
         """Resolve a verification key by ``kid`` (fail-closed on miss).
 
