@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
-import { constraintTone, freshness, pricePlans, type PricePlan } from "./data.ts";
+import { constraintTone, freshness, lifecycleTone, pricePlans, type PricePlan } from "./data.ts";
 import styles from "../intervention/intervention.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -35,7 +35,7 @@ export function PriceOpsWorkspace({ searchParams = {} }: { searchParams?: Search
           <section className={styles.overviewGrid} aria-label="PriceOps overview">
             <Summary title="Pending approval" value="2" copy="manual approval only; no auto execution" />
             <Summary title="Hard constraint failures" value="1" copy="blocked plan cannot be approved" />
-            <Summary title="Rollback ready" value="2" copy="publish requires rollback plan and audit" />
+            <Summary title="Rollback ready" value="2" copy="publish requires rollback plan, label, and audit" />
           </section>
           <FilterBar />
           <section className={styles.grid}>
@@ -96,6 +96,7 @@ function PlanTable({ selected }: { selected: string }) {
             <th>Revenue</th>
             <th>Gross margin</th>
             <th>Constraint</th>
+            <th>Loop state</th>
             <th>Approval</th>
           </tr>
         </thead>
@@ -108,6 +109,11 @@ function PlanTable({ selected }: { selected: string }) {
               <td>{plan.expectedRevenue}</td>
               <td>{plan.expectedGrossMargin}</td>
               <td><Badge label={plan.constraintStatus} tone={constraintTone[plan.constraintStatus]} marker="!" /></td>
+              <td>
+                <Badge label={plan.lifecycleStatus} tone={lifecycleTone[plan.lifecycleStatus]} marker="●" />
+                <br />
+                {plan.outcomeStatus}
+              </td>
               <td>{plan.approvalStatus}</td>
             </tr>
           ))}
@@ -145,9 +151,39 @@ function PlanDrawer({ plan }: { plan: PricePlan }) {
       <section id="rollback" className={styles.softBlock} data-testid="priceops-rollback">
         <h3>Rollback plan</h3>
         <p>{plan.rollbackPlan}</p>
+        <p>{plan.rollbackTrigger}</p>
       </section>
+      <ClosedLoopPanel plan={plan} />
       <ApprovalPanel plan={plan} blocked={blocked} />
     </aside>
+  );
+}
+
+function ClosedLoopPanel({ plan }: { plan: PricePlan }) {
+  return (
+    <section
+      className={plan.rollbackRecommended ? styles.warningBlock : styles.softBlock}
+      data-testid="priceops-closed-loop"
+    >
+      <h3>Apply, monitor, outcome</h3>
+      <ol className={styles.timeline}>
+        <li>
+          <strong>Apply</strong>
+          <span>{plan.applyStatus}</span>
+        </li>
+        <li>
+          <strong>Monitor</strong>
+          <span>{plan.monitoringStatus}</span>
+        </li>
+        <li>
+          <strong>Outcome</strong>
+          <span>{plan.outcomeStatus}</span>
+        </li>
+      </ol>
+      <p className={styles.auditLine}>
+        publish_job {plan.publishJobId} · label_entry {plan.labelEntryId}
+      </p>
+    </section>
   );
 }
 

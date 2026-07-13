@@ -30,9 +30,33 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   expect(forecastPayload.alerts.map((alert: { alert_level: string }) => alert.alert_level)).toContain("red");
   expect(forecastPayload.handoffs[0].eligibility_status).toBeTruthy();
 
+  // Close the ForecastOps loop step 1: acknowledge the persisted red alert.
+  const redAlert = forecastPayload.alerts.find(
+    (alert: { alert_level: string }) => alert.alert_level === "red",
+  );
+  expect(redAlert?.status).toBe("open");
+  const acknowledge = await api.post(
+    `${API_BASE_URL}/forecastops/alerts/${redAlert.alert_id}/acknowledge`,
+    { data: { actor: "pv006-ops-manager", note: "Red alert triaged from the ops board." } },
+  );
+  expect(acknowledge.status()).toBe(200);
+  expect((await acknowledge.json()).status).toBe("acknowledged");
+
   const intervention = await openIntervention(api);
   const interventionId = intervention.intervention_id as string;
   expect(intervention.status).toBe("CANDIDATE");
+
+  // Close the ForecastOps loop step 2: the handoff is executable and links the
+  // InterventionOps case it opened.
+  const forecastHandoffId = forecastPayload.handoffs[0].handoff_id as string;
+  const executeHandoff = await api.post(
+    `${API_BASE_URL}/forecastops/intervention-handoffs/${forecastHandoffId}/execute`,
+    { data: { actor: "pv006-ops-dispatcher", intervention_id: interventionId } },
+  );
+  expect(executeHandoff.status()).toBe(200);
+  const executedHandoff = await executeHandoff.json();
+  expect(executedHandoff.status).toBe("dispatched");
+  expect(executedHandoff.intervention_id).toBe(interventionId);
 
   await expectStatus(api.post(`${API_BASE_URL}/interventions/${interventionId}/eligibility`, {
     data: { eligible: true, actor: "pv006-policy", reasons: ["red ForecastOps alert has fresh telemetry"] },
@@ -82,6 +106,29 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   expect(interventionEffectPayload.status).toBe("COMPLETED");
   expect(interventionEffectPayload.effect.can_claim_causal).toBe(true);
   expect(interventionEffectPayload.label.is_mature).toBe(true);
+
+  // Close the matured case with a follow-up iteration — the loop's final step.
+  const interventionClose = await api.post(`${API_BASE_URL}/interventions/${interventionId}/close`, {
+    data: {
+      actor: "pv006-ops-director",
+      disposition: "ITERATE",
+      reason: "Positive causal effect on the red-alert store; iterate with a follow-up campaign.",
+      follow_up: true,
+      follow_up_kind: "AD_CAMPAIGN",
+    },
+  });
+  expect(interventionClose.status()).toBe(200);
+  const interventionClosePayload = await interventionClose.json();
+  expect(interventionClosePayload.status).toBe("CLOSED");
+  expect(interventionClosePayload.close.disposition).toBe("ITERATE");
+  const followUpId = interventionClosePayload.close.follow_up_intervention_id as string;
+  expect(followUpId).toBeTruthy();
+
+  const followUp = await api.get(`${API_BASE_URL}/interventions/${followUpId}`);
+  expect(followUp.status()).toBe(200);
+  const followUpPayload = await followUp.json();
+  expect(followUpPayload.status).toBe("CANDIDATE");
+  expect(followUpPayload.trigger_ref).toBe(`follow-up:${interventionId}`);
 
   const priceJob = await api.post(`${API_BASE_URL}/priceops/optimizer-jobs`, {
     data: {
@@ -174,6 +221,8 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   const auditEvents = (await audit.json()).events as Array<{ event_type: string; action: string }>;
   expect(auditEvents.map((event) => event.event_type)).toEqual(expect.arrayContaining([
     "forecastops.forecasted.v1",
+    "forecastops.alert.acknowledged.v1",
+    "forecastops.handoff.executed.v1",
     "priceops.optimized.v1",
     "priceops.activated.v1",
     "priceops.evaluated.v1",
@@ -181,14 +230,23 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   ]));
   expect(auditEvents.map((event) => event.action)).toEqual(expect.arrayContaining([
     "run_model",
+    "acknowledge",
     "execute",
     "evaluate",
+    "close",
   ]));
 
   await page.goto("/w/operations/forecast/store-001");
   await expect(page.getByTestId("ops-store-detail-page")).toBeVisible();
   await expect(page.getByTestId("audit-metadata")).toContainText("four-light-policy-v1");
   await expect(page.getByTestId("handoff-panel")).toContainText("handoff-9001");
+
+  // The alert center renders the live, API-backed four-light queue (with the
+  // acknowledged status persisted above), not just the fixture fallback.
+  await page.goto("/w/operations/alerts");
+  await expect(page.getByTestId("ops-live-alerts")).toBeVisible();
+  await expect(page.getByTestId("ops-alert-data-source")).toHaveAttribute("data-source", "api");
+  await expect(page.getByTestId("ops-live-alerts-table")).toContainText("acknowledged");
 
   await page.goto("/interventions?selected=int-3002&drawer=case");
   await expect(page.getByTestId("intervention-conflict-block")).toContainText("Conflict blocks approval execution");

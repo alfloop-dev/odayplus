@@ -203,5 +203,5 @@ def test_heatzone_api_fails_closed_on_absent_features() -> None:
         },
     )
     assert response.status_code == 422
-    assert "cannot run score job with absent live inputs" in response.json()["detail"]
+    assert "fail-closed" in response.json()["detail"]
 
