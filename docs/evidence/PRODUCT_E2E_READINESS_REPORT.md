@@ -77,3 +77,40 @@ The `product-e2e-gate` CI job fails if:
 - Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
 - Moderate dependency audit findings remain below the existing high/critical release-blocking threshold and are tracked by the security gate output.
+
+## Live-Readiness Wiring (ODP-FIN-LIVE-001)
+
+Task ODP-FIN-LIVE-001 completed the code-layer wiring for the three PV-008 P0
+gaps. The deterministic product-E2E gate is **not blocked** by these gaps. Live
+provider activation and remote staging require human/ops action documented in
+`docs/evidence/PRODUCT_RELEASE_RISK_ACCEPTANCE.md`.
+
+### P0 Gap Status After ODP-FIN-LIVE-001
+
+| P0 Gap | Code-layer status | Activation gate | Missing |
+|---|---|---|---|
+| Live external provider (listing / POI / geocoder) | ✅ Wired. `ODP_EXTERNAL_PROVIDER_MODE=live` switches all adapters from fixture replay to HTTP; `validate_external_providers_or_raise()` is fail-closed at startup. | Set `ODP_EXTERNAL_PROVIDER_MODE=live` + inject all named API key env vars per §2 of risk acceptance doc. | Real API keys / provider licensing |
+| Live map tile / geocoder (frontend) | ✅ Wired. `NEXT_PUBLIC_ODP_MAP_TILE_URL` and `NEXT_PUBLIC_ODP_GEOCODER_URL` are read at build time. Empty = local MapLibre style (safe fallback, no error). | Set the four `NEXT_PUBLIC_ODP_MAP_*` vars at Next.js build time. | Provider-issued tile URL + geocoder URL + attribution/terms |
+| Remote staging | ✅ Wired. `.github/workflows/deploy-staging.yml` is fail-closed; `check_remote_staging_proof.py` requires host/url/secret owner or fails. | Configure GitHub `staging` environment variables/secrets per runbook. | GitHub environment config + host |
+
+### Live Code Path References
+
+| Surface | File | Key symbol |
+|---|---|---|
+| External provider mode switch | `modules/external_data/connectors/provider_registry.py` | `external_provider_mode()`, `validate_external_providers_or_raise()` |
+| Live listing feed adapter | `modules/external_data/providers/live.py` | `ListingPartnerFeedProvider`, `PrimaryGeocodeProvider` |
+| Live geocoder HTTP client | `modules/external_data/providers/live.py` | `HttpGeocodeClient` |
+| Map tile / geocoder wiring | `apps/web/features/map/HeatZoneMap.tsx` | `readMapBoundaryConfig()` (lines 350–375) |
+| Remote staging checker | `scripts/e2e/check_remote_staging_proof.py` | — |
+| Staging workflow | `.github/workflows/deploy-staging.yml` | — |
+| Risk acceptance + secret inventory | `docs/evidence/PRODUCT_RELEASE_RISK_ACCEPTANCE.md` | §2, §3, §4 |
+
+### E2E Map Tests Covering Live Boundary Config
+
+The following Playwright specs exercise both the live-config path and
+the fault/fallback path. They pass today against fixture/local MapLibre.
+Live tile proof requires real provider URL at build time.
+
+- `tests/e2e/e2e-map-live-boundary.spec.ts` — live tile endpoint configured vs local style
+- `tests/e2e/e2e-map-resilience.spec.ts` — tile fault + geocoder fault states
+- `tests/e2e/e2e-map.spec.ts` — canvas nonblank + semantic pixel checks
