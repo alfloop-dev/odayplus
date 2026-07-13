@@ -33,6 +33,7 @@ class AuthBoundaryConfig:
     audiences: frozenset[str] = frozenset()
     signing_keys: Mapping[str, SigningKey] = field(default_factory=dict)
     leeway_seconds: int = 60
+    live_input_declared: bool = False
 
     @property
     def is_configured(self) -> bool:
@@ -51,9 +52,20 @@ class AuthBoundaryConfig:
         boundary fails closed on every request, whereas treating a partial
         config as "no boundary" would silently re-enable the insecure
         header-trust stub (ODP-FIN-AUTH-001).
+
+        :attr:`live_input_declared` is honoured in addition to the parsed
+        fields: an ``ODP_AUTH_*`` env var that was *set* but failed to parse
+        into a usable field (e.g. a malformed ``ODP_AUTH_HS256_KEYS=k1`` with no
+        ``kid:secret`` pair) still counts as intent, so a deployer typo fails
+        closed instead of silently downgrading to header trust.
         """
 
-        return bool(self.issuer) or bool(self.audiences) or bool(self.signing_keys)
+        return (
+            self.live_input_declared
+            or bool(self.issuer)
+            or bool(self.audiences)
+            or bool(self.signing_keys)
+        )
 
     def resolve_key(self, kid: str | None) -> SigningKey | None:
         """Resolve a verification key by ``kid`` (fail-closed on miss).
@@ -97,6 +109,15 @@ def config_from_env(
         if not sep or not kid or not secret:
             continue
         keys[kid] = SigningKey(kid=kid, algorithm="HS256", secret=secret.encode("utf-8"))
+    # Record raw live-input presence *before* parsing can discard it. A set but
+    # malformed ODP_AUTH_HS256_KEYS (or an issuer/audiences typo) must keep the
+    # boundary active and fail closed, never downgrade to header trust
+    # (ODP-FIN-AUTH-001). Parsed-field checks alone miss a value that dropped
+    # during parsing.
+    live_input_declared = any(
+        (source.get(var) or "").strip()
+        for var in ("ODP_AUTH_ISSUER", "ODP_AUTH_AUDIENCES", "ODP_AUTH_HS256_KEYS")
+    )
     leeway_raw = source.get("ODP_AUTH_LEEWAY_SECONDS")
     try:
         leeway = int(leeway_raw) if leeway_raw else 60
@@ -107,6 +128,7 @@ def config_from_env(
         audiences=audiences,
         signing_keys=keys,
         leeway_seconds=max(0, leeway),
+        live_input_declared=live_input_declared,
     )
 
 

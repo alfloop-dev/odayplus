@@ -201,6 +201,11 @@ def test_default_boundary_none_when_unconfigured(monkeypatch):
         {"ODP_AUTH_ISSUER": ISSUER},  # issuer only
         {"ODP_AUTH_AUDIENCES": AUDIENCE},  # audiences only
         {"ODP_AUTH_HS256_KEYS": "k1:api-wiring-secret"},  # keys only
+        # Malformed keys-only: `k1` has no `kid:secret` pair, so config_from_env
+        # parses zero keys. A raw-env typo must still fail closed, never drop to
+        # header trust (ODP-FIN-AUTH-001 reviewer reopen).
+        {"ODP_AUTH_HS256_KEYS": "k1"},
+        {"ODP_AUTH_HS256_KEYS": ":no-kid"},  # empty kid also malformed
     ],
 )
 def test_partial_env_fails_closed_not_header_trust(monkeypatch, env):
@@ -209,7 +214,9 @@ def test_partial_env_fails_closed_not_header_trust(monkeypatch, env):
     Regression for ODP-FIN-AUTH-001: setting some but not all live inputs used
     to leave ``is_configured`` False, dropping the boundary to ``None`` and
     silently trusting spoofable ``x-subject-id`` / ``x-roles``. The boundary is
-    now active (fail-closed) whenever any live input is present.
+    now active (fail-closed) whenever any live input is present -- including a
+    *malformed* ODP_AUTH_HS256_KEYS that parses to zero keys but still signals
+    live-auth intent.
     """
 
     for var in (

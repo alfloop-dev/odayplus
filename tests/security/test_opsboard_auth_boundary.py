@@ -316,7 +316,25 @@ def test_config_from_env_reads_hs256_keys():
 
 
 def test_config_from_empty_env_is_fail_closed():
-    assert config_from_env({}).is_configured is False
+    cfg = config_from_env({})
+    assert cfg.is_configured is False
+    assert cfg.has_live_inputs is False
+
+
+def test_malformed_hs256_keys_only_still_has_live_inputs():
+    """A set-but-malformed ODP_AUTH_HS256_KEYS must not read as "no boundary".
+
+    Regression for ODP-FIN-AUTH-001: ``k1`` has no ``kid:secret`` pair, so it
+    parses to zero signing keys. Deriving ``has_live_inputs`` from parsed fields
+    alone would return False and silently downgrade the API auth path to the
+    spoofable header-trust stub. The raw env presence must keep the boundary
+    active (fail-closed).
+    """
+
+    cfg = config_from_env({"ODP_AUTH_HS256_KEYS": "k1"})
+    assert cfg.signing_keys == {}  # nothing parsed
+    assert cfg.is_configured is False  # cannot verify a token
+    assert cfg.has_live_inputs is True  # ...but intent is preserved
 
 
 def test_metrics_counter_records_outcomes(config, key):
