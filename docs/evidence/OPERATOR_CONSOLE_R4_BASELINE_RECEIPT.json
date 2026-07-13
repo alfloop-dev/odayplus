@@ -1,0 +1,153 @@
+{
+  "artifact": "OPERATOR_CONSOLE_R4_BASELINE_RECEIPT",
+  "task_id": "ODP-OC-R4-000",
+  "title": "Lock R4 design baseline and page acceptance matrix",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "generated_at": "2026-07-13",
+  "purpose": "Freeze the obtainable Operator Console R4 design baseline: source-bundle hash, page/screen inventory, screen->task->E2E acceptance mapping, and branch truth. Record the AI Trading Desk reference zip as an unavailable artifact that does NOT block R4 implementation.",
+  "design_source": {
+    "bundle_label": "oday-plus-r4-20260707",
+    "bundle_md5": "78b65c33fac19dc33ba241e640df5cd1",
+    "hash_algorithm": "md5",
+    "description": "R4 Operator Console design bundle used to seed the ODP-OC-R4-001..012 fleet. The label date (2026-07-07) is the frozen design snapshot; the md5 is the integrity hash the fleet must build against.",
+    "provenance": "Off-repo design bundle. The bundle itself is not tracked in this git repository; this receipt records its identity so any reviewer can bind implementation work to the exact design snapshot without relying on chat history."
+  },
+  "branch_truth": {
+    "target_branch": "dev",
+    "promotion_branch": "main",
+    "baseline_ref": "origin/dev",
+    "baseline_commit": "5fefe2b11184a14169d52c00634dbf2552e5dc5c",
+    "baseline_commit_subject": "Merge pull request #267 from alfloop-dev/task/ODP-FIN-AUTH-001",
+    "baseline_captured_at": "2026-07-13T18:52:13+08:00",
+    "main_commit": "52fc9cd3270d8cf591ecca2ebc767cf6dc289d11",
+    "note": "All ODP-OC-R4-001..012 task branches cut from origin/dev at or after this commit. Cutover to main is gated by ODP-OC-R4-011 (product E2E gate) and ODP-OC-R4-012 (staging verify + promote-dev-to-main)."
+  },
+  "referenced_source_docs": [
+    {
+      "path": "docs/design/OPERATOR_CONSOLE_R4_FLEET_EXECUTION_TASKS_2026-07-13.md",
+      "present_in_baseline": false,
+      "note": "Referenced by the R4 task briefs but not tracked in origin/dev at the baseline commit. Fleet execution content is reproduced by this receipt and the implementation matrix so no reviewer depends on the missing file."
+    },
+    {
+      "path": "docs/design/OPERATOR_CONSOLE_R4_FLEET_EXECUTION_TASKS_2026-07-13.json",
+      "present_in_baseline": false,
+      "note": "Machine-readable twin of the fleet execution doc; also absent from the baseline tree."
+    },
+    {
+      "path": "docs/evidence/OPERATOR_CONSOLE_DESIGN_PARITY_AUDIT_2026-07-13.md",
+      "present_in_baseline": false,
+      "note": "Parity audit referenced by the task; absent from the baseline tree. Parity conclusions cannot be re-derived from repo state alone and are therefore NOT asserted here."
+    }
+  ],
+  "unavailable_artifacts": [
+    {
+      "name": "AI Trading Desk design zip",
+      "status": "unavailable",
+      "impact": "non_blocking",
+      "rationale": "The AI Trading Desk reference design zip is not available in this repository or the design bundle. Per ODP-OC-R4-000 scope, its absence does NOT block R4 implementation. No parity to the AI Trading Desk design is claimed anywhere in this baseline; any parity statement must wait until the zip is obtained and independently verified."
+    }
+  ],
+  "screen_matrix": [
+    {
+      "screen": "Shell (global chrome: header, nav, search, notifications, approvals, Task Center, Ctrl/Cmd+K)",
+      "implementation_task": "ODP-OC-R4-002",
+      "e2e_spec": "tests/e2e/operator-shell-today.spec.ts",
+      "primary_e2e_assertion": "Header counts match API results after writes without a full session reset; keyboard navigation and Ctrl/Cmd+K pass accessibility tests."
+    },
+    {
+      "screen": "Today (role-aware home for six roles)",
+      "implementation_task": "ODP-OC-R4-002",
+      "e2e_spec": "tests/e2e/operator-shell-today.spec.ts",
+      "primary_e2e_assertion": "All six roles receive distinct allowed workspaces and Today content from bootstrap/today APIs; search and queue selections open the exact entity and tab."
+    },
+    {
+      "screen": "Store Ops (four-light summary + durable issue lifecycle)",
+      "implementation_task": "ODP-OC-R4-003",
+      "e2e_spec": "tests/e2e/operator-store-ops.spec.ts",
+      "primary_e2e_assertion": "ISS-1024 completes a valid lifecycle and reload shows persisted state; invalid transitions return 409 and duplicate idempotency keys do not duplicate audit rows."
+    },
+    {
+      "screen": "Growth (three create entries + five-step Draft Builder + conflict gate + lifecycle)",
+      "implementation_task": "ODP-OC-R4-004",
+      "e2e_spec": "tests/e2e/operator-growth.spec.ts",
+      "primary_e2e_assertion": "All three entry cards prefill and persist the correct draft type; blocked conflict states cannot submit and return actionable server reasons."
+    },
+    {
+      "screen": "Network - Find Areas / Expansion Stepper / Listing Radar",
+      "implementation_task": "ODP-OC-R4-005",
+      "e2e_spec": "tests/e2e/operator-network-listings.spec.ts",
+      "primary_e2e_assertion": "HZ-01 to L-2024 to CS-1001 completes through product UI and APIs; converting L-2024 creates CS-1001 once; the real HeatZone map stays nonblank and synchronized with the selected zone/lens."
+    },
+    {
+      "screen": "Network - Candidate data gate / SiteScore / Compare",
+      "implementation_task": "ODP-OC-R4-006",
+      "e2e_spec": "tests/e2e/operator-network-scoring.spec.ts",
+      "primary_e2e_assertion": "CS-1001 returns GO 82 with SiteScore v2.3 and FS-20260704-0600; missing address/geocode/rent/area/floor/hard-rule data blocks scoring server-side."
+    },
+    {
+      "screen": "Network - Review Decision (role-gated decision dialog)",
+      "implementation_task": "ODP-OC-R4-007",
+      "e2e_spec": "tests/e2e/operator-network-review.spec.ts",
+      "primary_e2e_assertion": "GO maps to Approved, WAIT to On Hold, Return to Need Data, Reject to Rejected; a failed transaction leaves all five records unchanged and idempotent replay creates no duplicates."
+    },
+    {
+      "screen": "Network - Rebalance (API-backed AVM + NetPlan three-scenario compare)",
+      "implementation_task": "ODP-OC-R4-008",
+      "e2e_spec": "tests/e2e/operator-network-rebalance.spec.ts",
+      "primary_e2e_assertion": "AVM and NetPlan results are service outputs with model/snapshot metadata; a selected scenario persists and reloads with evidence and owner; unavailable model/runtime fails closed with an explicit retryable state."
+    },
+    {
+      "screen": "Govern (Approval, Decision, Audit, Evidence Package, SLA, Data Quality, Model, Connector, Users)",
+      "implementation_task": "ODP-OC-R4-009",
+      "e2e_spec": "tests/e2e/operator-governance.spec.ts",
+      "primary_e2e_assertion": "No governance value builder remains unreachable from UI navigation; return/reject require reason and approval policies are enforced server-side; evidence export records scope, range, format, actor, correlation, and retention policy."
+    }
+  ],
+  "enabling_tasks": [
+    {
+      "task": "ODP-OC-R4-001",
+      "role": "foundation",
+      "note": "Converges active FIN branches onto origin/dev; fixes /operator React route, modular Operator API, R4 DTOs, deterministic seed, and OpenAPI adapter contracts that every screen depends on."
+    },
+    {
+      "task": "ODP-OC-R4-010",
+      "role": "cross_cutting_security",
+      "note": "Applies real auth/RBAC, tenant isolation, replay dedup, immutable audit, camera purpose binding, and observability to every new Operator endpoint."
+    },
+    {
+      "task": "ODP-OC-R4-011",
+      "role": "acceptance_gate",
+      "note": "Makes the per-screen operator-*.spec.ts suite, visual, accessibility, map-pixel, and reload checks mandatory in CI. This is where each screen's E2E assertion becomes enforced."
+    },
+    {
+      "task": "ODP-OC-R4-012",
+      "role": "deploy_cutover",
+      "note": "Runs staging migration/seed/auth/runtime verification, rehearses rollback, and promotes dev to main once all gates are green."
+    }
+  ],
+  "release_blockers": [
+    {
+      "id": "RB-1",
+      "blocker": "AI Trading Desk parity unverifiable",
+      "detail": "The AI Trading Desk reference zip is unavailable; parity claims are prohibited until it is obtained and verified. Non-blocking to R4 build, blocking to any parity assertion."
+    },
+    {
+      "id": "RB-2",
+      "blocker": "R4 implementation not yet delivered",
+      "detail": "As of the baseline commit, ODP-OC-R4-001..012 are all status=todo; screens map to planned (not yet present) operator-*.spec.ts suites."
+    },
+    {
+      "id": "RB-3",
+      "blocker": "Product E2E + staging cutover gates open",
+      "detail": "Promotion of dev to main is gated by ODP-OC-R4-011 (mandatory product E2E/visual/a11y gate in CI) and ODP-OC-R4-012 (staging verify + rollback rehearsal)."
+    }
+  ],
+  "acceptance_self_check": {
+    "every_screen_one_task_one_e2e": true,
+    "receipt_records_md5": "78b65c33fac19dc33ba241e640df5cd1",
+    "receipt_records_label": "oday-plus-r4-20260707",
+    "no_ai_trading_desk_parity_claim": true,
+    "branch_source_and_blockers_selfcontained": true
+  }
+}
