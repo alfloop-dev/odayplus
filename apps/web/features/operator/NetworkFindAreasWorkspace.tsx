@@ -10,6 +10,7 @@ import {
   REBALANCE_STORE_FIXTURES,
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
 import {
@@ -47,6 +48,18 @@ export type NetworkFindAreasWorkspaceProps = {
   activeLens?: NetworkFindAreasLens;
   trackedHeatZoneIds?: string[];
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
+  /**
+   * Live API binding for heatzone scores. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * HEAT_ZONE_FIXTURES and shows a fixture-mode indicator.
+   */
+  liveHeatZones?: ApiBinding<OperatorHeatZone>;
+  /**
+   * Live API binding for candidate sites. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * CANDIDATE_FIXTURES.
+   */
+  liveCandidates?: ApiBinding<Candidate>;
 };
 
 const networkTabs = [
@@ -62,15 +75,33 @@ const networkTabs = [
 export function NetworkFindAreasWorkspace({
   activeLens,
   callbacks,
-  candidates = CANDIDATE_FIXTURES,
-  heatZones = HEAT_ZONE_FIXTURES,
+  candidates: candidatesProp = CANDIDATE_FIXTURES,
+  heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
   listings = LISTING_FIXTURES,
   listingSources = LISTING_SOURCE_FIXTURES,
   rebalanceStores = REBALANCE_STORE_FIXTURES,
   siteReviews = SITE_REVIEW_FIXTURES,
   selectedHeatZoneId,
   trackedHeatZoneIds,
+  liveHeatZones,
+  liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  // Resolve effective data: prefer live API items when the binding is ready;
+  // otherwise fall back to fixture defaults (or the prop passed by the parent).
+  const heatZones =
+    liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
+      ? liveHeatZones.items
+      : heatZonesProp;
+  const candidates =
+    liveCandidates?.source === "api" && liveCandidates.items.length > 0
+      ? liveCandidates.items
+      : candidatesProp;
+
+  // True when any data source fell back to fixtures (for status indicator).
+  const isFixtureFallback =
+    (liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
+    (liveCandidates !== undefined && liveCandidates.source !== "api");
+
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
@@ -198,6 +229,11 @@ export function NetworkFindAreasWorkspace({
           <span>{viewModel.totals.reviews} reviews</span>
           <span>{viewModel.totals.rebalances} rebalances</span>
           <span>{viewModel.totals.averageConfidence} avg confidence</span>
+          {isFixtureFallback && (
+            <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
+              fixture data
+            </span>
+          )}
         </div>
       </header>
 
