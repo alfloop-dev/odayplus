@@ -8,7 +8,7 @@ state machine and the audit-bearing records produced at each transition.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -112,6 +112,31 @@ class PriceElasticityEstimate:
     model_version: str = PRICEOPS_MODEL_VERSION
     feature_version: str = PRICEOPS_FEATURE_VERSION
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def from_observations(
+        cls,
+        price_demand_observations: Sequence[tuple[float, float]],
+        *,
+        horizon: str = "4week",
+        prediction_origin_time: datetime | None = None,
+    ) -> PriceElasticityEstimate:
+        """Estimate the elasticity from ``(price, demand)`` history.
+
+        Delegates to the scikit-learn log-log OLS estimator in
+        ``solver.pricing.demand`` and carries the fit's R²-derived confidence, so
+        a plan item's elasticity is grounded in observed data rather than a
+        hand-supplied constant.
+        """
+        from solver.pricing.demand import estimate_elasticity
+
+        fit = estimate_elasticity(price_demand_observations)
+        return cls(
+            elasticity_value=fit.elasticity,
+            confidence=fit.confidence,
+            horizon=horizon,
+            prediction_origin_time=prediction_origin_time or datetime.now(UTC),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
