@@ -179,6 +179,7 @@
 }
 
 .notificationPanel,
+.searchPanel,
 .roleMenu {
   position: absolute;
   top: calc(100% + 10px);
@@ -195,6 +196,12 @@
 
 .roleMenu {
   width: 520px;
+}
+
+.searchPanel {
+  left: 0;
+  right: auto;
+  width: 360px;
 }
 
 .popoverTitle {
@@ -217,6 +224,42 @@
   color: var(--operator-muted);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.searchResult {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px;
+  color: var(--operator-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--operator-border);
+  cursor: pointer;
+}
+
+.searchResult:hover {
+  background: #f4f8fc;
+}
+
+.searchResult span,
+.searchResult small,
+.searchEmpty {
+  color: var(--operator-muted);
+  font-size: 12px;
+}
+
+.searchResult strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchEmpty {
+  padding: 10px;
+  border-top: 1px solid var(--operator-border);
 }
 
 .roleOption,

@@ -286,15 +286,18 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveAuditFeed, setLiveAuditFeed] = useState(auditFeed);
   const [liveNotifications, setLiveNotifications] = useState(notifications);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
+  const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
+  const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
+  const [liveTasks, setLiveTasks] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
 
   const getSecurityHeaders = (roleId: string) => {
     let systemRole = "operations_manager";
-    if (roleId === "opsLead") systemRole = "operations_manager";
-    else if (roleId === "supportLead") systemRole = "operations_manager";
-    else if (roleId === "facilitiesLead") systemRole = "regional_supervisor";
-    else if (roleId === "marketingManager") systemRole = "marketing_manager";
-    else if (roleId === "expansionManager") systemRole = "expansion_user";
-    else if (roleId === "auditPm") systemRole = "auditor";
+    if (roleId === "field-lead") systemRole = "operations_manager,regional_supervisor";
+    else if (roleId === "marketing-manager") systemRole = "operations_manager,marketing_manager";
+    else if (roleId === "expansion-manager") systemRole = "operations_manager,expansion_user,site_reviewer";
+    else if (roleId === "pm-audit") systemRole = "operations_manager,auditor";
 
     return {
       "X-Subject-Id": `operator-${roleId}`,
@@ -321,13 +324,48 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
           if (data.notifications) setLiveNotifications(data.notifications);
           if (data.issues) setLiveIssues(data.issues);
+          if (data.approvals) setLiveApprovals(data.approvals);
+          if (data.governanceDecisions) setLiveGovernanceDecisions(data.governanceDecisions);
+          if (data.governanceAuditRows) setLiveGovernanceAuditRows(data.governanceAuditRows);
+          if (data.tasks) setLiveTasks(data.tasks);
         }
       } catch (err) {
         console.error("Error loading operator bootstrap:", err);
       }
     }
     loadBootstrap();
-  }, []);
+  }, [activeRoleId]);
+
+  useEffect(() => {
+    const trimmed = searchValue.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/v1/operator/search?q=${encodeURIComponent(trimmed)}`, {
+          headers: getSecurityHeaders(activeRoleId),
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.items ?? []);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error("Error searching operator console:", err);
+        }
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [activeRoleId, searchValue]);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -392,6 +430,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           if (freshData.decisions) setLiveDecisions(freshData.decisions);
           if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
           if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
+          if (freshData.approvals) setLiveApprovals(freshData.approvals);
+          if (freshData.governanceDecisions) setLiveGovernanceDecisions(freshData.governanceDecisions);
+          if (freshData.governanceAuditRows) setLiveGovernanceAuditRows(freshData.governanceAuditRows);
+          if (freshData.notifications) setLiveNotifications(freshData.notifications);
+          if (freshData.tasks) setLiveTasks(freshData.tasks);
         }
       }
     } catch (err) {
@@ -438,7 +481,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     setActiveRoleId(DEFAULT_OPERATOR_ROLE_ID);
     setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
     setSearchValue("");
-    showToast("POC session 已重置為營運主管 Today");
+    showToast("已重置為營運主管 Today");
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
@@ -485,15 +528,38 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         </nav>
 
         <div className={styles.topActions}>
-          <label className={styles.searchBox}>
-            <span aria-hidden="true">/</span>
-            <input
-              aria-label="Global search"
-              onChange={(event) => setSearchValue(event.target.value)}
-              placeholder="搜尋門市、案件、物件..."
-              value={searchValue}
-            />
-          </label>
+          <div className={styles.popoverAnchor}>
+            <label className={styles.searchBox}>
+              <span aria-hidden="true">/</span>
+              <input
+                aria-label="Global search"
+                onChange={(event) => setSearchValue(event.target.value)}
+                placeholder="搜尋門市、案件、物件..."
+                value={searchValue}
+              />
+            </label>
+            {searchValue.trim() ? (
+              <div className={styles.searchPanel} data-testid="operator-search-results">
+                <div className={styles.popoverTitle}>Search</div>
+                {searchResults.length ? (
+                  searchResults.slice(0, 6).map((result) => (
+                    <button
+                      className={styles.searchResult}
+                      key={`${result.type}-${result.id}`}
+                      onClick={() => handleWorkspaceClick(result.workspace)}
+                      type="button"
+                    >
+                      <span>{result.type}</span>
+                      <strong>{result.title}</strong>
+                      <small>{result.id}</small>
+                    </button>
+                  ))
+                ) : (
+                  <div className={styles.searchEmpty}>No matching operator work</div>
+                )}
+              </div>
+            ) : null}
+          </div>
 
           <div className={styles.popoverAnchor}>
             <Button
@@ -503,12 +569,12 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               size="sm"
               variant="ghost"
             >
-              ! 3
+              ! {liveNotifications.length}
             </Button>
             {isNotificationOpen ? (
               <div className={styles.notificationPanel}>
                 <div className={styles.popoverTitle}>Notifications</div>
-                {notifications.map((notification) => (
+                {liveNotifications.map((notification) => (
                   <article className={styles.notificationItem} key={notification.title}>
                     <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
                     <p>{notification.detail}</p>
@@ -523,7 +589,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             onClick={() => handleWorkspaceClick("govern")}
             type="button"
           >
-            待核准 <strong>5</strong>
+            待核准 <strong>{liveApprovals.length ? liveApprovals.filter((approval) => approval.status === "pending").length : 5}</strong>
           </button>
 
           <div className={styles.popoverAnchor}>
@@ -576,11 +642,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <div className={styles.pocBanner}>
         <div>
-          <strong>• POC Demo</strong>
-          <span>資料為 mock，操作僅保存在本 session，用於驗證流程與使用情境。</span>
+          <strong>API-backed</strong>
+          <span>
+            Workflow writes persist through the Operator API with audit, notification, search, and {liveTasks.length} task follow-up items.
+          </span>
         </div>
         <Button onClick={handleReset} size="sm" variant="secondary">
-          重設示範資料
+          重設視角
         </Button>
       </div>
 
@@ -614,12 +682,15 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ) : activeWorkspaceId === "govern" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <GovernanceWorkspace
+              approvals={liveApprovals.length ? liveApprovals : undefined}
+              auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
               callbacks={{
                 onApprove: (payload) => handleApprovalDecision(payload.approvalId, "approved", payload),
                 onReject: (payload) => handleApprovalDecision(payload.approvalId, "rejected", payload),
                 onReturn: (payload) => handleApprovalDecision(payload.approvalId, "returned", payload),
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
+              decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
               role={activeRole.label}
             />
           </WorkspaceChrome>
@@ -682,6 +753,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                     if (freshData.decisions) setLiveDecisions(freshData.decisions);
                     if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
                     if (freshData.issues) setLiveIssues(freshData.issues);
+                    if (freshData.approvals) setLiveApprovals(freshData.approvals);
+                    if (freshData.governanceDecisions) setLiveGovernanceDecisions(freshData.governanceDecisions);
+                    if (freshData.governanceAuditRows) setLiveGovernanceAuditRows(freshData.governanceAuditRows);
+                    if (freshData.notifications) setLiveNotifications(freshData.notifications);
+                    if (freshData.tasks) setLiveTasks(freshData.tasks);
                   }
                 }
               } catch (err) {

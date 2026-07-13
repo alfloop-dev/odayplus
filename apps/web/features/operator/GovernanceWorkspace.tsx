@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./governance.module.css";
 import type {
   GovernanceApproval,
@@ -289,6 +289,26 @@ export function GovernanceWorkspace({
     { id: "EVD-2026-0701-01", range: "2026-06-01 – 2026-06-30", mod: "Store Ops＋Growth＋Network", fmt: "PDF", t: "2026-07-01 10:15", by: "周明德" },
     { id: "EVD-2026-0615-02", range: "2026-05-01 – 2026-05-31", mod: "Store Ops＋Network", fmt: "CSV", t: "2026-06-15 14:22", by: "周明德" }
   ]);
+
+  useEffect(() => {
+    if (!approvals) return;
+    setLocalApprovals(approvals);
+    setSelectedApprovalId((current) =>
+      approvals.some((approval) => approval.id === current) ? current : approvals[0]?.id ?? "",
+    );
+  }, [approvals]);
+
+  useEffect(() => {
+    if (decisions) {
+      setLocalDecisions(decisions);
+    }
+  }, [decisions]);
+
+  useEffect(() => {
+    if (auditRows) {
+      setLocalAuditRows(auditRows);
+    }
+  }, [auditRows]);
 
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
   const selectedApproval =

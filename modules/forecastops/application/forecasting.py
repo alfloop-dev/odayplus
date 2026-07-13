@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastInput,
+    ForecastOpsNotFoundError,
     ForecastOutput,
     ForecastSeries,
     InterventionHandoff,
@@ -110,6 +111,40 @@ class ForecastOpsService:
             alerts=tuple(self.repository.save_alert(alert) for alert in alerts),
             handoffs=tuple(self.repository.save_handoff(handoff) for handoff in handoffs),
         )
+
+    def acknowledge_alert(
+        self,
+        alert_id: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        now: datetime | None = None,
+    ) -> Alert:
+        """Acknowledge a persisted four-light alert and persist the acknowledgement."""
+
+        alert = self.repository.get_alert(alert_id)
+        if alert is None:
+            raise ForecastOpsNotFoundError(f"alert {alert_id} not found")
+        acknowledged = alert.acknowledge(actor=actor, note=note, now=now or datetime.now(UTC))
+        return self.repository.save_alert(acknowledged)
+
+    def execute_handoff(
+        self,
+        handoff_id: str,
+        *,
+        actor: str,
+        intervention_id: str | None = None,
+        now: datetime | None = None,
+    ) -> InterventionHandoff:
+        """Dispatch a proposed intervention handoff, linking the opened case."""
+
+        handoff = self.repository.get_handoff(handoff_id)
+        if handoff is None:
+            raise ForecastOpsNotFoundError(f"handoff {handoff_id} not found")
+        executed = handoff.execute(
+            actor=actor, intervention_id=intervention_id, now=now or datetime.now(UTC)
+        )
+        return self.repository.save_handoff(executed)
 
 
 __all__ = ["ForecastOpsResult", "ForecastOpsService"]

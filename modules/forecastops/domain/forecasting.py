@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
+
+
+class ForecastOpsError(ValueError):
+    """Raised when a ForecastOps lifecycle transition is invalid."""
+
+
+class ForecastOpsNotFoundError(ForecastOpsError):
+    """Raised when an alert or handoff referenced by id does not exist."""
+
 
 FORECASTOPS_MODEL_VERSION = "forecastops-baseline-v1"
 FORECASTOPS_FEATURE_VERSION = "store-machine-timeseries-view-v1"
@@ -209,6 +218,32 @@ class Alert:
     opened_at: datetime
     status: str = "open"
     closed_at: datetime | None = None
+    acknowledged_by: str | None = None
+    acknowledged_at: datetime | None = None
+    acknowledgement_note: str | None = None
+
+    def acknowledge(
+        self, *, actor: str, note: str | None = None, now: datetime
+    ) -> Alert:
+        """Return an acknowledged copy of this alert.
+
+        Acknowledgement is a persisted human action: an alert can only be
+        acknowledged once, and a closed alert can no longer be acknowledged.
+        """
+
+        if not actor or not actor.strip():
+            raise ForecastOpsError("alert acknowledgement requires an actor")
+        if self.status == "acknowledged":
+            raise ForecastOpsError(f"alert {self.alert_id} is already acknowledged")
+        if self.status == "closed":
+            raise ForecastOpsError(f"alert {self.alert_id} is closed and cannot be acknowledged")
+        return replace(
+            self,
+            status="acknowledged",
+            acknowledged_by=actor,
+            acknowledged_at=now,
+            acknowledgement_note=note,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -220,6 +255,9 @@ class Alert:
             "opened_at": self.opened_at.isoformat(),
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
             "status": self.status,
+            "acknowledged_by": self.acknowledged_by,
+            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
+            "acknowledgement_note": self.acknowledgement_note,
         }
 
 
@@ -233,6 +271,31 @@ class InterventionHandoff:
     action_set_json: dict[str, Any]
     created_at: datetime
     status: str = "proposed"
+    executed_by: str | None = None
+    executed_at: datetime | None = None
+    intervention_id: str | None = None
+
+    def execute(
+        self, *, actor: str, intervention_id: str | None = None, now: datetime
+    ) -> InterventionHandoff:
+        """Return a dispatched copy that links this handoff to an intervention.
+
+        A handoff is *executable*: dispatching it records who acted, when, and
+        the InterventionOps case it opened, and moves it out of ``proposed`` so
+        it cannot be dispatched twice.
+        """
+
+        if not actor or not actor.strip():
+            raise ForecastOpsError("handoff execution requires an actor")
+        if self.status == "dispatched":
+            raise ForecastOpsError(f"handoff {self.handoff_id} is already dispatched")
+        return replace(
+            self,
+            status="dispatched",
+            executed_by=actor,
+            executed_at=now,
+            intervention_id=intervention_id,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -244,6 +307,9 @@ class InterventionHandoff:
             "action_set_json": self.action_set_json,
             "created_at": self.created_at.isoformat(),
             "status": self.status,
+            "executed_by": self.executed_by,
+            "executed_at": self.executed_at.isoformat() if self.executed_at else None,
+            "intervention_id": self.intervention_id,
         }
 
 
