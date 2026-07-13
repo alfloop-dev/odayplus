@@ -13,7 +13,9 @@ Canonical state machine (ODP-MOD-05 §7):
       → CONFLICT_CHECKING            (overlap / contamination control, §4 ODP-FR-INTV-004)
       → PENDING_APPROVAL → APPROVED | REJECTED   (human approval, separated from execution)
       → EXECUTING → OBSERVING        (observation window opens at execution)
-      → EVALUATING → COMPLETED | STOPPED | ROLLED_BACK
+      → EVALUATING → COMPLETED       (mature outcome + Evidence Level attached)
+      → CLOSED                       (operator disposition + optional follow-up)
+      (STOPPED / ROLLED_BACK are terminal off-ramps from the active states)
 
 Causal guardrails (ODP-ML-05 §2, §5, §6):
 
@@ -66,20 +68,38 @@ class InterventionStatus(StrEnum):
     OBSERVING = "OBSERVING"
     EVALUATING = "EVALUATING"
     COMPLETED = "COMPLETED"
+    CLOSED = "CLOSED"
     STOPPED = "STOPPED"
     ROLLED_BACK = "ROLLED_BACK"
 
 
-# Terminal states never transition further.
+# Terminal states never transition further. COMPLETED is deliberately *not*
+# terminal: a matured outcome still awaits an operator close/follow-up decision
+# (ODP-MOD-05 §7 close-out), which is what makes CLOSED the final resting state.
 TERMINAL_STATUSES = frozenset(
     {
         InterventionStatus.INELIGIBLE,
         InterventionStatus.REJECTED,
-        InterventionStatus.COMPLETED,
+        InterventionStatus.CLOSED,
         InterventionStatus.STOPPED,
         InterventionStatus.ROLLED_BACK,
     }
 )
+
+
+class CloseDisposition(StrEnum):
+    """Operator disposition recorded when a completed case is closed (ODP-MOD-05 §7).
+
+    - ``KEEP``     — effect was positive; keep the change, no follow-up needed.
+    - ``REVERT``   — no / negative effect; the change was (or will be) undone.
+    - ``ITERATE``  — inconclusive or change-channel; schedule a follow-up case.
+    - ``ESCALATE`` — outcome needs higher-level review before any further action.
+    """
+
+    KEEP = "KEEP"
+    REVERT = "REVERT"
+    ITERATE = "ITERATE"
+    ESCALATE = "ESCALATE"
 
 # Statuses whose planned window still competes for a store's timeline, so a new
 # intervention overlapping them is a contamination risk (ODP-ML-05 §7, §8.3).
@@ -375,6 +395,41 @@ class EffectEvaluation:
 
 
 @dataclass(frozen=True)
+class CloseRecord:
+    """Close-out + follow-up disposition (ODP-MOD-05 §7 close-out).
+
+    The operator reviews the matured effect and its recommendation, then records
+    a disposition and, when the recommendation warrants iterating, links the
+    follow-up intervention that continues the loop. ``recommendation`` snapshots
+    the effect recommendation at close so the audit trail is self-contained.
+    """
+
+    disposition: CloseDisposition
+    actor: str
+    reason: str
+    closed_at: datetime
+    policy_version: str
+    recommendation: str = ""
+    follow_up_intervention_id: str | None = None
+
+    @property
+    def has_follow_up(self) -> bool:
+        return self.follow_up_intervention_id is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "disposition": self.disposition.value,
+            "actor": self.actor,
+            "reason": self.reason,
+            "closed_at": self.closed_at.isoformat(),
+            "policy_version": self.policy_version,
+            "recommendation": self.recommendation,
+            "follow_up_intervention_id": self.follow_up_intervention_id,
+            "has_follow_up": self.has_follow_up,
+        }
+
+
+@dataclass(frozen=True)
 class LabelRecord:
     """Label written back to the Label Registry for ForecastOps consumption.
 
@@ -469,6 +524,7 @@ class Intervention:
     observation_window: ObservationWindow | None = None
     outcome: InterventionOutcome | None = None
     effect: EffectEvaluation | None = None
+    close: CloseRecord | None = None
     history: tuple[InterventionTransition, ...] = ()
 
     @property
@@ -532,6 +588,7 @@ class Intervention:
             ),
             "outcome": self.outcome.to_dict() if self.outcome else None,
             "effect": self.effect.to_dict() if self.effect else None,
+            "close": self.close.to_dict() if self.close else None,
             "history": [transition.to_dict() for transition in self.history],
         }
 
@@ -659,6 +716,8 @@ __all__ = [
     "POLICY_VERSION",
     "TERMINAL_STATUSES",
     "ApprovalRecord",
+    "CloseDisposition",
+    "CloseRecord",
     "ConflictResult",
     "EffectEvaluation",
     "EligibilityResult",

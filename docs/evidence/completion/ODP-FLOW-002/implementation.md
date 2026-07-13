@@ -1,6 +1,11 @@
 # ODP-FLOW-002 — Complete Expansion HeatZone → SiteScore decision flow
 
-**Owner:** Claude2 · **Reviewer:** Claude · **Phase:** Product Flow Implementation
+**Owner:** Claude2 · **Reviewer:** Codex · **Phase:** Product Flow Implementation
+
+> Closeout note: the durable task reviewer is **Codex**, who approved the task
+> with no blocking findings. The original implementation commit (`58c5360`)
+> predates the reviewer reassignment and still records `Reviewer: Claude`; this
+> closeout commit syncs the evidence reviewer to the durable assignment.
 
 ## Goal
 

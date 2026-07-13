@@ -3,6 +3,7 @@
 from modules.priceops.application.pricing import (
     DEFAULT_LABEL_MATURITY_DAYS,
     ActivationResult,
+    ApprovalBlockedError,
     EvaluationResult,
     MissingRollbackPlanError,
     PlanNotFoundError,
@@ -11,6 +12,7 @@ from modules.priceops.application.pricing import (
 
 __all__ = [
     "DEFAULT_LABEL_MATURITY_DAYS",
+    "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
     "MissingRollbackPlanError",

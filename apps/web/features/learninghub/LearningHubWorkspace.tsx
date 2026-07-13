@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import type { StatusTone } from "@oday-plus/domain-types";
+import type { ModelReleaseSummary } from "@oday-plus/openapi-client";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   models,
   releases,
@@ -20,6 +23,8 @@ type LearningHubWorkspaceProps = {
   version?: string;
   releaseId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /learninghub/releases` binding; supplied by the server route. */
+  liveReleases?: ApiBinding<ModelReleaseSummary>;
 };
 
 export function LearningHubWorkspace({
@@ -28,21 +33,23 @@ export function LearningHubWorkspace({
   version,
   releaseId,
   searchParams = {},
+  liveReleases,
 }: LearningHubWorkspaceProps) {
   if (view === "models") return <ModelsPage searchParams={searchParams} />;
   if (view === "modelHistory") return <ModelHistoryPage model={selectedModel(modelName)} />;
   if (view === "modelDetail") return <ModelDetailPage model={selectedModel(modelName, version)} />;
-  if (view === "releases") return <ReleasesPage />;
+  if (view === "releases") return <ReleasesPage liveReleases={liveReleases} />;
   if (view === "releaseDetail") return <ReleaseDetailPage release={selectedRelease(releaseId)} />;
-  return <LearningOverview />;
+  return <LearningOverview liveReleases={liveReleases} />;
 }
 
-function LearningOverview() {
+function LearningOverview({ liveReleases }: { liveReleases?: ApiBinding<ModelReleaseSummary> }) {
   return (
     <>
       <Header title="模型與學習" summary="Learning Hub：模型登錄、驗證、模型卡、發布控制與 rollback console。" />
       <main className="odp-content" data-testid="learning-overview-page">
         <WorkspaceNav active="overview" />
+        {liveReleases ? <LiveReleases binding={liveReleases} /> : null}
         <section className={styles.flowGrid}>
           <Link className={styles.flowCard} href="/w/ai/models">
             <h2>模型登錄</h2>
@@ -178,12 +185,13 @@ function ModelDetailPage({ model }: { model: ModelVersionRecord }) {
   );
 }
 
-function ReleasesPage() {
+function ReleasesPage({ liveReleases }: { liveReleases?: ApiBinding<ModelReleaseSummary> }) {
   return (
     <>
       <Header title="模型發布" summary="掃描發布 / 回滾事件、監控窗、success/fail criteria 與 audit trail。" statusLabel="compact" />
       <main className="odp-content" data-testid="learning-releases-page">
         <WorkspaceNav active="releases" />
+        {liveReleases ? <LiveReleases binding={liveReleases} /> : null}
         <div className={styles.panel}>
           <h2>Release decisions</h2>
           <ReleasesTable />
@@ -191,6 +199,87 @@ function ReleasesPage() {
       </main>
     </>
   );
+}
+
+function LiveReleases({ binding }: { binding: ApiBinding<ModelReleaseSummary> }) {
+  return (
+    <section
+      className={styles.panel}
+      data-testid="learning-live-releases"
+      aria-label="API-bound model release and rollback log"
+    >
+      <div className={styles.badgeRow}>
+        <h2>發布 / 回滾（API live）</h2>
+        <DataSourceBadge binding={binding} testId="learning-data-source" />
+      </div>
+      <p>
+        本區直接讀取 <code>GET /learninghub/releases</code> 的治理決策（shadow / canary / full /
+        rollback）；下方固定發布為 documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="learning-live-releases-table">
+            <caption>Live releases served by the backend ({binding.items.length})</caption>
+            <thead>
+              <tr>
+                <th>release_id</th>
+                <th>Model</th>
+                <th>Type</th>
+                <th>Version</th>
+                <th>Monitoring</th>
+                <th>audit_event_id</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((item) => (
+                <tr key={item.release_id} data-testid="learning-live-release-row">
+                  <td className={styles.mono}>{item.release_id}</td>
+                  <td>{stringField(item.model_name) || "—"}</td>
+                  <td>
+                    <Badge
+                      label={stringField(item.release_type) || "—"}
+                      tone={liveReleaseTone(item.release_type)}
+                      marker="◆"
+                    />
+                  </td>
+                  <td className={styles.mono}>
+                    {stringField(item.from_version) || "—"} → {stringField(item.to_version) || "—"}
+                  </td>
+                  <td>{stringField(item.monitoring_window) || "—"}</td>
+                  <td className={styles.mono}>{stringField(item.audit_event_id) || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="learning-live-releases-empty" className={styles.subtle}>
+          {liveReleasesFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveReleasesFallbackMessage(binding: ApiBinding<ModelReleaseSummary>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無發布決策（cold store）；顯示固定發布作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定發布 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定發布渲染。";
+}
+
+function liveReleaseTone(releaseType: unknown): StatusTone {
+  if (releaseType === "ROLLBACK") return "red";
+  if (releaseType === "FULL") return "green";
+  if (releaseType === "CANARY") return "orange";
+  return "blue";
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
 function ReleaseDetailPage({ release }: { release: ReleaseDecision }) {

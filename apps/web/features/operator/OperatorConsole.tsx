@@ -15,9 +15,7 @@ import {
   TabBar,
   type Tone,
 } from "./components";
-import { fixtureOperatorAdapter } from "./adapters";
 import { DesignStoreOpsWorkspace, DesignTodayWorkspace } from "./DesignAlignedWorkspaces";
-import { APPROVAL_FIXTURES, ISSUE_FIXTURES, LISTING_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -253,113 +251,23 @@ const auditFeed = [
   },
 ];
 
-// Higher tone urgency sorts first so the console surfaces the most critical
-// signal at the top of both the notification tray and the search results.
-const TONE_PRIORITY: Record<Tone, number> = {
-  danger: 0,
-  warning: 1,
-  accent: 2,
-  info: 3,
-  success: 4,
-  neutral: 5,
-};
-
-type ConsoleNotification = {
-  id: string;
-  title: string;
-  detail: string;
-  tone: Tone;
-};
-
-// Notifications are derived from typed fixtures (open issues + pending
-// approvals) rather than a hand-written list, then ordered by tone priority.
-function buildNotifications(): ConsoleNotification[] {
-  const issueNotifications: ConsoleNotification[] = ISSUE_FIXTURES.map((issue) => ({
-    id: `NTF-${issue.id}`,
-    title: issue.title,
-    detail: `${issue.storeName}｜狀態 ${issue.status}`,
-    tone:
-      issue.severity === "critical"
-        ? "danger"
-        : issue.severity === "high"
-          ? "warning"
-          : issue.severity === "medium"
-            ? "info"
-            : "neutral",
-  }));
-
-  const approvalNotifications: ConsoleNotification[] = APPROVAL_FIXTURES.filter(
-    (approval) => approval.status === "pending",
-  ).map((approval) => ({
-    id: `NTF-${approval.id}`,
-    title: `待核准：${approval.title}`,
-    detail: `${approval.module}｜風險 ${approval.risk}`,
-    tone: approval.risk === "high" || approval.risk === "critical" ? "danger" : approval.risk === "medium" ? "warning" : "info",
-  }));
-
-  return [...issueNotifications, ...approvalNotifications].sort(
-    (a, b) => TONE_PRIORITY[a.tone] - TONE_PRIORITY[b.tone],
-  );
-}
-
-const notifications = buildNotifications();
-
-type SearchResultGroup = "門市" | "案件" | "物件";
-
-type SearchResult = {
-  id: string;
-  label: string;
-  detail: string;
-  group: SearchResultGroup;
-  tone: Tone;
-  workspace: WorkspaceId;
-};
-
-function matchesQuery(query: string, fields: Array<string | undefined>): boolean {
-  return fields.some((field) => field?.toLowerCase().includes(query));
-}
-
-// Global search filters stores (門市), issues (案件), and listings (物件)
-// from the shared fixtures and points each hit at the workspace that owns it.
-function buildSearchResults(rawQuery: string): SearchResult[] {
-  const query = rawQuery.trim().toLowerCase();
-  if (!query) return [];
-
-  const stores: SearchResult[] = STORE_FIXTURES.filter((store) =>
-    matchesQuery(query, [store.id, store.name, store.district, store.city, store.manager]),
-  ).map((store) => ({
-    id: store.id,
-    label: store.name,
-    detail: `${store.district}・${store.manager}｜風險 ${store.riskScore}`,
-    group: "門市",
-    tone: store.riskScore >= 80 ? "danger" : store.riskScore >= 60 ? "warning" : "info",
-    workspace: "store",
-  }));
-
-  const issues: SearchResult[] = ISSUE_FIXTURES.filter((issue) =>
-    matchesQuery(query, [issue.id, issue.title, issue.storeName, issue.summary]),
-  ).map((issue) => ({
-    id: issue.id,
-    label: issue.title,
-    detail: `${issue.storeName}｜${issue.id}`,
-    group: "案件",
-    tone: issue.severity === "critical" ? "danger" : issue.severity === "high" ? "warning" : "info",
-    workspace: "store",
-  }));
-
-  const listings: SearchResult[] = LISTING_FIXTURES.filter((listing) =>
-    matchesQuery(query, [listing.id, listing.address]),
-  ).map((listing) => ({
-    id: listing.id,
-    label: listing.address,
-    detail: `${listing.id}｜狀態 ${listing.status}`,
-    group: "物件",
-    tone: "info",
-    workspace: "network",
-  }));
-
-  return [...stores, ...issues, ...listings];
-}
+const notifications = [
+  {
+    title: "SLA 即將到期",
+    detail: "ISS-1024 需在 58 分鐘內完成 Triage。",
+    tone: "danger" as Tone,
+  },
+  {
+    title: "核准中心新增",
+    detail: "SiteScore APR-501 已送出複審。",
+    tone: "warning" as Tone,
+  },
+  {
+    title: "模型快照更新",
+    detail: "ForecastOps v2.6 完成 06:00 refresh。",
+    tone: "info" as Tone,
+  },
+];
 
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
@@ -370,7 +278,6 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
-  const [demoResetNonce, setDemoResetNonce] = useState(0);
 
   const [liveKpis, setLiveKpis] = useState(kpis);
   const [liveWorkQueue, setLiveWorkQueue] = useState(workQueue);
@@ -379,15 +286,18 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveAuditFeed, setLiveAuditFeed] = useState(auditFeed);
   const [liveNotifications, setLiveNotifications] = useState(notifications);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
+  const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
+  const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
+  const [liveTasks, setLiveTasks] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
 
   const getSecurityHeaders = (roleId: string) => {
     let systemRole = "operations_manager";
-    if (roleId === "opsLead") systemRole = "operations_manager";
-    else if (roleId === "supportLead") systemRole = "operations_manager";
-    else if (roleId === "facilitiesLead") systemRole = "regional_supervisor";
-    else if (roleId === "marketingManager") systemRole = "marketing_manager";
-    else if (roleId === "expansionManager") systemRole = "expansion_user";
-    else if (roleId === "auditPm") systemRole = "auditor";
+    if (roleId === "field-lead") systemRole = "operations_manager,regional_supervisor";
+    else if (roleId === "marketing-manager") systemRole = "operations_manager,marketing_manager";
+    else if (roleId === "expansion-manager") systemRole = "operations_manager,expansion_user,site_reviewer";
+    else if (roleId === "pm-audit") systemRole = "operations_manager,auditor";
 
     return {
       "X-Subject-Id": `operator-${roleId}`,
@@ -414,13 +324,48 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
           if (data.notifications) setLiveNotifications(data.notifications);
           if (data.issues) setLiveIssues(data.issues);
+          if (data.approvals) setLiveApprovals(data.approvals);
+          if (data.governanceDecisions) setLiveGovernanceDecisions(data.governanceDecisions);
+          if (data.governanceAuditRows) setLiveGovernanceAuditRows(data.governanceAuditRows);
+          if (data.tasks) setLiveTasks(data.tasks);
         }
       } catch (err) {
         console.error("Error loading operator bootstrap:", err);
       }
     }
     loadBootstrap();
-  }, []);
+  }, [activeRoleId]);
+
+  useEffect(() => {
+    const trimmed = searchValue.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/v1/operator/search?q=${encodeURIComponent(trimmed)}`, {
+          headers: getSecurityHeaders(activeRoleId),
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.items ?? []);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error("Error searching operator console:", err);
+        }
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [activeRoleId, searchValue]);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -457,16 +402,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     return liveWorkQueue.filter((item) => item.workspace === "today" || isWorkspaceAllowed(activeRole, item.workspace));
   }, [activeRole, liveWorkQueue]);
 
-  const searchResults = useMemo(() => buildSearchResults(searchValue), [searchValue]);
-  const isSearchOpen = searchValue.trim().length > 0;
-
   function showToast(message: string) {
     setToast(message);
-  }
-
-  function handleSearchSelect(result: SearchResult) {
-    setSearchValue("");
-    handleWorkspaceClick(result.workspace);
   }
 
   async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
@@ -493,6 +430,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           if (freshData.decisions) setLiveDecisions(freshData.decisions);
           if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
           if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
+          if (freshData.approvals) setLiveApprovals(freshData.approvals);
+          if (freshData.governanceDecisions) setLiveGovernanceDecisions(freshData.governanceDecisions);
+          if (freshData.governanceAuditRows) setLiveGovernanceAuditRows(freshData.governanceAuditRows);
+          if (freshData.notifications) setLiveNotifications(freshData.notifications);
+          if (freshData.tasks) setLiveTasks(freshData.tasks);
         }
       }
     } catch (err) {
@@ -538,14 +480,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     window.sessionStorage.removeItem(workspaceStorageKey);
     setActiveRoleId(DEFAULT_OPERATOR_ROLE_ID);
     setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-    setActiveStoreOpsDialog(null);
-    setSelectedStoreOpsIssue(undefined);
     setSearchValue("");
-    // Reset the shared fixture-backed demo state and force the workspace
-    // subtree to remount so in-session edits fall back to the fixtures.
-    void fixtureOperatorAdapter.resetState();
-    setDemoResetNonce((nonce) => nonce + 1);
-    showToast("POC 示範資料已重設為營運主管 Today");
+    showToast("已重置為營運主管 Today");
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
@@ -602,26 +538,24 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                 value={searchValue}
               />
             </label>
-            {isSearchOpen ? (
-              <div className={styles.notificationPanel} data-testid="operator-search-results">
-                <div className={styles.popoverTitle}>搜尋結果 · {searchResults.length}</div>
-                {searchResults.length === 0 ? (
-                  <p className={styles.searchEmpty}>找不到符合「{searchValue.trim()}」的門市、案件或物件。</p>
-                ) : (
-                  searchResults.map((result) => (
+            {searchValue.trim() ? (
+              <div className={styles.searchPanel} data-testid="operator-search-results">
+                <div className={styles.popoverTitle}>Search</div>
+                {searchResults.length ? (
+                  searchResults.slice(0, 6).map((result) => (
                     <button
                       className={styles.searchResult}
-                      key={`${result.group}-${result.id}`}
-                      onClick={() => handleSearchSelect(result)}
+                      key={`${result.type}-${result.id}`}
+                      onClick={() => handleWorkspaceClick(result.workspace)}
                       type="button"
                     >
-                      <StatusBadge tone={result.tone}>{result.group}</StatusBadge>
-                      <span className={styles.searchResultText}>
-                        <strong>{result.label}</strong>
-                        <small>{result.detail}</small>
-                      </span>
+                      <span>{result.type}</span>
+                      <strong>{result.title}</strong>
+                      <small>{result.id}</small>
                     </button>
                   ))
+                ) : (
+                  <div className={styles.searchEmpty}>No matching operator work</div>
                 )}
               </div>
             ) : null}
@@ -635,13 +569,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               size="sm"
               variant="ghost"
             >
-              ! {notifications.length}
+              ! {liveNotifications.length}
             </Button>
             {isNotificationOpen ? (
               <div className={styles.notificationPanel}>
                 <div className={styles.popoverTitle}>Notifications</div>
-                {notifications.map((notification) => (
-                  <article className={styles.notificationItem} key={notification.id}>
+                {liveNotifications.map((notification) => (
+                  <article className={styles.notificationItem} key={notification.title}>
                     <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
                     <p>{notification.detail}</p>
                   </article>
@@ -655,7 +589,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             onClick={() => handleWorkspaceClick("govern")}
             type="button"
           >
-            待核准 <strong>5</strong>
+            待核准 <strong>{liveApprovals.length ? liveApprovals.filter((approval) => approval.status === "pending").length : 5}</strong>
           </button>
 
           <div className={styles.popoverAnchor}>
@@ -708,15 +642,17 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <div className={styles.pocBanner}>
         <div>
-          <strong>• POC Demo</strong>
-          <span>資料為 mock，操作僅保存在本 session，用於驗證流程與使用情境。</span>
+          <strong>API-backed</strong>
+          <span>
+            Workflow writes persist through the Operator API with audit, notification, search, and {liveTasks.length} task follow-up items.
+          </span>
         </div>
         <Button onClick={handleReset} size="sm" variant="secondary">
-          重設示範資料
+          重設視角
         </Button>
       </div>
 
-      <main className={styles.shell} key={demoResetNonce}>
+      <main className={styles.shell}>
         {activeWorkspaceId === "today" ? (
           <DesignTodayWorkspace
             onQueueSelect={(workspaceId) => handleWorkspaceClick(workspaceId)}
@@ -746,12 +682,15 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ) : activeWorkspaceId === "govern" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <GovernanceWorkspace
+              approvals={liveApprovals.length ? liveApprovals : undefined}
+              auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
               callbacks={{
                 onApprove: (payload) => handleApprovalDecision(payload.approvalId, "approved", payload),
                 onReject: (payload) => handleApprovalDecision(payload.approvalId, "rejected", payload),
                 onReturn: (payload) => handleApprovalDecision(payload.approvalId, "returned", payload),
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
+              decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
               role={activeRole.label}
             />
           </WorkspaceChrome>
@@ -814,6 +753,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                     if (freshData.decisions) setLiveDecisions(freshData.decisions);
                     if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
                     if (freshData.issues) setLiveIssues(freshData.issues);
+                    if (freshData.approvals) setLiveApprovals(freshData.approvals);
+                    if (freshData.governanceDecisions) setLiveGovernanceDecisions(freshData.governanceDecisions);
+                    if (freshData.governanceAuditRows) setLiveGovernanceAuditRows(freshData.governanceAuditRows);
+                    if (freshData.notifications) setLiveNotifications(freshData.notifications);
+                    if (freshData.tasks) setLiveTasks(freshData.tasks);
                   }
                 }
               } catch (err) {
