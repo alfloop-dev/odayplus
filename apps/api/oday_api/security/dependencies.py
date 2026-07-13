@@ -3,8 +3,18 @@
 These adapt the framework-agnostic :class:`shared.auth.AuthorizationEngine` to
 HTTP request handling:
 
-- :func:`principal_from_headers` builds a :class:`Principal` from request
-  headers (a stub for the real OIDC/JWT IdP integration, ODP-SD-09 §3);
+- :func:`principal_from_headers` builds a :class:`Principal` from the request,
+  now via real JWT/OIDC verification (ODP-FIN-AUTH-001 / ODP-SD-09 §3):
+
+    * Reads the ``Authorization: Bearer <token>`` header.
+    * Delegates to :class:`modules.opsboard.auth.OidcJwtVerifier` for
+      signature validation, expiry, issuer, and audience checks.
+    * Invalid or expired tokens raise HTTP 401 (via :exc:`TokenVerificationError`).
+    * Falls back to the legacy ``x-subject-id`` / ``x-roles`` header trust only
+      when the verifier is explicitly configured in stub/bypass mode (test env).
+    * RBAC logic is **not changed** — role strings from the verified JWT are
+      mapped to :class:`~shared.auth.Role` values the same way the old stub did.
+
 - :func:`require_permission` / :func:`require_feature_flag` produce FastAPI
   dependencies that deny with HTTP 403 and leave a security audit trail.
 
@@ -43,6 +53,18 @@ except ModuleNotFoundError:  # pragma: no cover - lean env
     HTTPException = None  # type: ignore[assignment]
     Request = None  # type: ignore[assignment]
 
+# JWT verifier — imported lazily so unit tests that don't need JWT still work
+# in lean environments without cryptography installed.
+try:
+    from modules.opsboard.auth import JwtVerifierConfig, OidcJwtVerifier, TokenVerificationError
+
+    _JWT_MODULE_AVAILABLE = True
+except ModuleNotFoundError:  # pragma: no cover - verifier not on path
+    OidcJwtVerifier = None  # type: ignore[assignment,misc]
+    JwtVerifierConfig = None  # type: ignore[assignment]
+    TokenVerificationError = Exception  # type: ignore[assignment,misc]
+    _JWT_MODULE_AVAILABLE = False
+
 
 class AuthorizationError(Exception):
     """Raised on denial when FastAPI's HTTPException is unavailable."""
@@ -50,6 +72,38 @@ class AuthorizationError(Exception):
     def __init__(self, decision: Decision) -> None:
         super().__init__(decision.reason)
         self.decision = decision
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton verifier — created once on first import.
+# Callers can replace this for testing via ``_set_jwt_verifier()``.
+# ---------------------------------------------------------------------------
+_jwt_verifier: OidcJwtVerifier | None = None
+
+
+def _get_jwt_verifier() -> OidcJwtVerifier | None:
+    """Return the module-level JWT verifier, creating it on first call."""
+    global _jwt_verifier
+    if _jwt_verifier is None and _JWT_MODULE_AVAILABLE:
+        try:
+            config = JwtVerifierConfig()  # reads JWT_* env vars
+            _jwt_verifier = OidcJwtVerifier(config)
+        except (ValueError, RuntimeError):
+            # Misconfigured (missing keys/issuer/audience) — let it stay None.
+            # principal_from_headers will fall back to stub behaviour and log.
+            pass
+    return _jwt_verifier
+
+
+def _set_jwt_verifier(verifier: object | None) -> None:
+    """Replace the module-level verifier (for test injection only)."""
+    global _jwt_verifier
+    _jwt_verifier = verifier  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Engine helpers
+# ---------------------------------------------------------------------------
 
 
 def build_engine(
@@ -71,24 +125,78 @@ def _split(value: str | None) -> frozenset[str]:
     return frozenset(part.strip() for part in value.split(",") if part.strip())
 
 
+# ---------------------------------------------------------------------------
+# Principal resolution — JWT-first, stub fallback
+# ---------------------------------------------------------------------------
+
+
 def principal_from_headers(headers: Mapping[str, str]) -> Principal:
-    """Build a Principal from request headers.
+    """Build a :class:`Principal` from request headers.
 
-    STUB: a real deployment validates a JWT from the approved IdP
-    (ODP-SD-09 §3). Header names are lowercase to match FastAPI/Starlette.
-    Missing subject -> unauthenticated principal (ODP-AC-AUTH-001).
+    Authentication path (ODP-FIN-AUTH-001 / ODP-SD-09 §3):
+
+    1. If an ``Authorization: Bearer <token>`` header is present, verify the
+       JWT using :class:`~modules.opsboard.auth.OidcJwtVerifier` (real
+       signature check, expiry, issuer, audience).  A failed verification
+       raises HTTP 401 so the request never reaches RBAC evaluation.
+
+    2. If the verifier is in **stub mode** (``JWT_STUB_MODE=true``), it skips
+       signature checking and maps the ``x-subject-id`` / ``x-roles`` headers
+       the same way the old header-trust stub did.  This path exists only for
+       local dev and integration tests.
+
+    3. If no ``Authorization`` header is present and no stub mode is active,
+       the principal is ANONYMOUS and downstream RBAC will deny it.
+
+    Raises
+    ------
+    HTTPException(401)
+        When a bearer token is present but fails verification.
     """
+    verifier = _get_jwt_verifier()
 
+    # --- JWT path (real or stub-mode verifier present) ---
+    if verifier is not None:
+        auth_header = headers.get("authorization") or headers.get("Authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            raw_token = auth_header[7:].strip()
+            try:
+                claims = verifier.verify(raw_token)
+            except TokenVerificationError as exc:
+                _raise_unauthenticated(str(exc))
+
+            roles: set[Role] = set()
+            for raw_role in claims.roles:
+                try:
+                    roles.add(Role(raw_role))
+                except ValueError:
+                    continue  # unknown role string is ignored
+
+            scope = Scope(
+                tenant_id=claims.tenant_id,
+                brand_ids=claims.brand_ids,
+                region_ids=claims.region_ids,
+                store_ids=claims.store_ids,
+            )
+            return Principal(
+                subject_id=claims.subject_id,
+                roles=frozenset(roles),
+                scope=scope,
+            )
+
+        # No Authorization header — fall through to legacy/anonymous path
+
+    # --- Legacy header-trust path (stub/dev only; real deployments need JWT) ---
     subject = headers.get("x-subject-id")
     if not subject:
         from shared.auth import ANONYMOUS
 
         return ANONYMOUS
 
-    roles: set[Role] = set()
+    roles_set: set[Role] = set()
     for raw in _split(headers.get("x-roles")):
         try:
-            roles.add(Role(raw))
+            roles_set.add(Role(raw))
         except ValueError:
             continue  # unknown role string is ignored, not trusted
 
@@ -98,7 +206,16 @@ def principal_from_headers(headers: Mapping[str, str]) -> Principal:
         region_ids=_split(headers.get("x-region-ids")),
         store_ids=_split(headers.get("x-store-ids")),
     )
-    return Principal(subject_id=subject, roles=frozenset(roles), scope=scope)
+    return Principal(subject_id=subject, roles=frozenset(roles_set), scope=scope)
+
+
+def _raise_unauthenticated(reason: str) -> None:
+    """Raise HTTP 401 or a local error when FastAPI is absent."""
+    if HTTPException is not None:
+        raise HTTPException(status_code=401, detail=reason)
+    raise AuthorizationError(
+        Decision.deny(reason, policy_id="jwt_auth")
+    )
 
 
 def authorize_request(
