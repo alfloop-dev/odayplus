@@ -194,6 +194,54 @@ def test_default_boundary_none_when_unconfigured(monkeypatch):
         deps.reset_default_boundary()
 
 
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"ODP_AUTH_ISSUER": ISSUER, "ODP_AUTH_AUDIENCES": AUDIENCE},  # no keys
+        {"ODP_AUTH_ISSUER": ISSUER},  # issuer only
+        {"ODP_AUTH_AUDIENCES": AUDIENCE},  # audiences only
+        {"ODP_AUTH_HS256_KEYS": "k1:api-wiring-secret"},  # keys only
+    ],
+)
+def test_partial_env_fails_closed_not_header_trust(monkeypatch, env):
+    """A partial ODP_AUTH_* config must NOT re-enable the header-trust stub.
+
+    Regression for ODP-FIN-AUTH-001: setting some but not all live inputs used
+    to leave ``is_configured`` False, dropping the boundary to ``None`` and
+    silently trusting spoofable ``x-subject-id`` / ``x-roles``. The boundary is
+    now active (fail-closed) whenever any live input is present.
+    """
+
+    for var in (
+        "ODP_AUTH_ISSUER",
+        "ODP_AUTH_AUDIENCES",
+        "ODP_AUTH_HS256_KEYS",
+        "ODP_AUTH_LEEWAY_SECONDS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    deps.reset_default_boundary()
+    try:
+        # Boundary is active despite the incomplete config.
+        assert deps.default_boundary() is not None
+
+        # A spoofed platform_admin principal is rejected, not authenticated.
+        with pytest.raises(_UNAUTH_EXC) as exc_info:
+            deps.principal_from_headers(
+                {"x-subject-id": "spoofed", "x-roles": Role.PLATFORM_ADMIN.value}
+            )
+        _assert_401(exc_info, AuthFailureReason.NO_CREDENTIALS)
+
+        # A presented bearer token also fails closed: an incomplete config
+        # cannot verify anything.
+        with pytest.raises(_UNAUTH_EXC) as exc_info:
+            deps.principal_from_headers(_bearer(_token()))
+        _assert_401(exc_info, AuthFailureReason.BOUNDARY_NOT_CONFIGURED)
+    finally:
+        deps.reset_default_boundary()
+
+
 def test_default_boundary_built_from_env(monkeypatch):
     monkeypatch.setenv("ODP_AUTH_ISSUER", ISSUER)
     monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)

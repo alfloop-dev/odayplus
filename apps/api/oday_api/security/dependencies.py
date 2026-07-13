@@ -99,11 +99,21 @@ _default_boundary: object = _UNSET
 def default_boundary() -> AuthenticationBoundary | None:
     """Return the env-configured :class:`AuthenticationBoundary`, or ``None``.
 
-    ``None`` means the live IdP inputs (``ODP_AUTH_ISSUER`` / ``ODP_AUTH_AUDIENCES``
-    / signing keys) are absent, so this environment keeps the legacy
-    header-trust behaviour. Built once and cached; call
-    :func:`reset_default_boundary` after mutating ``ODP_AUTH_*`` (e.g. in tests)
-    to force a rebuild.
+    The boundary is active whenever **any** live IdP input is present
+    (``ODP_AUTH_ISSUER`` / ``ODP_AUTH_AUDIENCES`` / ``ODP_AUTH_HS256_KEYS``).
+    ``None`` -- keeping the legacy header-trust behaviour -- is returned only
+    when the environment carries *no* ``ODP_AUTH_*`` live inputs at all.
+
+    This fails closed on a *partial* configuration: setting, say, the issuer and
+    audiences but forgetting the signing keys makes the boundary active but not
+    :attr:`~modules.opsboard.auth.config.AuthBoundaryConfig.is_configured`, so
+    every request is denied (401) instead of silently falling back to trusting
+    spoofable ``x-subject-id`` / ``x-roles`` headers (ODP-FIN-AUTH-001). A
+    deployer who set any auth input clearly intends live auth; a typo must never
+    downgrade to header trust.
+
+    Built once and cached; call :func:`reset_default_boundary` after mutating
+    ``ODP_AUTH_*`` (e.g. in tests) to force a rebuild.
     """
 
     global _default_boundary
@@ -113,7 +123,7 @@ def default_boundary() -> AuthenticationBoundary | None:
 
         config = config_from_env()
         _default_boundary = (
-            AuthenticationBoundary(config) if config.is_configured else None
+            AuthenticationBoundary(config) if config.has_live_inputs else None
         )
     return _default_boundary  # type: ignore[return-value]
 
