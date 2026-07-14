@@ -70,7 +70,7 @@ def create_network_rebalance_sub_router(
             correlation_id=x_correlation_id,
         )
 
-    @router.post("/reset")
+    @router.post("/reset", dependencies=[Depends(require_write_permission_fn)])
     def reset_network_rebalance() -> dict[str, Any]:
         if reset_govern_fn is not None:
             reset_govern_fn()

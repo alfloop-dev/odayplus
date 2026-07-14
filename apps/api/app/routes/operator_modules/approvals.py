@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.domain.r4_dtos import (
@@ -21,21 +21,23 @@ from modules.opsboard.domain.r4_dtos import (
 
 
 def _read_context(
+    request: Request,
     *,
     x_operator_role: str | None,
     x_subject_id: str | None,
     x_roles: str | None,
 ) -> dict[str, str | None]:
     return {
-        "role_id": x_operator_role,
-        "subject_id": x_subject_id,
-        "system_roles": x_roles,
+        "role_id": getattr(request.state, "operator_role_id", None) or x_operator_role,
+        "subject_id": getattr(request.state, "operator_subject_id", None) or x_subject_id,
+        "system_roles": getattr(request.state, "operator_system_roles", None) or x_roles,
     }
 
 
 def create_approvals_sub_router(
     state_service: OperatorStateService,
-    require_permission_fn: Callable[..., Any],
+    require_view_permission_fn: Callable[..., Any],
+    require_write_permission_fn: Callable[..., Any],
 ) -> APIRouter:
     """Return the approvals sub-router.
 
@@ -43,14 +45,17 @@ def create_approvals_sub_router(
     ----------
     state_service:
         Shared OperatorStateService instance.
-    require_permission_fn:
+    require_view_permission_fn:
+        Operator Console read guard.
+    require_write_permission_fn:
         A callable that returns a FastAPI dependency for the write guard.
-        Typically ``require_permission("intervention", Action.APPROVE, engine=...)``.
+        Typically ``require_operator_permission("intervention", Action.APPROVE, engine=...)``.
     """
     router = APIRouter()
 
-    @router.get("/approvals")
+    @router.get("/approvals", dependencies=[Depends(require_view_permission_fn)])
     def get_approvals(
+        request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
         x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
         x_roles: str | None = Header(default=None, alias="X-Roles"),
@@ -58,6 +63,7 @@ def create_approvals_sub_router(
         """List pending approval decisions."""
         items = state_service.get_approvals(
             **_read_context(
+                request,
                 x_operator_role=x_operator_role,
                 x_subject_id=x_subject_id,
                 x_roles=x_roles,
@@ -67,7 +73,7 @@ def create_approvals_sub_router(
 
     @router.post(
         "/approvals/{approval_id}/decision",
-        dependencies=[Depends(require_permission_fn)],
+        dependencies=[Depends(require_write_permission_fn)],
     )
     def decide_approval(
         approval_id: str,

@@ -153,12 +153,16 @@ class OutcomePayload(BaseModel):
 def create_growth_sub_router(
     service: GrowthService,
     *,
+    require_view_permission_fn: Any = None,
     require_permission_fn: Any = None,
 ) -> APIRouter:
     """Return the Growth sub-router wired to a shared GrowthService instance."""
     router = APIRouter(prefix="/growth", tags=["operator-growth"])
 
     # Build auth dependency list
+    read_deps: list[Any] = []
+    if require_view_permission_fn is not None:
+        read_deps = [Depends(require_view_permission_fn)]
     write_deps: list[Any] = []
     if require_permission_fn is not None:
         write_deps = [Depends(require_permission_fn)]
@@ -167,13 +171,13 @@ def create_growth_sub_router(
     # Read endpoints
     # ------------------------------------------------------------------
 
-    @router.get("/freshness")
+    @router.get("/freshness", dependencies=read_deps)
     def get_freshness(request: Request) -> dict[str, Any]:
         data = service.get_freshness()
         data["correlation_id"] = request.state.correlation_id
         return data
 
-    @router.get("/segments")
+    @router.get("/segments", dependencies=read_deps)
     def list_segments(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
@@ -185,7 +189,7 @@ def create_growth_sub_router(
             "correlation_id": request.state.correlation_id,
         }
 
-    @router.get("/recommendations")
+    @router.get("/recommendations", dependencies=read_deps)
     def list_recommendations(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
@@ -197,7 +201,7 @@ def create_growth_sub_router(
             "correlation_id": request.state.correlation_id,
         }
 
-    @router.get("/actions")
+    @router.get("/actions", dependencies=read_deps)
     def list_actions(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
@@ -210,7 +214,7 @@ def create_growth_sub_router(
             "correlation_id": request.state.correlation_id,
         }
 
-    @router.get("/actions/{action_id}")
+    @router.get("/actions/{action_id}", dependencies=read_deps)
     def get_action(action_id: str, request: Request) -> dict[str, Any]:
         try:
             data = service.get_action(action_id)
@@ -219,7 +223,7 @@ def create_growth_sub_router(
         except GrowthNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    @router.get("/summary")
+    @router.get("/summary", dependencies=read_deps)
     def get_summary(request: Request) -> dict[str, Any]:
         summary = service.get_summary()
         summary["correlation_id"] = request.state.correlation_id
@@ -314,7 +318,7 @@ def create_growth_sub_router(
     # Conflict gate + approval lifecycle (package 6 five-step builder)
     # ------------------------------------------------------------------
 
-    @router.post("/conflicts/check")
+    @router.post("/conflicts/check", dependencies=read_deps)
     def check_conflicts(body: ConflictCheckPayload, request: Request) -> dict[str, Any]:
         result = service.check_conflicts(
             kind=body.kind,
@@ -349,7 +353,7 @@ def create_growth_sub_router(
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    @router.get("/approvals")
+    @router.get("/approvals", dependencies=read_deps)
     def list_approvals(request: Request) -> dict[str, Any]:
         items = service.list_approvals()
         return {
@@ -380,7 +384,7 @@ def create_growth_sub_router(
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    @router.get("/decisions")
+    @router.get("/decisions", dependencies=read_deps)
     def list_decisions(request: Request) -> dict[str, Any]:
         items = service.list_decisions()
         return {

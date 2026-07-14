@@ -32,6 +32,7 @@ BASE = "/api/v1/operator/growth"
 WRITE_HEADERS = {
     "X-Subject-Id": "test-growth-lead",
     "X-Roles": "operations_manager",
+    "X-Tenant-Id": "tenant-a",
 }
 
 
@@ -85,9 +86,9 @@ def _create_draft(
 def test_growth_read_endpoints_return_envelopes() -> None:
     client = _client()
     for path in ("/freshness", "/segments", "/recommendations", "/actions", "/summary"):
-        resp = client.get(f"{BASE}{path}")
+        resp = client.get(f"{BASE}{path}", headers=WRITE_HEADERS)
         assert resp.status_code == 200, (path, resp.text)
-    actions = client.get(f"{BASE}/actions").json()
+    actions = client.get(f"{BASE}/actions", headers=WRITE_HEADERS).json()
     assert actions["count"] >= 5
     # Seed actions expose their draft kind and a derived closeout gate.
     first = actions["items"][0]
@@ -107,7 +108,7 @@ def test_three_entry_cards_persist_correct_draft_type() -> None:
         assert created["kind"] == kind
         assert created["status"] == "DRAFT"
         # Persisted: a follow-up GET round-trips the same draft type.
-        fetched = client.get(f"{BASE}/actions/{created['id']}").json()
+        fetched = client.get(f"{BASE}/actions/{created['id']}", headers=WRITE_HEADERS).json()
         assert fetched["kind"] == kind, (kind, fetched["kind"])
 
 
@@ -117,7 +118,7 @@ def test_create_action_idempotency_replays_same_draft() -> None:
     second = _create_draft(client, kind="offpeak", idem="idem-dup")
     assert first["id"] == second["id"]
     # Only one action was actually appended for the duplicated key.
-    ids = [a["id"] for a in client.get(f"{BASE}/actions").json()["items"]]
+    ids = [a["id"] for a in client.get(f"{BASE}/actions", headers=WRITE_HEADERS).json()["items"]]
     assert ids.count(first["id"]) == 1
 
 
@@ -154,6 +155,7 @@ def test_conflict_check_returns_five_named_checks() -> None:
             "channel": "LINE 推播",
             "budget": 80000,
         },
+        headers=_headers(),
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -184,6 +186,7 @@ def test_blocked_conflict_cannot_submit_and_returns_actionable_reason() -> None:
             "channel": "App 首頁",
             "excludeActionId": second["id"],
         },
+        headers=_headers(),
     ).json()
     assert gate["blocked"] is True
     assert gate["reasons"], "blocked gate must carry actionable reasons"
@@ -198,7 +201,7 @@ def test_blocked_conflict_cannot_submit_and_returns_actionable_reason() -> None:
     assert first["id"] in detail
 
     # The blocked draft stays DRAFT — no approval item was created.
-    assert client.get(f"{BASE}/actions/{second['id']}").json()["status"] == "DRAFT"
+    assert client.get(f"{BASE}/actions/{second['id']}", headers=WRITE_HEADERS).json()["status"] == "DRAFT"
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +224,7 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
     assert submit.json()["status"] == "PENDING_APPROVAL"
 
     # The Govern item is listed on the growth approvals surface.
-    approvals = client.get(f"{BASE}/approvals").json()["items"]
+    approvals = client.get(f"{BASE}/approvals", headers=WRITE_HEADERS).json()["items"]
     assert any(a["id"] == approval["id"] and a["module"] == "Growth" for a in approvals)
 
     # Idempotent re-submit does not create a second approval.
@@ -229,7 +232,7 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
         f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers(idem="idem-submit")
     )
     assert replay.json()["idempotentReplay"] is True
-    assert len(client.get(f"{BASE}/approvals").json()["items"]) == 1
+    assert len(client.get(f"{BASE}/approvals", headers=WRITE_HEADERS).json()["items"]) == 1
 
     # Approve advances the Growth state to APPROVED and writes a Decision Log.
     decided = client.post(
@@ -239,8 +242,8 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
     )
     assert decided.status_code == 200, decided.text
     assert decided.json()["growthStatus"] == "APPROVED"
-    assert client.get(f"{BASE}/actions/{draft['id']}").json()["status"] == "APPROVED"
-    decisions = client.get(f"{BASE}/decisions").json()["items"]
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"] == "APPROVED"
+    decisions = client.get(f"{BASE}/decisions", headers=WRITE_HEADERS).json()["items"]
     assert any(d["ref"] == draft["id"] and d["verdict"] == "核准" for d in decisions)
 
 
@@ -258,7 +261,7 @@ def test_rejected_approval_returns_action_to_draft() -> None:
     )
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["growthStatus"] == "DRAFT"
-    assert client.get(f"{BASE}/actions/{draft['id']}").json()["status"] == "DRAFT"
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"] == "DRAFT"
 
 
 def test_full_lifecycle_pending_to_outcome_ready() -> None:
@@ -308,9 +311,13 @@ def test_outcomes_persist_and_write_decision_log() -> None:
         assert body["status"] == expected_status
         assert body["decision"]["verdict"] == verdict
         # Outcome persists on the action record.
-        assert client.get(f"{BASE}/actions/{action_id}").json()["growthOutcome"] == outcome
+        assert (
+            client.get(f"{BASE}/actions/{action_id}", headers=WRITE_HEADERS)
+            .json()["growthOutcome"]
+            == outcome
+        )
 
-    decisions = client.get(f"{BASE}/decisions").json()["items"]
+    decisions = client.get(f"{BASE}/decisions", headers=WRITE_HEADERS).json()["items"]
     assert len(decisions) == 3
     assert {d["verdict"] for d in decisions} == {"判定有效", "判定無效", "判定待判定"}
 
