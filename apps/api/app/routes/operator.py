@@ -31,6 +31,8 @@ Backward-compat note:
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -76,6 +78,7 @@ def create_operator_router(
     *,
     audit_log: InMemoryAuditLog | None = None,
     state_service: OperatorStateService | None = None,
+    document_store: Any = None,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -93,6 +96,9 @@ def create_operator_router(
     state_service:
         Optional pre-built OperatorStateService; injected by tests to pass
         a pre-seeded service with deterministic state.
+    document_store:
+        Reserved durable state store passed by create_app(); the current R4
+        shell service remains seed-backed and does not consume it yet.
     """
     from apps.api.oday_api.security.dependencies import build_engine, require_permission
     from shared.auth import Action

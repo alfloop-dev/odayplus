@@ -791,8 +791,15 @@
 }
 
 .filterButton {
-  border: 0;
+  min-height: 28px;
+  padding: 0 9px;
+  color: #34405a;
+  background: #f3f6fb;
+  border: 1px solid #d8e0eb;
+  border-radius: 999px;
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
   transition: all 0.2s ease;
 }
 
@@ -815,4 +822,3 @@
   border-color: #3442aa !important;
   box-shadow: 0 4px 12px rgba(52, 66, 170, 0.08);
 }
-
