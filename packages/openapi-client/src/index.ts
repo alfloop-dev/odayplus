@@ -68,9 +68,39 @@ export type AuditEventsResponse = {
   events: AuditEvent[];
 };
 
+export type SourceFreshnessEvidence = {
+  provider_id: string;
+  source_snapshot_id: string;
+  data_status: string;
+  provider_observed_at?: string | null;
+  ingested_at?: string | null;
+  freshness_sla_seconds: number;
+  correlation_id: string;
+  quality_flags?: string[];
+};
+
+export type ExternalDataFreshnessResponse = {
+  freshness: SourceFreshnessEvidence[];
+  correlation_id: string;
+};
+
 export type InterventionSummary = {
   intervention_id: string;
   status?: string;
+  [key: string]: unknown;
+};
+
+/** A persisted four-light ForecastOps alert (see GET /forecastops/alerts). */
+export type ForecastAlert = {
+  alert_id: string;
+  store_id: string;
+  alert_level: string;
+  alert_reason_code: string;
+  status: string;
+  opened_at: string;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  acknowledgement_note?: string | null;
   [key: string]: unknown;
 };
 
@@ -91,6 +121,24 @@ export type HeatZoneScore = {
   unmet_demand: number;
   confidence: number;
   state: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
+ * endpoint). Mirrors `NetPlanScenario.to_dict()` in
+ * modules/netplan/domain/planning.py — only the always-present summary fields
+ * are typed; the full solve/execution/outcome detail lives on the
+ * `/netplan/scenarios/{id}` response and is left open via the index signature.
+ */
+export type NetPlanScenarioSummary = {
+  scenario_id: string;
+  scenario_name?: string;
+  planning_horizon?: string;
+  status?: string;
+  solver_version?: string;
+  model_version?: string;
+  correlation_id?: string;
   [key: string]: unknown;
 };
 
@@ -126,6 +174,29 @@ export type SiteScoreReportSummary = {
   modelVersion: string;
   featureSnapshotTime: string;
   cannibalizationRisk: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A model release decision as served by `GET /learninghub/releases` (the
+ * Learning Hub release/rollback log the UI binds to). Mirrors
+ * `ModelReleaseDecision.to_dict()` in
+ * modules/learninghub/application/release.py — only the always-present summary
+ * fields are typed; the full success/fail criteria detail is left open via the
+ * index signature.
+ */
+export type ModelReleaseSummary = {
+  release_id: string;
+  model_name?: string;
+  from_version?: string | null;
+  to_version?: string;
+  release_type?: string;
+  approval_id?: string;
+  monitoring_window?: string;
+  rollback_target?: string | null;
+  approved_by?: string;
+  created_at?: string;
+  audit_event_id?: string | null;
   [key: string]: unknown;
 };
 
@@ -268,6 +339,10 @@ export class OdpApiClient {
     });
   }
 
+  listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
+    return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
+  }
+
   listAuditEvents(
     options: { correlationId?: string } = {},
   ): Promise<AuditEventsResponse> {
@@ -278,6 +353,14 @@ export class OdpApiClient {
 
   listInterventions(): Promise<ListResponse<InterventionSummary>> {
     return this.request<ListResponse<InterventionSummary>>("/interventions");
+  }
+
+  listForecastAlerts(
+    options: { level?: string } = {},
+  ): Promise<ListResponse<ForecastAlert>> {
+    return this.request<ListResponse<ForecastAlert>>("/forecastops/alerts", {
+      query: { level: options.level },
+    });
   }
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
@@ -309,6 +392,18 @@ export class OdpApiClient {
    */
   listSiteScoreReports(): Promise<ListResponse<SiteScoreReportSummary>> {
     return this.request<ListResponse<SiteScoreReportSummary>>("/sitescore/reports");
+  }
+
+  listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
+    return this.request<ListResponse<NetPlanScenarioSummary>>("/netplan/scenarios");
+  }
+
+  listLearningReleases(
+    options: { modelName?: string } = {},
+  ): Promise<ListResponse<ModelReleaseSummary>> {
+    return this.request<ListResponse<ModelReleaseSummary>>("/learninghub/releases", {
+      query: { model_name: options.modelName },
+    });
   }
 
   getOperatorBootstrap(): Promise<any> {

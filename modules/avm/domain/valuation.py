@@ -208,6 +208,7 @@ class ApprovalDecision:
     approved_at: datetime
     decision_reason: str
     reserve_price: float
+    correlation_id: str
     policy_version: str = AVM_POLICY_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -218,6 +219,7 @@ class ApprovalDecision:
             "approved_at": self.approved_at.isoformat(),
             "decision_reason": self.decision_reason,
             "reserve_price": self.reserve_price,
+            "correlation_id": self.correlation_id,
         }
 
 
@@ -295,6 +297,21 @@ class DataRoom:
     export_audit: tuple[dict[str, Any], ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    @property
+    def completeness(self) -> float:
+        if not self.checklist:
+            return 0.0
+        ready = sum(1 for item in self.checklist if item.status == "ready")
+        return round(ready / len(self.checklist), 4)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.completeness == 1.0
+
+    @property
+    def missing_documents(self) -> tuple[str, ...]:
+        return tuple(item.document_id for item in self.checklist if item.status != "ready")
+
     def with_export(self, *, actor: str, reason: str, correlation_id: str) -> DataRoom:
         event = {
             "export_id": f"avm-export-{uuid4()}",
@@ -310,6 +327,9 @@ class DataRoom:
             "dataroom_id": self.dataroom_id,
             "case_id": self.case_id,
             "checklist": [document.to_dict() for document in self.checklist],
+            "completeness": self.completeness,
+            "is_complete": self.is_complete,
+            "missing_documents": list(self.missing_documents),
             "valuation_card": self.valuation_card,
             "export_audit": list(self.export_audit),
             "created_at": self.created_at.isoformat(),
@@ -341,30 +361,79 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
 def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> ValuationReport:
     item = case.valuation_input
     income_p50 = normalized_margin.normalized_gm * 2.8
-    asset_p50 = max(item.asset_book_value + item.equipment_fair_value + item.working_capital - item.lease_liability, 0.0)
+    asset_p50 = max(
+        item.asset_book_value
+        + item.equipment_fair_value
+        + item.working_capital
+        - item.lease_liability,
+        0.0,
+    )
     multiple = _median(item.comparable_multiples) if item.comparable_multiples else 2.4
     market_p50 = normalized_margin.normalized_gm * multiple * (1 - item.liquidity_discount)
 
-    lenses = (
-        _lens("income", income_p50, "normalized_gm_multiple", {"multiple": 2.8}),
-        _lens("asset", asset_p50, "net_asset_value", {"lease_liability": item.lease_liability}),
+    source_snapshot_ids = list(item.source_snapshot_ids)
+    base_lenses = (
+        _lens(
+            "income",
+            income_p50,
+            "normalized_gm_multiple",
+            {
+                "multiple": 2.8,
+                "gm_ttm": item.gm_ttm,
+                "gm_fwd": item.forecast_gm_next_12m,
+                "normalized_gm": normalized_margin.normalized_gm,
+                "source_snapshot_ids": source_snapshot_ids,
+            },
+        ),
+        _lens(
+            "asset",
+            asset_p50,
+            "net_asset_value",
+            {
+                "asset_book_value": item.asset_book_value,
+                "equipment_fair_value": item.equipment_fair_value,
+                "working_capital": item.working_capital,
+                "lease_liability": item.lease_liability,
+                "source_snapshot_ids": source_snapshot_ids,
+            },
+        ),
         _lens(
             "market",
             market_p50,
             "comparable_multiple_with_liquidity_discount",
-            {"multiple": multiple, "liquidity_discount": item.liquidity_discount},
+            {
+                "multiple": multiple,
+                "comparable_multiples": list(item.comparable_multiples),
+                "liquidity_discount": item.liquidity_discount,
+                "evidence_status": "ready"
+                if item.comparable_multiples
+                else "missing_default_multiple",
+                "source_snapshot_ids": source_snapshot_ids,
+            },
         ),
     )
-    p10 = round(sum(lens.p10 for lens in lenses) / len(lenses), 2)
-    p50 = round(sum(lens.p50 for lens in lenses) / len(lenses), 2)
-    p90 = round(sum(lens.p90 for lens in lenses) / len(lenses), 2)
+    p10 = round(sum(lens.p10 for lens in base_lenses) / len(base_lenses), 2)
+    p50 = round(sum(lens.p50 for lens in base_lenses) / len(base_lenses), 2)
+    p90 = round(sum(lens.p90 for lens in base_lenses) / len(base_lenses), 2)
     fair = PriceBand(p10=p10, p50=p50, p90=p90)
+    blended = LensValuation(
+        lens="blended",
+        p10=p10,
+        p50=p50,
+        p90=p90,
+        method="three_lens_average_fair_price_band",
+        evidence={
+            "included_lenses": [lens.lens for lens in base_lenses],
+            "reserve_formula": "fair_price.p10 * 0.97",
+            "asking_formula": "fair_price.p90 * 1.05",
+        },
+    )
     return ValuationReport(
         report_id=f"avm-report-{uuid4()}",
         case_id=case.case_id,
         store_id=case.store_id,
         normalized_margin=normalized_margin,
-        lenses=lenses,
+        lenses=base_lenses + (blended,),
         fair_price=fair,
         reserve_price=round(p10 * 0.97, 2),
         asking_price=round(p90 * 1.05, 2),
@@ -377,12 +446,40 @@ def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> Val
 
 
 def generate_data_room(report: ValuationReport) -> DataRoom:
+    source_snapshot_ids = _report_source_snapshot_ids(report)
     checklist = (
-        DataRoomDocument("financials", "Normalized GM and forecast evidence", "ready"),
-        DataRoomDocument("assets", "Asset ledger and equipment valuation", "ready"),
-        DataRoomDocument("lease", "Lease and liability summary", "ready"),
-        DataRoomDocument("comparables", "Comparable transaction evidence", "ready"),
-        DataRoomDocument("valuation_card", "Fair, reserve, and asking valuation card", "ready"),
+        DataRoomDocument(
+            "financials",
+            "Normalized GM and forecast evidence",
+            "ready" if report.normalized_margin.normalized_gm > 0 else "missing",
+            source_snapshot_ids[0] if source_snapshot_ids else None,
+        ),
+        DataRoomDocument(
+            "assets",
+            "Asset ledger and equipment valuation",
+            "ready" if _lens_value(report, "asset") > 0 else "missing",
+            source_snapshot_ids[0] if source_snapshot_ids else None,
+        ),
+        DataRoomDocument(
+            "lease",
+            "Lease and liability summary",
+            "ready" if "lease_liability" in _lens_evidence(report, "asset") else "missing",
+            source_snapshot_ids[0] if source_snapshot_ids else None,
+        ),
+        DataRoomDocument(
+            "comparables",
+            "Comparable transaction evidence",
+            "ready"
+            if _lens_evidence(report, "market").get("evidence_status") == "ready"
+            else "missing",
+            source_snapshot_ids[0] if source_snapshot_ids else None,
+        ),
+        DataRoomDocument(
+            "valuation_card",
+            "Fair, reserve, and asking valuation card",
+            "ready",
+            report.report_id,
+        ),
     )
     return DataRoom(
         dataroom_id=f"avm-dataroom-{uuid4()}",
@@ -396,6 +493,9 @@ def generate_data_room(report: ValuationReport) -> DataRoom:
             "asking_price": report.asking_price,
             "model_version": report.model_version,
             "valuation_version": report.valuation_version,
+            "finance_approval": (
+                report.finance_approval.to_dict() if report.finance_approval else None
+            ),
         },
     )
 
@@ -426,6 +526,31 @@ def _median(values: tuple[float, ...]) -> float:
     if len(ordered) % 2:
         return ordered[midpoint]
     return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
+def _lens_evidence(report: ValuationReport, lens_name: str) -> dict[str, Any]:
+    for lens in report.lenses:
+        if lens.lens == lens_name:
+            return lens.evidence
+    return {}
+
+
+def _lens_value(report: ValuationReport, lens_name: str) -> float:
+    for lens in report.lenses:
+        if lens.lens == lens_name:
+            return lens.p50
+    return 0.0
+
+
+def _report_source_snapshot_ids(report: ValuationReport) -> tuple[str, ...]:
+    source_ids: list[str] = []
+    for lens in report.lenses:
+        values = lens.evidence.get("source_snapshot_ids", ())
+        for value in values:
+            item = str(value)
+            if item not in source_ids:
+                source_ids.append(item)
+    return tuple(source_ids)
 
 
 def _bounded(value: Any, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
