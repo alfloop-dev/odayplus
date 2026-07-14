@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 
-
 NETWORK_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
     "x-roles": "expansion_user",
