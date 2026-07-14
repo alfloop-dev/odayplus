@@ -76,6 +76,7 @@ else:
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
         adlift_repository: Any = None,
+        store_ops_repository: Any = None,
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
@@ -183,6 +184,7 @@ else:
         from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.operator import create_operator_router
+        from apps.api.app.routes.operator_modules import create_operator_store_ops_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
@@ -197,6 +199,7 @@ else:
         site_repository = sitescore_repository or bundle.sitescore_repository
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
         adlift_repo = adlift_repository or bundle.adlift_repository
+        store_ops_repo = store_ops_repository or bundle.store_ops_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
         interventions_workflow = intervention_workflow or InterventionWorkflow(
@@ -233,6 +236,13 @@ else:
         )
         api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
         api.include_router(
+            create_operator_store_ops_router(
+                repository=store_ops_repo,
+                audit_log=audit_log,
+            ),
+            prefix="/api/v1",
+        )
+        api.include_router(
             create_interventions_router(
                 workflow=interventions_workflow,
                 label_registry=label_registry,
@@ -253,6 +263,7 @@ else:
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
         api.state.adlift_repository = adlift_repo
+        api.state.store_ops_repository = store_ops_repo
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry

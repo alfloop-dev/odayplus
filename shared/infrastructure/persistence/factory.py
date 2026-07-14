@@ -41,6 +41,7 @@ class PersistenceBundle:
     priceops_repository: Any
     sitescore_repository: Any
     adlift_repository: Any
+    store_ops_repository: Any
     intervention_repository: Any
     intervention_label_registry: Any
     engine: Any = None
@@ -61,6 +62,7 @@ def _memory_bundle() -> PersistenceBundle:
     )
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
+    from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
@@ -80,12 +82,14 @@ def _memory_bundle() -> PersistenceBundle:
         priceops_repository=InMemoryPriceOpsRepository(),
         sitescore_repository=InMemorySiteScoreRepository(),
         adlift_repository=InMemoryAdLiftRepository(),
+        store_ops_repository=InMemoryStoreOpsRepository(),
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
     )
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+    from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -119,6 +123,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
         engine=engine,

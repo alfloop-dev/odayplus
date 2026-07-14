@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from modules.opsboard.application.store_ops import DurableStoreOpsRepository
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -63,6 +64,7 @@ __all__ = [
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableSiteScoreRepository",
+    "DurableStoreOpsRepository",
     "InMemoryLineageRecorder",
     "LineageConflictError",
     "LineageManifest",
