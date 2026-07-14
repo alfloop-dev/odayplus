@@ -18,6 +18,8 @@ never be included_router'd without their auth guard.
 from .approvals import create_approvals_sub_router
 from .evidence import create_evidence_sub_router
 from .issues import create_issues_sub_router
+from .network_listings import create_network_listings_sub_router
+from .network_scoring import create_network_scoring_sub_router
 from .seed import create_seed_sub_router
 from .shell import create_shell_sub_router
 from .store_ops import create_operator_store_ops_router
@@ -27,6 +29,8 @@ __all__ = [
     "create_issues_sub_router",
     "create_approvals_sub_router",
     "create_evidence_sub_router",
+    "create_network_listings_sub_router",
+    "create_network_scoring_sub_router",
     "create_seed_sub_router",
     "create_operator_store_ops_router",
 ]
