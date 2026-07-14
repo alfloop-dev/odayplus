@@ -24,9 +24,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+.consoleNetworkParity {
+  --operator-bg: #f2f4f8;
+  min-width: 1280px;
+  background: #f2f4f8;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .topbar {
   position: sticky;
-  top: var(--odp-layout-header-height);
+  top: 0;
   z-index: 30;
   min-width: 1180px;
   display: flex;
@@ -38,6 +46,54 @@
   background: var(--operator-topbar);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 8px 24px rgba(5, 10, 20, 0.22);
+}
+
+.consoleNetworkParity .topbar {
+  min-height: 52px;
+  padding: 7px 20px;
+  background: #181e38;
+  border-bottom-color: #10142a;
+  box-shadow: none;
+}
+
+.consoleNetworkParity .brandMark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #3d4cc4, #12909f);
+  color: #ffffff;
+  font-size: 11px;
+}
+
+.consoleNetworkParity .brandText small {
+  color: #8e97be;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.consoleNetworkParity .workspaceNav {
+  flex: 0 1 auto;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.consoleNetworkParity .workspaceNavItem {
+  min-width: 76px;
+  height: 38px;
+  padding: 0 12px;
+}
+
+.consoleNetworkParity .workspaceNavItem span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.consoleNetworkParity .workspaceNavItem small {
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .brandCluster {
@@ -514,10 +570,31 @@
   font-size: 13px;
 }
 
+.consoleNetworkParity .pocBanner {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid #efe2c0;
+  border-radius: 0;
+  background: #fbf6e9;
+  color: #7a6220;
+  padding: 5px 20px;
+}
+
+.consoleNetworkParity .pocBanner span,
+.consoleNetworkParity .pocBanner strong {
+  font-size: 11px;
+}
+
 .shell {
   width: 100%;
   margin: 0;
   padding: 14px 20px 28px;
+}
+
+.consoleNetworkParity .shell {
+  max-width: 1720px;
+  margin: 0 auto;
+  padding: 16px 20px 44px;
 }
 
 .workspaceHeader {

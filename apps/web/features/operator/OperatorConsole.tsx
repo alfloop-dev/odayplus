@@ -377,6 +377,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   }, [shellEnvelope.navigation.workspaces]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
+  const isNetworkWorkspace = activeWorkspaceId === "network";
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
 
@@ -895,7 +896,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   }
 
   return (
-    <div className={styles.console} data-testid="operator-console">
+    <div
+      className={[styles.console, isNetworkWorkspace ? styles.consoleNetworkParity : ""].join(" ")}
+      data-testid="operator-console"
+    >
       <header className={styles.topbar} data-screen-label="Top Navigation">
         <div className={styles.brandCluster} aria-label="Oday Plus Operator Console">
           <span className={styles.brandMark}>O+</span>
@@ -1179,26 +1183,24 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             onOpenWorkflow={openStoreOpsWorkflow}
           />
         ) : activeWorkspaceId === "network" ? (
-          <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
-            <NetworkFindAreasWorkspace
-              liveCandidates={liveNetworkBindings?.candidates}
-              liveHeatZones={liveNetworkBindings?.heatZones}
-              callbacks={{
-                onChangeLens: (lens) => showToast(`Network lens: ${lens}`),
-                onScoreCandidate: (candidate, heatZone) => showToast(`${candidate.id} scoring opened for ${heatZone.id}`),
-                onSelectHeatZone: (heatZone) => showToast(`${heatZone.id} selected`),
-                onSourceListings: (heatZone) => showToast(`${heatZone.id} source listings callback recorded`),
-                onSubmitReview: (heatZone) => showToast(`${heatZone.id} review submitted to POC shell`),
-                onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
-                onDecideReview: (reviewId, status, reason) =>
-                  handleApprovalDecision(
-                    reviewId,
-                    status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned",
-                    { reason },
-                  ),
-              }}
-            />
-          </WorkspaceChrome>
+          <NetworkFindAreasWorkspace
+            liveCandidates={liveNetworkBindings?.candidates}
+            liveHeatZones={liveNetworkBindings?.heatZones}
+            callbacks={{
+              onChangeLens: (lens) => showToast(`Network lens: ${lens}`),
+              onScoreCandidate: (candidate, heatZone) => showToast(`${candidate.id} scoring opened for ${heatZone.id}`),
+              onSelectHeatZone: (heatZone) => showToast(`${heatZone.id} selected`),
+              onSourceListings: (heatZone) => showToast(`${heatZone.id} source listings callback recorded`),
+              onSubmitReview: (heatZone) => showToast(`${heatZone.id} review submitted to POC shell`),
+              onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
+              onDecideReview: (reviewId, status, reason) =>
+                handleApprovalDecision(
+                  reviewId,
+                  status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned",
+                  { reason },
+                ),
+            }}
+          />
         ) : activeWorkspaceId === "govern" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <GovernanceWorkspace
