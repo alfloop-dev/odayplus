@@ -1,27 +1,26 @@
 {
-  "generatedAt": "2026-07-14T08:12:17.313Z",
-  "source": "Playwright WebGL readPixels across the full product HeatZoneMap canvas",
+  "generatedAt": "2026-07-14T09:01:30.898Z",
+  "source": "Playwright WebGL readPixels against the product Network embedded HeatZoneMap canvas",
   "productDesktop": {
     "suffix": "desktop",
     "viewport": {
-      "width": 1440,
-      "height": 1000
+      "width": 1472,
+      "height": 982
     },
-    "productRole": "expansion_reviewer",
-    "productRoleLabel": "展店審查",
+    "productUrl": "http://127.0.0.1:3115/operator?ws=network",
     "mapBefore": {
-      "width": 755,
-      "height": 471,
+      "width": 888,
+      "height": 508,
       "hasVisiblePixels": true,
-      "sampledPixels": 355605,
-      "nonWhiteSampleCount": 88902
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
     },
     "mapAfter": {
-      "width": 755,
-      "height": 457,
+      "width": 888,
+      "height": 478,
       "hasVisiblePixels": true,
-      "sampledPixels": 345035,
-      "nonWhiteSampleCount": 86259
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
     },
     "selectedZoneAfter": "HZ-02"
   },
@@ -31,21 +30,20 @@
       "width": 390,
       "height": 900
     },
-    "productRole": "expansion_reviewer",
-    "productRoleLabel": "展店審查",
+    "productUrl": "http://127.0.0.1:3115/operator?ws=network",
     "mapBefore": {
-      "width": 1116,
-      "height": 425,
+      "width": 552,
+      "height": 490,
       "hasVisiblePixels": true,
-      "sampledPixels": 474300,
-      "nonWhiteSampleCount": 118575
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
     },
     "mapAfter": {
-      "width": 1116,
-      "height": 404,
+      "width": 552,
+      "height": 466,
       "hasVisiblePixels": true,
-      "sampledPixels": 450864,
-      "nonWhiteSampleCount": 112716
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
     },
     "selectedZoneAfter": "HZ-02"
   }

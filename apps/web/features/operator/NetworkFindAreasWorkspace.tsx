@@ -321,6 +321,7 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
+      setActiveTab(1);
     }
   }
 
@@ -436,19 +437,20 @@ export function NetworkFindAreasWorkspace({
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
   return (
-    <section className={styles.workspace} data-testid="network-find-areas-workspace">
+    <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
         <div>
           <p className={styles.kicker}>Network</p>
-          <h2>Find Areas</h2>
+          <h2>展店與店網</h2>
+          <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
         </div>
         <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <span>{viewModel.totals.heatZones} HeatZones</span>
-          <span>{viewModel.totals.listings} listings</span>
-          <span>{viewModel.totals.candidates} candidates</span>
-          <span>{viewModel.totals.reviews} reviews</span>
-          <span>{viewModel.totals.rebalances} rebalances</span>
-          <span>{viewModel.totals.averageConfidence} avg confidence</span>
+          <span><strong>{viewModel.totals.heatZones}</strong> HeatZones</span>
+          <span><strong>{viewModel.totals.listings}</strong> listings</span>
+          <span><strong>{viewModel.totals.candidates}</strong> candidates</span>
+          <span><strong>{viewModel.totals.reviews}</strong> reviews</span>
+          <span><strong>{viewModel.totals.rebalances}</strong> rebalances</span>
+          <span><strong>{viewModel.totals.averageConfidence}</strong> avg confidence</span>
           {isFixtureFallback && (
             <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
               fixture data
@@ -548,7 +550,7 @@ function FindAreasPanel({
   );
   const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel">
+    <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
           {viewModel.lenses.map((lens) => (
