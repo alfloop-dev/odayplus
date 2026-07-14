@@ -1,0 +1,52 @@
+{
+  "generatedAt": "2026-07-14T08:12:17.313Z",
+  "source": "Playwright WebGL readPixels across the full product HeatZoneMap canvas",
+  "productDesktop": {
+    "suffix": "desktop",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "productRole": "expansion_reviewer",
+    "productRoleLabel": "展店審查",
+    "mapBefore": {
+      "width": 755,
+      "height": 471,
+      "hasVisiblePixels": true,
+      "sampledPixels": 355605,
+      "nonWhiteSampleCount": 88902
+    },
+    "mapAfter": {
+      "width": 755,
+      "height": 457,
+      "hasVisiblePixels": true,
+      "sampledPixels": 345035,
+      "nonWhiteSampleCount": 86259
+    },
+    "selectedZoneAfter": "HZ-02"
+  },
+  "productConstrained": {
+    "suffix": "constrained",
+    "viewport": {
+      "width": 390,
+      "height": 900
+    },
+    "productRole": "expansion_reviewer",
+    "productRoleLabel": "展店審查",
+    "mapBefore": {
+      "width": 1116,
+      "height": 425,
+      "hasVisiblePixels": true,
+      "sampledPixels": 474300,
+      "nonWhiteSampleCount": 118575
+    },
+    "mapAfter": {
+      "width": 1116,
+      "height": 404,
+      "hasVisiblePixels": true,
+      "sampledPixels": 450864,
+      "nonWhiteSampleCount": 112716
+    },
+    "selectedZoneAfter": "HZ-02"
+  }
+}

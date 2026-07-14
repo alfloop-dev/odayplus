@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-07-14T08:14:41.505Z",
+  "sourcePackage": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6",
+  "sourceZipSha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+  "sourceInteractiveHtmlSha256": "65d359f4abaf82b39eb16f67da8e91e7ad1b030628bc15f8f45ce7c18c0e2f48",
+  "productUrl": "http://127.0.0.1:3115/operator?ws=network",
+  "designUrl": "http://127.0.0.1:8126/Oday%20Plus%20Operator%20Console.dc.html",
+  "roleForDesignCapture": "展店經理",
+  "relevantDataScreenLabels": [
+    "Network 展店與店網",
+    "Network Expansion Flow Stepper",
+    "Network 找區域",
+    "Network 物件雷達"
+  ],
+  "captures": [
+    "screenshots/product-network-desktop.png",
+    "screenshots/product-listing-radar-desktop.png",
+    "screenshots/product-network-constrained.png",
+    "screenshots/product-listing-radar-constrained.png",
+    "screenshots/design-network-desktop.png",
+    "screenshots/design-listing-radar-desktop.png",
+    "screenshots/design-network-constrained.png",
+    "screenshots/design-listing-radar-constrained.png"
+  ],
+  "designLabelsSeen": {
+    "desktopNetwork": [
+      "Network 展店與店網",
+      "Network Expansion Flow Stepper",
+      "Network 找區域"
+    ],
+    "desktopRadar": [
+      "Network 展店與店網",
+      "Network Expansion Flow Stepper",
+      "Network 物件雷達"
+    ],
+    "constrainedNetwork": [
+      "Network 展店與店網",
+      "Network Expansion Flow Stepper",
+      "Network 找區域"
+    ],
+    "constrainedRadar": [
+      "Network 展店與店網",
+      "Network Expansion Flow Stepper",
+      "Network 物件雷達"
+    ]
+  },
+  "apiProofSummary": {
+    "convertCandidateId": "CS-1001",
+    "mergeTargetContainsRetainedEvidence": true,
+    "archiveStatus": "archived"
+  },
+  "productRoleForCapture": "展店審查 (expansion_reviewer)",
+  "constrainedCaptureMode": "viewport 390x900 from scroll origin for product and archived design; map synchronization is separately proven in map-pixel-proof.json"
+}
