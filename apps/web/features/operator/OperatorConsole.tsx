@@ -1010,7 +1010,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               ! {shellEnvelope.header.counts.notifications}
             </Button>
             {isNotificationOpen ? (
-              <div className={styles.notificationPanel}>
+              <div className={styles.notificationPanel} data-screen-label="Notifications" data-testid="operator-notifications">
                 <div className={styles.popoverTitle}>Notifications</div>
                 {liveNotifications.map((notification) => (
                   <article className={styles.notificationItem} key={notification.id ?? notification.title}>
@@ -1107,6 +1107,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           <div className={styles.popoverAnchor}>
             <Button
               aria-expanded={isRoleMenuOpen}
+              aria-label="Open role switch menu"
+              data-testid="operator-role-switch"
               onClick={() => {
                 setIsRoleMenuOpen((open) => !open);
                 setIsNotificationOpen(false);
@@ -1118,7 +1120,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               {activeRole.label}
             </Button>
             {isRoleMenuOpen ? (
-              <div className={styles.roleMenu}>
+              <div className={styles.roleMenu} data-screen-label="Role Switch Menu" data-testid="operator-role-menu">
                 <div className={styles.popoverTitle}>Role switcher</div>
                 {rolesForShell.map((role) => (
                   <button

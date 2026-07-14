@@ -73,6 +73,15 @@ REQUIRED_FILES = {
     "external proof follow-up workflow checker": "scripts/e2e/check_external_proof_followup_workflow.py",
     "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
+    # ODP-OC-R4-011: mandatory R4 Operator Console visual + accessibility gate.
+    "operator visual a11y gate checker": "scripts/e2e/check_operator_visual_a11y_gate.py",
+    "operator visual a11y spec": "tests/e2e/operator-visual-a11y.spec.ts",
+    "operator screen label coverage manifest": "docs/evidence/completion/ODP-OC-R4-011/screen_label_coverage.json",
+    "operator visual a11y completion report": "docs/evidence/completion/ODP-OC-R4-011/VISUAL_A11Y_GATE_REPORT.md",
+    "operator console interactive html source": (
+        "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/"
+        "extracted/Oday Plus Operator Console.dc.html"
+    ),
 }
 
 REQUIRED_RUNNER_SPECS = (
@@ -82,6 +91,19 @@ REQUIRED_RUNNER_SPECS = (
     "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
     "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
     "tests/e2e/product-e2e-env.spec.ts",
+    # ODP-OC-R4-011: full R4 Operator Console product E2E (visual, accessibility,
+    # six-role allow/deny, map-pixel, reload) is mandatory in the release runner.
+    "tests/e2e/e2e-operator-console.spec.ts",
+    "tests/e2e/e2e-map-a11y.spec.ts",
+    "tests/e2e/operator-visual-a11y.spec.ts",
+    "tests/e2e/operator-shell-today.spec.ts",
+    "tests/e2e/operator-store-ops.spec.ts",
+    "tests/e2e/operator-growth.spec.ts",
+    "tests/e2e/operator-governance.spec.ts",
+    "tests/e2e/operator-network-listings.spec.ts",
+    "tests/e2e/operator-network-scoring.spec.ts",
+    "tests/e2e/operator-network-review.spec.ts",
+    "tests/e2e/operator-network-rebalance.spec.ts",
 )
 
 REQUIRED_REPORT_TOKENS = (
@@ -298,6 +320,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"external proof handback status board check failed: {output}")
+
+    operator_visual_a11y_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_operator_visual_a11y_gate.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if operator_visual_a11y_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (operator_visual_a11y_check.stdout + operator_visual_a11y_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"operator visual/a11y gate check failed: {output}")
 
     go_no_go_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_go_no_go.py"],

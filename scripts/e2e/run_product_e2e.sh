@@ -41,15 +41,32 @@ python3 scripts/e2e/seed_product_e2e_data.py \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
 
 set +e
+# ODP-OC-R4-011 makes the full R4 Operator Console product E2E — the visual,
+# accessibility, six-role allow/deny, map-pixel and reload gates — mandatory in
+# the release runner. ODP_OPERATOR_PRODUCT_GATE=1 arms the ODP-OC-PROD-014
+# go/no-go gate so the run fails when /operator renders an iframe or lacks API
+# read/write proof.
 ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
 OPSBOARD_PORT="$WEB_PORT" \
 ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
+ODP_OPERATOR_PRODUCT_GATE=1 \
 npx playwright test \
   tests/e2e/e2e-api-bound-ui.spec.ts \
   tests/e2e/e2e-map.spec.ts \
+  tests/e2e/e2e-map-a11y.spec.ts \
   tests/e2e/e2e-expansion-product.spec.ts \
   tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts \
   tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts \
+  tests/e2e/e2e-operator-console.spec.ts \
+  tests/e2e/operator-visual-a11y.spec.ts \
+  tests/e2e/operator-shell-today.spec.ts \
+  tests/e2e/operator-store-ops.spec.ts \
+  tests/e2e/operator-growth.spec.ts \
+  tests/e2e/operator-governance.spec.ts \
+  tests/e2e/operator-network-listings.spec.ts \
+  tests/e2e/operator-network-scoring.spec.ts \
+  tests/e2e/operator-network-review.spec.ts \
+  tests/e2e/operator-network-rebalance.spec.ts \
   tests/e2e/product-e2e-env.spec.ts \
   --project=chromium
 test_status=$?

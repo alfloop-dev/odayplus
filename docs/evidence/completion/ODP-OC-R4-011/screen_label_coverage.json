@@ -1,0 +1,289 @@
+{
+  "canonical_source": {
+    "interactive_html": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/extracted/Oday Plus Operator Console.dc.html",
+    "package": "r4-20260707-package-6",
+    "screen_label_count": 32,
+    "zip": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip",
+    "zip_sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76"
+  },
+  "coverage_counts": {
+    "non_runtime_assertion": 3,
+    "runtime_dialog": 9,
+    "runtime_workspace": 20
+  },
+  "schema": "oday-plus.operator-console.visual-a11y-coverage.v1",
+  "screen_labels": {
+    "Dialog Assign": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 指派 Owner",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Camera Purpose": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 點擊填寫調閱目的",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Create Action": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 建立 Field Action",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Escalate": {
+      "coverage": "non_runtime_assertion",
+      "note": "dialogScreenLabels.escalate",
+      "source": "apps/web/features/operator/StoreOpsWorkflowDialogs.tsx"
+    },
+    "Dialog Growth Draft Builder": {
+      "coverage": "runtime_dialog",
+      "note": "opened via growth entry builder",
+      "spec": "tests/e2e/operator-growth.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Growth Outcome": {
+      "coverage": "runtime_dialog",
+      "note": "opened via growth closeout outcome",
+      "spec": "tests/e2e/operator-growth.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Outcome Review": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 檢視 Outcome",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Reply Review": {
+      "coverage": "non_runtime_assertion",
+      "note": "dialogScreenLabels.replyReview",
+      "source": "apps/web/features/operator/StoreOpsWorkflowDialogs.tsx"
+    },
+    "Dialog Review Decision": {
+      "coverage": "runtime_dialog",
+      "note": "opened via review go/return/reject",
+      "spec": "tests/e2e/operator-network-review.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Dialog Transfer": {
+      "coverage": "non_runtime_assertion",
+      "note": "dialogScreenLabels.transfer",
+      "source": "apps/web/features/operator/StoreOpsWorkflowDialogs.tsx"
+    },
+    "Dialog Triage": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 完成 Triage",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Drawer Field Report": {
+      "coverage": "runtime_dialog",
+      "note": "opened via 提交 Field Report",
+      "spec": "tests/e2e/operator-store-ops.spec.ts",
+      "viewports": [
+        "desktop-1440x900"
+      ]
+    },
+    "Govern 治理稽核": {
+      "coverage": "runtime_workspace",
+      "note": "approval center / decision log / audit trail",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Growth PriceOps": {
+      "coverage": "runtime_workspace",
+      "note": "priceops recommendation table",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Growth 建立入口": {
+      "coverage": "runtime_workspace",
+      "note": "three create-entry cards",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Growth 會員分群": {
+      "coverage": "runtime_workspace",
+      "note": "member segments tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Growth 營收成長": {
+      "coverage": "runtime_workspace",
+      "note": "growth workspace shell",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network Expansion Flow Stepper": {
+      "coverage": "runtime_workspace",
+      "note": "expansion flow stepper above tabs",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network SiteScore Lab": {
+      "coverage": "runtime_workspace",
+      "note": "sitescore lab tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 低效重配": {
+      "coverage": "runtime_workspace",
+      "note": "rebalance tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 候選點工作台": {
+      "coverage": "runtime_workspace",
+      "note": "candidate workbench tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 候選點比較": {
+      "coverage": "runtime_workspace",
+      "note": "candidate compare tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 展店與店網": {
+      "coverage": "runtime_workspace",
+      "note": "network workspace shell",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 找區域": {
+      "coverage": "runtime_workspace",
+      "note": "find-areas heatzone tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 物件雷達": {
+      "coverage": "runtime_workspace",
+      "note": "listing radar tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Network 選址審核": {
+      "coverage": "runtime_workspace",
+      "note": "site review tab",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Notifications": {
+      "coverage": "runtime_workspace",
+      "note": "notification tray from header",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Role Switch Menu": {
+      "coverage": "runtime_workspace",
+      "note": "role switch menu from header",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Store Ops 全店四燈摘要": {
+      "coverage": "runtime_workspace",
+      "note": "all-store four-light summary strip in Store Ops",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Store Ops 門市營運": {
+      "coverage": "runtime_workspace",
+      "note": "store issue queue + selected issue detail",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Today 今日工作": {
+      "coverage": "runtime_workspace",
+      "note": "role-aware Today queue/decisions/risk",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    },
+    "Top Navigation": {
+      "coverage": "runtime_workspace",
+      "note": "shell chrome; role switch + notifications live in header",
+      "spec": "tests/e2e/operator-visual-a11y.spec.ts",
+      "viewports": [
+        "desktop-1440x900",
+        "constrained-1024x768"
+      ]
+    }
+  },
+  "task": "ODP-OC-R4-011",
+  "viewports": {
+    "constrained": "1024x768",
+    "desktop": "1440x900"
+  }
+}
