@@ -239,7 +239,7 @@
 
 .expansionStepState {
   grid-area: state;
-  align-self: start;
+  align-self: flex-start;
   border-radius: 4px;
   background: rgba(15, 23, 42, 0.07);
   color: #334155;
@@ -639,7 +639,7 @@
 
 .detailTopline {
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -816,6 +816,179 @@
   color: #172033;
 }
 
+.tabPanel[data-screen-label="Network 找區域"] {
+  grid-template-columns: 206px minmax(0, 1fr) 330px;
+  grid-template-areas:
+    "lens map detail"
+    "lens tray detail";
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensBar {
+  grid-area: lens;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: stretch;
+  position: sticky;
+  top: 76px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensSelector,
+.tabPanel[data-screen-label="Network 找區域"] .legend {
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensSelector {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 13px 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .legend {
+  display: grid;
+  gap: 7px;
+  justify-content: stretch;
+  max-width: none;
+  padding: 13px 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mainGrid {
+  display: contents;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel {
+  grid-area: map;
+  overflow: hidden;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .trayPanel {
+  grid-area: tray;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailPanel {
+  grid-area: detail;
+  gap: 14px;
+  padding: 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"]) {
+  grid-template-rows: minmax(430px, 1fr);
+  min-height: 430px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map-canvas"]) {
+  min-height: 430px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map layer controls"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-config"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-alert"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-state-panel"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-evidence-fallback"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map legend"]) {
+  display: none;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .trayPanel .panelHeader {
+  border-bottom: 0;
+  padding: 0 0 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneList {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main score"
+    "rank score";
+  align-items: stretch;
+  min-height: 74px;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow:hover,
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow[aria-current="true"] {
+  border-color: #b7c6f0;
+  background: #f1f4fd;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .rank {
+  grid-area: rank;
+  align-self: flex-end;
+  color: #7a8496;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain {
+  grid-area: main;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain strong {
+  white-space: normal;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain small {
+  white-space: normal;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowScore {
+  grid-area: score;
+  align-self: flex-start;
+  border-radius: 999px;
+  background: #e2f4f6;
+  color: #0e7c8c;
+  padding: 4px 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailTopline {
+  display: grid;
+  gap: 10px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailActions button {
+  min-width: 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .metricGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid {
+  grid-template-columns: 1fr;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .linkedRows {
+  display: grid;
+  gap: 6px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .linkedRows span {
+  border-radius: 8px;
+}
+
 .emptyState {
   display: grid;
   min-height: 220px;
@@ -827,7 +1000,7 @@
 @media (max-width: 980px) {
   .header,
   .detailTopline {
-    align-items: start;
+    align-items: flex-start;
     flex-direction: column;
   }
 
@@ -996,7 +1169,7 @@
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr) 348px;
   gap: 14px;
-  align-items: start;
+  align-items: flex-start;
 }
 
 .sourceFilterPanel,

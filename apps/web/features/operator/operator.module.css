@@ -1422,7 +1422,7 @@
   inset: 0;
   z-index: 80;
   display: grid;
-  align-items: start;
+  align-items: flex-start;
   justify-items: center;
   padding-top: 92px;
   background: rgba(8, 13, 24, 0.44);
@@ -1796,7 +1796,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 40%);
   gap: var(--odp-space-4);
-  align-items: start;
+  align-items: flex-start;
 }
 
 .drawer {

@@ -70,7 +70,7 @@ export function ListingRadarPanel({
   ];
 
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-listings" role="tabpanel">
+    <div className={styles.tabPanel} data-screen-label="Network 物件雷達" data-testid="network-panel-listings" role="tabpanel">
       <div className={styles.complianceBanner}>
         <span>COMPLIANCE</span>
         正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。

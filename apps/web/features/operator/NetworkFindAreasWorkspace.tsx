@@ -437,7 +437,7 @@ export function NetworkFindAreasWorkspace({
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
   return (
-    <section className={styles.workspace} data-testid="network-find-areas-workspace">
+    <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
         <div>
           <p className={styles.kicker}>Network</p>
@@ -550,7 +550,7 @@ function FindAreasPanel({
   );
   const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel">
+    <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
           {viewModel.lenses.map((lens) => (

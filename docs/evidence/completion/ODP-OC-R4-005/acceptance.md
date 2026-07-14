@@ -11,7 +11,7 @@ Relevant archived package 6 `data-screen-label` values used for comparison:
 
 The archived HTML was opened from the extracted package 6 payload and switched
 to Demo role `展店經理` before capturing Network screens. Product captures used
-role `展店審查 (expansion_reviewer)`.
+`/operator?ws=network` with the API-backed Operator session.
 
 ## Functional Acceptance
 
@@ -22,6 +22,7 @@ role `展店審查 (expansion_reviewer)`.
 | `L-2029` merges into `L-2025` without deleting source evidence | `api-proof.json` retained evidence array and target containment | Pass |
 | `L-2030` archives with a reason and keeps hard-rule evidence | `api-proof.json` archive block | Pass |
 | Real HeatZone map remains nonblank and syncs selected zone/lens | `map-pixel-proof.json` desktop/constrained `hasVisiblePixels: true`, `selectedZoneAfter: HZ-02` | Pass |
+| Product Network no longer renders the extra OpsBoard shell/sidebar or nested Network workspace chrome | `screenshot-manifest.json` `productShellAssertions` all `0` | Pass |
 
 ## Screenshot Comparison
 
@@ -35,19 +36,21 @@ role `展店審查 (expansion_reviewer)`.
 Comparison notes:
 
 - The product now exposes the R4 six-step flow states, Network tabs, HZ/L/CS ids,
-  selected zone chip, API-backed Listing Radar rows, source cards, conversion,
-  merge, archive, and map sync.
-- The archived design has a richer visual layout for source compliance cards and
-  the Listing Radar detail rail. The product intentionally prioritizes the
-  API-backed table/action workflow for this task.
-- In a 390px viewport, both archived design and product require horizontal space
-  for the Network workbench. The product also includes the existing global left
-  rail, which is outside this task's owned layer and is not changed here.
+  selected zone chip, API-backed Listing Radar rows, source cards, detail rail,
+  conversion, merge, archive, and map sync.
+- Reopen fix: product Network now opts out of the outer OpsBoard shell and the
+  nested workspace chrome, matching the package 6 top-level Operator shell.
+- Find Areas now follows the package 6 workbench structure: left lens stack,
+  center HeatZone map plus recommended areas, and right HeatZone detail rail.
+- Listing Radar now follows the package 6 structure: compliance banner, source
+  cards, source filter panel, listing inbox, and detail rail.
+- In a 390px viewport, both archived design and product preserve a wide Network
+  workbench and are captured with horizontal overflow rather than duplicate nav
+  or overlapping chrome.
 
 ## Review Boundary
 
 This evidence refresh resolves the audit gap for package 6 provenance, relevant
-`data-screen-label` values, and desktop/constrained screenshot comparison. Any
-remaining global shell responsiveness work should be handled outside
-ODP-OC-R4-005 because it is not part of the Network Listing Radar owned layer.
-
+`data-screen-label` values, desktop/constrained screenshot comparison, and the
+reopen finding that the prior package-6 screenshots still showed the outer
+OpsBoard shell plus nested Network chrome.

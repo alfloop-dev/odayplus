@@ -36,7 +36,12 @@ export function ExpansionStepper({
   }
 
   return (
-    <section className={styles.expansionStepper} aria-label="Network Golden Flow" data-testid="network-expansion-stepper">
+    <section
+      className={styles.expansionStepper}
+      aria-label="Network Golden Flow"
+      data-screen-label="Network Expansion Flow Stepper"
+      data-testid="network-expansion-stepper"
+    >
       <div className={styles.flowHeader}>
         <span>EXPANSION FLOW · 找點流程</span>
         <strong>{steps.find((step) => activeTab === step.tabIndex)?.summary ?? steps[0]?.summary}</strong>
