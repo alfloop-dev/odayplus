@@ -11,6 +11,7 @@ Sub-module ownership (R4):
   approvals.py  → /operator/approvals, /operator/approvals/{id}/decision
   evidence.py   → /operator/evidence/{id}/purpose
   seed.py       → /operator/seed/reset
+  network_listings.py → /operator/network-listings/*
 
 State contract: all sub-routers share a single OperatorStateService instance
 per application startup so writes from one route are immediately visible in
@@ -120,11 +121,26 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.approvals import create_approvals_sub_router
     from apps.api.app.routes.operator_modules.evidence import create_evidence_sub_router
     from apps.api.app.routes.operator_modules.issues import create_issues_sub_router
+    from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
+    from modules.opsboard.application.network_listings import NetworkListingService
 
     # Shell — read-only, no permission guard needed.
     router.include_router(create_shell_sub_router(svc))
+
+    # Network listing intake — read/write paths for R4 Listing Radar.
+    router.include_router(
+        create_network_listings_sub_router(
+            NetworkListingService(),
+            require_view_permission_fn=require_permission(
+                "listing", Action.VIEW, engine=authz_engine
+            ),
+            require_write_permission_fn=require_permission(
+                "listing", Action.UPDATE, engine=authz_engine
+            ),
+        )
+    )
 
     # Issues — write endpoint requires intervention CREATE guard.
     router.include_router(

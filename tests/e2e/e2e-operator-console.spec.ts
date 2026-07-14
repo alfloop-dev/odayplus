@@ -191,18 +191,18 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   // 物件雷達 / Listing Radar
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("network-panel-listings")).toBeVisible();
-  await expect(page.getByTestId("network-listing-table")).toContainText("LST-440");
-  await expect(page.getByTestId("network-listing-table")).toContainText("LST-441");
+  await expect(page.getByTestId("network-listing-table")).toContainText("L-2024");
+  await expect(page.getByTestId("network-listing-table")).toContainText("L-2030");
+  await page.getByTestId("convert-L-2024").click();
 
   // 候選點 / Candidates
-  await page.getByTestId("network-tab-2").click();
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
-  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1002");
+  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1001");
 
   // SiteScore / Score Lab
   await page.getByTestId("network-tab-3").click();
   await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
-  await expect(page.getByTestId("sitescore-card-CS-1002")).toContainText("sitescore-v0.9.4");
+  await expect(page.getByTestId("sitescore-card-CS-1001")).toContainText("SiteScore v2.3");
 
   // 比較 / Compare
   await page.getByTestId("network-tab-4").click();
@@ -212,22 +212,22 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   // 審核 / Review
   await page.getByTestId("network-tab-5").click();
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
-  await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
+  await expect(page.getByTestId("review-card-RV-1001")).toBeVisible();
 
   // Test reason gate validation error
-  await page.getByTestId("review-reason-input-RV-701").fill("Short");
-  await page.getByTestId("review-btn-approve-RV-701").click();
-  await expect(page.getByTestId("review-error-RV-701")).toContainText("決策理由需至少 10 個字");
+  await page.getByTestId("review-reason-input-RV-1001").fill("Short");
+  await page.getByTestId("review-btn-approve-RV-1001").click();
+  await expect(page.getByTestId("review-error-RV-1001")).toContainText("決策理由需至少 10 個字");
 
   // Perform a valid decision
   const reviewReason = "Review approved based on excellent SiteScore and fit metrics.";
-  await page.getByTestId("review-reason-input-RV-701").fill(reviewReason);
-  await page.getByTestId("review-btn-return-RV-701").click(); // Return decision status
+  await page.getByTestId("review-reason-input-RV-1001").fill(reviewReason);
+  await page.getByTestId("review-btn-return-RV-1001").click(); // Return decision status
 
   // Verify UI changes on card
-  await expect(page.getByTestId("review-card-RV-701")).toContainText("退回");
-  await expect(page.getByTestId("review-reason-RV-701")).toContainText(reviewReason);
-  await expect(page.getByTestId("review-card-RV-701")).toContainText("Decided");
+  await expect(page.getByTestId("review-card-RV-1001")).toContainText("退回");
+  await expect(page.getByTestId("review-reason-RV-1001")).toContainText(reviewReason);
+  await expect(page.getByTestId("review-card-RV-1001")).toContainText("Decided");
 
   // Check that candidate status is updated in Candidates tab
   await page.getByTestId("network-tab-2").click();
