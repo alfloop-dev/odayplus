@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import { createOdpApiClient } from "@oday-plus/openapi-client";
 import {
   Button,
   Chip,
@@ -11,8 +19,10 @@ import {
 } from "./components";
 import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
-import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
+import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
+import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
+import { ISSUE_FIXTURES } from "./fixtures";
 import {
   DEFAULT_OPERATOR_ROLE_ID,
   DEFAULT_WORKSPACE_ID,
@@ -24,17 +34,19 @@ import {
   type OperatorRoleId,
   type WorkspaceId,
 } from "./navigation";
+import {
+  loadNetworkFindAreasBindings,
+  type NetworkFindAreasBindings,
+} from "./networkFindAreasLoader";
 import styles from "./operator.module.css";
+import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
   TodayWorkspace as ApiTodayWorkspace,
   normalizeShellEnvelope,
   type OperatorShellEnvelope,
   type ShellTarget,
 } from "./TodayWorkspace";
-import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
-import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import type { Issue } from "./types";
-import { ISSUE_FIXTURES } from "./fixtures";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
@@ -47,14 +59,6 @@ const rolePermissionHeaders: Record<OperatorRoleId, string> = {
   "ops-lead": "operations_manager",
   "pm-audit": "auditor",
 };
-
-function isOperatorRoleId(value: string): value is OperatorRoleId {
-  return OPERATOR_ROLES.some((role) => role.id === value);
-}
-
-function isWorkspaceId(value: string): value is WorkspaceId {
-  return WORKSPACES.some((workspace) => workspace.id === value);
-}
 
 const notifications = [
   {
@@ -74,6 +78,227 @@ const notifications = [
   },
 ];
 
+type TaskCenterLoadState = "idle" | "loading" | "ready" | "fallback";
+type TaskCenterSource = "api" | "fixture";
+
+type OperatorTask = {
+  dueLabel: string;
+  href: string;
+  id: string;
+  owner: string;
+  priority: string;
+  source: TaskCenterSource;
+  status: string;
+  summary: string;
+  title: string;
+  tone: Tone;
+  workspace?: WorkspaceId;
+};
+
+type CommandGroup = "pages" | "entities" | "actions";
+
+type CommandPaletteItem = {
+  execute: () => void;
+  group: CommandGroup;
+  id: string;
+  keywords: string[];
+  subtitle: string;
+  title: string;
+  tone?: Tone;
+};
+
+const taskCenterFixtures: OperatorTask[] = [
+  {
+    id: "TASK-401",
+    title: "完成 ISS-1024 Triage",
+    summary: "支付失敗率與 Google 負評已合併，需確認根因與下一步 owner。",
+    owner: "營運",
+    status: "SLA 58m",
+    priority: "P0",
+    dueLabel: "58m",
+    tone: "danger",
+    workspace: "store",
+    href: "/operator?ws=store",
+    source: "fixture",
+  },
+  {
+    id: "TASK-418",
+    title: "SiteScore WAIT 複審",
+    summary: "CS-1002 候選點分數 76，競品密度高，需要主管決策理由。",
+    owner: "展店",
+    status: "Review",
+    priority: "P1",
+    dueLabel: "2h",
+    tone: "warning",
+    workspace: "govern",
+    href: "/operator?ws=govern",
+    source: "fixture",
+  },
+  {
+    id: "TASK-433",
+    title: "補齊 RV-701 路口可視性佐證",
+    summary: "Listing Radar 已去重，仍缺街角照片與招牌可視性 evidence。",
+    owner: "展店",
+    status: "Need data",
+    priority: "P1",
+    dueLabel: "Today",
+    tone: "warning",
+    workspace: "network",
+    href: "/operator?ws=network",
+    source: "fixture",
+  },
+  {
+    id: "TASK-452",
+    title: "會員回流活動毛利保護確認",
+    summary: "夜間券建議 20:00-23:00 投放，需確認折扣上限與衝突。",
+    owner: "行銷",
+    status: "Draft",
+    priority: "P2",
+    dueLabel: "Today",
+    tone: "info",
+    workspace: "growth",
+    href: "/operator?ws=growth",
+    source: "fixture",
+  },
+];
+
+const commandPageTargets: Array<{ href: string; keywords: string[]; subtitle: string; title: string }> = [
+  { title: "OpsBoard 總覽", subtitle: "跨模組狀態與最近決策", href: "/", keywords: ["home", "overview"] },
+  { title: "任務中心", subtitle: "個人與團隊待辦", href: "/tasks", keywords: ["tasks", "todo"] },
+  { title: "全域搜尋", subtitle: "門市、候選點、決策、模型版本", href: "/search", keywords: ["search"] },
+  { title: "營運監控", subtitle: "四燈、預測帶與根因證據", href: "/operations", keywords: ["operations"] },
+  { title: "展店選址", subtitle: "HeatZone、Listing、SiteScore", href: "/expansion", keywords: ["expansion"] },
+  { title: "干預決策", subtitle: "干預建議與觀察窗", href: "/interventions", keywords: ["interventions"] },
+  { title: "定價", subtitle: "調價方案與保護線", href: "/pricing", keywords: ["pricing"] },
+  { title: "廣告增益", subtitle: "treatment/control 與 iROMI", href: "/adlift", keywords: ["adlift"] },
+  { title: "門市估值", subtitle: "AVM 公允價值與資料室", href: "/avm", keywords: ["avm"] },
+  { title: "網路規劃", subtitle: "NetPlan 情境與 solver", href: "/netplan", keywords: ["netplan"] },
+  { title: "模型與學習", subtitle: "模型版本、release、rollback", href: "/learning", keywords: ["learning"] },
+  { title: "稽核軌跡", subtitle: "決策時間軸與證據包", href: "/audit", keywords: ["audit"] },
+];
+
+const commandGroupLabels: Record<CommandGroup, string> = {
+  pages: "Pages",
+  entities: "Entities",
+  actions: "Quick actions",
+};
+
+function isOperatorRoleId(value: string): value is OperatorRoleId {
+  return OPERATOR_ROLES.some((role) => role.id === value);
+}
+
+function isWorkspaceId(value: string): value is WorkspaceId {
+  return WORKSPACES.some((workspace) => workspace.id === value);
+}
+
+function coerceText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function getRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function getNestedText(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    const text = coerceText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function inferWorkspace(record: Record<string, unknown>): WorkspaceId | undefined {
+  const direct = getNestedText(record, ["workspace", "workspaceId", "module", "routeKey", "area"]).toLowerCase();
+  if (WORKSPACES.some((workspace) => workspace.id === direct)) return direct as WorkspaceId;
+
+  const artifacts = Array.isArray(record.artifacts) ? record.artifacts.join(" ") : "";
+  const text = `${direct} ${artifacts} ${getNestedText(record, ["title", "summary", "summary_zh", "description", "next"])}`.toLowerCase();
+  if (text.includes("store") || text.includes("operator") || text.includes("forecast") || text.includes("issue")) return "store";
+  if (text.includes("growth") || text.includes("price") || text.includes("adlift") || text.includes("campaign")) return "growth";
+  if (text.includes("network") || text.includes("site") || text.includes("listing") || text.includes("heatzone") || text.includes("netplan")) return "network";
+  if (text.includes("govern") || text.includes("audit") || text.includes("approval") || text.includes("learning")) return "govern";
+  return undefined;
+}
+
+function getTaskTone(status: string, priority: string): Tone {
+  const value = `${status} ${priority}`.toLowerCase();
+  if (value.includes("blocked") || value.includes("overdue") || value.includes("p0") || value.includes("critical")) return "danger";
+  if (value.includes("review") || value.includes("wait") || value.includes("need") || value.includes("p1")) return "warning";
+  if (value.includes("done") || value.includes("complete") || value.includes("closed")) return "success";
+  if (value.includes("progress") || value.includes("draft") || value.includes("todo")) return "info";
+  return "neutral";
+}
+
+function getTaskStatusLabel(status: string): string {
+  const value = status.trim();
+  if (!value) return "Todo";
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeTaskRecord(value: unknown, index: number, source: TaskCenterSource): OperatorTask | null {
+  const record = getRecord(value);
+  if (!record) return null;
+
+  const id = getNestedText(record, ["id", "task_id", "taskId", "key", "uuid"]) || `TASK-${index + 1}`;
+  const title =
+    getNestedText(record, ["title", "name", "summary_zh", "summary", "message", "next"]) || `Task ${index + 1}`;
+  const summary =
+    getNestedText(record, ["description", "summary", "summary_zh", "next", "message"]) || "No task summary available.";
+  const owner = getNestedText(record, ["owner", "assignee", "agent", "role"]) || "Unassigned";
+  const rawStatus = getNestedText(record, ["status", "state", "stage"]) || "todo";
+  const priority = getNestedText(record, ["priority", "severity", "rank"]) || "P2";
+  const dueLabel =
+    getNestedText(record, ["dueLabel", "due_label", "sla", "due", "due_at", "dueAt", "deadline"]) || "No SLA";
+  const workspace = inferWorkspace(record);
+  const href = getNestedText(record, ["href", "url"]) || (workspace ? `/operator?ws=${workspace}` : "/tasks");
+  const tone = getTaskTone(rawStatus, priority);
+
+  return {
+    dueLabel,
+    href,
+    id,
+    owner,
+    priority,
+    source,
+    status: getTaskStatusLabel(rawStatus),
+    summary,
+    title,
+    tone,
+    workspace,
+  };
+}
+
+function normalizeTasksPayload(payload: unknown, source: TaskCenterSource): OperatorTask[] {
+  const record = getRecord(payload);
+  const rawItems =
+    (Array.isArray(payload) && payload) ||
+    (Array.isArray(record?.items) && record.items) ||
+    (Array.isArray(record?.tasks) && record.tasks) ||
+    (Array.isArray(record?.data) && record.data) ||
+    (Array.isArray(record?.results) && record.results) ||
+    [];
+
+  return rawItems
+    .map((item, index) => normalizeTaskRecord(item, index, source))
+    .filter((item): item is OperatorTask => Boolean(item));
+}
+
+function commandSearchText(item: CommandPaletteItem): string {
+  return [item.title, item.subtitle, item.group, ...item.keywords].join(" ").toLowerCase();
+}
+
+function toDomSafeId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
+}
+
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
@@ -83,16 +308,27 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [taskCenterLoadState, setTaskCenterLoadState] = useState<TaskCenterLoadState>("idle");
+  const [taskCenterSource, setTaskCenterSource] = useState<TaskCenterSource>("fixture");
+  const [liveTasks, setLiveTasks] = useState<OperatorTask[]>(taskCenterFixtures);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
   const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() => normalizeShellEnvelope());
   const [liveNotifications, setLiveNotifications] = useState<any[]>(notifications);
-  const [liveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
+  const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
+  const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
+  const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
 
   const getSecurityHeaders = (roleId: OperatorRoleId) => {
     return {
@@ -105,8 +341,20 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
   const applyOperatorEnvelope = (payload: unknown) => {
     const nextEnvelope = normalizeShellEnvelope(payload);
+    const record = getRecord(payload);
     setShellEnvelope(nextEnvelope);
-    setLiveNotifications(nextEnvelope.notifications);
+    setLiveNotifications(nextEnvelope.notifications.length ? nextEnvelope.notifications : notifications);
+    setLiveApprovals(nextEnvelope.approvals);
+
+    if (Array.isArray(record?.issues)) {
+      setLiveIssues(record.issues as Issue[]);
+    }
+    if (Array.isArray(record?.governanceDecisions)) {
+      setLiveGovernanceDecisions(record.governanceDecisions);
+    }
+    if (Array.isArray(record?.governanceAuditRows)) {
+      setLiveGovernanceAuditRows(record.governanceAuditRows);
+    }
   };
 
   const rolesForShell = useMemo(() => {
@@ -129,6 +377,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   }, [shellEnvelope.navigation.workspaces]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
+  const liveWorkQueue = shellEnvelope.workQueue;
+  const liveDecisions = shellEnvelope.decisions;
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -158,7 +408,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     setSelectedEntityId(entity);
     setActiveTabId(tab);
     setHasHydratedPreferences(true);
-  }, [searchParams?.ws]);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!hasHydratedPreferences) return;
@@ -170,11 +420,6 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         if (bootstrapRes.ok) {
           applyOperatorEnvelope(await bootstrapRes.json());
         }
-
-        const todayRes = await fetch("/api/v1/operator/today", { headers });
-        if (todayRes.ok) {
-          applyOperatorEnvelope(await todayRes.json());
-        }
       } catch (err) {
         console.error("Error loading operator shell envelope:", err);
       }
@@ -184,11 +429,90 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   }, [activeRoleId, hasHydratedPreferences]);
 
   useEffect(() => {
+    if (!isTaskCenterOpen) return undefined;
+
+    let cancelled = false;
+    async function loadTasks() {
+      setTaskCenterLoadState("loading");
+      try {
+        const res = await fetch("/api/v1/tasks", {
+          headers: getSecurityHeaders(activeRoleId),
+        });
+        if (!res.ok) throw new Error(`Task center API returned ${res.status}`);
+
+        const data = await res.json();
+        const tasks = normalizeTasksPayload(data, "api");
+        if (cancelled) return;
+
+        if (tasks.length > 0) {
+          setLiveTasks(tasks);
+          setTaskCenterSource("api");
+          setTaskCenterLoadState("ready");
+        } else {
+          setLiveTasks(taskCenterFixtures);
+          setTaskCenterSource("fixture");
+          setTaskCenterLoadState("fallback");
+        }
+      } catch {
+        if (cancelled) return;
+        setLiveTasks(taskCenterFixtures);
+        setTaskCenterSource("fixture");
+        setTaskCenterLoadState("fallback");
+      }
+    }
+
+    loadTasks();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoleId, isTaskCenterOpen]);
+
+  useEffect(() => {
+    if (activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
+    const client = createOdpApiClient({
+      env: {
+        ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
+        NEXT_PUBLIC_ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
+      },
+    });
+    loadNetworkFindAreasBindings(client)
+      .then((bindings) => setLiveNetworkBindings(bindings))
+      .catch(() => undefined);
+  }, [activeWorkspaceId, liveNetworkBindings]);
+
+  useEffect(() => {
     if (!toast) return undefined;
 
     const timeout = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    function handleGlobalKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+        event.preventDefault();
+        openCommandPalette(searchValue);
+      } else if (event.key === "Escape") {
+        if (isCommandPaletteOpen) {
+          closeCommandPalette();
+        } else {
+          setIsSearchOpen(false);
+          setIsNotificationOpen(false);
+          setIsTaskCenterOpen(false);
+          setIsRoleMenuOpen(false);
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [isCommandPaletteOpen, searchValue]);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) return undefined;
+    const timeout = window.setTimeout(() => commandInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [isCommandPaletteOpen]);
 
   useEffect(() => {
     setSearchActiveIndex(0);
@@ -203,6 +527,152 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       )
       .slice(0, 8);
   }, [searchValue, shellEnvelope.search.items]);
+
+  const taskSummary = useMemo(() => {
+    const activeTasks = liveTasks.filter((task) => !/(done|closed|complete|resolved)/i.test(task.status));
+    const urgentTasks = activeTasks.filter((task) => task.tone === "danger" || task.priority.toUpperCase() === "P0");
+    return {
+      active: activeTasks.length,
+      urgent: urgentTasks.length,
+    };
+  }, [liveTasks]);
+
+  const workspaceCommands: CommandPaletteItem[] = WORKSPACES.map((workspace) => ({
+    id: `workspace-${workspace.id}`,
+    group: "pages",
+    title: workspace.label,
+    subtitle: `${workspace.description} workspace`,
+    keywords: [workspace.id, workspace.shortLabel, workspace.description],
+    execute: () => handleWorkspaceClick(workspace.id),
+  }));
+
+  const routeCommands: CommandPaletteItem[] = commandPageTargets.map((page) => ({
+    id: `route-${page.href}`,
+    group: "pages",
+    title: page.title,
+    subtitle: page.subtitle,
+    keywords: [page.href, ...page.keywords],
+    execute: () => window.location.assign(page.href),
+  }));
+
+  const apiSearchCommands: CommandPaletteItem[] = shellEnvelope.search.items.slice(0, 20).map((item) => ({
+    id: `api-${item.id}`,
+    group: "entities",
+    title: item.label,
+    subtitle: `${item.entityId} · ${item.description}`,
+    keywords: [item.entityId, item.description, item.keywords ?? "", item.target.workspace, item.target.tab ?? ""],
+    tone: "info",
+    execute: () => handleTargetSelect(item.target, item.entityId),
+  }));
+
+  const taskCommands: CommandPaletteItem[] = liveTasks.slice(0, 12).map((task) => ({
+    id: `task-${task.id}`,
+    group: "entities",
+    title: task.title,
+    subtitle: `${task.id} · ${task.owner} · ${task.status}`,
+    keywords: [task.id, task.owner, task.priority, task.summary, task.workspace ?? "tasks"],
+    tone: task.tone,
+    execute: () => handleTaskSelect(task),
+  }));
+
+  const queueCommands: CommandPaletteItem[] = liveWorkQueue.slice(0, 8).map((item) => ({
+    id: `queue-${item.id}`,
+    group: "entities",
+    title: item.title,
+    subtitle: `${item.id} · ${item.owner} · ${item.status}`,
+    keywords: [item.id, item.meta, item.description ?? "", item.workspace, item.target.tab ?? ""],
+    tone: item.tone,
+    execute: () => handleTargetSelect(item.target, item.id),
+  }));
+
+  const decisionCommands: CommandPaletteItem[] = liveDecisions.slice(0, 6).map((decision) => ({
+    id: `decision-${decision.id}`,
+    group: "entities",
+    title: decision.title,
+    subtitle: `${decision.id} · ${decision.status}`,
+    keywords: [decision.id, decision.meta, decision.cta, decision.target.tab ?? ""],
+    tone: decision.tone,
+    execute: () => handleTargetSelect(decision.target, decision.id),
+  }));
+
+  const issueCommands: CommandPaletteItem[] = liveIssues.slice(0, 8).map((issue) => ({
+    id: `issue-${issue.id}`,
+    group: "entities",
+    title: issue.title,
+    subtitle: `${issue.id} · ${issue.storeName}`,
+    keywords: [issue.id, issue.storeName, issue.summary],
+    tone: issue.severity === "critical" ? "danger" : issue.severity === "high" ? "warning" : "info",
+    execute: () => handleTargetSelect({ workspace: "store", entityId: issue.id, tab: "overview" }, issue.id),
+  }));
+
+  const actionCommands: CommandPaletteItem[] = [
+    {
+      id: "action-task-center",
+      group: "actions",
+      title: "開啟任務中心",
+      subtitle: `${shellEnvelope.header.counts.taskCenter} API tasks · ${taskSummary.urgent} urgent local`,
+      keywords: ["task center", "tasks", "todo", "inbox"],
+      tone: shellEnvelope.header.counts.critical > 0 ? "danger" : "info",
+      execute: () => openTaskCenter(),
+    },
+    {
+      id: "action-notifications",
+      group: "actions",
+      title: "開啟通知",
+      subtitle: `${shellEnvelope.header.counts.notifications} notifications`,
+      keywords: ["notifications", "alerts"],
+      tone: liveNotifications.some((notification) => notification.tone === "danger") ? "danger" : "info",
+      execute: () => {
+        setIsNotificationOpen(true);
+        setIsTaskCenterOpen(false);
+      },
+    },
+    {
+      id: "action-reset-demo",
+      group: "actions",
+      title: "重設示範資料",
+      subtitle: "清除角色與 workspace session state",
+      keywords: ["reset", "demo", "session"],
+      execute: () => handleReset(),
+    },
+    ...OPERATOR_ROLES.map((role) => ({
+      id: `role-${role.id}`,
+      group: "actions" as CommandGroup,
+      title: `切換角色：${role.label}`,
+      subtitle: role.subtitle,
+      keywords: [role.id, role.label, role.subtitle],
+      execute: () => handleRoleSelect(role.id),
+    })),
+  ];
+
+  const commandItems: CommandPaletteItem[] = [
+    ...workspaceCommands,
+    ...routeCommands,
+    ...apiSearchCommands,
+    ...taskCommands,
+    ...queueCommands,
+    ...decisionCommands,
+    ...issueCommands,
+    ...actionCommands,
+  ];
+
+  const commandQueryText = commandQuery.trim().toLowerCase();
+  const filteredCommandItems = (
+    commandQueryText
+      ? commandItems.filter((item) => commandSearchText(item).includes(commandQueryText))
+      : commandItems.filter((item) => item.group !== "entities").slice(0, 10)
+  ).slice(0, 18);
+
+  const commandGroups = (["pages", "entities", "actions"] as CommandGroup[])
+    .map((group) => ({
+      group,
+      items: filteredCommandItems.filter((item) => item.group === group),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  useEffect(() => {
+    setActiveCommandIndex(0);
+  }, [commandQuery, isCommandPaletteOpen]);
 
   function showToast(message: string) {
     setToast(message);
@@ -240,7 +710,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
     updateDeepLink({ ...target, workspace: workspaceId });
     setIsSearchOpen(false);
+    setIsCommandPaletteOpen(false);
     setSearchValue("");
+    setCommandQuery("");
 
     if (workspaceId === "store") {
       const issue = liveIssues.find((item) => item.id === target.entityId);
@@ -252,49 +724,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     showToast(`${label} opened: ${workspace.label}${target.tab ? ` / ${target.tab}` : ""}`);
   }
 
-  async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
-    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
-    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
-    try {
-      const res = await fetch(`/api/v1/operator/approvals/${approvalId}/decision`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-          "X-Correlation-Id": correlationId,
-          ...getSecurityHeaders(activeRoleId),
-        },
-        body: JSON.stringify({ status, ...payload }),
-      });
-      if (res.ok) {
-        showToast("決策已送出");
-        applyOperatorEnvelope(await res.json());
-      }
-    } catch (err) {
-      console.error("Error submitting approval decision:", err);
-    }
-  }
-
   function handleWorkspaceClick(workspaceId: WorkspaceId) {
-    const workspace = getWorkspace(workspaceId);
-
-    if (!isWorkspaceAllowed(activeRole, workspaceId)) {
-      showToast(`${activeRole.label} 暫無 ${workspace.label} 權限`);
-      return;
-    }
-
-    setActiveWorkspaceId(workspaceId);
-    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
-    setSelectedEntityId(null);
-    setActiveTabId("overview");
-    updateDeepLink({ workspace: workspaceId, tab: "overview" });
-    if (workspaceId !== "store") {
-      setActiveStoreOpsDialog(null);
-    }
-
-    if (workspaceId === "growth") {
-      showToast("營收成長 shell 已就緒，等待 ODP-OC-007 接工作台");
-    }
+    handleTargetSelect({ workspace: workspaceId, tab: "overview" }, getWorkspace(workspaceId).label);
   }
 
   function handleRoleSelect(roleId: OperatorRoleId) {
@@ -322,8 +753,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     setSelectedEntityId(null);
     setActiveTabId("overview");
     setSearchValue("");
+    setCommandQuery("");
     updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
-    showToast("POC session 已重置為營運主管 Today");
+    showToast("已重置為營運主管 Today");
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
@@ -331,40 +763,134 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     setActiveStoreOpsDialog(dialog);
   }
 
-  useEffect(() => {
-    function handleGlobalKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
-        event.preventDefault();
-        setIsSearchOpen(true);
-        searchInputRef.current?.focus();
-      }
+  function openCommandPalette(query = "") {
+    setCommandQuery(query);
+    setSearchValue(query);
+    setActiveCommandIndex(0);
+    setIsCommandPaletteOpen(true);
+    setIsSearchOpen(false);
+    setIsNotificationOpen(false);
+    setIsRoleMenuOpen(false);
+    setIsTaskCenterOpen(false);
+  }
+
+  function closeCommandPalette() {
+    setIsCommandPaletteOpen(false);
+    setCommandQuery("");
+    setSearchValue("");
+    setActiveCommandIndex(0);
+  }
+
+  function openTaskCenter() {
+    setIsTaskCenterOpen(true);
+    setIsNotificationOpen(false);
+    setIsRoleMenuOpen(false);
+  }
+
+  function executeCommand(item: CommandPaletteItem) {
+    closeCommandPalette();
+    item.execute();
+  }
+
+  function handleTaskSelect(task: OperatorTask) {
+    setIsTaskCenterOpen(false);
+    if (task.workspace) {
+      handleTargetSelect({ workspace: task.workspace, entityId: task.id, tab: "overview" }, task.id);
+      return;
     }
 
-    window.addEventListener("keydown", handleGlobalKeyDown);
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, []);
+    try {
+      const href = new URL(task.href, window.location.origin);
+      const ws = href.searchParams.get("ws");
+      if (href.pathname === "/operator" && ws && isWorkspaceId(ws)) {
+        handleTargetSelect(
+          {
+            workspace: ws,
+            entityId: href.searchParams.get("entity") ?? task.id,
+            tab: href.searchParams.get("tab") ?? "overview",
+          },
+          task.id,
+        );
+        return;
+      }
+    } catch {
+      // Fall through to normal navigation for non-URL task hrefs.
+    }
+
+    window.location.assign(task.href);
+  }
+
+  function handleCommandKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveCommandIndex((index) => Math.min(index + 1, Math.max(filteredCommandItems.length - 1, 0)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveCommandIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const item = filteredCommandItems[activeCommandIndex];
+      if (item) executeCommand(item);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeCommandPalette();
+    }
+  }
 
   function handleSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setSearchActiveIndex((index) => Math.min(index + 1, Math.max(searchMatches.length - 1, 0)));
       setIsSearchOpen(true);
-      return;
-    }
-    if (event.key === "ArrowUp") {
+    } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setSearchActiveIndex((index) => Math.max(index - 1, 0));
       setIsSearchOpen(true);
-      return;
-    }
-    if (event.key === "Escape") {
+    } else if (event.key === "Escape") {
       setIsSearchOpen(false);
-      return;
-    }
-    if (event.key === "Enter" && searchMatches[searchActiveIndex]) {
+    } else if (event.key === "Enter" && searchMatches[searchActiveIndex]) {
       event.preventDefault();
       const selected = searchMatches[searchActiveIndex];
       handleTargetSelect(selected.target, selected.entityId);
+    }
+  }
+
+  async function refreshOperatorEnvelope() {
+    const freshRes = await fetch("/api/v1/operator/bootstrap", {
+      headers: getSecurityHeaders(activeRoleId),
+    });
+    if (freshRes.ok) {
+      applyOperatorEnvelope(await freshRes.json());
+    }
+  }
+
+  async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
+    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
+    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
+    try {
+      const body = {
+        actorName: shellEnvelope.today.hero.name,
+        actorRoleId: activeRoleId,
+        reason: payload?.reason ?? `Decision from Operator Console for ${approvalId}`,
+        ...payload,
+        status,
+      };
+      const res = await fetch(`/api/v1/operator/approvals/${approvalId}/decision`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+          "X-Correlation-Id": correlationId,
+          ...getSecurityHeaders(activeRoleId),
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        showToast("決策已送出");
+        await refreshOperatorEnvelope();
+      }
+    } catch (err) {
+      console.error("Error submitting approval decision:", err);
     }
   }
 
@@ -408,59 +934,72 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         </nav>
 
         <div className={styles.topActions}>
-          <label className={styles.searchBox}>
-            <span aria-hidden="true">/</span>
-            <input
-              aria-activedescendant={
-                isSearchOpen && searchMatches[searchActiveIndex] ? `operator-search-${searchMatches[searchActiveIndex].id}` : undefined
-              }
-              aria-controls="operator-search-results"
-              aria-label="Global search"
-              aria-expanded={isSearchOpen}
-              aria-haspopup="listbox"
-              onBlur={() => window.setTimeout(() => setIsSearchOpen(false), 120)}
-              onChange={(event) => {
-                setSearchValue(event.target.value);
-                setIsSearchOpen(true);
-              }}
-              onFocus={() => setIsSearchOpen(true)}
-              onKeyDown={handleSearchKeyDown}
-              placeholder="搜尋門市、案件、物件..."
-              ref={searchInputRef}
-              role="combobox"
-              value={searchValue}
-            />
-            {isSearchOpen && searchMatches.length ? (
-              <div className={styles.searchResults} id="operator-search-results" role="listbox">
-                {searchMatches.map((item, index) => (
-                  <button
-                    aria-selected={index === searchActiveIndex}
-                    className={index === searchActiveIndex ? styles.searchResult_active : styles.searchResult}
-                    data-target-entity={item.target.entityId}
-                    data-target-tab={item.target.tab}
-                    data-target-workspace={item.target.workspace}
-                    id={`operator-search-${item.id}`}
-                    key={item.id}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      handleTargetSelect(item.target, item.entityId);
-                    }}
-                    role="option"
-                    type="button"
-                  >
-                    <strong>{item.label}</strong>
-                    <span>{item.description}</span>
-                  </button>
-                ))}
+          <div className={styles.popoverAnchor}>
+            <label className={styles.searchBox}>
+              <span aria-hidden="true">/</span>
+              <input
+                aria-label="Global search"
+                onBlur={() => window.setTimeout(() => setIsSearchOpen(false), 120)}
+                onChange={(event) => {
+                  setSearchValue(event.target.value);
+                  setIsSearchOpen(true);
+                }}
+                onFocus={() => setIsSearchOpen(true)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="搜尋門市、案件、物件..."
+                value={searchValue}
+              />
+            </label>
+            {isSearchOpen && !isCommandPaletteOpen && searchValue.trim() ? (
+              <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
+                <div className={styles.popoverTitle}>Search</div>
+                {searchMatches.length ? (
+                  searchMatches.map((item, index) => (
+                    <button
+                      aria-selected={index === searchActiveIndex}
+                      className={styles.searchResult}
+                      data-target-entity={item.target.entityId}
+                      data-target-tab={item.target.tab}
+                      data-target-workspace={item.target.workspace}
+                      key={item.id}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        handleTargetSelect(item.target, item.entityId);
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      <span>{item.entityId}</span>
+                      <strong>{item.label}</strong>
+                      <small>{item.description}</small>
+                    </button>
+                  ))
+                ) : (
+                  <div className={styles.searchEmpty}>No matching operator work</div>
+                )}
               </div>
             ) : null}
-          </label>
+          </div>
+
+          <Button
+            aria-label="Open command palette"
+            data-testid="operator-command-trigger"
+            onClick={() => openCommandPalette(searchValue)}
+            size="sm"
+            variant="ghost"
+          >
+            ⌘K
+          </Button>
 
           <div className={styles.popoverAnchor}>
             <Button
               aria-expanded={isNotificationOpen}
               aria-label="Open notifications"
-              onClick={() => setIsNotificationOpen((open) => !open)}
+              onClick={() => {
+                setIsNotificationOpen((open) => !open);
+                setIsTaskCenterOpen(false);
+                setIsRoleMenuOpen(false);
+              }}
               size="sm"
               variant="ghost"
             >
@@ -479,6 +1018,79 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             ) : null}
           </div>
 
+          <div className={styles.popoverAnchor}>
+            <button
+              aria-expanded={isTaskCenterOpen}
+              aria-label="Open task center"
+              className={styles.taskCenterButton}
+              data-testid="operator-task-center-button"
+              onClick={() => (isTaskCenterOpen ? setIsTaskCenterOpen(false) : openTaskCenter())}
+              type="button"
+            >
+              <span data-testid="operator-task-center-count">
+                Task Center <strong>{shellEnvelope.header.counts.taskCenter}</strong>
+              </span>
+              {taskSummary.urgent > 0 ? <span>{taskSummary.urgent} urgent</span> : null}
+            </button>
+            {isTaskCenterOpen ? (
+              <div className={styles.taskCenterPanel} data-testid="operator-task-center">
+                <div className={styles.taskCenterHeader}>
+                  <div>
+                    <div className={styles.popoverTitle}>Task center</div>
+                    <strong>我的待辦與核准</strong>
+                  </div>
+                  <Chip tone={taskCenterSource === "api" ? "success" : "neutral"}>
+                    {taskCenterLoadState === "loading" ? "SYNCING" : taskCenterSource.toUpperCase()}
+                  </Chip>
+                </div>
+                <div className={styles.taskCenterStats} aria-label="Task center summary">
+                  <span>
+                    <strong>{shellEnvelope.header.counts.taskCenter}</strong>
+                    API
+                  </span>
+                  <span>
+                    <strong>{taskSummary.urgent}</strong>
+                    Urgent
+                  </span>
+                  <span>
+                    <strong>{liveTasks.length}</strong>
+                    Visible
+                  </span>
+                </div>
+                <div className={styles.taskList}>
+                  {liveTasks.slice(0, 8).map((task) => (
+                    <button
+                      className={styles.taskRow}
+                      key={task.id}
+                      onClick={() => handleTaskSelect(task)}
+                      type="button"
+                    >
+                      <span className={[styles.taskMarker, styles[`marker_${task.tone}`]].join(" ")} aria-hidden="true" />
+                      <span className={styles.taskMain}>
+                        <span>
+                          <strong>{task.title}</strong>
+                          <StatusBadge tone={task.tone}>{task.status}</StatusBadge>
+                        </span>
+                        <small>{task.id} · {task.summary}</small>
+                      </span>
+                      <span className={styles.taskMeta}>
+                        <b>{task.owner}</b>
+                        <em>{task.priority}</em>
+                        <time>{task.dueLabel}</time>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className={styles.taskCenterFooter}>
+                  <button type="button" onClick={() => window.location.assign("/tasks")}>
+                    Open full tasks page
+                  </button>
+                  <span>{taskCenterLoadState === "fallback" ? "/api/v1/tasks fallback active" : "/api/v1/tasks live"}</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           <button
             className={styles.approvalChip}
             data-testid="operator-approval-count"
@@ -488,19 +1100,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             待核准 <strong>{shellEnvelope.header.counts.approvals}</strong>
           </button>
 
-          <button
-            className={styles.taskCenterChip}
-            data-testid="operator-task-center-count"
-            onClick={() => handleWorkspaceClick("today")}
-            type="button"
-          >
-            Task Center <strong>{shellEnvelope.header.counts.taskCenter}</strong>
-          </button>
-
           <div className={styles.popoverAnchor}>
             <Button
               aria-expanded={isRoleMenuOpen}
-              onClick={() => setIsRoleMenuOpen((open) => !open)}
+              onClick={() => {
+                setIsRoleMenuOpen((open) => !open);
+                setIsNotificationOpen(false);
+                setIsTaskCenterOpen(false);
+              }}
               size="sm"
               variant="secondary"
             >
@@ -547,11 +1154,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <div className={styles.pocBanner}>
         <div>
-          <strong>• POC Demo</strong>
-          <span>Shell、Today、通知與核准數字由 Operator API envelope 驅動；寫入後即時刷新本 session。</span>
+          <strong>API-backed</strong>
+          <span>
+            Shell、Today、通知與核准數字由 Operator API envelope 驅動；寫入後即時刷新本 session。
+          </span>
         </div>
         <Button onClick={handleReset} size="sm" variant="secondary">
-          重設示範資料
+          重設視角
         </Button>
       </div>
 
@@ -566,12 +1175,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           <DesignStoreOpsWorkspace
             initialIssueId={selectedEntityId ?? undefined}
             initialTabId={activeTabId}
-            onOpenWorkflow={openStoreOpsWorkflow}
             issues={liveIssues}
+            onOpenWorkflow={openStoreOpsWorkflow}
           />
         ) : activeWorkspaceId === "network" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <NetworkFindAreasWorkspace
+              liveCandidates={liveNetworkBindings?.candidates}
+              liveHeatZones={liveNetworkBindings?.heatZones}
               callbacks={{
                 onChangeLens: (lens) => showToast(`Network lens: ${lens}`),
                 onScoreCandidate: (candidate, heatZone) => showToast(`${candidate.id} scoring opened for ${heatZone.id}`),
@@ -580,19 +1191,26 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                 onSubmitReview: (heatZone) => showToast(`${heatZone.id} review submitted to POC shell`),
                 onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
                 onDecideReview: (reviewId, status, reason) =>
-                  handleApprovalDecision(reviewId, status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned", { reason }),
+                  handleApprovalDecision(
+                    reviewId,
+                    status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned",
+                    { reason },
+                  ),
               }}
             />
           </WorkspaceChrome>
         ) : activeWorkspaceId === "govern" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <GovernanceWorkspace
+              approvals={liveApprovals.length ? liveApprovals : undefined}
+              auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
               callbacks={{
                 onApprove: (payload) => handleApprovalDecision(payload.approvalId, "approved", payload),
                 onReject: (payload) => handleApprovalDecision(payload.approvalId, "rejected", payload),
                 onReturn: (payload) => handleApprovalDecision(payload.approvalId, "returned", payload),
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
+              decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
               role={activeRole.label}
             />
           </WorkspaceChrome>
@@ -638,10 +1256,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                     "X-Correlation-Id": correlationId,
                     ...getSecurityHeaders(activeRoleId),
                   },
-                  body: JSON.stringify(event.payload),
+                  body: JSON.stringify({
+                    actorName: shellEnvelope.today.hero.name,
+                    actorRoleId: activeRoleId,
+                    ...event.payload,
+                  }),
                 });
                 if (res.ok) {
-                  applyOperatorEnvelope(await res.json());
+                  await refreshOperatorEnvelope();
                 }
               } catch (err) {
                 console.error("Error submitting workflow write:", err);
@@ -652,6 +1274,82 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         issue={selectedStoreOpsIssue}
         onClose={() => setActiveStoreOpsDialog(null)}
       />
+
+      {isCommandPaletteOpen ? (
+        <div
+          className={styles.commandOverlay}
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) closeCommandPalette();
+          }}
+        >
+          <section
+            aria-label="Command palette"
+            aria-modal="true"
+            className={styles.commandDialog}
+            data-testid="operator-command-palette"
+            onKeyDown={handleCommandKeyDown}
+            role="dialog"
+          >
+            <div className={styles.commandSearchRow}>
+              <span className={styles.commandKey}>⌘K</span>
+              <input
+                aria-activedescendant={filteredCommandItems[activeCommandIndex] ? `command-${toDomSafeId(filteredCommandItems[activeCommandIndex].id)}` : undefined}
+                aria-controls="operator-command-results"
+                aria-expanded={isCommandPaletteOpen}
+                aria-label="Command palette search Global search"
+                autoComplete="off"
+                onChange={(event) => {
+                  setCommandQuery(event.target.value);
+                  setSearchValue(event.target.value);
+                }}
+                placeholder="搜尋頁面、任務、門市、候選點或快速動作"
+                ref={commandInputRef}
+                role="combobox"
+                value={commandQuery}
+              />
+              <Button onClick={closeCommandPalette} size="sm" variant="ghost">
+                Esc
+              </Button>
+            </div>
+            <div className={styles.commandResults} id="operator-command-results" role="listbox">
+              {commandGroups.length > 0 ? (
+                commandGroups.map((group) => (
+                  <div className={styles.commandGroup} key={group.group}>
+                    <div className={styles.commandGroupTitle}>{commandGroupLabels[group.group]}</div>
+                    {group.items.map((item) => {
+                      const flatIndex = filteredCommandItems.findIndex((candidate) => candidate.id === item.id);
+                      const isActive = flatIndex === activeCommandIndex;
+                      return (
+                        <button
+                          aria-selected={isActive}
+                          className={[styles.commandItem, isActive ? styles.commandItem_active : ""].join(" ")}
+                          id={`command-${toDomSafeId(item.id)}`}
+                          key={item.id}
+                          onClick={() => executeCommand(item)}
+                          onMouseEnter={() => setActiveCommandIndex(flatIndex)}
+                          role="option"
+                          type="button"
+                        >
+                          <span className={styles.commandItemMain}>
+                            <strong>{item.title}</strong>
+                            <small>{item.subtitle}</small>
+                          </span>
+                          <span className={styles.commandItemMeta}>
+                            {item.tone ? <StatusBadge tone={item.tone}>{commandGroupLabels[item.group]}</StatusBadge> : null}
+                            <kbd>Enter</kbd>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              ) : (
+                <div className={styles.commandEmpty}>No matching command</div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {toast ? <div className={styles.toast}>{toast}</div> : null}
     </div>

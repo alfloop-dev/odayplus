@@ -41,6 +41,49 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   expect(browserErrors).toEqual([]);
 });
 
+test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({ page }) => {
+  const taskRequests: string[] = [];
+  await page.route("**/api/v1/tasks", async (route) => {
+    taskRequests.push(route.request().url());
+    await route.fulfill({
+      contentType: "application/json",
+      status: 200,
+      body: JSON.stringify({
+        items: [
+          {
+            id: "API-902",
+            title: "Live SiteScore review",
+            summary: "Review CS-1002 before the expansion weekly gate.",
+            owner: "展店",
+            status: "review",
+            priority: "P1",
+            dueLabel: "42m",
+            workspace: "govern",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/operator");
+
+  await page.getByTestId("operator-task-center-button").click();
+  const taskCenter = page.getByTestId("operator-task-center");
+  await expect(taskCenter).toBeVisible();
+  await expect(taskCenter).toContainText("API");
+  await expect(taskCenter).toContainText("Live SiteScore review");
+  expect(taskRequests.length).toBeGreaterThan(0);
+
+  await page.keyboard.press("Control+K");
+  const palette = page.getByTestId("operator-command-palette");
+  await expect(palette).toBeVisible();
+  await page.getByRole("combobox", { name: "Command palette search" }).fill("Live SiteScore");
+  await expect(page.getByRole("option", { name: /Live SiteScore review/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator('[data-screen-label="Govern 治理稽核"]')).toBeVisible();
+});
+
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
   page,
 }) => {

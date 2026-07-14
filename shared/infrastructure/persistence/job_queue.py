@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import JobRecord, JobRequest, JobStatus
@@ -58,6 +59,41 @@ class DurableJobQueue:
             "SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,)
         )
         return None if row is None else self._row_to_record(row)
+
+    def claim_next(self) -> JobRecord | None:
+        with self._engine.lock:
+            row = self._engine.query_one(
+                "SELECT * FROM durable_jobs WHERE status = ? ORDER BY created_at LIMIT 1",
+                (JobStatus.QUEUED.value,),
+            )
+            if row is None:
+                return None
+            record = self._row_to_record(row)
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ? WHERE job_id = ?",
+                (JobStatus.RUNNING.value, record.job_id),
+            )
+            return JobRecord(
+                job_type=record.job_type,
+                payload=record.payload,
+                correlation_id=record.correlation_id,
+                idempotency_key=record.idempotency_key,
+                status=JobStatus.RUNNING,
+                job_id=record.job_id,
+                created_at=record.created_at,
+            )
+
+    def update_status(self, job_id: str, status: JobStatus, payload: dict[str, Any] | None = None) -> None:
+        if payload is not None:
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ?, payload_json = ? WHERE job_id = ?",
+                (status.value, json.dumps(payload), job_id),
+            )
+        else:
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ? WHERE job_id = ?",
+                (status.value, job_id),
+            )
 
     @staticmethod
     def _row_to_record(row) -> JobRecord:
