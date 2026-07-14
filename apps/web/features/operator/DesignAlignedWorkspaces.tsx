@@ -2,6 +2,7 @@
 
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./designAligned.module.css";
 import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
 import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
@@ -416,7 +417,9 @@ export function DesignStoreOpsWorkspace({
 
       setIsStoreOpsLoading(true);
       try {
-        const response = await fetch(`/api/v1/operator/store-ops/issues?${params.toString()}`);
+        const response = await fetch(`/api/v1/operator/store-ops/issues?${params.toString()}`, {
+          headers: operatorSecurityHeaders(roleId),
+        });
         if (!response.ok) return;
         const data = (await response.json()) as StoreOpsApiState;
         if (!cancelled) {

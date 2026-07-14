@@ -188,7 +188,12 @@ export function GrowthWorkspace({
 
   return (
     <>
-      <div className={g.screen} data-testid="growth-workspace" data-source={vm.dataSource}>
+      <div
+        className={g.screen}
+        data-screen-label="Growth 營收成長"
+        data-testid="growth-workspace"
+        data-source={vm.dataSource}
+      >
         <header className={g.header}>
           <div className={g.headerTitle}>營收成長</div>
           <div className={g.headerSub}>

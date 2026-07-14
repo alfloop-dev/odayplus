@@ -32,6 +32,7 @@ import type {
   DecisionStatus,
   StatusTone,
 } from "@oday-plus/domain-types";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 
 export type ConfidenceLevel = Confidence["level"];
 
@@ -354,6 +355,7 @@ async function apiFetch<T>(
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
+        ...operatorSecurityHeaders(),
         ...(fetchOptions.headers ?? {}),
       },
     });

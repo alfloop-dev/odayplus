@@ -26,6 +26,7 @@ import type {
   GovernanceDecisionAction,
   GovernanceDecisionRow,
 } from "../governanceTypes";
+import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
 
 const GOVERNANCE_API_BASE = "/api/v1/operator/governance";
 
@@ -79,15 +80,16 @@ function newCorrelationId(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { correlationId?: string } = {},
+  options: RequestInit & { correlationId?: string; roleId?: string } = {},
 ): Promise<{ ok: true; status: number; data: T } | { ok: false; status: number; data: null }> {
-  const { correlationId, ...fetchOptions } = options;
+  const { correlationId, roleId, ...fetchOptions } = options;
   try {
     const res = await fetch(`${GOVERNANCE_API_BASE}${path}`, {
       ...fetchOptions,
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
+        ...operatorSecurityHeaders(roleId),
         ...(fetchOptions.headers ?? {}),
       },
     });
@@ -116,7 +118,7 @@ export async function fetchGovernanceSnapshot(
     statusBoard: GovernanceStatusBoard;
     evidencePackages: GovernanceEvidencePackage[];
     correlation_id?: string;
-  }>("/snapshot", { method: "GET", headers });
+  }>("/snapshot", { method: "GET", headers, roleId });
   if (!result.ok || !result.data) return null;
   const data = result.data;
   return {
@@ -156,6 +158,7 @@ export async function submitGovernanceDecision(params: {
   }>("/decisions", {
     method: "POST",
     headers,
+    roleId: params.roleId,
     body: JSON.stringify({
       approvalId: params.approvalId,
       action: params.action,
@@ -215,6 +218,7 @@ export async function exportEvidencePackage(params: {
   const result = await apiFetch<{ package: EvidencePackageRecord }>("/evidence-package", {
     method: "POST",
     headers,
+    roleId: params.roleId,
     body: JSON.stringify({
       dateFrom: params.dateFrom,
       dateTo: params.dateTo,
