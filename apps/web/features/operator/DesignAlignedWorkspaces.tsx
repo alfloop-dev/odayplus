@@ -32,6 +32,8 @@ type DesignTodayWorkspaceProps = {
 };
 
 type DesignStoreOpsWorkspaceProps = {
+  initialIssueId?: string;
+  initialTabId?: string;
   onOpenWorkflow: (dialog: StoreOpsWorkflowDialogType, issue: Issue) => void;
   issues?: Issue[];
 };
@@ -356,7 +358,12 @@ export function DesignTodayWorkspace({
   );
 }
 
-export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: DesignStoreOpsWorkspaceProps) {
+export function DesignStoreOpsWorkspace({
+  initialIssueId,
+  initialTabId,
+  onOpenWorkflow,
+  issues: propIssues,
+}: DesignStoreOpsWorkspaceProps) {
   // 1. Get current operator role from sessionStorage if available
   const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
   const [apiState, setApiState] = useState<StoreOpsApiState | null>(null);
@@ -377,7 +384,13 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
   const [selectedSeverities, setSelectedSeverities] = useState<Severity[]>([]);
   const [selectedLightFilter, setSelectedLightFilter] = useState<StoreOpsLightFilter | null>(null);
   const [mineOnly, setMineOnly] = useState(false);
-  const [selectedIssueId, setSelectedIssueId] = useState<string>("ISS-1024");
+  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "ISS-1024");
+
+  useEffect(() => {
+    if (initialIssueId) {
+      setSelectedIssueId(initialIssueId);
+    }
+  }, [initialIssueId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -596,7 +609,12 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
       : (propIssues ?? ISSUE_FIXTURES).length;
 
   return (
-    <div className={styles.storeWorkspace} data-screen-label="Store Ops 門市營運">
+    <div
+      className={styles.storeWorkspace}
+      data-screen-label="Store Ops 門市營運"
+      data-selected-issue-id={selectedIssueId}
+      data-selected-tab-id={initialTabId}
+    >
       <header className={styles.storeHeader}>
         <h1>門市營運</h1>
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>

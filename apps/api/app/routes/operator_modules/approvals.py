@@ -20,6 +20,19 @@ from modules.opsboard.domain.r4_dtos import (
 )
 
 
+def _read_context(
+    *,
+    x_operator_role: str | None,
+    x_subject_id: str | None,
+    x_roles: str | None,
+) -> dict[str, str | None]:
+    return {
+        "role_id": x_operator_role,
+        "subject_id": x_subject_id,
+        "system_roles": x_roles,
+    }
+
+
 def create_approvals_sub_router(
     state_service: OperatorStateService,
     require_permission_fn: Callable[..., Any],
@@ -37,9 +50,19 @@ def create_approvals_sub_router(
     router = APIRouter()
 
     @router.get("/approvals")
-    def get_approvals() -> dict[str, Any]:
+    def get_approvals(
+        x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
+        x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+        x_roles: str | None = Header(default=None, alias="X-Roles"),
+    ) -> dict[str, Any]:
         """List pending approval decisions."""
-        items = state_service.get_approvals()
+        items = state_service.get_approvals(
+            **_read_context(
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+            )
+        )
         return {"items": items, "count": len(items)}
 
     @router.post(

@@ -77,8 +77,8 @@ class EvidencePurposePayload(BaseModel):
 def create_operator_router(
     *,
     audit_log: InMemoryAuditLog | None = None,
+    document_store: Any | None = None,
     state_service: OperatorStateService | None = None,
-    document_store: Any = None,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -93,13 +93,14 @@ def create_operator_router(
     ----------
     audit_log:
         Optional shared InMemoryAuditLog for the authz engine.
+    document_store:
+        Accepted for app-level composition compatibility; the R4 operator
+        routes do not read from the document store.
     state_service:
         Optional pre-built OperatorStateService; injected by tests to pass
         a pre-seeded service with deterministic state.
-    document_store:
-        Reserved durable state store passed by create_app(); the current R4
-        shell service remains seed-backed and does not consume it yet.
     """
+    _ = document_store
     from apps.api.oday_api.security.dependencies import build_engine, require_permission
     from shared.auth import Action
 
