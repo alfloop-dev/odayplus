@@ -30,22 +30,29 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
 }) => {
   await page.goto("/operator?ws=growth");
 
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  // The Operator Console is full-bleed (package-6): no OpsBoard app-shell chrome.
+  await expect(page.getByTestId("operator-console")).toBeVisible();
+  await expect(page.getByTestId("app-shell")).toHaveCount(0);
   await expect(page.getByTestId("growth-workspace")).toBeVisible();
   await expect(page.getByTestId("growth-data-status")).toContainText("FRESH");
 
+  // Default 活動 tab renders the Growth Action campaign cards.
+  const itemTable = page.getByTestId("growth-item-table");
+  await expect(itemTable).toContainText("都會晚餐套餐調價活動");
+  await expect(itemTable).toContainText("宵夜外送費試點活動");
+
+  // 會員分群 tab renders the segment cards.
+  await page.getByTestId("growth-tab-segments").click();
   const segmentTable = page.getByTestId("growth-segment-table");
   await expect(segmentTable).toContainText("都會晚餐高潛力組");
   await expect(segmentTable).toContainText("郊區午餐守成組");
   await expect(segmentTable).toContainText("宵夜外送流失組");
 
+  // PriceOps tab renders the pricing recommendation table.
+  await page.getByTestId("growth-tab-priceops").click();
   const recTable = page.getByTestId("growth-recommendation-table");
   await expect(recTable).toContainText("晚餐套餐 +3% 加權調價");
   await expect(recTable).toContainText("宵夜外送費 -2% 試點");
-
-  const itemTable = page.getByTestId("growth-item-table");
-  await expect(itemTable).toContainText("都會晚餐套餐調價活動");
-  await expect(itemTable).toContainText("宵夜外送費試點活動");
 });
 
 // ---------------------------------------------------------------------------
@@ -53,16 +60,20 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
 // ---------------------------------------------------------------------------
 
 test("Growth workspace segment filtering works", async ({ page }) => {
-  await page.goto("/operator?ws=growth");
+  await page.goto("/operator?ws=growth&gtab=segments");
 
   const filter = page.getByTestId("growth-segment-filter");
   await filter.getByText("都會晚餐高潛力組").click();
   await expect(page).toHaveURL(/segment=seg-metro-dinner/);
 
+  // The segment focus scopes the PriceOps recommendations across tabs.
+  await page.getByTestId("growth-tab-priceops").click();
   const recTable = page.getByTestId("growth-recommendation-table");
   await expect(recTable).toContainText("晚餐套餐 +3% 加權調價");
   await expect(recTable).not.toContainText("宵夜外送費 -2% 試點");
 
+  // Clearing the focus returns to all segments.
+  await page.getByTestId("growth-tab-segments").click();
   await filter.getByText("全部分群").click();
   await expect(page).toHaveURL(/ws=growth/);
   await expect(page).not.toHaveURL(/segment=/);
@@ -147,7 +158,7 @@ test("Growth builder can be dismissed without submitting", async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 test("HARD_CONSTRAINT_FAILED recommendation has disabled draft button", async ({ page }) => {
-  await page.goto("/operator?ws=growth");
+  await page.goto("/operator?ws=growth&gtab=priceops");
 
   const recTable = page.getByTestId("growth-recommendation-table");
   const hardConstraintRow = recTable.locator('tr:has-text("午餐主力商品 +9% 調價")');
