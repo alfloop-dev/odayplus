@@ -229,6 +229,49 @@ def test_idempotent_replay_creates_no_duplicate_records() -> None:
     assert len(snap["auditEvents"]) == 1
 
 
+def test_idempotency_key_reused_across_reviews_does_not_replay() -> None:
+    """A shared Idempotency-Key must NOT let review B replay review A's cached
+    result. The cache is scoped by review id + payload, so the same key decides
+    each review on its own terms and produces distinct records."""
+
+    client = _client()
+    shared = {**REVIEWER_HEADERS, "idempotency-key": "idem-shared-key"}
+
+    first = client.post(
+        "/api/v1/operator/network-reviews/RV-702/decide",
+        headers=shared,
+        json={
+            "decision": "GO",
+            "reason": "人流量體大且回本期可接受，核准進展店閘。",
+            "actorRoleId": "siteReviewer",
+        },
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["review"]["id"] == "RV-702"
+
+    # Same key, different review + payload → NOT a replay of RV-702's result.
+    second = client.post(
+        "/api/v1/operator/network-reviews/RV-698/decide",
+        headers=shared,
+        json={
+            "decision": "RETURN",
+            "reason": "決策前需補齊現勘與晚間人流資料。",
+            "requiredData": ["現勘紀錄"],
+            "actorRoleId": "siteReviewer",
+        },
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["review"]["id"] == "RV-698"
+    assert body["decision"]["finalDecision"] == "Need Data"
+    assert body["idempotentReplay"] is False
+    assert body["decision"]["id"] != first.json()["decision"]["id"]
+
+    snap = _snapshot(client)
+    assert len(snap["decisions"]) == 2
+    assert len(snap["auditEvents"]) == 2
+
+
 def test_second_decision_on_decided_review_conflicts() -> None:
     client = _client()
     client.post(

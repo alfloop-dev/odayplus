@@ -31,6 +31,8 @@ CS-1001 (RV-702, GO) is the golden approve flow.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -125,6 +127,38 @@ def _now() -> str:
 
 def _copy(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _payload_fingerprint(
+    *,
+    action: str,
+    reason: str,
+    conditions: str,
+    required_data: list[str],
+    override_ack: bool,
+    actor_role_id: str,
+) -> str:
+    """Stable hash of the decision payload.
+
+    Combined with the review id and Idempotency-Key it scopes the replay cache
+    so a key can only replay the *same decision on the same review*. A key
+    reused across reviews (or with a different payload) misses the cache instead
+    of returning another review's cached result.
+    """
+
+    canonical = json.dumps(
+        {
+            "action": action,
+            "reason": reason,
+            "conditions": conditions,
+            "requiredData": required_data,
+            "overrideAck": bool(override_ack),
+            "actorRoleId": actor_role_id,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _is_override(action: str, recommendation: str) -> bool:
@@ -248,7 +282,7 @@ class NetworkReviewService:
         self._approvals: dict[str, dict[str, Any]] = {}
         self._decisions: list[dict[str, Any]] = []
         self._audit_events: list[dict[str, Any]] = []
-        self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._idempotency_cache: dict[tuple[str, ...], dict[str, Any]] = {}
         for review in self._reviews:
             review["status"] = "pending"
             review["statusLabel"] = STATUS_LABEL["pending"]
@@ -323,13 +357,34 @@ class NetworkReviewService:
         wrapped in a rollback guard so an unexpected mid-commit error also leaves
         no partial write. Replays on the same Idempotency-Key return the cached
         result and create no duplicate records.
+
+        The replay cache is scoped by ``(review_id, Idempotency-Key, payload
+        fingerprint)`` so a key can only replay the same decision on the same
+        review — a key accidentally reused across reviews (or with a different
+        payload) never returns another review's cached result.
         """
 
-        cache_key = ("decide", idempotency_key or "")
+        action = (decision or "").strip().upper()
+        reason_text = (reason or "").strip()
+        condition_text = (conditions or "").strip()
+        required_list = [item.strip() for item in (required_data or []) if item and item.strip()]
+
+        cache_key = (
+            "decide",
+            review_id,
+            idempotency_key or "",
+            _payload_fingerprint(
+                action=action,
+                reason=reason_text,
+                conditions=condition_text,
+                required_data=required_list,
+                override_ack=override_ack,
+                actor_role_id=actor_role_id,
+            ),
+        )
         if idempotency_key and cache_key in self._idempotency_cache:
             return {**_copy(self._idempotency_cache[cache_key]), "idempotentReplay": True}
 
-        action = (decision or "").strip().upper()
         if action not in DECISION_ACTIONS:
             raise NetworkReviewPolicyError(
                 f"decision must be one of {', '.join(DECISION_ACTIONS)}"
@@ -347,17 +402,14 @@ class NetworkReviewService:
                 f"role {actor_role_id!r} may prepare or submit but not decide network reviews"
             )
 
-        reason_text = (reason or "").strip()
         if len(reason_text) < _MIN_REASON_LEN:
             raise NetworkReviewPolicyError(
                 "決策原因必填（至少 10 字），寫入 Decision Log"
             )
 
-        condition_text = (conditions or "").strip()
         if action == "WAIT" and not condition_text:
             raise NetworkReviewPolicyError("核准 WAIT 需填寫通過條件（條件達成後可重評為 GO）")
 
-        required_list = [item.strip() for item in (required_data or []) if item and item.strip()]
         if action == "RETURN" and not required_list:
             raise NetworkReviewPolicyError("退回修改需填寫需補資料（會同步至 Candidate 缺資料清單）")
 

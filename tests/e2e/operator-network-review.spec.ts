@@ -153,6 +153,31 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await api.dispose();
   });
 
+  test("Expansion active role sees read-only review actions (no decision bar)", async ({ page }) => {
+    // Bind the console to the Expansion role before hydration. Expansion may
+    // read/prepare/submit but not decide, so the decision bar must be hidden.
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+    });
+    await page.goto("/operator?ws=network");
+    await expect(page.getByTestId("network-find-areas-workspace")).toBeVisible();
+
+    await page.getByTestId("network-tab-5").click();
+    const panel = page.getByTestId("network-panel-review");
+    await expect(panel).toBeVisible();
+
+    // Queue still hydrates for Expansion (sitescore VIEW via expansion_user).
+    await expect(page.getByTestId("review-card-RV-702")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("review-card-RV-702").click();
+
+    // Read-only note is shown; the GO / WAIT / 退回 / 駁回 bar is NOT rendered.
+    await expect(page.getByTestId("review-role-note-RV-702")).toBeVisible();
+    await expect(page.getByTestId("review-btn-go-RV-702")).toHaveCount(0);
+    await expect(page.getByTestId("review-btn-wait-RV-701")).toHaveCount(0);
+    await expect(page.getByTestId("review-btn-return-RV-702")).toHaveCount(0);
+    await expect(page.getByTestId("review-btn-reject-RV-702")).toHaveCount(0);
+  });
+
   test("Expansion may read but not decide; reviewer may decide", async () => {
     const expansion = await playwrightRequest.newContext({
       baseURL: API_BASE_URL,

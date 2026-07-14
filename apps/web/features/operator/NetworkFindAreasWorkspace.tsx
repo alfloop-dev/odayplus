@@ -11,6 +11,7 @@ import {
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
@@ -60,6 +61,12 @@ export type NetworkFindAreasWorkspaceProps = {
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
   trackedHeatZoneIds?: string[];
+  /**
+   * Active operator console role. Binds the Network Review read/decide security
+   * headers, the decision actor, and whether the review decision bar is shown
+   * (canDecide). Defaults to the console default role.
+   */
+  activeRoleId?: OperatorRoleId;
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
   /**
    * Live API binding for heatzone scores. When `source === "api"` the
@@ -125,21 +132,70 @@ const NETWORK_ACTOR = {
   actorRoleId: "expansionManager",
 };
 
-// The review-decision surface acts as the authorized Site Reviewer. Deciding a
-// review requires sitescore APPROVE, which Expansion (expansion_user) does not
-// hold — so decisions carry the reviewer identity while reads stay open to the
-// expansion console. Reads use NETWORK_OPERATOR_HEADERS above.
-const NETWORK_REVIEW_DECIDE_HEADERS = {
-  "X-Operator-Role": "expansion-manager",
+// Network Review decision authority is bound to the ACTIVE operator console
+// role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
+// Site Reviewer backend role holds but Expansion (expansion_user) does not.
+//
+// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
+//   reads and decides as the Site Reviewer backend identity (sitescore
+//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
+// - Expansion (and any other network-capable role) reads as expansion_user
+//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
+//   (canDecide=false). If a decide POST is still attempted it carries the
+//   role's own non-approving identity, so the API fails closed with 403 —
+//   defense in depth behind the hidden bar.
+const SITE_REVIEWER_REVIEW_HEADERS = {
+  "X-Operator-Role": "site-reviewer",
   "X-Roles": "site_reviewer",
   "X-Subject-Id": "operator-site-reviewer",
   "X-Tenant-Id": "tenant-a",
 };
 
-const NETWORK_REVIEW_ACTOR = {
+const EXPANSION_REVIEW_HEADERS = {
+  "X-Operator-Role": "expansion-manager",
+  "X-Roles": "expansion_user",
+  "X-Subject-Id": "operator-expansion-manager",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const SITE_REVIEWER_ACTOR = {
   actorName: "陳映辰",
   actorRoleId: "siteReviewer",
 };
+
+const EXPANSION_ACTOR = {
+  actorName: "王若寧",
+  actorRoleId: "expansionManager",
+};
+
+// Console roles authorized to decide a Network site review. Only the operations
+// lead carries an approval mandate on this surface; Expansion prepares/submits
+// but cannot decide (ODP-OC-R4-007 acceptance).
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+
+type NetworkReviewIdentity = {
+  canDecide: boolean;
+  readHeaders: Record<string, string>;
+  decideHeaders: Record<string, string>;
+  actor: { actorName: string; actorRoleId: string };
+};
+
+function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
+  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
+    return {
+      canDecide: true,
+      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      actor: SITE_REVIEWER_ACTOR,
+    };
+  }
+  return {
+    canDecide: false,
+    readHeaders: EXPANSION_REVIEW_HEADERS,
+    decideHeaders: EXPANSION_REVIEW_HEADERS,
+    actor: EXPANSION_ACTOR,
+  };
+}
 
 async function fetchNetworkSnapshot(
   selectedHeatZoneId: string,
@@ -184,12 +240,14 @@ async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | n
   }
 }
 
-async function fetchNetworkReviewsSnapshot(): Promise<NetworkReviewsSnapshot | null> {
+async function fetchNetworkReviewsSnapshot(
+  readHeaders: Record<string, string>,
+): Promise<NetworkReviewsSnapshot | null> {
   try {
     const response = await fetch(`/api/v1/operator/network-reviews`, {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...readHeaders,
         "X-Correlation-Id": "corr-r4-007-reviews-read",
       },
     });
@@ -257,6 +315,7 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
 
 export function NetworkFindAreasWorkspace({
   activeLens,
+  activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
   candidates: candidatesProp = CANDIDATE_FIXTURES,
   heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
@@ -269,6 +328,7 @@ export function NetworkFindAreasWorkspace({
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
@@ -360,7 +420,7 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     let cancelled = false;
     async function loadReviews() {
-      const snapshot = await fetchNetworkReviewsSnapshot();
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       if (!cancelled && snapshot) {
         setReviewsSnapshot(snapshot);
       }
@@ -369,12 +429,14 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reviewIdentity]);
 
-  // Decide a review as the authorized Site Reviewer. The decision syncs
-  // Candidate + Review + Approval + Decision + Audit atomically server-side;
-  // on success we reload the queue. Returns false so the dialog stays open when
-  // the server rejects the decision (policy 422 / role 403 / conflict 409).
+  // Decide a review as the active operator role's review identity. The decision
+  // syncs Candidate + Review + Approval + Decision + Audit atomically
+  // server-side; on success we reload the queue. Returns false so the dialog
+  // stays open when the server rejects the decision (policy 422 / role 403 /
+  // conflict 409). A non-deciding role reaching this path carries its own
+  // non-approving headers, so the API fails closed with 403.
   async function submitReviewDecision(
     reviewId: string,
     action: ReviewDecisionAction,
@@ -393,10 +455,10 @@ export function NetworkFindAreasWorkspace({
           "Content-Type": "application/json",
           "Idempotency-Key": `r4-007-decide-${reviewId}-${action}`,
           "X-Correlation-Id": `corr-r4-007-decide-${reviewId}`,
-          ...NETWORK_REVIEW_DECIDE_HEADERS,
+          ...reviewIdentity.decideHeaders,
         },
         body: JSON.stringify({
-          ...NETWORK_REVIEW_ACTOR,
+          ...reviewIdentity.actor,
           decision: action,
           reason: form.reason,
           conditions: form.conditions,
@@ -408,7 +470,7 @@ export function NetworkFindAreasWorkspace({
         setReviewError(`review decision failed (${response.status})`);
         return false;
       }
-      const snapshot = await fetchNetworkReviewsSnapshot();
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       if (snapshot) {
         setReviewsSnapshot(snapshot);
       }
@@ -672,6 +734,7 @@ export function NetworkFindAreasWorkspace({
           <ReviewPanel
             reviews={reviewsSnapshot?.reviews ?? []}
             fallbackRows={viewModel.reviewQueue}
+            canDecide={reviewIdentity.canDecide}
             submitting={reviewSubmitting}
             decideError={reviewError}
             onDecide={submitReviewDecision}
