@@ -2563,3 +2563,417 @@
   background: #e5f3ea;
   color: #1e7f4f;
 }
+
+/* ---------------------------------------------------------------------------
+ * ODP-OC-R4-007 Network Review decision surface
+ * (data-screen-label "Network 選址審核" / "Dialog Review Decision")
+ * ------------------------------------------------------------------------- */
+
+.reviewLayout {
+  display: grid;
+  grid-template-columns: 390px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .reviewLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.reviewQueue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reviewQueueCard {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 11px;
+  padding: 11px 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.reviewQueueCard:hover {
+  border-color: #b9c4ee;
+}
+
+.reviewQueueCard[data-active="true"] {
+  border-color: #2e3a97;
+  box-shadow: 0 0 0 1px #2e3a97 inset;
+}
+
+.reviewQueueTop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.reviewQueueId {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: #8a93a8;
+}
+
+.reviewQueueName {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1c2333;
+  margin-top: 5px;
+}
+
+.reviewQueueMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #8a93a8;
+}
+
+.reviewQueueDue {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", monospace;
+  color: #96610b;
+}
+
+.reviewDetail {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.reviewDetailHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reviewMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (max-width: 640px) {
+  .reviewMetaGrid,
+  .reviewMetricGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.reviewMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid #eef1f6;
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: #fbfcfe;
+}
+
+.reviewMetaLabel {
+  font-size: 9.5px;
+  color: #98a1b3;
+  font-weight: 700;
+}
+
+.reviewMetaValue {
+  font-size: 11.5px;
+  color: #3a4362;
+  margin-top: 2px;
+}
+
+.reviewFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+
+.reviewFactRow {
+  display: flex;
+  gap: 8px;
+}
+
+.reviewFactKey {
+  width: 82px;
+  flex: none;
+  color: #8a93a8;
+}
+
+.reviewChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.reviewChip {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #0e7c8c;
+  background: #e2f4f6;
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+
+.reviewHistory {
+  margin-top: 10px;
+  border: 1px solid #eef1f6;
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: #fbfcfe;
+}
+
+.reviewHistoryRow {
+  display: flex;
+  gap: 8px;
+  font-size: 10.5px;
+}
+
+.reviewHistoryTime {
+  width: 118px;
+  flex: none;
+  color: #98a1b3;
+  font-weight: 600;
+}
+
+.reviewDecided {
+  margin-top: 12px;
+  background: #f8fafd;
+  border: 1px solid #eef1f6;
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: #3a4362;
+  line-height: 1.6;
+}
+
+.reviewPending {
+  margin-top: 14px;
+  border-top: 1px solid #eef1f6;
+  padding-top: 12px;
+}
+
+.reviewSyncNote {
+  background: #f8fafd;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #5a6478;
+  line-height: 1.6;
+}
+
+.reviewOverrideHint {
+  margin-bottom: 8px;
+  background: #fbf1dd;
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #96610b;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.reviewDecisionBar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.reviewDecisionBar button {
+  flex: 1;
+  min-width: 110px;
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btnGo {
+  background: #1e7f4f;
+  color: #ffffff;
+  border: none;
+}
+
+.btnWait {
+  background: #ffffff;
+  color: #96610b;
+  border: 1px solid #e4c88a;
+}
+
+.reviewRoleNote {
+  margin-top: 10px;
+  background: #fbf6e9;
+  border: 1px solid #efe2c0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #7a6220;
+  line-height: 1.55;
+}
+
+/* Decision dialog ("Dialog Review Decision") */
+.reviewDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: rgba(20, 25, 48, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.reviewDialog {
+  width: 520px;
+  max-width: 94vw;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.reviewDialogHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px 0;
+}
+
+.reviewDialogTitle {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.reviewDialogClose {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #8a93a8;
+  font-size: 17px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.reviewDialogBody {
+  padding: 12px 18px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.reviewDialogSub {
+  font-size: 11.5px;
+  color: #5a6478;
+}
+
+.reviewDialogField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.reviewDialogFieldLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a6478;
+}
+
+.reviewDialogFieldLabelWarn {
+  color: #96610b;
+}
+
+.reviewDialogInput {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #1c2333;
+  background: #fbfcfe;
+  outline: none;
+  resize: vertical;
+}
+
+.reviewAckButton {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.reviewAckButton[data-checked="true"] {
+  background: #eef1fb;
+  border-color: #2e3a97;
+}
+
+.reviewAckMark {
+  font-size: 14px;
+  color: #2e3a97;
+  flex: none;
+  line-height: 1.2;
+}
+
+.reviewAckText {
+  font-size: 11.5px;
+  color: #3a4362;
+  line-height: 1.5;
+}
+
+.reviewDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+.reviewDialogCancel {
+  background: #ffffff;
+  color: #3a4362;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reviewDialogSubmit {
+  background: #2e3a97;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reviewDialogSubmit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

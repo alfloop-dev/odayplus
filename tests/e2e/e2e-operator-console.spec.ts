@@ -179,7 +179,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 });
 
 
-test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page }) => {
+test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page, request }) => {
   const resetRebalance = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-rebalance/reset`, {
     headers: NETWORK_HEADERS,
   });
@@ -196,6 +196,12 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
     }
   });
   page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  // ODP-OC-R4-007: reset the review service before the panel first fetches so
+  // the golden GO review (RV-702) is pending and decidable in this smoke.
+  await request
+    .post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`)
+    .catch(() => undefined);
 
   await page.goto("/operator");
 
@@ -229,25 +235,25 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   await expect(page.getByTestId("network-panel-compare")).toBeVisible();
   await expect(page.getByTestId("network-compare-table")).toContainText("SiteScore");
 
-  // 審核 / Review
+  // 選址審核 / Review — ODP-OC-R4-007 productized the review to the API-backed
+  // decision dialog (Candidate/Review/Approval/Decision/Audit atomic sync).
   await page.getByTestId("network-tab-5").click();
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
-  await expect(page.getByTestId("review-card-RV-1001")).toBeVisible();
+  await expect(page.getByTestId("review-card-RV-702")).toBeVisible({ timeout: 15_000 });
 
-  // Test reason gate validation error
-  await page.getByTestId("review-reason-input-RV-1001").fill("Short");
-  await page.getByTestId("review-btn-approve-RV-1001").click();
-  await expect(page.getByTestId("review-error-RV-1001")).toContainText("決策理由需至少 10 個字");
+  // Reason gate: submitting without a substantive reason is blocked.
+  await page.getByTestId("review-card-RV-702").click();
+  await page.getByTestId("review-btn-go-RV-702").click();
+  await expect(page.getByTestId("review-decision-dialog")).toBeVisible();
+  await page.getByTestId("review-decision-reason").fill("Short");
+  await page.getByTestId("review-decision-submit").click();
+  await expect(page.getByTestId("review-decision-error")).toContainText("決策原因");
 
-  // Perform a valid decision
-  const reviewReason = "Review approved based on excellent SiteScore and fit metrics.";
-  await page.getByTestId("review-reason-input-RV-1001").fill(reviewReason);
-  await page.getByTestId("review-btn-return-RV-1001").click(); // Return decision status
-
-  // Verify UI changes on card
-  await expect(page.getByTestId("review-card-RV-1001")).toContainText("退回");
-  await expect(page.getByTestId("review-reason-RV-1001")).toContainText(reviewReason);
-  await expect(page.getByTestId("review-card-RV-1001")).toContainText("Decided");
+  // A complete GO decision maps to Approved and closes the dialog.
+  await page.getByTestId("review-decision-reason").fill("Review approved based on excellent SiteScore and fit metrics.");
+  await page.getByTestId("review-decision-submit").click();
+  await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("review-decided-RV-702")).toContainText("Approved");
 
   // Candidates tab now surfaces the ODP-OC-R4-006 data-completeness Gate:
   // CS-1003 is gate-blocked ("缺資料 — 無法評分") so scoring is locked.

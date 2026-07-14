@@ -1184,6 +1184,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           />
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
+            activeRoleId={activeRoleId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}
             callbacks={{
@@ -1193,12 +1194,6 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               onSourceListings: (heatZone) => showToast(`${heatZone.id} source listings callback recorded`),
               onSubmitReview: (heatZone) => showToast(`${heatZone.id} review submitted to POC shell`),
               onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
-              onDecideReview: (reviewId, status, reason) =>
-                handleApprovalDecision(
-                  reviewId,
-                  status === "approved" ? "approved" : status === "rejected" ? "rejected" : "returned",
-                  { reason },
-                ),
             }}
           />
         ) : activeWorkspaceId === "govern" ? (

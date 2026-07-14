@@ -11,16 +11,23 @@ import {
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
 import styles from "./networkFindAreas.module.css";
-import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
+import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
 import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
+import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
 import type { ExpansionStep } from "./network/ExpansionStepper";
 import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
+import type {
+  NetworkReviewsSnapshot,
+  ReviewDecisionAction,
+  ReviewDecisionForm,
+} from "./network/networkReviewTypes";
 import {
   buildNetworkFindAreasViewModel,
   type ListingRadarRow,
@@ -28,7 +35,6 @@ import {
   type NetworkFindAreasMapPoint,
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
-  type ReviewQueueRow,
 } from "./networkFindAreasViewModel";
 import { HeatZoneMap } from "../map/HeatZoneMap";
 import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
@@ -40,7 +46,6 @@ export type NetworkFindAreasWorkspaceCallbacks = {
   onSourceListings?: (heatZone: OperatorHeatZone) => void;
   onScoreCandidate?: (candidate: Candidate, heatZone: OperatorHeatZone) => void;
   onSubmitReview?: (heatZone: OperatorHeatZone) => void;
-  onDecideReview?: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
 };
 
 export type NetworkFindAreasWorkspaceProps = {
@@ -53,6 +58,12 @@ export type NetworkFindAreasWorkspaceProps = {
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
   trackedHeatZoneIds?: string[];
+  /**
+   * Active operator console role. Binds the Network Review read/decide security
+   * headers, the decision actor, and whether the review decision bar is shown
+   * (canDecide). Defaults to the console default role.
+   */
+  activeRoleId?: OperatorRoleId;
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
   /**
    * Live API binding for heatzone scores. When `source === "api"` the
@@ -130,6 +141,91 @@ const NETWORK_ACTOR = {
   actorName: "王若寧",
   actorRoleId: "expansionManager",
 };
+
+// Network Review decision authority is bound to the ACTIVE operator console
+// role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
+// Site Reviewer backend role holds but Expansion (expansion_user) does not.
+//
+// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
+//   reads and decides as the Site Reviewer backend identity (sitescore
+//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
+// - Expansion (and any other network-capable role) reads as expansion_user
+//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
+//   (canDecide=false). If a decide POST is still attempted it carries the
+//   role's own non-approving identity, so the API fails closed with 403 —
+//   defense in depth behind the hidden bar.
+const SITE_REVIEWER_REVIEW_HEADERS = {
+  "X-Operator-Role": "site-reviewer",
+  "X-Roles": "site_reviewer",
+  "X-Subject-Id": "operator-site-reviewer",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const EXPANSION_REVIEW_HEADERS = {
+  "X-Operator-Role": "expansion-manager",
+  "X-Roles": "expansion_user",
+  "X-Subject-Id": "operator-expansion-manager",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const SITE_REVIEWER_ACTOR = {
+  actorName: "陳映辰",
+  actorRoleId: "siteReviewer",
+};
+
+const EXPANSION_ACTOR = {
+  actorName: "王若寧",
+  actorRoleId: "expansionManager",
+};
+
+// Console roles authorized to decide a Network site review. Only the operations
+// lead carries an approval mandate on this surface; Expansion prepares/submits
+// but cannot decide (ODP-OC-R4-007 acceptance).
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+
+type NetworkReviewIdentity = {
+  canDecide: boolean;
+  readHeaders: Record<string, string>;
+  decideHeaders: Record<string, string>;
+  actor: { actorName: string; actorRoleId: string };
+};
+
+function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
+  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
+    return {
+      canDecide: true,
+      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      actor: SITE_REVIEWER_ACTOR,
+    };
+  }
+  return {
+    canDecide: false,
+    readHeaders: EXPANSION_REVIEW_HEADERS,
+    decideHeaders: EXPANSION_REVIEW_HEADERS,
+    actor: EXPANSION_ACTOR,
+  };
+}
+
+async function fetchNetworkReviewsSnapshot(
+  readHeaders: Record<string, string>,
+): Promise<NetworkReviewsSnapshot | null> {
+  try {
+    const response = await fetch(`/api/v1/operator/network-reviews`, {
+      cache: "no-store",
+      headers: {
+        ...readHeaders,
+        "X-Correlation-Id": "corr-r4-007-reviews-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkReviewsSnapshot;
+  } catch {
+    return null;
+  }
+}
 
 async function fetchNetworkSnapshot(
   selectedHeatZoneId: string,
@@ -247,6 +343,7 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
 
 export function NetworkFindAreasWorkspace({
   activeLens,
+  activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
   candidates: candidatesProp = CANDIDATE_FIXTURES,
   heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
@@ -259,6 +356,7 @@ export function NetworkFindAreasWorkspace({
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
@@ -271,6 +369,9 @@ export function NetworkFindAreasWorkspace({
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
+  const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length ? networkSnapshot.heatZones : undefined;
   const heatZones =
@@ -357,6 +458,72 @@ export function NetworkFindAreasWorkspace({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadReviews() {
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (!cancelled && snapshot) {
+        setReviewsSnapshot(snapshot);
+      }
+    }
+    loadReviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewIdentity]);
+
+  // Decide a review as the active operator role's review identity. The decision
+  // syncs Candidate + Review + Approval + Decision + Audit atomically
+  // server-side; on success we reload the queue. Returns false so the dialog
+  // stays open when the server rejects the decision (policy 422 / role 403 /
+  // conflict 409). A non-deciding role reaching this path carries its own
+  // non-approving headers, so the API fails closed with 403.
+  async function submitReviewDecision(
+    reviewId: string,
+    action: ReviewDecisionAction,
+    form: ReviewDecisionForm,
+  ): Promise<boolean> {
+    setReviewSubmitting(true);
+    setReviewError(null);
+    try {
+      const requiredData = form.requiredData
+        .split(/[、,]/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const response = await fetch(`/api/v1/operator/network-reviews/${reviewId}/decide`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-007-decide-${reviewId}-${action}`,
+          "X-Correlation-Id": `corr-r4-007-decide-${reviewId}`,
+          ...reviewIdentity.decideHeaders,
+        },
+        body: JSON.stringify({
+          ...reviewIdentity.actor,
+          decision: action,
+          reason: form.reason,
+          conditions: form.conditions,
+          requiredData,
+          overrideAck: form.overrideAck,
+        }),
+      });
+      if (!response.ok) {
+        setReviewError(`review decision failed (${response.status})`);
+        return false;
+      }
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (snapshot) {
+        setReviewsSnapshot(snapshot);
+      }
+      return true;
+    } catch {
+      setReviewError("review decision failed");
+      return false;
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
 
   async function reloadScoringSnapshot() {
     const snapshot = await fetchNetworkScoringSnapshot();
@@ -621,34 +788,6 @@ export function NetworkFindAreasWorkspace({
     });
   }
 
-  function handleDecideReview(reviewId: string, status: SiteReviewStatus, reason: string) {
-    setLocalSiteReviews((prev) =>
-      prev.map((r) =>
-        r.id === reviewId
-          ? {
-              ...r,
-              status,
-              reason,
-              decidedAt: new Date().toISOString().substring(0, 19).replace("T", " "),
-            }
-          : r
-      )
-    );
-
-    const review = localSiteReviews.find((r) => r.id === reviewId);
-    if (review) {
-      const candidateStatus: CandidateStatus | undefined =
-        status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "returned" ? "wait" : undefined;
-      if (candidateStatus) {
-        setLocalCandidates((prev) =>
-          prev.map((c) => (c.id === review.candidateId ? { ...c, status: candidateStatus } : c))
-        );
-      }
-    }
-
-    callbacks?.onDecideReview?.(reviewId, status, reason);
-  }
-
   const expansionSteps =
     networkSnapshot?.expansionSteps ??
     buildFallbackExpansionSteps(
@@ -715,7 +854,14 @@ export function NetworkFindAreasWorkspace({
         ) : activeTab === 4 ? (
           <ComparePanel compare={scoringSnapshot?.compare ?? null} fallback={viewModel.compare} />
         ) : activeTab === 5 ? (
-          <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
+          <ReviewPanel
+            reviews={reviewsSnapshot?.reviews ?? []}
+            fallbackRows={viewModel.reviewQueue}
+            canDecide={reviewIdentity.canDecide}
+            submitting={reviewSubmitting}
+            decideError={reviewError}
+            onDecide={submitReviewDecision}
+          />
         ) : activeTab === 6 ? (
           <RebalancePanel
             apiError={rebalanceApiError}
@@ -999,144 +1145,6 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
     >
       {point.type === "candidate" ? "C" : "L"}
     </span>
-  );
-}
-
-function ReviewQueuePanel({
-  rows,
-  onDecideReview,
-}: {
-  rows: ReviewQueueRow[];
-  onDecideReview: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
-}) {
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const handleDecision = (row: ReviewQueueRow, status: SiteReviewStatus) => {
-    const reason = (reasons[row.id] ?? "").trim();
-    if (reason.length < 10) {
-      setErrors((prev) => ({ ...prev, [row.id]: "決策理由需至少 10 個字" }));
-      return;
-    }
-    setErrors((prev) => {
-      const next = { ...prev };
-      delete next[row.id];
-      return next;
-    });
-    onDecideReview(row.id, status, reason);
-  };
-
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-review" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>審核 / Review</h3>
-        <span>{rows.length} in queue</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.reviewCard} key={row.id} data-tone={row.tone} data-testid={`review-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.candidateTitle}</strong>
-                  <small>{row.zoneLabel}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-              </header>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>Candidate</dt>
-                  <dd>{row.candidateId}</dd>
-                </div>
-                <div>
-                  <dt>SiteScore</dt>
-                  <dd>{row.score !== undefined ? `${row.score} · ${row.recommendation ?? "—"}` : "—"}</dd>
-                </div>
-                <div>
-                  <dt>Requested by</dt>
-                  <dd>{row.requestedByLabel}</dd>
-                </div>
-                <div>
-                  <dt>Reviewers</dt>
-                  <dd>{row.reviewerLabels.join("、")}</dd>
-                </div>
-                <div>
-                  <dt>Requested at</dt>
-                  <dd>{row.requestedAt}</dd>
-                </div>
-              </dl>
-              {row.reasonRequired && row.status === "pending" ? (
-                <p className={styles.reasonNote}>此高風險審核需填寫決策理由。</p>
-              ) : null}
-              {row.reason ? (
-                <p className={styles.muted} data-testid={`review-reason-${row.id}`}>
-                  <strong>決策理由：</strong>{row.reason}
-                </p>
-              ) : null}
-              {row.status === "pending" ? (
-                <div className={styles.reasonInputGroup}>
-                  <label htmlFor={`reason-${row.id}`}>決策理由 (至少 10 個字):</label>
-                  <textarea
-                    id={`reason-${row.id}`}
-                    data-testid={`review-reason-input-${row.id}`}
-                    placeholder="請輸入核准/退回/駁回理由..."
-                    value={reasons[row.id] ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setReasons((prev) => ({ ...prev, [row.id]: val }));
-                      if (val.trim().length >= 10) {
-                        setErrors((prev) => {
-                          const next = { ...prev };
-                          delete next[row.id];
-                          return next;
-                        });
-                      }
-                    }}
-                    className={styles.textarea}
-                  />
-                  {errors[row.id] && (
-                    <p className={styles.errorText} data-testid={`review-error-${row.id}`}>
-                      {errors[row.id]}
-                    </p>
-                  )}
-                  <div className={styles.actionButtons}>
-                    <button
-                      onClick={() => handleDecision(row, "approved")}
-                      className={styles.btnApprove}
-                      data-testid={`review-btn-approve-${row.id}`}
-                      type="button"
-                    >
-                      核准 (Approve)
-                    </button>
-                    <button
-                      onClick={() => handleDecision(row, "returned")}
-                      className={styles.btnReturn}
-                      data-testid={`review-btn-return-${row.id}`}
-                      type="button"
-                    >
-                      退回 (Return)
-                    </button>
-                    <button
-                      onClick={() => handleDecision(row, "rejected")}
-                      className={styles.btnReject}
-                      data-testid={`review-btn-reject-${row.id}`}
-                      type="button"
-                    >
-                      駁回 (Reject)
-                    </button>
-                  </div>
-                </div>
-              ) : row.decidedAt ? (
-                <small className={styles.muted}>Decided {row.decidedAt}</small>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No reviews pending</div>
-      )}
-    </div>
   );
 }
 
