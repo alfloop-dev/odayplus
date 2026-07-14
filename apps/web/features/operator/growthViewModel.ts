@@ -1,11 +1,23 @@
 /**
  * Growth workspace (營收成長) view model.
  *
- * Pure fixtures + selectors for the Operator Console Growth workspace. No
- * runtime/data dependencies — the workspace renders from these fixtures until
- * the backend Growth/PriceOps endpoints are wired.
+ * Dual-mode: runtime API client + embedded fixture fallback.
  *
- * Fixture entities (task ODP-OC-FE-03):
+ * Read path  — fetchGrowthViewModel({ segmentId, itemId, draftId })
+ *   1. Calls /api/v1/operator/growth/{freshness,segments,recommendations,actions}
+ *      with Idempotency-Key and X-Correlation-Id.
+ *   2. On any network/parse error, silently falls back to embedded fixtures so
+ *      the workspace never breaks.
+ *
+ * Write path — apiClient.createGrowthDraft() / apiClient.writeGrowthOutcome()
+ *   • POST /api/v1/operator/growth/actions           (create draft)
+ *   • POST /api/v1/operator/growth/actions/{id}/outcome  (effectiveness writeback)
+ *   Both carry Idempotency-Key + X-Correlation-Id headers and are idempotent.
+ *
+ * Synchronous buildGrowthViewModel() still works for SSR/testing contexts that
+ * pass pre-fetched data directly.
+ *
+ * Fixture entities (task ODP-OC-FE-03, wire-up ODP-FIN-FE-001):
  *   - SEGMENTS                 分群 (GrowthSegment)
  *   - PRICEOPS_RECOMMENDATIONS PriceOps 建議 (PriceOpsRecommendation)
  *   - GROWTH_ITEMS             Growth Actions (GrowthItem)
@@ -89,7 +101,21 @@ export type GrowthItem = {
   };
 };
 
-export const freshness = {
+/** Freshness / model-version metadata returned by /growth/freshness. */
+export type GrowthFreshness = {
+  status: DataStatus;
+  updatedAt: string;
+  modelVersion: string;
+  policyVersion: string;
+  featureSnapshotTime: string;
+  sourceSnapshotId: string;
+};
+
+// ---------------------------------------------------------------------------
+// Embedded fixture data (fallback when API is unreachable)
+// ---------------------------------------------------------------------------
+
+export const FIXTURE_FRESHNESS: GrowthFreshness = {
   status: "FRESH" as DataStatus,
   updatedAt: "2026-07-09 14:20",
   modelVersion: "growth-uplift-v1.4.0",
@@ -97,6 +123,12 @@ export const freshness = {
   featureSnapshotTime: "2026-07-09T06:00:00Z",
   sourceSnapshotId: "snap-growth-20260709-0600",
 };
+
+/**
+ * @deprecated Use FIXTURE_FRESHNESS. The bare `freshness` export is kept for
+ * existing imports that reference it directly.
+ */
+export const freshness = FIXTURE_FRESHNESS;
 
 export const SEGMENTS: GrowthSegment[] = [
   {
@@ -278,6 +310,202 @@ export const GROWTH_ITEMS: GrowthItem[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Runtime API client
+// ---------------------------------------------------------------------------
+
+const GROWTH_API_BASE = "/api/v1/operator/growth";
+
+/** Generate a short idempotency key for browser-side requests. */
+function newIdempotencyKey(): string {
+  return `ik-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Generate a correlation ID for browser-side requests. */
+function newCorrelationId(): string {
+  return `corr-web-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit & { correlationId?: string } = {},
+): Promise<T | null> {
+  const { correlationId, ...fetchOptions } = options;
+  try {
+    const res = await fetch(`${GROWTH_API_BASE}${path}`, {
+      ...fetchOptions,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Correlation-Id": correlationId ?? newCorrelationId(),
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** Create a Growth Action draft from a PriceOps recommendation. */
+export async function createGrowthDraft(params: {
+  name: string;
+  segmentId: string;
+  sourceRecommendationId?: string;
+  objective: string;
+  targetLift: number;
+  observationWindowDays?: number;
+  rationale?: string;
+  rollbackPlan?: string;
+}): Promise<{ id: string; status: string; correlationId: string } | null> {
+  const idempotencyKey = newIdempotencyKey();
+  const correlationId = newCorrelationId();
+  const result = await apiFetch<{ id: string; status: string; correlation_id: string }>(
+    "/actions",
+    {
+      method: "POST",
+      correlationId,
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        name: params.name,
+        segmentId: params.segmentId,
+        sourceRecommendationId: params.sourceRecommendationId,
+        objective: params.objective,
+        targetLift: params.targetLift,
+        observationWindowDays: params.observationWindowDays ?? 14,
+        rationale: params.rationale ?? "",
+        rollbackPlan: params.rollbackPlan ?? "",
+      }),
+    },
+  );
+  if (!result) return null;
+  return {
+    id: result.id,
+    status: result.status,
+    correlationId: result.correlation_id,
+  };
+}
+
+/** Write back effectiveness verdict for a Growth Action. */
+export async function writeGrowthOutcome(params: {
+  actionId: string;
+  outcome: GrowthOutcome;
+  requiredAction: CloseoutRequiredAction;
+  observedLift?: number | null;
+  evidenceLevel?: ConfidenceLevel;
+  rationale?: string;
+}): Promise<{ actionId: string; outcome: string; correlationId: string } | null> {
+  const idempotencyKey = newIdempotencyKey();
+  const correlationId = newCorrelationId();
+  const result = await apiFetch<{
+    id: string;
+    growth_outcome: string;
+    correlation_id: string;
+  }>(`/actions/${params.actionId}/outcome`, {
+    method: "POST",
+    correlationId,
+    headers: {
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      outcome: params.outcome,
+      requiredAction: params.requiredAction,
+      observedLift: params.observedLift ?? null,
+      evidenceLevel: params.evidenceLevel ?? "medium",
+      rationale: params.rationale ?? "",
+    }),
+  });
+  if (!result) return null;
+  return {
+    actionId: result.id,
+    outcome: result.growth_outcome,
+    correlationId: result.correlation_id,
+  };
+}
+
+/** Bundled API client for Growth workspace write operations. */
+export const growthApiClient = { createGrowthDraft, writeGrowthOutcome };
+
+// ---------------------------------------------------------------------------
+// Runtime data fetch with fixture fallback
+// ---------------------------------------------------------------------------
+
+export type GrowthApiData = {
+  freshness: GrowthFreshness;
+  segments: GrowthSegment[];
+  recommendations: PriceOpsRecommendation[];
+  items: GrowthItem[];
+  /** true when data came from the live API; false when falling back to fixtures */
+  fromApi: boolean;
+};
+
+/**
+ * Fetch all Growth workspace data from /api/v1/operator/growth/*.
+ * Falls back to embedded fixtures on any error so the workspace never breaks.
+ *
+ * Called from server components (Next.js server-side fetch) or from
+ * client-side hooks when live refresh is needed.
+ */
+export async function fetchGrowthApiData(params: {
+  segmentId?: string;
+} = {}): Promise<GrowthApiData> {
+  const correlationId = newCorrelationId();
+  const baseHeaders = { "X-Correlation-Id": correlationId };
+
+  try {
+    const [freshnessRes, segmentsRes, recommendationsRes, actionsRes] = await Promise.all([
+      apiFetch<GrowthFreshness>("/freshness", { headers: baseHeaders }),
+      apiFetch<{ items: GrowthSegment[] }>("/segments", { headers: baseHeaders }),
+      apiFetch<{ items: PriceOpsRecommendation[] }>(
+        params.segmentId
+          ? `/recommendations?segment_id=${encodeURIComponent(params.segmentId)}`
+          : "/recommendations",
+        { headers: baseHeaders },
+      ),
+      apiFetch<{ items: GrowthItem[] }>(
+        params.segmentId
+          ? `/actions?segment_id=${encodeURIComponent(params.segmentId)}`
+          : "/actions",
+        { headers: baseHeaders },
+      ),
+    ]);
+
+    if (segmentsRes && recommendationsRes && actionsRes) {
+      return {
+        freshness: freshnessRes ?? FIXTURE_FRESHNESS,
+        segments: segmentsRes.items,
+        recommendations: recommendationsRes.items,
+        items: actionsRes.items,
+        fromApi: true,
+      };
+    }
+  } catch {
+    // fall through to fixture fallback
+  }
+
+  // Fixture fallback
+  const recommendations = params.segmentId
+    ? PRICEOPS_RECOMMENDATIONS.filter((r) => r.segmentId === params.segmentId)
+    : PRICEOPS_RECOMMENDATIONS;
+  const items = params.segmentId
+    ? GROWTH_ITEMS.filter((i) => i.segmentId === params.segmentId)
+    : GROWTH_ITEMS;
+
+  return {
+    freshness: FIXTURE_FRESHNESS,
+    segments: SEGMENTS,
+    recommendations,
+    items,
+    fromApi: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Domain logic (pure, unchanged from ODP-OC-FE-03)
+// ---------------------------------------------------------------------------
+
 /** Statuses whose observation window has matured enough to judge an outcome. */
 const OUTCOME_STAGES: DecisionStatus[] = ["OUTCOME_READY", "CLOSED"];
 
@@ -421,35 +649,46 @@ export type GrowthViewModel = {
     effectiveCount: number;
     blockedCloseoutCount: number;
   };
+  /** Metadata about whether data came from the live API or fixtures. */
+  dataSource: "api" | "fixture";
 };
 
 /**
- * Build the workspace view model from URL-synced selection params. Filtering by
- * segment narrows both the recommendation table and the growth-action list so
- * the console reads as one coherent workspace.
+ * Build the workspace view model from URL-synced selection params and
+ * pre-fetched API data.
+ *
+ * When called without `apiData`, falls back to embedded fixtures (backwards
+ * compatible with existing synchronous callers and tests).
  */
-export function buildGrowthViewModel(params: {
-  segmentId?: string;
-  itemId?: string;
-  draftId?: string;
-}): GrowthViewModel {
+export function buildGrowthViewModel(
+  params: {
+    segmentId?: string;
+    itemId?: string;
+    draftId?: string;
+  },
+  apiData?: GrowthApiData,
+): GrowthViewModel {
+  const allSegments = apiData?.segments ?? SEGMENTS;
+  const allItems = apiData?.items ?? GROWTH_ITEMS;
+  const allRecommendations = apiData?.recommendations ?? PRICEOPS_RECOMMENDATIONS;
+
   const selectedSegment =
-    SEGMENTS.find((segment) => segment.id === params.segmentId) ?? null;
+    allSegments.find((segment) => segment.id === params.segmentId) ?? null;
 
   const recommendations = selectedSegment
-    ? PRICEOPS_RECOMMENDATIONS.filter((rec) => rec.segmentId === selectedSegment.id)
-    : PRICEOPS_RECOMMENDATIONS;
+    ? allRecommendations.filter((rec) => rec.segmentId === selectedSegment.id)
+    : allRecommendations;
 
   const items = selectedSegment
-    ? GROWTH_ITEMS.filter((item) => item.segmentId === selectedSegment.id)
-    : GROWTH_ITEMS;
+    ? allItems.filter((item) => item.segmentId === selectedSegment.id)
+    : allItems;
 
-  const fallbackItem = items[0] ?? GROWTH_ITEMS[0];
+  const fallbackItem = items[0] ?? allItems[0];
   const selectedItem =
     items.find((item) => item.id === params.itemId) ?? fallbackItem;
 
   const draftRecommendation = params.draftId
-    ? PRICEOPS_RECOMMENDATIONS.find((rec) => rec.id === params.draftId) ?? null
+    ? allRecommendations.find((rec) => rec.id === params.draftId) ?? null
     : null;
 
   const activeStatuses: DecisionStatus[] = [
@@ -460,22 +699,23 @@ export function buildGrowthViewModel(params: {
   ];
 
   return {
-    segments: SEGMENTS,
+    segments: allSegments,
     recommendations,
     items,
     selectedSegment,
     selectedItem,
     selectedItemGate: closeoutGate(selectedItem),
     draftRecommendation,
+    dataSource: apiData?.fromApi ? "api" : "fixture",
     summary: {
-      segmentCount: SEGMENTS.length,
-      activeCount: GROWTH_ITEMS.filter((item) =>
+      segmentCount: allSegments.length,
+      activeCount: allItems.filter((item) =>
         activeStatuses.includes(item.status),
       ).length,
-      effectiveCount: GROWTH_ITEMS.filter(
+      effectiveCount: allItems.filter(
         (item) => judgeEffectiveness(item) === "EFFECTIVE",
       ).length,
-      blockedCloseoutCount: GROWTH_ITEMS.filter((item) => {
+      blockedCloseoutCount: allItems.filter((item) => {
         const gate = closeoutGate(item);
         return item.status === "OUTCOME_READY" && !gate.canClose;
       }).length,

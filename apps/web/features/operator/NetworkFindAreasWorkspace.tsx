@@ -10,6 +10,7 @@ import {
   REBALANCE_STORE_FIXTURES,
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
 import {
@@ -25,6 +26,8 @@ import {
   type ReviewQueueRow,
   type SiteScoreLabRow,
 } from "./networkFindAreasViewModel";
+import { HeatZoneMap } from "../map/HeatZoneMap";
+import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
 
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;
@@ -47,6 +50,18 @@ export type NetworkFindAreasWorkspaceProps = {
   activeLens?: NetworkFindAreasLens;
   trackedHeatZoneIds?: string[];
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
+  /**
+   * Live API binding for heatzone scores. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * HEAT_ZONE_FIXTURES and shows a fixture-mode indicator.
+   */
+  liveHeatZones?: ApiBinding<OperatorHeatZone>;
+  /**
+   * Live API binding for candidate sites. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * CANDIDATE_FIXTURES.
+   */
+  liveCandidates?: ApiBinding<Candidate>;
 };
 
 const networkTabs = [
@@ -62,15 +77,33 @@ const networkTabs = [
 export function NetworkFindAreasWorkspace({
   activeLens,
   callbacks,
-  candidates = CANDIDATE_FIXTURES,
-  heatZones = HEAT_ZONE_FIXTURES,
+  candidates: candidatesProp = CANDIDATE_FIXTURES,
+  heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
   listings = LISTING_FIXTURES,
   listingSources = LISTING_SOURCE_FIXTURES,
   rebalanceStores = REBALANCE_STORE_FIXTURES,
   siteReviews = SITE_REVIEW_FIXTURES,
   selectedHeatZoneId,
   trackedHeatZoneIds,
+  liveHeatZones,
+  liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  // Resolve effective data: prefer live API items when the binding is ready;
+  // otherwise fall back to fixture defaults (or the prop passed by the parent).
+  const heatZones =
+    liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
+      ? liveHeatZones.items
+      : heatZonesProp;
+  const candidates =
+    liveCandidates?.source === "api" && liveCandidates.items.length > 0
+      ? liveCandidates.items
+      : candidatesProp;
+
+  // True when any data source fell back to fixtures (for status indicator).
+  const isFixtureFallback =
+    (liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
+    (liveCandidates !== undefined && liveCandidates.source !== "api");
+
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
@@ -198,6 +231,11 @@ export function NetworkFindAreasWorkspace({
           <span>{viewModel.totals.reviews} reviews</span>
           <span>{viewModel.totals.rebalances} rebalances</span>
           <span>{viewModel.totals.averageConfidence} avg confidence</span>
+          {isFixtureFallback && (
+            <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
+              fixture data
+            </span>
+          )}
         </div>
       </header>
 
@@ -236,6 +274,9 @@ export function NetworkFindAreasWorkspace({
           selectedZone={selectedZone}
           effectiveLens={effectiveLens}
           isSelectedTracked={isSelectedTracked}
+          heatZones={heatZones}
+          listings={listings}
+          candidates={localCandidates}
           onSelectZone={selectHeatZone}
           onChangeLens={changeLens}
           onToggleTracked={toggleTracked}
@@ -253,6 +294,9 @@ type FindAreasPanelProps = {
   selectedZone: NetworkFindAreasZoneViewModel | null;
   effectiveLens: NetworkFindAreasLens;
   isSelectedTracked: boolean;
+  heatZones: OperatorHeatZone[];
+  listings: Listing[];
+  candidates: Candidate[];
   onSelectZone: (zone: NetworkFindAreasZoneViewModel) => void;
   onChangeLens: (lens: NetworkFindAreasLens) => void;
   onToggleTracked: () => void;
@@ -262,8 +306,11 @@ type FindAreasPanelProps = {
 };
 
 function FindAreasPanel({
+  candidates,
   effectiveLens,
+  heatZones,
   isSelectedTracked,
+  listings,
   onChangeLens,
   onScoreCandidate,
   onSelectZone,
@@ -273,6 +320,19 @@ function FindAreasPanel({
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
+  const mapZones = useMemo(
+    () => heatZones.map(operatorHeatZoneToMapZone),
+    [heatZones],
+  );
+  const mapListings = useMemo(
+    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
+    [listings, heatZones],
+  );
+  const mapCandidates = useMemo(
+    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
+    [candidates, heatZones],
+  );
+  const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
   return (
     <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
@@ -313,35 +373,17 @@ function FindAreasPanel({
             <h3>HeatZone Lens Map</h3>
             <span>{viewModel.activeLens}</span>
           </div>
-          <div className={styles.mapCanvas} aria-label="Deterministic local HeatZone map">
-            <div className={styles.mapGrid} aria-hidden="true" />
-            <div className={styles.mapRoadA} aria-hidden="true" />
-            <div className={styles.mapRoadB} aria-hidden="true" />
-            <div className={styles.mapRoadC} aria-hidden="true" />
-            {viewModel.mapPoints.map((point) => (
-              <MapPoint key={`${point.type}-${point.id}`} point={point} />
-            ))}
-            {viewModel.zones.map((zone) => (
-              <button
-                aria-current={selectedZone?.id === zone.id ? "true" : undefined}
-                className={styles.zoneMarker}
-                data-tone={zone.mapTone}
-                key={zone.id}
-                onClick={() => onSelectZone(zone)}
-                style={
-                  {
-                    "--marker-size": `${zone.mapSize}px`,
-                    "--x": `${zone.mapX}%`,
-                    "--y": `${zone.mapY}%`,
-                  } as CSSProperties
-                }
-                type="button"
-              >
-                <strong>{zone.id}</strong>
-                <span>{zone.lensLabel}</span>
-              </button>
-            ))}
-          </div>
+          {/* Real MapLibre/deck.gl HeatZoneMap – replaces CSS-grid placeholder.
+              When no tile URL is configured (default), HeatZoneMap falls back to
+              its local MapLibre style (deterministic CSS background), preserving
+              the tile-fallback contract from the task brief. */}
+          <HeatZoneMap
+            zones={mapZones}
+            listings={mapListings}
+            candidates={mapCandidates}
+            selectedZoneId={selectedMapZoneId}
+            freshness={OPERATOR_MAP_FRESHNESS}
+          />
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
@@ -973,4 +1015,146 @@ function formatCurrency(value: number) {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+// ─── Operator → Map type adapters ──────────────────────────────────────────
+// These bridge the operator-layer types (OperatorHeatZone, Listing, Candidate)
+// to the expansion-layer types that HeatZoneMap expects.
+// Synthetic/missing fields are derived deterministically from available data.
+
+const OPERATOR_MAP_FRESHNESS = {
+  status: "FRESH",
+  updatedAt: "",
+  modelVersion: "network-ops-local",
+  featureSnapshotTime: "",
+  sourceSnapshotId: "snap-network-ops-local",
+};
+
+/** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
+function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
+  if (zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
+  if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
+  if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
+  if (zone.competitionIndex >= 0.7) return "SATURATED";
+  return "PARTIALLY_ABSORBED";
+}
+
+/**
+ * Convert an OperatorHeatZone to the MapHeatZone type expected by HeatZoneMap.
+ * Fields not tracked by the operator layer are synthesised deterministically
+ * so that the map renders correctly without requiring API data.
+ */
+function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
+  return {
+    id: zone.id,
+    district: zone.label,
+    // h3 is intentionally invalid so that zoneToFeature falls back to the
+    // centroid-delta polygon – a deterministic, no-network fallback.
+    h3: `operator-${zone.id}`,
+    centroid: zone.centroid,
+    h3Resolution: 9,
+    score: Math.round(zone.demandGap * 100),
+    confidence: zone.confidence,
+    state: deriveHeatZoneState(zone),
+    rank: zone.rank,
+    listings: 0,
+    warnings: zone.risks,
+    reasons: zone.reasons,
+    modelVersion: "network-ops-local",
+    featureVersion: "operator-proxy-v1",
+    featureSnapshotTime: "",
+    predictionOriginTime: "",
+    lastScoredAt: "",
+    sourceSnapshotIds: ["snap-network-ops-local"],
+    unmetDemandScore: zone.demandGap,
+    formatFitScore: 1 - zone.competitionIndex,
+    cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
+    rentFeasibility: 0.7,
+    listingAvailability: 0.5,
+    poiCount: 10,
+    competitorCount: Math.round(zone.competitionIndex * 10),
+    competitorCapacity: 20,
+    medianListingRent: 0,
+    existingStoreCount: 0,
+    dataQualityScore: zone.confidence,
+  };
+}
+
+/**
+ * Convert an operator Listing to the MapListing type expected by HeatZoneMap.
+ * Coordinates are inferred from the associated HeatZone centroid with a small
+ * deterministic offset so listings don't stack on top of the zone marker.
+ */
+function operatorListingToMapListing(
+  listing: Listing,
+  heatZones: OperatorHeatZone[],
+  index: number,
+): MapListing {
+  const zone = heatZones.find((z) => z.id === listing.heatZoneId);
+  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
+  // Small deterministic offsets so listings spread around the centroid
+  const offset = 0.003;
+  const angle = (index * 137.5 * Math.PI) / 180; // golden angle spread
+  const coordinates: [number, number] = [
+    lng + offset * Math.cos(angle),
+    lat + offset * Math.sin(angle),
+  ];
+  return {
+    id: listing.id,
+    source: listing.sourceId,
+    address: listing.address,
+    status: listing.status === "hardfail" ? "FAILED_HARD_RULE"
+      : listing.status === "duplicate" ? "DUPLICATE"
+      : listing.status === "candidate" ? "CANDIDATE"
+      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching" ? "GEOCODED"
+      : listing.status === "parsed" ? "PARSED"
+      : "RAW",
+    issue: listing.hardRuleFailures.join("; ") || "",
+    rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
+    area: `${listing.areaPing} ping`,
+    geocode: `${listing.geocodeConfidence.toFixed(2)} / operator`,
+    duplicate: listing.duplicateOfId ?? "",
+    heatZoneId: listing.heatZoneId,
+    coordinates,
+    updatedAt: "",
+    action: listing.candidateId ? "候選點已建立" : "待處理",
+  };
+}
+
+/**
+ * Convert an operator Candidate to the MapCandidateSite type expected by HeatZoneMap.
+ */
+function operatorCandidateToMapSite(
+  candidate: Candidate,
+  heatZones: OperatorHeatZone[],
+  index: number,
+): MapCandidateSite {
+  const zone = heatZones.find((z) => z.id === candidate.heatZoneId);
+  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
+  const offset = 0.005;
+  const angle = (index * 97.3 * Math.PI) / 180;
+  const coordinates: [number, number] = [
+    lng + offset * Math.cos(angle),
+    lat + offset * Math.sin(angle),
+  ];
+  const isReady = candidate.status === "ready" || candidate.status === "pendingreview" || candidate.status === "approved";
+  return {
+    id: candidate.id,
+    address: candidate.address,
+    status: candidate.status === "approved" ? "approved"
+      : candidate.status === "rejected" ? "rejected"
+      : candidate.status === "scoring" || candidate.status === "pendingreview" ? "scored"
+      : candidate.status === "wait" || candidate.status === "ready" ? "screened"
+      : "new",
+    heatZoneId: candidate.heatZoneId,
+    coordinates,
+    heatZoneScore: candidate.score,
+    rentArea: "",
+    geocode: "",
+    feasibility: candidate.missingData.length ? candidate.missingData.join("; ") : "OK",
+    listingSource: candidate.listingId ?? "",
+    siteScore: `${candidate.score} / ${candidate.recommendation}`,
+    readiness: isReady ? "ready" : "blocked",
+    disabledReason: candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
+  };
 }

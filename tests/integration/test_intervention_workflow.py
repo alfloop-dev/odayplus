@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.intervention import (
+    CloseDisposition,
     EvaluationMethod,
     EvidenceLevel,
     InMemoryInterventionRepository,
@@ -78,6 +79,24 @@ def _drive_to_approved(workflow: InterventionWorkflow, intervention_id: str) -> 
     )
 
 
+def _drive_to_completed(workflow: InterventionWorkflow, intervention_id: str) -> None:
+    """Drive a case all the way to COMPLETED with a matured, causal outcome."""
+    _drive_to_approved(workflow, intervention_id)
+    workflow.execute(intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        intervention_id,
+        actor="analyst-a",
+        incremental_revenue=120_000.0,
+        incremental_gross_margin=48_000.0,
+        has_control_group=True,
+        pretrend_status=PretrendStatus.PASS,
+        treatment_store_count=1,
+        control_store_count=4,
+        evaluation_method=EvaluationMethod.DID,
+    )
+    workflow.evaluate_effect(intervention_id, actor="analyst-a", now=MATURE_TIME)
+
+
 def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> None:
     workflow, registry = _new_workflow()
     case = _open_case(workflow)
@@ -126,6 +145,99 @@ def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> No
     assert label.evidence_level is EvidenceLevel.L3_DID_VALIDATED
     assert registry.intervened_windows("store-001") == [label]
     assert label.label_maturity_time == observing.observation_window.maturity_time
+
+
+def test_close_completed_case_records_disposition_and_is_terminal() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    completed = workflow.get(case.intervention_id)
+    assert completed.status is InterventionStatus.COMPLETED
+    # A matured-but-unclosed case is NOT terminal: it still awaits close/follow-up.
+    assert completed.is_terminal is False
+
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="positive causal effect; keep the change, no follow-up needed",
+    )
+    assert closed.status is InterventionStatus.CLOSED
+    assert closed.is_terminal is True
+    assert closed.close is not None
+    assert closed.close.disposition is CloseDisposition.KEEP
+    assert closed.close.has_follow_up is False
+    # The effect recommendation is snapshotted onto the close record for audit.
+    assert closed.close.recommendation == closed.effect.recommendation.value
+
+
+def test_close_requires_reason_and_completed_state() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+
+    # Cannot close a case that has not reached COMPLETED (rejects invalid state).
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="too early",
+        )
+
+    _drive_to_completed(workflow, case.intervention_id)
+
+    # Closing is high-risk: a reason is mandatory.
+    with pytest.raises(InterventionError, match="requires a reason"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.REVERT,
+            reason="   ",
+        )
+
+    # A closed case cannot be closed again (CLOSED is terminal).
+    workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="keep the change after positive matured effect",
+    )
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="double close attempt",
+        )
+
+
+def test_close_with_follow_up_opens_linked_candidate_after_maturity() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    original = workflow.get(case.intervention_id)
+
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.ITERATE,
+        reason="inconclusive channel mix; schedule a follow-up iteration",
+        follow_up=True,
+        follow_up_kind=InterventionKind.AD_CAMPAIGN,
+    )
+    assert closed.status is InterventionStatus.CLOSED
+    assert closed.close.has_follow_up is True
+
+    follow_up_id = closed.close.follow_up_intervention_id
+    follow_up = workflow.get(follow_up_id)
+    assert follow_up is not None
+    # The follow-up is a fresh CANDIDATE for the same store, linked back and
+    # scheduled after the original's observation window matures (no overlap).
+    assert follow_up.status is InterventionStatus.CANDIDATE
+    assert follow_up.store_id == original.store_id
+    assert follow_up.kind is InterventionKind.AD_CAMPAIGN
+    assert follow_up.trigger_ref == f"follow-up:{case.intervention_id}"
+    assert follow_up.planned_start == original.observation_window.maturity_time
 
 
 def test_conflict_blocks_approval_until_resolved() -> None:
@@ -234,6 +346,144 @@ def test_immature_window_cannot_claim_effect() -> None:
     assert outcome.effect.recommendation is Recommendation.INCONCLUSIVE
     assert "observation_window_not_mature" in outcome.effect.limitations
     assert registry.get(case.intervention_id).can_claim_effect is False
+    # KEY: an immature evaluate_effect must NOT advance the case to COMPLETED.
+    # It must stay in EVALUATING so close_case cannot be called prematurely.
+    assert outcome.intervention.status is InterventionStatus.EVALUATING
+
+
+def test_immature_evaluate_then_close_is_rejected() -> None:
+    """Regression: Codex2 review — immature evaluate_effect must not allow close.
+
+    Reproduction sequence:
+        1. Drive a case to OBSERVING with an outcome collected.
+        2. Call evaluate_effect with now=IMMATURE_TIME (window not settled).
+        3. Attempt close_case with KEEP.
+
+    Before the fix evaluate_effect always advanced to COMPLETED even when
+    observation_mature=False, which let close_case slip through to CLOSED.
+    After the fix:
+        - evaluate_effect with an immature window stays in EVALUATING (not COMPLETED);
+        - a close_case attempt at that point raises InterventionError because the
+          status check (requires COMPLETED) fails.
+    """
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        case.intervention_id,
+        actor="analyst-a",
+        incremental_revenue=50_000.0,
+        incremental_gross_margin=20_000.0,
+        has_control_group=False,
+        pretrend_status=PretrendStatus.INCONCLUSIVE,
+        treatment_store_count=1,
+        control_store_count=0,
+        evaluation_method=EvaluationMethod.BEFORE_AFTER,
+    )
+
+    # Immature evaluation: window has not settled.
+    outcome = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
+    )
+    assert outcome.effect.observation_mature is False
+    # Must stay in EVALUATING — NOT COMPLETED.
+    assert outcome.intervention.status is InterventionStatus.EVALUATING
+
+    # close_case must be rejected because the status is EVALUATING, not COMPLETED.
+    with pytest.raises(InterventionError, match="cannot close"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="attempted close on immature outcome",
+        )
+
+
+def test_close_defence_in_depth_rejects_immature_effect() -> None:
+    """Defence-in-depth: close_case must guard effect.observation_mature even if
+    the status check is somehow satisfied (e.g. via a future alternative code path).
+
+    Simulated by creating a workflow state where the case is in COMPLETED but the
+    effect has observation_mature=False — which cannot happen through the normal
+    workflow after the primary fix, but we verify the guard independently.
+    """
+    from dataclasses import replace as dc_replace
+
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_completed(workflow, case.intervention_id)
+    completed = workflow.get(case.intervention_id)
+    assert completed.status is InterventionStatus.COMPLETED
+
+    # Fabricate an immature effect on an otherwise COMPLETED case to test the
+    # defence-in-depth guard independently of the primary fix.
+    assert completed.effect is not None
+    immature_effect = dc_replace(completed.effect, observation_mature=False)
+    tampered = dc_replace(completed, effect=immature_effect)
+    workflow.repository.save(tampered)
+
+    with pytest.raises(InterventionError, match="observation window has not matured"):
+        workflow.close_case(
+            case.intervention_id,
+            actor="ops-manager",
+            disposition=CloseDisposition.KEEP,
+            reason="attempting close with fabricated immature effect",
+        )
+
+
+def test_immature_evaluate_then_mature_retry_reaches_completed() -> None:
+    """Regression: Codex2 review — mature retry after immature evaluate must work.
+
+    Full reproduction sequence from the task brief:
+        1. Drive a case to OBSERVING with an outcome collected.
+        2. Call evaluate_effect(now=IMMATURE_TIME) → EVALUATING, observation_mature=False.
+        3. Call evaluate_effect(now=MATURE_TIME) → must succeed (NOT raise) and
+           advance the case to COMPLETED so the operator can close it.
+
+    Before the fix step 3 raised:
+        InterventionError: cannot evaluate effect on intervention in status EVALUATING
+    because _require_status only allowed OBSERVING.  After the fix EVALUATING is
+    also accepted, making the mature-retry path reachable.
+    """
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        case.intervention_id,
+        actor="analyst-a",
+        incremental_revenue=50_000.0,
+        incremental_gross_margin=20_000.0,
+        has_control_group=True,
+        pretrend_status=PretrendStatus.PASS,
+        treatment_store_count=5,
+        control_store_count=5,
+        evaluation_method=EvaluationMethod.DID,
+    )
+
+    # Step 2: immature first evaluate — case stays in EVALUATING.
+    first = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
+    )
+    assert first.effect.observation_mature is False
+    assert first.intervention.status is InterventionStatus.EVALUATING
+
+    # Step 3: mature retry — must NOT raise, must advance to COMPLETED.
+    second = workflow.evaluate_effect(
+        case.intervention_id, actor="analyst-a", now=MATURE_TIME
+    )
+    assert second.effect.observation_mature is True
+    assert second.intervention.status is InterventionStatus.COMPLETED
+
+    # Verify the case can now be closed.
+    closed = workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="positive effect confirmed after mature retry",
+    )
+    assert closed.status is InterventionStatus.CLOSED
 
 
 def test_mature_without_control_is_before_after_not_causal() -> None:
@@ -508,3 +758,88 @@ def test_api_conflict_blocks_submit() -> None:
 
     blocked = client.post(f"/interventions/{second}/submit", json={"actor": "p"})
     assert blocked.status_code == 422
+
+
+def test_api_close_case_with_follow_up_and_audit() -> None:
+    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
+    corr = {"x-correlation-id": "corr-iv-close"}
+
+    create = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-close",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "recover GM",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "s",
+        },
+        headers=corr,
+    )
+    iid = create.json()["intervention_id"]
+    for path, payload in (
+        ("eligibility", {"eligible": True, "actor": "s"}),
+        ("action", {"action_spec": {"pct": -5}, "actor": "p"}),
+        ("conflict-check", {"actor": "p"}),
+        ("submit", {"actor": "p"}),
+        ("approve", {"action": "APPROVE", "actor": "m", "reason": "ok"}),
+        ("execute", {"executor": "r", "executed_at": EXEC_TIME.isoformat()}),
+        (
+            "outcomes",
+            {
+                "actor": "a",
+                "incremental_revenue": 100_000,
+                "incremental_gross_margin": 40_000,
+                "has_control_group": True,
+                "pretrend_status": "PASS",
+                "treatment_store_count": 1,
+                "control_store_count": 4,
+                "evaluation_method": "DID",
+            },
+        ),
+    ):
+        assert (
+            client.post(f"/interventions/{iid}/{path}", json=payload, headers=corr).status_code
+            == 200
+        )
+    assert (
+        client.post(
+            f"/interventions/{iid}/evaluate",
+            json={"actor": "a", "now": MATURE_TIME.isoformat()},
+            headers=corr,
+        ).status_code
+        == 200
+    )
+
+    # Closing requires a valid disposition; an unknown one is a domain 422.
+    bad = client.post(
+        f"/interventions/{iid}/close",
+        json={"actor": "m", "disposition": "NOT_A_DISPOSITION", "reason": "x"},
+    )
+    assert bad.status_code == 422
+
+    close = client.post(
+        f"/interventions/{iid}/close",
+        json={
+            "actor": "ops-manager",
+            "disposition": "ITERATE",
+            "reason": "iterate with a follow-up campaign after positive matured effect",
+            "follow_up": True,
+        },
+        headers=corr,
+    )
+    assert close.status_code == 200
+    closed = close.json()
+    assert closed["status"] == "CLOSED"
+    assert closed["close"]["disposition"] == "ITERATE"
+    follow_up_id = closed["close"]["follow_up_intervention_id"]
+    assert follow_up_id
+
+    follow_up = client.get(f"/interventions/{follow_up_id}")
+    assert follow_up.status_code == 200
+    assert follow_up.json()["status"] == "CANDIDATE"
+    assert follow_up.json()["trigger_ref"] == f"follow-up:{iid}"
+
+    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-close"})
+    actions = {e["action"] for e in audit.json()["events"]}
+    assert "close" in actions

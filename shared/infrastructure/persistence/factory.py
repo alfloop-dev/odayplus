@@ -44,6 +44,22 @@ class PersistenceBundle:
     store_ops_repository: Any
     intervention_repository: Any
     intervention_label_registry: Any
+    ingestion_run_store: Any
+    # Expansion decision-flow stores (ODP-FLOW-002): HeatZone ranking, listing
+    # dedup + candidate inbox, SiteScore decisions, and realized sites.
+    heatzone_store: Any
+    listing_repository: Any
+    sitescore_decision_store: Any
+    sitescore_realized_store: Any
+
+    tenant_repository: Any
+    brand_repository: Any
+    address_location_repository: Any
+    store_repository: Any
+    machine_repository: Any
+    transaction_repository: Any
+    machine_cycle_repository: Any
+    external_fetch_state_store: Any = None
     engine: Any = None
 
     @property
@@ -55,19 +71,35 @@ def _memory_bundle() -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
+    from modules.external_data.application.ingestion_store import (
+        InMemoryIngestionRunStore,
+    )
+    from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
+    from modules.heatzone.infrastructure import HeatZoneResultStore
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
     )
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
+    from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.infrastructure.persistence.repositories import (
+        InMemoryAddressLocationRepository,
+        InMemoryBrandRepository,
+        InMemoryMachineCycleRepository,
+        InMemoryMachineRepository,
+        InMemoryStoreRepository,
+        InMemoryTenantRepository,
+        InMemoryTransactionRepository,
+    )
     from shared.jobs.queue import InMemoryJobQueue
+    from shared.workflow.sitescore import InMemoryDecisionStore, InMemoryRealizedSiteStore
 
     return PersistenceBundle(
         mode="memory",
@@ -85,27 +117,54 @@ def _memory_bundle() -> PersistenceBundle:
         store_ops_repository=InMemoryStoreOpsRepository(),
         intervention_repository=InMemoryInterventionRepository(),
         intervention_label_registry=InMemoryLabelRegistry(),
+        ingestion_run_store=InMemoryIngestionRunStore(),
+        heatzone_store=HeatZoneResultStore(),
+        listing_repository=InMemoryListingRepository(),
+        sitescore_decision_store=InMemoryDecisionStore(),
+        sitescore_realized_store=InMemoryRealizedSiteStore(),
+
+        tenant_repository=InMemoryTenantRepository(),
+        brand_repository=InMemoryBrandRepository(),
+        address_location_repository=InMemoryAddressLocationRepository(),
+        store_repository=InMemoryStoreRepository(),
+        machine_repository=InMemoryMachineRepository(),
+        transaction_repository=InMemoryTransactionRepository(),
+        machine_cycle_repository=InMemoryMachineCycleRepository(),
+        external_fetch_state_store=InMemoryExternalFetchStateStore(),
     )
 
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
         DurableAVMRepository,
+        DurableBrandRepository,
+        DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
         DurableLearningHubRepository,
+        DurableListingRepository,
+        DurableMachineCycleRepository,
+        DurableMachineRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
+        DurableRealizedSiteStore,
         DurableSiteScoreRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+        DurableTransactionRepository,
     )
 
     engine = SqliteEngine(db_path)
@@ -126,6 +185,19 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
+        ingestion_run_store=DurableIngestionRunStore(store),
+        heatzone_store=DurableHeatZoneResultStore(store),
+        listing_repository=DurableListingRepository(store),
+        sitescore_decision_store=DurableDecisionStore(store),
+        sitescore_realized_store=DurableRealizedSiteStore(store),
+        tenant_repository=DurableTenantRepository(engine),
+        brand_repository=DurableBrandRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(engine),
+        store_repository=DurableStoreRepository(engine),
+        machine_repository=DurableMachineRepository(engine),
+        transaction_repository=DurableTransactionRepository(engine),
+        machine_cycle_repository=DurableMachineCycleRepository(engine),
+        external_fetch_state_store=DurableExternalFetchStateStore(store),
         engine=engine,
     )
 

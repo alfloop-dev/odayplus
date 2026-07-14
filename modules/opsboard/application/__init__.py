@@ -1,5 +1,6 @@
 """OpsBoard application services."""
 
+from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
@@ -10,6 +11,7 @@ from modules.opsboard.application.store_ops import (
 )
 
 __all__ = [
+    "OperatorStateService",
     "DurableStoreOpsRepository",
     "InMemoryStoreOpsRepository",
     "StoreOpsConflict",

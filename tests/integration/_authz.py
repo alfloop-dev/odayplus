@@ -42,4 +42,6 @@ EXTERNAL_DATA_HEADERS = auth_headers(Role.DATA_OWNER)
 INTERVENTION_HEADERS = auth_headers(
     Role.OPERATIONS_MANAGER, Role.REGIONAL_SUPERVISOR
 )
+# PriceOps view/create/approve/execute is held by the pricing manager.
+PRICEOPS_HEADERS = auth_headers(Role.PRICING_MANAGER)
 SITESCORE_HEADERS = auth_headers(Role.SITE_REVIEWER)
