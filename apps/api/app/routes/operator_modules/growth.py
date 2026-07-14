@@ -51,7 +51,12 @@ class CreateActionPayload(BaseModel):
     segmentId: str
     objective: str
     targetLift: float
+    kind: str = "offpeak"
     observationWindowDays: int = Field(default=14, ge=1, le=365)
+    observationWindow: str | None = None
+    store: str = "全品牌"
+    channel: str = "LINE 推播"
+    budget: float = 0
     rationale: str = ""
     rollbackPlan: str = ""
     sourceRecommendationId: str | None = None
@@ -64,6 +69,43 @@ class CreateActionPayload(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("field must not be empty")
+        return v
+
+
+class ConflictCheckPayload(BaseModel):
+    """POST /operator/growth/conflicts/check — run the five conflict checks."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str = "offpeak"
+    store: str = "全品牌"
+    observationWindow: str = ""
+    channel: str = "LINE 推播"
+    budget: float = 0
+    excludeActionId: str | None = None
+
+
+class SubmitPayload(BaseModel):
+    """POST /operator/growth/actions/{id}/submit — submit draft for approval."""
+
+    actorRoleId: str | None = None
+    actorName: str | None = None
+
+
+class ApprovalDecisionPayload(BaseModel):
+    """POST /operator/growth/approvals/{id}/decision — approve / reject."""
+
+    decision: str
+    reason: str = ""
+    actorRoleId: str | None = None
+    actorName: str | None = None
+
+    @field_validator("decision")
+    @classmethod
+    def valid_decision(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in {"approved", "rejected"}:
+            raise ValueError("decision must be 'approved' or 'rejected'")
         return v
 
 
@@ -199,7 +241,12 @@ def create_growth_sub_router(
                 segment_id=body.segmentId,
                 objective=body.objective,
                 target_lift=body.targetLift,
+                kind=body.kind,
                 observation_window_days=body.observationWindowDays,
+                observation_window=body.observationWindow,
+                store=body.store,
+                channel=body.channel,
+                budget=body.budget,
                 rationale=body.rationale,
                 rollback_plan=body.rollbackPlan,
                 source_recommendation_id=body.sourceRecommendationId,
@@ -263,6 +310,85 @@ def create_growth_sub_router(
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
+    # ------------------------------------------------------------------
+    # Conflict gate + approval lifecycle (package 6 five-step builder)
+    # ------------------------------------------------------------------
+
+    @router.post("/conflicts/check")
+    def check_conflicts(body: ConflictCheckPayload, request: Request) -> dict[str, Any]:
+        result = service.check_conflicts(
+            kind=body.kind,
+            store=body.store,
+            observation_window=body.observationWindow,
+            channel=body.channel,
+            budget=body.budget,
+            exclude_action_id=body.excludeActionId,
+        )
+        result["correlation_id"] = request.state.correlation_id
+        return result
+
+    @router.post("/actions/{action_id}/submit", dependencies=write_deps)
+    def submit_for_approval(
+        action_id: str,
+        body: SubmitPayload,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        try:
+            return service.submit_for_approval(
+                action_id=action_id,
+                actor_role_id=body.actorRoleId or "growthLead",
+                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                idempotency_key=idempotency_key,
+                correlation_id=request.state.correlation_id,
+            )
+        except GrowthNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except GrowthPolicyError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        except GrowthConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    @router.get("/approvals")
+    def list_approvals(request: Request) -> dict[str, Any]:
+        items = service.list_approvals()
+        return {
+            "items": items,
+            "count": len(items),
+            "correlation_id": request.state.correlation_id,
+        }
+
+    @router.post("/approvals/{approval_id}/decision", dependencies=write_deps)
+    def decide_approval(
+        approval_id: str,
+        body: ApprovalDecisionPayload,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        try:
+            return service.resolve_approval(
+                approval_id=approval_id,
+                decision=body.decision,
+                reason=body.reason,
+                actor_role_id=body.actorRoleId or "opsLead",
+                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                idempotency_key=idempotency_key,
+                correlation_id=request.state.correlation_id,
+            )
+        except GrowthNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except GrowthConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    @router.get("/decisions")
+    def list_decisions(request: Request) -> dict[str, Any]:
+        items = service.list_decisions()
+        return {
+            "items": items,
+            "count": len(items),
+            "correlation_id": request.state.correlation_id,
+        }
+
     return router
 
 
@@ -275,6 +401,7 @@ def _actor_name_from_role(role_id: str | None) -> str:
         "expansionManager": "展店經理",
         "auditPm": "PM／稽核",
         "growthManager": "成長經理",
+        "growthLead": "成長主管",
     }.get(role_id or "opsLead", "Operator")
 
 

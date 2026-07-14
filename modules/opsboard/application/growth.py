@@ -65,17 +65,50 @@ class GrowthCloseoutGateError(GrowthConflict):
 # Domain constants
 # ---------------------------------------------------------------------------
 
-_ACTIVE_STATUSES = {"APPROVED", "EXECUTED", "OBSERVING", "OUTCOME_READY"}
+_ACTIVE_STATUSES = {
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "SCHEDULED",
+    "RUNNING",
+    "EXECUTED",
+    "OBSERVING",
+    "OUTCOME_READY",
+}
 _OUTCOME_STAGES = {"OUTCOME_READY", "CLOSED"}
+
+# Canonical R4 Growth lifecycle (package 6 design):
+#   DRAFT → PENDING_APPROVAL → APPROVED → SCHEDULED → RUNNING → OBSERVING
+#         → OUTCOME_READY → CLOSED, with an INEFFECTIVE branch back to DRAFT.
+# EXECUTED is retained as a backward-compatible alias for RUNNING so earlier
+# callers/tests that drove DRAFT→APPROVED→EXECUTED keep working.
 _LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
-    "DRAFT": {"APPROVED", "CANCELLED"},
-    "APPROVED": {"EXECUTED", "CANCELLED"},
+    "DRAFT": {"PENDING_APPROVAL", "APPROVED", "CANCELLED"},
+    "PENDING_APPROVAL": {"APPROVED", "DRAFT", "CANCELLED"},
+    "APPROVED": {"SCHEDULED", "EXECUTED", "CANCELLED"},
+    "SCHEDULED": {"RUNNING", "CANCELLED"},
+    "RUNNING": {"OBSERVING"},
     "EXECUTED": {"OBSERVING"},
     "OBSERVING": {"OUTCOME_READY"},
-    "OUTCOME_READY": {"CLOSED", "OBSERVING"},
+    "OUTCOME_READY": {"CLOSED", "INEFFECTIVE", "OBSERVING"},
+    "INEFFECTIVE": {"DRAFT"},
     "CLOSED": set(),
     "CANCELLED": set(),
 }
+
+# The three canonical create-entry draft types (package 6 entry cards).
+_DRAFT_TYPES = {"offpeak", "winback", "priceops"}
+
+# Statuses that count as "an active campaign" for conflict detection.
+_CONFLICT_ACTIVE_STATUSES = {
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "SCHEDULED",
+    "RUNNING",
+    "OBSERVING",
+}
+
+# Single-campaign budget ceiling; above this a second-level approval is needed.
+_BUDGET_SECOND_APPROVAL_CEILING = 50000
 
 
 def _now_iso() -> str:
@@ -365,14 +398,36 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
 ]
 
 
+# Draft type (kind) and conflict-relevant fields per seed action.  These mirror
+# the package 6 demo state so conflict detection and type filters have data.
+_SEED_ACTION_META: dict[str, dict[str, Any]] = {
+    "growth-7001": {"kind": "priceops", "store": "Oday 信義松仁店", "channel": "店內告示＋App 價格頁", "budget": 0},
+    "growth-7002": {"kind": "priceops", "store": "Oday 板橋府中店", "channel": "店內告示", "budget": 0},
+    "growth-7003": {"kind": "offpeak", "store": "Oday 中壢中原店", "channel": "LINE 推播", "budget": 12000},
+    "growth-7004": {"kind": "offpeak", "store": "Oday 信義松仁店", "channel": "App 首頁", "budget": 8000},
+    "growth-7005": {"kind": "winback", "store": "全品牌", "channel": "LINE 推播", "budget": 18000},
+}
+
+
 def _seed_state() -> dict[str, Any]:
+    actions = _clone(_SEED_ACTIONS)
+    for action in actions:
+        meta = _SEED_ACTION_META.get(action["id"], {})
+        action.setdefault("kind", meta.get("kind", "offpeak"))
+        action.setdefault("store", meta.get("store", "全品牌"))
+        action.setdefault("channel", meta.get("channel", "LINE 推播"))
+        action.setdefault("budget", meta.get("budget", 0))
     return {
         "freshness": _clone(_SEED_FRESHNESS),
         "segments": _clone(_SEED_SEGMENTS),
         "recommendations": _clone(_SEED_RECOMMENDATIONS),
-        "actions": _clone(_SEED_ACTIONS),
+        "actions": actions,
+        "approvals": [],
+        "decisions": [],
         "auditEvents": [],
         "nextAuditOrdinal": 8001,
+        "nextApprovalOrdinal": 501,
+        "nextDecisionOrdinal": 9001,
         "idempotencyResults": {},
     }
 
@@ -485,7 +540,12 @@ class GrowthService:
         segment_id: str,
         objective: str,
         target_lift: float,
+        kind: str = "offpeak",
         observation_window_days: int = 14,
+        observation_window: str | None = None,
+        store: str = "全品牌",
+        channel: str = "LINE 推播",
+        budget: float = 0,
         rationale: str = "",
         rollback_plan: str = "",
         source_recommendation_id: str | None = None,
@@ -496,10 +556,14 @@ class GrowthService:
     ) -> dict[str, Any]:
         """Create a Growth Action draft.
 
-        Entry points:
-          1. From a PriceOps recommendation row (source_recommendation_id set).
-          2. From the recommendations entry (same, payload-driven).
-          3. Direct new-action entry (no source_recommendation_id).
+        Entry points (three create-entry cards, package 6):
+          1. Off-peak promotion  (kind="offpeak")
+          2. Member winback      (kind="winback")
+          3. PriceOps test       (kind="priceops")
+
+        The draft ``kind`` is persisted so each entry card round-trips its own
+        draft type.  A ``source_recommendation_id`` may additionally seed a
+        draft from a PriceOps recommendation row.
 
         Raises GrowthPolicyError when the seeding recommendation has
         HARD_CONSTRAINT_FAILED — callers must resolve the constraint first.
@@ -509,6 +573,8 @@ class GrowthService:
             cached = self._state["idempotencyResults"].get(idempotency_key)
             if cached is not None:
                 return _clone(cached)
+
+        draft_kind = kind if kind in _DRAFT_TYPES else "offpeak"
 
         # Conflict gate — block drafts seeded from hard-constrained recs
         if source_recommendation_id:
@@ -527,18 +593,23 @@ class GrowthService:
         new_action: dict[str, Any] = {
             "id": action_id,
             "name": name,
+            "kind": draft_kind,
             "segmentId": segment_id,
             "sourceRecommendationId": source_recommendation_id,
             "objective": objective,
             "status": "DRAFT",
-            "observationWindow": "尚未排程",
+            "observationWindow": observation_window or "尚未排程",
             "observationWindowDays": observation_window_days,
+            "store": store,
+            "channel": channel,
+            "budget": budget,
             "targetLift": target_lift,
             "observedLift": None,
             "evidenceLevel": "low",
             "rationale": rationale,
             "rollbackPlan": rollback_plan,
             "growthOutcome": None,
+            "approvalId": None,
             "createdAt": now,
             "updatedAt": now,
             "audit": {
@@ -556,9 +627,10 @@ class GrowthService:
             actor_role_id=actor_role_id,
             actor_name=actor_name,
             category="workflow",
-            message=f"Growth Action {action_id} created as DRAFT.",
+            message=f"Growth Action {action_id} created as DRAFT ({draft_kind}).",
             metadata={
                 "actionId": action_id,
+                "kind": draft_kind,
                 "segmentId": segment_id,
                 "sourceRecommendationId": source_recommendation_id,
                 "idempotencyKey": idempotency_key,
@@ -577,6 +649,7 @@ class GrowthService:
         result: dict[str, Any] = {
             "id": action_id,
             "status": "DRAFT",
+            "kind": draft_kind,
             "name": name,
             "correlation_id": correlation_id,
             "audit": _clone(new_action["audit"]),
@@ -585,6 +658,351 @@ class GrowthService:
         if idempotency_key:
             self._state["idempotencyResults"][idempotency_key] = _clone(result)
         return result
+
+    # ------------------------------------------------------------------
+    # Conflict gate — server-side checks (overlap / PriceOps / budget /
+    # fatigue / approval).  Mirrors package 6 gwBuilderChecks so the builder's
+    # step 4 blocks submit when a hard conflict exists.
+    # ------------------------------------------------------------------
+
+    def check_conflicts(
+        self,
+        *,
+        kind: str = "offpeak",
+        store: str = "全品牌",
+        observation_window: str = "",
+        channel: str = "LINE 推播",
+        budget: float = 0,
+        exclude_action_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the five Growth conflict checks for a draft payload.
+
+        Returns ``{"checks": [...], "blocked": bool, "reasons": [...]}``.
+        A check ``level`` is one of ok | warn | fail.  ``blocked`` is True when
+        any check is ``fail`` — the builder must not submit a blocked draft.
+        """
+        actives = [
+            a
+            for a in self._state["actions"]
+            if a.get("status") in _CONFLICT_ACTIVE_STATUSES
+            and a.get("id") != exclude_action_id
+        ]
+
+        def _store_overlap(a: str, b: str) -> bool:
+            if not a or not b:
+                return False
+            if "全品牌" in a or "全品牌" in b:
+                return True
+            return a == b
+
+        # 1. Overlap with another active promotion on the same store + window.
+        same_store = [a for a in actives if _store_overlap(store, a.get("store", ""))]
+        hard_overlap = next(
+            (a for a in same_store if observation_window and a.get("observationWindow") == observation_window),
+            None,
+        )
+        if hard_overlap is not None:
+            overlap_check = {
+                "id": "overlap",
+                "label": "與其他促銷重疊",
+                "level": "fail",
+                "note": f"同門市同時窗已有進行中活動 {hard_overlap['id']} — 需先錯開時段或結束該活動",
+            }
+        elif same_store:
+            overlap_check = {
+                "id": "overlap",
+                "label": "與其他促銷重疊",
+                "level": "warn",
+                "note": f"同門市有 {same_store[0]['id']} 進行中 — 建議錯開時段",
+            }
+        else:
+            overlap_check = {
+                "id": "overlap",
+                "label": "與其他促銷重疊",
+                "level": "ok",
+                "note": "無重疊促銷",
+            }
+
+        # 2. Conflict with an active PriceOps test on the same store.
+        price_clash = next(
+            (
+                a
+                for a in actives
+                if a.get("kind") == "priceops" and _store_overlap(store, a.get("store", ""))
+            ),
+            None,
+        )
+        priceops_check = {
+            "id": "priceops",
+            "label": "與 PriceOps 衝突",
+            "level": "warn" if price_clash else "ok",
+            "note": (
+                f"同門市有 {price_clash['id']} PriceOps 進行中 — 建議錯開時段"
+                if price_clash
+                else "無進行中 PriceOps 衝突"
+            ),
+        }
+
+        # 3. Budget ceiling — over the single-campaign limit needs 2nd approval.
+        over_budget = float(budget or 0) > _BUDGET_SECOND_APPROVAL_CEILING
+        budget_check = {
+            "id": "budget",
+            "label": "預算檢查",
+            "level": "warn" if over_budget else "ok",
+            "note": (
+                f"超出單檔上限 NT${_BUDGET_SECOND_APPROVAL_CEILING:,} — 需二階核准"
+                if over_budget
+                else f"預算 NT${float(budget or 0):,.0f} 於權限內"
+            ),
+        }
+
+        # 4. Member fatigue — recent LINE push on an overlapping store.
+        line_busy = "LINE" in (channel or "") and any(
+            "LINE" in a.get("channel", "") and _store_overlap(store, a.get("store", ""))
+            for a in actives
+        )
+        fatigue_check = {
+            "id": "fatigue",
+            "label": "會員打擾頻率",
+            "level": "warn" if line_busy else "ok",
+            "note": (
+                "30 天內已有其他 LINE 推播鎖定相近客群 — 注意打擾"
+                if line_busy
+                else "推播頻率於規範內（30 天 ≤ 2 次）"
+            ),
+        }
+
+        # 5. Approval — Growth activities are always approval-gated; PriceOps
+        #    additionally requires a rollback condition.
+        approval_check = {
+            "id": "approval",
+            "label": "主管核准",
+            "level": "warn" if kind == "priceops" else "ok",
+            "note": (
+                "PriceOps 測試一律需營運主管核准＋回滾條件"
+                if kind == "priceops"
+                else "送出後需營運主管核准（Growth 活動一律核准制）"
+            ),
+        }
+
+        checks = [overlap_check, priceops_check, budget_check, fatigue_check, approval_check]
+        blocked = any(c["level"] == "fail" for c in checks)
+        reasons = [c["note"] for c in checks if c["level"] == "fail"]
+        return {"checks": checks, "blocked": blocked, "reasons": reasons}
+
+    # ------------------------------------------------------------------
+    # Write path — submit for approval (creates a Govern approval item)
+    # ------------------------------------------------------------------
+
+    def submit_for_approval(
+        self,
+        *,
+        action_id: str,
+        actor_role_id: str = "growthLead",
+        actor_name: str = "Operator",
+        idempotency_key: str | None = None,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """Submit a DRAFT Growth Action for approval.
+
+        Runs the conflict gate first: a blocked (``fail``) draft raises
+        GrowthPolicyError carrying the actionable server reasons.  On success a
+        Govern approval item (``module="Growth"``) is created and the action
+        advances to PENDING_APPROVAL.
+        """
+        if idempotency_key:
+            cached = self._state["idempotencyResults"].get(idempotency_key)
+            if cached is not None:
+                return {**_clone(cached), "idempotentReplay": True}
+
+        action = self._find_action(action_id)
+        if action["status"] != "DRAFT":
+            raise GrowthConflict(
+                f"only DRAFT actions can be submitted for approval; "
+                f"{action_id} is {action['status']}"
+            )
+
+        gate = self.check_conflicts(
+            kind=action.get("kind", "offpeak"),
+            store=action.get("store", "全品牌"),
+            observation_window=action.get("observationWindow", ""),
+            channel=action.get("channel", "LINE 推播"),
+            budget=action.get("budget", 0),
+            exclude_action_id=action_id,
+        )
+        if gate["blocked"]:
+            raise GrowthPolicyError(
+                "submit blocked by conflict gate: " + "；".join(gate["reasons"])
+            )
+
+        approval_id = f"APR-{self._state['nextApprovalOrdinal']}"
+        self._state["nextApprovalOrdinal"] += 1
+        now = _now_iso()
+        risk = "高" if any(c["level"] == "warn" for c in gate["checks"]) else "低"
+        approval = {
+            "id": approval_id,
+            "module": "Growth",
+            "kind": "growth",
+            "ref": action_id,
+            "title": f"活動核准：{action['name']}",
+            "requester": actor_name,
+            "approver": "營運主管",
+            "risk": risk,
+            "status": "pending",
+            "evidence": [
+                f"受眾快照：{action.get('segmentId')}",
+                f"預算試算：NT${float(action.get('budget') or 0):,.0f}",
+                f"時窗：{action.get('observationWindow')}",
+                "衝突檢查：" + ("通過" if risk == "低" else "有警示，已記錄"),
+            ],
+            "conflictChecks": gate["checks"],
+            "reason": "",
+            "decidedBy": "",
+            "decidedAt": "",
+            "createdAt": now,
+            "correlationId": correlation_id,
+        }
+        self._state["approvals"].insert(0, approval)
+
+        action["status"] = "PENDING_APPROVAL"
+        action["approvalId"] = approval_id
+        action["updatedAt"] = now
+
+        audit = self._append_audit_event(
+            action="growth.action.submitted",
+            actor_role_id=actor_role_id,
+            actor_name=actor_name,
+            category="workflow",
+            message=f"Growth Action {action_id} submitted for approval → {approval_id}.",
+            metadata={
+                "actionId": action_id,
+                "approvalId": approval_id,
+                "status": "PENDING_APPROVAL",
+                "idempotencyKey": idempotency_key,
+            },
+        )
+        self._record_shared_audit(
+            event_type="operator.growth.action.submitted",
+            actor=actor_name,
+            action="submit_for_approval",
+            resource=f"operator/growth/actions/{action_id}",
+            outcome="accepted",
+            correlation_id=correlation_id,
+            metadata=audit["metadata"],
+        )
+
+        result = {
+            "id": action_id,
+            "status": "PENDING_APPROVAL",
+            "approval": _clone(approval),
+            "correlation_id": correlation_id,
+            "idempotentReplay": False,
+        }
+        if idempotency_key:
+            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        return result
+
+    def list_approvals(self) -> list[dict[str, Any]]:
+        """Return the Govern approval items created from Growth submissions."""
+        return _clone(self._state["approvals"])
+
+    def resolve_approval(
+        self,
+        *,
+        approval_id: str,
+        decision: str,
+        reason: str = "",
+        actor_role_id: str = "opsLead",
+        actor_name: str = "營運主管",
+        idempotency_key: str | None = None,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """Record an approval decision and advance the linked Growth state.
+
+        ``decision`` is "approved" or "rejected".  An approval advances the
+        action to APPROVED; a rejection returns it to DRAFT for revision.  Both
+        write a Decision Log entry and an Audit Trail event.
+        """
+        if idempotency_key:
+            cached = self._state["idempotencyResults"].get(idempotency_key)
+            if cached is not None:
+                return {**_clone(cached), "idempotentReplay": True}
+
+        normalized = decision.lower()
+        if normalized not in {"approved", "rejected"}:
+            raise GrowthConflict(
+                f"approval decision must be 'approved' or 'rejected'; got {decision!r}"
+            )
+
+        approval = self._find_approval(approval_id)
+        if approval["status"] != "pending":
+            raise GrowthConflict(
+                f"approval {approval_id} already decided: {approval['status']}"
+            )
+
+        action = self._find_action(approval["ref"])
+        now = _now_iso()
+        approval["status"] = normalized
+        approval["reason"] = reason
+        approval["decidedBy"] = actor_name
+        approval["decidedAt"] = now
+
+        new_status = "APPROVED" if normalized == "approved" else "DRAFT"
+        action["status"] = new_status
+        action["updatedAt"] = now
+        if normalized == "rejected":
+            action["approvalId"] = None
+
+        decision_entry = self._append_decision_log(
+            module="Growth",
+            ref=action["id"],
+            title=action["name"],
+            recommendation="送主管核准",
+            verdict="核准" if normalized == "approved" else "駁回",
+            reason=reason or ("核准通過" if normalized == "approved" else "退回修改"),
+        )
+
+        audit = self._append_audit_event(
+            action=f"growth.approval.{normalized}",
+            actor_role_id=actor_role_id,
+            actor_name=actor_name,
+            category="Decision log",
+            message=f"Approval {approval_id} {normalized}; {action['id']} → {new_status}.",
+            metadata={
+                "approvalId": approval_id,
+                "actionId": action["id"],
+                "decision": normalized,
+                "newStatus": new_status,
+                "decisionId": decision_entry["id"],
+                "idempotencyKey": idempotency_key,
+            },
+        )
+        self._record_shared_audit(
+            event_type="operator.growth.approval.decision",
+            actor=actor_name,
+            action="resolve_approval",
+            resource=f"operator/growth/approvals/{approval_id}",
+            outcome=normalized,
+            correlation_id=correlation_id,
+            metadata=audit["metadata"],
+        )
+
+        result = {
+            "id": approval_id,
+            "status": normalized,
+            "actionId": action["id"],
+            "growthStatus": new_status,
+            "decision": _clone(decision_entry),
+            "correlation_id": correlation_id,
+            "idempotentReplay": False,
+        }
+        if idempotency_key:
+            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        return result
+
+    def list_decisions(self) -> list[dict[str, Any]]:
+        """Return the Growth Decision Log entries."""
+        return _clone(self._state["decisions"])
 
     # ------------------------------------------------------------------
     # Write path — lifecycle transition
@@ -706,7 +1124,29 @@ class GrowthService:
         derived = _closeout_gate(action)
         if outcome == "EFFECTIVE" and required_action == "CLOSE" and derived["canClose"]:
             action["status"] = "CLOSED"
+        elif outcome == "INEFFECTIVE":
+            # Ineffective, matured actions are marked INEFFECTIVE (revise/rollback
+            # branch); they cannot be closed directly.
+            if action["status"] == "OUTCOME_READY":
+                action["status"] = "INEFFECTIVE"
         action["updatedAt"] = _now_iso()
+
+        # Every outcome verdict (effective / ineffective / inconclusive) is
+        # persisted to the Decision Log in addition to the Audit Trail.
+        _verdict_label = {
+            "EFFECTIVE": "判定有效",
+            "INEFFECTIVE": "判定無效",
+            "INCONCLUSIVE": "判定待判定",
+            "PENDING": "觀察中",
+        }.get(outcome, outcome)
+        decision_entry = self._append_decision_log(
+            module="Growth",
+            ref=action_id,
+            title=action["name"],
+            recommendation="成效判斷",
+            verdict=_verdict_label,
+            reason=rationale or derived["reason"],
+        )
 
         audit = self._append_audit_event(
             action="growth.action.outcome",
@@ -739,6 +1179,7 @@ class GrowthService:
             "growth_outcome": outcome,
             "status": action["status"],
             "closeoutGate": derived,
+            "decision": _clone(decision_entry),
             "correlation_id": correlation_id,
             "auditEvent": _clone(audit),
             "idempotentReplay": False,
@@ -775,6 +1216,38 @@ class GrowthService:
             if action["id"] == action_id:
                 return action
         raise GrowthNotFound(f"growth action {action_id!r} not found")
+
+    def _find_approval(self, approval_id: str) -> dict[str, Any]:
+        for approval in self._state["approvals"]:
+            if approval["id"] == approval_id:
+                return approval
+        raise GrowthNotFound(f"growth approval {approval_id!r} not found")
+
+    def _append_decision_log(
+        self,
+        *,
+        module: str,
+        ref: str,
+        title: str,
+        recommendation: str,
+        verdict: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        ordinal = self._state.get("nextDecisionOrdinal", 9001)
+        entry: dict[str, Any] = {
+            "id": f"DEC-{ordinal}",
+            "ordinal": ordinal,
+            "occurredAt": _now_iso(),
+            "module": module,
+            "ref": ref,
+            "title": title,
+            "recommendation": recommendation,
+            "verdict": verdict,
+            "reason": reason,
+        }
+        self._state.setdefault("decisions", []).insert(0, entry)
+        self._state["nextDecisionOrdinal"] = ordinal + 1
+        return entry
 
     def _append_audit_event(
         self,
