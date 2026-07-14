@@ -14,6 +14,14 @@ from models.shared_ml.artifact_store import (
 )
 from models.shared_ml.backtest import run_rolling_backtest
 from models.shared_ml.drift import calculate_psi, monitor_drift
+from models.shared_ml.feature_registry import (
+    FeatureLineageEvent,
+    FeatureRegistry,
+    FeatureRegistryError,
+    FeatureStatus,
+    FeatureViewBinding,
+    create_feature_registry,
+)
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import (
     FeatureDefinition,
@@ -78,6 +86,13 @@ __all__ = [
     "LabelDefinition",
     "FeatureSet",
     "LabelSet",
+    # Feature Registry
+    "FeatureLineageEvent",
+    "FeatureRegistry",
+    "FeatureRegistryError",
+    "FeatureStatus",
+    "FeatureViewBinding",
+    "create_feature_registry",
     "ModelBinding",
     "ProductionModelUnavailableError",
     "SCORING_MODEL_SPECS",
@@ -88,4 +103,3 @@ __all__ = [
     "resolve_production_binding",
     "seed_scoring_models",
 ]
-
