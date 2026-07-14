@@ -11,12 +11,13 @@ import {
   confidenceTone,
   constraintTone,
   formatLift,
-  freshness,
   outcomeLabel,
   outcomeTone,
   trendLabel,
   trendTone,
+  writeGrowthOutcome,
   type CloseoutGate,
+  type GrowthApiData,
   type GrowthItem,
   type GrowthSegment,
   type PriceOpsRecommendation,
@@ -24,6 +25,12 @@ import {
 import styles from "./operator.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+/** Inline data-source badge shown next to freshness when rendering from fixture. */
+const DATA_SOURCE_HINT: Record<"api" | "fixture", string | null> = {
+  api: null,
+  fixture: "fixture",
+};
 
 const requiredActionLabel: Record<CloseoutGate["requiredAction"], string> = {
   CLOSE: "結案",
@@ -37,21 +44,33 @@ const requiredActionLabel: Record<CloseoutGate["requiredAction"], string> = {
  * growth-action list + detail, a URL-driven create-draft modal, and an
  * effectiveness / closeout gate that blocks closing ineffective campaigns.
  *
+ * Accepts optional `apiData` (fetched server-side via fetchGrowthApiData) so
+ * the workspace renders real API data on first load. Falls back to fixtures
+ * when `apiData` is undefined (e.g. during testing or when the API is down).
+ *
  * Rendered inside the Operator Console; state is URL-synced (server component)
  * so selection and the draft modal are shareable and testable.
  */
 export function GrowthWorkspace({
   searchParams = {},
   basePath = "/operator",
+  apiData,
 }: {
   searchParams?: SearchParams;
   basePath?: string;
+  /** Pre-fetched API data from the server component. Optional; falls back to fixtures. */
+  apiData?: GrowthApiData;
 }) {
   const segmentId = readParam(searchParams.segment);
   const itemId = readParam(searchParams.item);
   const draftId = readParam(searchParams.draft);
 
-  const vm = buildGrowthViewModel({ segmentId, itemId, draftId });
+  const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, apiData);
+  const freshnessData = apiData?.freshness ?? {
+    status: "FRESH" as const,
+    updatedAt: "2026-07-09 14:20",
+    modelVersion: "growth-uplift-v1.4.0",
+  };
 
   // Build an href that keeps the Growth workspace active and preserves the
   // current selection unless explicitly overridden.
@@ -70,6 +89,8 @@ export function GrowthWorkspace({
     return `${basePath}?${params.toString()}`;
   };
 
+  const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
+
   return (
     <>
       <PageHeader
@@ -77,14 +98,14 @@ export function GrowthWorkspace({
         summary="分群 → PriceOps 建議 → Growth Action 生命週期。成效未達標的活動不可直接結案，需先 rollback 或補強證據。"
         breadcrumb={[{ label: "Operator Console", href: basePath }, { label: "營收成長" }]}
         status={{
-          label: freshness.status,
-          tone: dataStatusTone[freshness.status],
+          label: freshnessData.status,
+          tone: dataStatusTone[freshnessData.status],
           marker: "◆",
           "data-testid": "growth-data-status",
         }}
-        lastUpdated={`${freshness.updatedAt} · model ${freshness.modelVersion}`}
+        lastUpdated={`${freshnessData.updatedAt} · model ${freshnessData.modelVersion}${fixtureHint ? ` · [${fixtureHint}]` : ""}`}
       />
-      <div className="odp-content" data-testid="growth-workspace">
+      <div className="odp-content" data-testid="growth-workspace" data-source={vm.dataSource}>
         <section className={styles.overviewGrid} aria-label="Growth overview">
           <Metric label="分群數" value={String(vm.summary.segmentCount)} hint="納入成長評估的區隔" />
           <Metric label="進行中活動" value={String(vm.summary.activeCount)} hint="已核准至觀察中的 Growth Action" />
@@ -414,19 +435,44 @@ function CloseoutPanel({
   gate: CloseoutGate;
   href: (o: Record<string, string | undefined>) => string;
 }) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
   const blockClass = gate.canClose ? styles.successBlock : styles.warningBlock;
 
-  const handleApprove = () => {
-    if (!gate.canClose) return;
+  const handleApprove = async () => {
+    if (!gate.canClose || isSubmitting) return;
+    setIsSubmitting(true);
+    setApiError(null);
 
+    // Write outcome to API with Idempotency-Key and X-Correlation-Id
+    const result = await writeGrowthOutcome({
+      actionId: item.id,
+      outcome: gate.outcome,
+      requiredAction: gate.requiredAction,
+      observedLift: item.observedLift,
+      evidenceLevel: item.evidenceLevel,
+      rationale: item.rationale,
+    });
+
+    // Always record local audit trail regardless of API availability
     const auditPayload = {
       action: "APPROVE_CLOSEOUT",
       itemId: item.id,
       decisionId: item.audit.decisionId,
+      outcome: gate.outcome,
+      requiredAction: gate.requiredAction,
+      apiResult: result ? { correlationId: result.correlationId } : "offline-fallback",
       timestamp: new Date().toISOString(),
     };
     console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
+
+    if (result === null) {
+      // API unavailable — record locally and proceed (fixture/offline fallback)
+      setApiError("API 暫時不可用，結案已記錄於本機稽核日誌。");
+    }
+
+    setIsSubmitting(false);
     setIsApproved(true);
   };
 
@@ -436,6 +482,9 @@ function CloseoutPanel({
       {isApproved ? (
         <div className={styles.successBlock} data-testid="growth-closeout-success">
           <p>結案已成功提交並記錄稽核日誌。等待後端決策回寫。</p>
+          {apiError ? (
+            <p className={styles.subtle}>{apiError}</p>
+          ) : null}
         </div>
       ) : (
         <div className={blockClass} data-testid="growth-closeout-gate" data-can-close={gate.canClose}>
@@ -446,11 +495,11 @@ function CloseoutPanel({
         <button
           type="button"
           className={styles.primaryButton}
-          disabled={!gate.canClose || isApproved}
+          disabled={!gate.canClose || isApproved || isSubmitting}
           onClick={handleApprove}
           data-testid="growth-close-button"
         >
-          {isApproved ? "已結案" : "結案並回寫成效"}
+          {isSubmitting ? "提交中…" : isApproved ? "已結案" : "結案並回寫成效"}
         </button>
         {gate.requiredAction !== "CLOSE" && !isApproved ? (
           <span className={styles.secondaryButton} data-testid="growth-required-action">
@@ -482,8 +531,27 @@ function CreateDraftModal({
   const [targetLift, setTargetLift] = useState(recommendation.expectedRevenueLift.toFixed(1));
   const [observationWindow, setObservationWindow] = useState("14");
   const [rationale, setRationale] = useState("以 PriceOps 建議為基礎；待補齊對照組與 pre-trend 檢定後送審。");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setApiError(null);
+
+    // Write draft to API with Idempotency-Key + X-Correlation-Id
+    const { createGrowthDraft } = await import("./growthViewModel.ts");
+    const result = await createGrowthDraft({
+      name,
+      segmentId: recommendation.segmentId,
+      sourceRecommendationId: recommendation.id,
+      objective: `以 PriceOps 建議 ${recommendation.id} 為基礎的 Growth Action 草稿。`,
+      targetLift: parseFloat(targetLift) || 0,
+      observationWindowDays: parseInt(observationWindow, 10) || 14,
+      rationale,
+      rollbackPlan: "",
+    });
+
     const auditPayload = {
       action: "CREATE_DRAFT",
       recommendationId: recommendation.id,
@@ -491,9 +559,16 @@ function CreateDraftModal({
       targetLift: parseFloat(targetLift) || 0,
       observationWindow: `${observationWindow} 天`,
       rationale,
+      apiResult: result ? { id: result.id, correlationId: result.correlationId } : "offline-fallback",
       timestamp: new Date().toISOString(),
     };
     console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
+
+    if (result === null) {
+      setApiError("API 暫時不可用，草稿建立已記錄於本機稽核日誌。");
+    }
+
+    setIsSubmitting(false);
     router.push(closeHref);
   };
 
@@ -522,6 +597,11 @@ function CreateDraftModal({
             關閉
           </Link>
         </div>
+        {apiError ? (
+          <div className={styles.warningBlock} data-testid="growth-draft-api-error">
+            <p>{apiError}</p>
+          </div>
+        ) : null}
         <form className={styles.modalForm}>
           <label>
             活動名稱
@@ -568,9 +648,10 @@ function CreateDraftModal({
               type="button"
               className={styles.primaryButton}
               onClick={handleSubmit}
+              disabled={isSubmitting}
               data-testid="growth-draft-submit"
             >
-              建立草稿
+              {isSubmitting ? "建立中…" : "建立草稿"}
             </button>
           </div>
         </form>

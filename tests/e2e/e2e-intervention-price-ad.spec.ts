@@ -42,6 +42,8 @@ test("E2E-PRICE-001 PriceOps smoke blocks hard constraint approval and exposes r
   await expect(page.getByTestId("priceops-constraint")).toContainText("Hard constraint failures cannot be approved");
   await expect(page.getByRole("button", { name: "核准此調價方案" })).toBeDisabled();
   await expect(page.getByTestId("priceops-rollback")).toContainText("Rollback");
+  await expect(page.getByTestId("priceops-closed-loop")).toContainText("Apply");
+  await expect(page.getByTestId("priceops-closed-loop")).toContainText("Outcome");
   await expect(page.getByTestId("priceops-approval-panel")).toContainText("decision_id dec-price-5102-blocked");
 });
 
