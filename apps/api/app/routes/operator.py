@@ -127,9 +127,13 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.network_listings import (
         create_network_listings_sub_router,
     )
+    from apps.api.app.routes.operator_modules.network_scoring import (
+        create_network_scoring_sub_router,
+    )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
+    from modules.opsboard.application.network_scoring import NetworkScoringService
 
     # Shell — read-only, no permission guard needed.
     router.include_router(create_shell_sub_router(svc))
@@ -143,6 +147,21 @@ def create_operator_router(
             ),
             require_write_permission_fn=require_permission(
                 "listing", Action.UPDATE, engine=authz_engine
+            ),
+        )
+    )
+
+    # Network SiteScore scoring — read/write paths for R4 Candidate gate,
+    # SiteScore job, and Compare recommendation. Missing-data candidates are
+    # blocked server-side (422) by the service gate.
+    router.include_router(
+        create_network_scoring_sub_router(
+            NetworkScoringService(),
+            require_view_permission_fn=require_permission(
+                "sitescore", Action.VIEW, engine=authz_engine
+            ),
+            require_write_permission_fn=require_permission(
+                "sitescore", Action.EXECUTE, engine=authz_engine
             ),
         )
     )
