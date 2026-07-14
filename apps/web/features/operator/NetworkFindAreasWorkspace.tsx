@@ -20,6 +20,7 @@ import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
+import { RebalancePanel } from "./network/RebalancePanel";
 import type { ExpansionStep } from "./network/ExpansionStepper";
 import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
 import type {
@@ -29,15 +30,11 @@ import type {
 } from "./network/networkReviewTypes";
 import {
   buildNetworkFindAreasViewModel,
-  type CandidatePipelineRow,
   type ListingRadarRow,
-  type NetworkCompareViewModel,
   type NetworkFindAreasLens,
   type NetworkFindAreasMapPoint,
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
-  type RebalanceQueueRow,
-  type SiteScoreLabRow,
 } from "./networkFindAreasViewModel";
 import { HeatZoneMap } from "../map/HeatZoneMap";
 import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
@@ -120,6 +117,19 @@ type NetworkListingsSnapshot = {
   correlationId?: string;
 };
 
+type NetworkRebalanceSnapshot = {
+  source?: "api" | "fixture";
+  stores?: RebalanceStore[];
+  selectedStoreId?: string;
+  metadata?: {
+    canonicalPackage?: string;
+    screenLabels?: string[];
+    avm?: Record<string, unknown>;
+    netPlan?: Record<string, unknown>;
+  };
+  correlationId?: string;
+};
+
 const NETWORK_OPERATOR_HEADERS = {
   "X-Operator-Role": "expansion-manager",
   "X-Roles": "expansion_user",
@@ -197,6 +207,26 @@ function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIden
   };
 }
 
+async function fetchNetworkReviewsSnapshot(
+  readHeaders: Record<string, string>,
+): Promise<NetworkReviewsSnapshot | null> {
+  try {
+    const response = await fetch(`/api/v1/operator/network-reviews`, {
+      cache: "no-store",
+      headers: {
+        ...readHeaders,
+        "X-Correlation-Id": "corr-r4-007-reviews-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkReviewsSnapshot;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchNetworkSnapshot(
   selectedHeatZoneId: string,
   lens: NetworkFindAreasLens,
@@ -240,21 +270,19 @@ async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | n
   }
 }
 
-async function fetchNetworkReviewsSnapshot(
-  readHeaders: Record<string, string>,
-): Promise<NetworkReviewsSnapshot | null> {
+async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
   try {
-    const response = await fetch(`/api/v1/operator/network-reviews`, {
+    const response = await fetch("/api/v1/operator/network-rebalance", {
       cache: "no-store",
       headers: {
-        ...readHeaders,
-        "X-Correlation-Id": "corr-r4-007-reviews-read",
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": "corr-r4-008-rebalance-read",
       },
     });
     if (!response.ok) {
       return null;
     }
-    return (await response.json()) as NetworkReviewsSnapshot;
+    return (await response.json()) as NetworkRebalanceSnapshot;
   } catch {
     return null;
   }
@@ -338,6 +366,9 @@ export function NetworkFindAreasWorkspace({
   const [busyListingId, setBusyListingId] = useState<string | null>(null);
   const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
+  const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
+  const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
   const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
@@ -356,6 +387,7 @@ export function NetworkFindAreasWorkspace({
       ? liveCandidates.items
       : candidatesProp);
   const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
+  const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length ? rebalanceSnapshot.stores : rebalanceStores;
 
   // True when every Network R4 intake binding is still falling back to fixtures.
   const isFixtureFallback =
@@ -410,12 +442,22 @@ export function NetworkFindAreasWorkspace({
     };
   }, []);
 
-  async function reloadScoringSnapshot() {
-    const snapshot = await fetchNetworkScoringSnapshot();
-    if (snapshot) {
-      setScoringSnapshot(snapshot);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRebalance() {
+      const snapshot = await fetchNetworkRebalanceSnapshot();
+      if (!cancelled && snapshot) {
+        setRebalanceSnapshot(snapshot);
+        setRebalanceApiError(null);
+      } else if (!cancelled && !snapshot) {
+        setRebalanceApiError("network-rebalance API unavailable; using fixtures");
+      }
     }
-  }
+    loadRebalance();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -483,6 +525,13 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  async function reloadScoringSnapshot() {
+    const snapshot = await fetchNetworkScoringSnapshot();
+    if (snapshot) {
+      setScoringSnapshot(snapshot);
+    }
+  }
+
   async function postScoringAction(
     path: string,
     body: Record<string, unknown>,
@@ -536,6 +585,80 @@ export function NetworkFindAreasWorkspace({
     await postScoringAction("compare", { candidateIds: next }, candidateId);
   }
 
+  async function reloadRebalanceSnapshot() {
+    const snapshot = await fetchNetworkRebalanceSnapshot();
+    if (snapshot) {
+      setRebalanceSnapshot(snapshot);
+      setRebalanceApiError(null);
+    }
+  }
+
+  async function postRebalanceAction(
+    storeId: string,
+    action: "request-avm" | "complete-avm" | "solve-netplan" | "submit-review",
+  ) {
+    const endpoint =
+      action === "request-avm"
+        ? `/api/v1/operator/network-rebalance/stores/${storeId}/avm/request`
+        : action === "complete-avm"
+          ? `/api/v1/operator/network-rebalance/stores/${storeId}/avm/complete`
+          : action === "solve-netplan"
+            ? `/api/v1/operator/network-rebalance/stores/${storeId}/netplan/solve`
+            : `/api/v1/operator/network-rebalance/stores/${storeId}/submit-review`;
+    const busyKey = `${storeId}:${action}`;
+    setBusyRebalanceAction(busyKey);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-008-${action}-${storeId}`,
+          "X-Correlation-Id": `corr-r4-008-${action}-${storeId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          ...NETWORK_ACTOR,
+          reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
+        }),
+      });
+      if (!response.ok) {
+        setRebalanceApiError(`network-rebalance ${action} failed (${response.status})`);
+        return;
+      }
+      await reloadRebalanceSnapshot();
+    } catch {
+      setRebalanceApiError(`network-rebalance ${action} failed`);
+    } finally {
+      setBusyRebalanceAction(null);
+    }
+  }
+
+  async function selectRebalanceScenario(storeId: string, scenarioId: string) {
+    const busyKey = `${storeId}:select-scenario:${scenarioId}`;
+    setBusyRebalanceAction(busyKey);
+    try {
+      const response = await fetch(`/api/v1/operator/network-rebalance/stores/${storeId}/scenarios/${scenarioId}/select`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-008-select-${storeId}-${scenarioId}`,
+          "X-Correlation-Id": `corr-r4-008-select-${storeId}-${scenarioId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify(NETWORK_ACTOR),
+      });
+      if (!response.ok) {
+        setRebalanceApiError(`network-rebalance select failed (${response.status})`);
+        return;
+      }
+      await reloadRebalanceSnapshot();
+    } catch {
+      setRebalanceApiError("network-rebalance select failed");
+    } finally {
+      setBusyRebalanceAction(null);
+    }
+  }
+
   const viewModel = useMemo(
     () =>
       buildNetworkFindAreasViewModel({
@@ -544,11 +667,11 @@ export function NetworkFindAreasWorkspace({
         heatZones,
         listings: listingsEffective,
         listingSources: listingSourcesEffective,
-        rebalanceStores,
+        rebalanceStores: rebalanceStoresEffective,
         selectedHeatZoneId: effectiveSelectedId,
         siteReviews: localSiteReviews,
       }),
-    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStores, localSiteReviews],
+    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
   );
 
   const selectedZone = viewModel.selectedZone;
@@ -740,7 +863,16 @@ export function NetworkFindAreasWorkspace({
             onDecide={submitReviewDecision}
           />
         ) : activeTab === 6 ? (
-          <RebalancePanel rows={viewModel.rebalanceQueue} />
+          <RebalancePanel
+            apiError={rebalanceApiError}
+            busyAction={busyRebalanceAction}
+            onCompleteAvm={(storeId) => postRebalanceAction(storeId, "complete-avm")}
+            onRequestAvm={(storeId) => postRebalanceAction(storeId, "request-avm")}
+            onSelectScenario={selectRebalanceScenario}
+            onSolveNetPlan={(storeId) => postRebalanceAction(storeId, "solve-netplan")}
+            onSubmitReview={(storeId) => postRebalanceAction(storeId, "submit-review")}
+            rows={viewModel.rebalanceQueue}
+          />
         ) : (
           <FindAreasPanel
             viewModel={viewModel}
@@ -1013,92 +1145,6 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
     >
       {point.type === "candidate" ? "C" : "L"}
     </span>
-  );
-}
-
-function RebalancePanel({ rows }: { rows: RebalanceQueueRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-rebalance" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>低效重配 / Rebalance</h3>
-        <span>{rows.length} stores</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.reviewCard} key={row.id} data-tone={row.tone} data-testid={`rebalance-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.storeName}</strong>
-                  <small>{row.storeId}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-              </header>
-              <p>{row.summary}</p>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>AVM</dt>
-                  <dd>{row.avmRequestId ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>NetPlan</dt>
-                  <dd>{row.netPlanOptionId ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>Approval</dt>
-                  <dd>{row.relatedApprovalId ?? "—"}</dd>
-                </div>
-              </dl>
-              {row.avmP50 !== undefined && (
-                <div className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${row.id}`}>
-                  <div className={styles.rebalanceAvmHeader}>
-                    <span>AVM 估值（P50 公允價值）</span>
-                    <span className={styles.muted}>{row.avmConf ?? "中高（收益法＋市場比較）"}</span>
-                  </div>
-                  <div className={styles.avmValueP50}>
-                    {formatCurrency(row.avmP50)}
-                  </div>
-                  <div className={styles.avmBands}>
-                    <span>P10: {row.avmP10 ? formatCurrency(row.avmP10) : "—"}</span>
-                    <span>P90: {row.avmP90 ? formatCurrency(row.avmP90) : "—"}</span>
-                  </div>
-                  {row.avmReserve && <div className={styles.avmReserveNote}>{row.avmReserve}</div>}
-                </div>
-              )}
-              {row.netPlanScenarios && row.netPlanScenarios.length > 0 && (
-                <div className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${row.id}`}>
-                  <div className={styles.rebalanceNetPlanHeader}>NETPLAN 三案</div>
-                  <div className={styles.netPlanScenarioList}>
-                    {row.netPlanScenarios.map((sc, i) => (
-                      <div
-                        key={i}
-                        className={classNames(
-                          styles.netPlanScenarioCard,
-                          sc.isSystemRecommendation && styles.netPlanScenarioCardRec
-                        )}
-                        data-testid={`rebalance-scenario-${i}`}
-                      >
-                        <div className={styles.scenarioTitleRow}>
-                          <strong>{sc.name}</strong>
-                          {sc.isSystemRecommendation && <span className={styles.recBadge}>系統建議</span>}
-                          <span className={styles.roiValue}>{sc.roi}</span>
-                        </div>
-                        <p className={styles.scenarioDetails}>
-                          投資 {sc.inv} · 回本 {sc.payback} · 風險 {sc.risk} · 時程 {sc.time}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No rebalance candidates</div>
-      )}
-    </div>
   );
 }
 

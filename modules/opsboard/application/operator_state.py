@@ -420,6 +420,35 @@ class OperatorStateService:
             self._idempotency_cache[idempotency_key] = response
         return response
 
+    def upsert_network_rebalance_approval(self, approval: dict[str, Any]) -> dict[str, Any]:
+        """Create or update a Govern approval row from Network Rebalance.
+
+        The existing Govern list stores lightweight decision cards, so the
+        rebalance service passes a card-shaped payload and keeps the full
+        workflow state in its own service. This method only makes that pending
+        approval visible through /operator/approvals and the shell envelope.
+        """
+        approval = deepcopy(approval)
+        decisions = self._state.setdefault("decisions", [])
+        for index, existing in enumerate(decisions):
+            if existing.get("id") == approval.get("id"):
+                decisions[index] = approval
+                break
+        else:
+            decisions.insert(0, approval)
+
+        self._state.setdefault("auditFeed", []).insert(
+            0,
+            {
+                "actor": approval.get("requestedBy") or "Expansion Manager",
+                "category": "Decision log",
+                "detail": f"Created Network Rebalance approval {approval.get('id')}.",
+                "time": datetime.now(UTC).strftime("%H:%M"),
+                "auditEventId": str(uuid.uuid4()),
+            },
+        )
+        return deepcopy(approval)
+
     def confirm_evidence_purpose(
         self,
         *,

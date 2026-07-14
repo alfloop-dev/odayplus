@@ -12,10 +12,9 @@
  *   2. Return ApiBinding<T> envelopes — `state` = "ready" | "empty" | "error" | "unconfigured".
  *   3. Workspace falls back to bundled fixtures for any non-"ready" binding.
  *
- * NOTE: Rebalance stores are not exposed by a dedicated read-only API endpoint in the
- * current backend (they are managed through AVM + NetPlan write flows). The loader
- * omits that binding; the workspace always uses fixture data for the rebalance queue
- * until a backend list endpoint is introduced.
+ * NOTE: Rebalance is now loaded directly by NetworkFindAreasWorkspace from
+ * /operator/network-rebalance because it owns an interactive AVM/NetPlan
+ * workflow. This loader remains scoped to heatzones/candidates/SiteScore.
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
@@ -139,8 +138,8 @@ export type NetworkFindAreasBindings = {
  * Lab tab renders authoritative scores without a separate prop. Enrichment is
  * best-effort — a report fetch failure keeps the raw candidate values.
  *
- * Rebalance stores have no dedicated list endpoint; the workspace always uses
- * fixture data for that tab.
+ * Rebalance stores are intentionally omitted here; the client workspace loads
+ * /operator/network-rebalance so scenario selection can persist/reload.
  *
  * Pass `client: null` (e.g. when `ODP_API_BASE_URL` is unset) to get
  * `unconfigured` envelopes that tell the workspace to use fixture data.

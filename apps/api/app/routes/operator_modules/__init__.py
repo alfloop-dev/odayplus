@@ -9,6 +9,8 @@ Composition contract:
   - issues     → write guard: require_permission("intervention", CREATE).
   - approvals  → write guard: require_permission("intervention", APPROVE).
   - evidence   → write guard: require_permission("intervention", CREATE).
+  - network_rebalance → view/update guard: require_permission("listing", VIEW/UPDATE).
+  - network_reviews → view guard: require_permission("sitescore", VIEW); decide guard: require_permission("sitescore", APPROVE).
   - seed       → no auth guard (dev/test only).
 
 All guards are wired at composition time in operator.py — sub-routers must
@@ -19,6 +21,7 @@ from .approvals import create_approvals_sub_router
 from .evidence import create_evidence_sub_router
 from .issues import create_issues_sub_router
 from .network_listings import create_network_listings_sub_router
+from .network_rebalance import create_network_rebalance_sub_router
 from .network_reviews import create_network_review_sub_router
 from .network_scoring import create_network_scoring_sub_router
 from .seed import create_seed_sub_router
@@ -31,6 +34,7 @@ __all__ = [
     "create_approvals_sub_router",
     "create_evidence_sub_router",
     "create_network_listings_sub_router",
+    "create_network_rebalance_sub_router",
     "create_network_review_sub_router",
     "create_network_scoring_sub_router",
     "create_seed_sub_router",

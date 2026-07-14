@@ -1,6 +1,12 @@
 import { expect, test, type Locator } from "@playwright/test";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
+const NETWORK_HEADERS = {
+  "x-subject-id": "operator-expansion-manager",
+  "x-roles": "expansion_user",
+  "x-operator-role": "expansion-manager",
+  "x-tenant-id": "tenant-a",
+};
 
 test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog", async ({
   page,
@@ -174,6 +180,15 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
 
 test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page, request }) => {
+  const resetRebalance = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-rebalance/reset`, {
+    headers: NETWORK_HEADERS,
+  });
+  expect(resetRebalance.status()).toBe(200);
+  const resetListings = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-listings/reset`, {
+    headers: NETWORK_HEADERS,
+  });
+  expect(resetListings.status()).toBe(200);
+
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -251,19 +266,8 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   await page.getByTestId("network-tab-6").click();
   await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
   await expect(page.getByTestId("rebalance-card-RB-801")).toContainText("新北板橋文化");
-
-  // Verify AVM bands
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toBeVisible();
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P50 公允價值");
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P10");
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P90");
-
-  // Verify NetPlan scenarios
-  await expect(page.getByTestId("rebalance-netplan-RB-801")).toBeVisible();
-  await expect(page.getByTestId("rebalance-scenario-0")).toContainText("Keep / Improve");
-  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("Move (移轉新址)");
-  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("系統建議");
-  await expect(page.getByTestId("rebalance-scenario-2")).toContainText("Exit (關店止損)");
+  await expect(page.getByTestId("rebalance-primary-action")).toContainText("建立 AVM 估值請求");
+  await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText("relocationExecuted=false");
 
   // Back to Find Areas remains functional.
   await page.getByTestId("network-tab-0").click();
