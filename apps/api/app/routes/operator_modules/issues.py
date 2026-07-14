@@ -2,14 +2,16 @@
 
 Owns: GET /operator/issues, POST /operator/issues/{issue_id}/{action_type}
 Not touching: approvals, evidence, seed, shell sub-routers
-Composes with: create_operator_router() in operator.py
+Composes with: create_operator_router() in operator.py — caller must pass
+    require_permission_fn so write endpoints carry the correct auth guard.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.domain.r4_dtos import IssueTransitionRequest, IssueTransitionResponse
@@ -17,9 +19,18 @@ from modules.opsboard.domain.r4_dtos import IssueTransitionRequest, IssueTransit
 
 def create_issues_sub_router(
     state_service: OperatorStateService,
-    require_permission_fn: Any,
+    require_permission_fn: Callable[..., Any],
 ) -> APIRouter:
-    """Return the issues sub-router."""
+    """Return the issues sub-router.
+
+    Parameters
+    ----------
+    state_service:
+        Shared OperatorStateService instance.
+    require_permission_fn:
+        A callable that returns a FastAPI dependency for the write guard.
+        Typically ``require_permission("intervention", Action.CREATE, engine=...)``.
+    """
     router = APIRouter()
 
     @router.get("/issues")
@@ -28,7 +39,10 @@ def create_issues_sub_router(
         items = state_service.get_work_queue()
         return {"items": items, "count": len(items)}
 
-    @router.post("/issues/{issue_id}/{action_type}")
+    @router.post(
+        "/issues/{issue_id}/{action_type}",
+        dependencies=[Depends(require_permission_fn)],
+    )
     def transition_issue(
         issue_id: str,
         action_type: str,

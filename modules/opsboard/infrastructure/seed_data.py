@@ -19,16 +19,25 @@ from pathlib import Path
 from typing import Any
 
 # Prefer loading from the durable JSON fixture so the source of truth is one file.
+# parents[3] resolves to the repo root:
+#   seed_data.py → parents[0]=infrastructure → [1]=opsboard → [2]=modules → [3]=repo-root
 _FIXTURE_PATH = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[3]
     / "tests"
     / "fixtures"
     / "operator_console"
     / "seed_r4.json"
 )
 
-# Inline fallback — kept identical to seed_r4.json.
+# Inline fallback — kept identical to seed_r4.json (including _meta key).
 _INLINE_SEED: dict[str, Any] = {
+    "_meta": {
+        "task": "ODP-OC-R4-001",
+        "version": "r4",
+        "description": "Canonical R4 seed for Operator Console integration tests and dev reset.",
+        "owner": "Antigravity",
+        "generated_at": "2026-07-14T01:52:00Z",
+    },
     "kpis": [
         {"label": "Critical SLA", "value": "9", "delta": "+3 since 09:00", "meta": "4 due in 2h", "tone": "danger"},
         {"label": "待核准", "value": "5", "delta": "2 SiteScore", "meta": "1 returned", "tone": "warning"},
