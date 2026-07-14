@@ -174,16 +174,37 @@ export type RebalanceQueueRow = {
   storeName: string;
   status: RebalanceStore["status"];
   statusLabel: string;
+  ownerName?: string;
+  ownerRoleId?: string;
   avmRequestId?: string;
   netPlanOptionId?: string;
   relatedApprovalId?: string;
+  approvalStatus?: string;
   summary: string;
+  healthNote?: string;
+  monthlyRevenueLabel?: string;
+  utilizationLabel?: string;
+  sourceIssueId?: string;
+  lightHistory?: string[];
+  trend?: number[];
   tone: NetworkTone;
   avmP10?: number;
   avmP50?: number;
   avmP90?: number;
   avmConf?: string;
   avmReserve?: string;
+  avmModelVersion?: string;
+  avmSnapshotId?: string;
+  avmEvidenceId?: string;
+  selectedScenarioId?: string;
+  selectedScenarioOwner?: RebalanceStore["selectedScenarioOwner"];
+  selectedScenarioEvidenceId?: string;
+  netPlanModelVersion?: string;
+  netPlanSnapshotId?: string;
+  relocationExecuted?: boolean;
+  executionBoundary?: string;
+  runtimeState?: RebalanceStore["runtimeState"];
+  evidence?: RebalanceStore["evidence"];
   netPlanScenarios?: RebalanceStore["netPlanScenarios"];
 };
 
@@ -600,16 +621,37 @@ function buildReviewQueue(
 
 function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueRow[] {
   return rebalanceStores.map((store) => ({
+    approvalStatus: store.approvalStatus,
     avmRequestId: store.avmRequestId,
+    avmEvidenceId: store.avmEvidenceId,
+    avmModelVersion: store.avmModelVersion,
     id: store.id,
+    avmSnapshotId: store.avmSnapshotId,
     netPlanOptionId: store.netPlanOptionId,
+    netPlanModelVersion: store.netPlanModelVersion,
+    netPlanSnapshotId: store.netPlanSnapshotId,
+    selectedScenarioId: store.selectedScenarioId,
+    selectedScenarioOwner: store.selectedScenarioOwner,
+    selectedScenarioEvidenceId: store.selectedScenarioEvidenceId,
     relatedApprovalId: store.relatedApprovalId,
+    relocationExecuted: store.relocationExecuted,
+    executionBoundary: store.executionBoundary,
+    runtimeState: store.runtimeState,
+    evidence: store.evidence,
     status: store.status,
-    statusLabel: REBALANCE_STATUS_LABEL[store.status] ?? store.status,
+    statusLabel: store.statusLabel ?? REBALANCE_STATUS_LABEL[store.status] ?? store.status,
     storeId: store.storeId,
     storeName: store.storeName,
+    ownerName: store.ownerName,
+    ownerRoleId: store.ownerRoleId,
     summary: store.summary,
-    tone: store.status === "approved" || store.status === "closed" ? "good" : store.status === "pendingapproval" ? "watch" : "watch",
+    healthNote: store.healthNote,
+    monthlyRevenueLabel: store.monthlyRevenueLabel,
+    utilizationLabel: store.utilizationLabel,
+    sourceIssueId: store.sourceIssueId,
+    lightHistory: store.lightHistory,
+    trend: store.trend,
+    tone: store.status === "approved" || store.status === "closed" ? "good" : store.runtimeState ? "risk" : "watch",
     avmP10: store.avmP10,
     avmP50: store.avmP50,
     avmP90: store.avmP90,
