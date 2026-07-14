@@ -63,6 +63,7 @@ export function RebalancePanel({
   const cta = primaryCta(selected);
   const selectedScenario = selected.netPlanScenarios?.find((scenario) => scenario.id === selected.selectedScenarioId);
   const actionBusy = busyAction?.startsWith(`${selected.id}:`) ?? false;
+  const avmP50 = typeof selected.avmP50 === "number" ? selected.avmP50 : null;
 
   function handlePrimary() {
     if (cta.disabled) return;
@@ -180,16 +181,16 @@ export function RebalancePanel({
             </div>
           ) : null}
 
-          {selected.avmP50 !== undefined ? (
+          {avmP50 !== null ? (
             <section className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${selected.id}`}>
               <div className={styles.rebalanceAvmHeader}>
                 <span>AVM 估值（service output）</span>
                 <span>{selected.avmConf ?? "—"}</span>
               </div>
-              <div className={styles.avmValueP50}>{formatCurrency(selected.avmP50)}</div>
+              <div className={styles.avmValueP50}>{formatCurrency(avmP50)}</div>
               <div className={styles.avmBands}>
-                <span>P10: {selected.avmP10 ? formatCurrency(selected.avmP10) : "—"}</span>
-                <span>P90: {selected.avmP90 ? formatCurrency(selected.avmP90) : "—"}</span>
+                <span>P10: {typeof selected.avmP10 === "number" ? formatCurrency(selected.avmP10) : "—"}</span>
+                <span>P90: {typeof selected.avmP90 === "number" ? formatCurrency(selected.avmP90) : "—"}</span>
               </div>
               <div className={styles.rebalanceMetadata}>
                 <span>{selected.avmModelVersion}</span>
