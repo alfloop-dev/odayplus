@@ -142,10 +142,12 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   const fileName = await resultPanel.locator("span").first().textContent();
   expect(fileName).toContain("EVD-2026-0705-");
 
-  // Go to Audit Trail tab and verify audit event has been written
+  // Go to Audit Trail tab and verify audit event has been written.
+  // The Govern workspace is now API-bound (ODP-OC-R4-009): the export audit is
+  // attributed to the acting role rather than the former hardcoded mock actor.
   await page.getByRole("button", { name: "Audit Trail" }).click();
   await expect(page.locator("table")).toContainText("Export Evidence Package");
-  await expect(page.locator("table")).toContainText("Antigravity6");
+  await expect(page.locator("table")).toContainText("營運主管");
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
