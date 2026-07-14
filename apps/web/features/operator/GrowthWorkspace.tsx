@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, PageHeader } from "@oday-plus/ui";
+import { Badge } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
 import {
   BUILDER_STEPS,
@@ -35,8 +35,18 @@ import {
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
 import styles from "./operator.module.css";
+import g from "./growth.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+/** Growth tabs (package-6 tab bar): campaign workbench / segments / PriceOps. */
+type GrowthTab = "campaign" | "segments" | "priceops";
+
+const GROWTH_TABS: { id: GrowthTab; label: string }[] = [
+  { id: "campaign", label: "活動 Campaign" },
+  { id: "segments", label: "會員分群 Segments" },
+  { id: "priceops", label: "PriceOps" },
+];
 
 /** Inline data-source badge shown next to freshness when rendering from fixture. */
 const DATA_SOURCE_HINT: Record<"api" | "fixture", string | null> = {
@@ -51,17 +61,80 @@ const requiredActionLabel: Record<CloseoutGate["requiredAction"], string> = {
   STRENGTHEN_EVIDENCE: "補強證據",
 };
 
+/** Eight-step Growth lifecycle used by the detail-panel stepper (package 6). */
+const LIFECYCLE_STEPS = ["草稿", "送審", "核准", "排程", "執行", "觀察", "成效", "結案"];
+
+const STATUS_STEP: Record<string, number> = {
+  DRAFT: 0,
+  PENDING_APPROVAL: 1,
+  APPROVED: 2,
+  SCHEDULED: 3,
+  RUNNING: 4,
+  EXECUTED: 4,
+  OBSERVING: 5,
+  OUTCOME_READY: 6,
+  INEFFECTIVE: 6,
+  CLOSED: 7,
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  DRAFT: "草稿",
+  PENDING_APPROVAL: "待核准",
+  APPROVED: "已核准",
+  SCHEDULED: "已排程",
+  RUNNING: "執行中",
+  EXECUTED: "已執行",
+  OBSERVING: "觀察中",
+  OUTCOME_READY: "待判定成效",
+  INEFFECTIVE: "無效",
+  CLOSED: "已結案",
+  REJECTED: "已駁回",
+  SYSTEM_RECOMMENDED: "系統建議",
+};
+
+const NEXT_STEP: Record<string, string> = {
+  DRAFT: "送主管核准",
+  PENDING_APPROVAL: "等待核准",
+  APPROVED: "排程執行",
+  SCHEDULED: "開始執行",
+  RUNNING: "觀察中",
+  EXECUTED: "觀察中",
+  OBSERVING: "觀察窗成熟後判定",
+  OUTCOME_READY: "判定成效並結案",
+  INEFFECTIVE: "執行 Rollback",
+  CLOSED: "已結案",
+};
+
+const KIND_SHORT: Record<GrowthKind, string> = {
+  offpeak: "離峰促銷",
+  winback: "會員召回",
+  priceops: "PriceOps",
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status;
+}
+
+/** Derive a create-entry kind for an action that predates the entry-card flow. */
+function itemKind(item: GrowthItem): GrowthKind {
+  if (item.kind) return item.kind;
+  if (item.sourceRecommendationId) return "priceops";
+  if (item.name.includes("召回") || item.name.includes("廣告")) return "winback";
+  return "offpeak";
+}
+
 /**
- * 營收成長 Growth workspace — segmentation, PriceOps recommendation table,
- * growth-action list + detail, a URL-driven create-draft modal, and an
- * effectiveness / closeout gate that blocks closing ineffective campaigns.
+ * 營收成長 Growth workspace — package-6 parity.
  *
- * Accepts optional `apiData` (fetched server-side via fetchGrowthApiData) so
- * the workspace renders real API data on first load. Falls back to fixtures
- * when `apiData` is undefined (e.g. during testing or when the API is down).
+ * A self-contained full-bleed screen (no breadcrumb / nested console header):
+ * inline title, three create-entry cards, a tab bar (活動 / 會員分群 / PriceOps)
+ * and, on the default 活動 tab, a three-column campaign workbench
+ * (filter rail | action cards | sticky lifecycle detail). The five-step Draft
+ * Builder, server conflict gate, submit-for-approval and effectiveness/closeout
+ * gate all carry over unchanged.
  *
- * Rendered inside the Operator Console; state is URL-synced (server component)
- * so selection and the draft modal are shareable and testable.
+ * Accepts optional `apiData` (fetched server-side) so the workspace renders real
+ * API data on first load, falling back to fixtures when unavailable.
  */
 export function GrowthWorkspace({
   searchParams = {},
@@ -77,6 +150,11 @@ export function GrowthWorkspace({
   const itemId = readParam(searchParams.item);
   const draftId = readParam(searchParams.draft);
   const builderParam = readParam(searchParams.builder);
+  const tabParam = readParam(searchParams.gtab);
+  const kindFilter = readParam(searchParams.gkind);
+  const statusFilter = readParam(searchParams.gstatus);
+  const activeTab: GrowthTab =
+    tabParam === "segments" || tabParam === "priceops" ? tabParam : "campaign";
   const builderKind: GrowthKind | null =
     builderParam === "offpeak" || builderParam === "winback" || builderParam === "priceops"
       ? builderParam
@@ -88,64 +166,79 @@ export function GrowthWorkspace({
     updatedAt: "2026-07-09 14:20",
     modelVersion: "growth-uplift-v1.4.0",
   };
+  const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
 
   // Build an href that keeps the Growth workspace active and preserves the
-  // current selection unless explicitly overridden.
+  // current tab + selection unless explicitly overridden.
   const href = (overrides: Record<string, string | undefined>): string => {
     const params = new URLSearchParams({ ws: "growth" });
     const merged: Record<string, string | undefined> = {
+      gtab: activeTab === "campaign" ? undefined : activeTab,
       segment: vm.selectedSegment?.id,
       item: itemId,
+      gkind: kindFilter,
+      gstatus: statusFilter,
       ...overrides,
     };
     for (const [key, value] of Object.entries(merged)) {
-      if (value) {
-        params.set(key, value);
-      }
+      if (value) params.set(key, value);
     }
     return `${basePath}?${params.toString()}`;
   };
 
-  const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
-
   return (
     <>
-      <PageHeader
-        title="營收成長"
-        summary="分群 → PriceOps 建議 → Growth Action 生命週期。成效未達標的活動不可直接結案，需先 rollback 或補強證據。"
-        breadcrumb={[{ label: "Operator Console", href: basePath }, { label: "營收成長" }]}
-        status={{
-          label: freshnessData.status,
-          tone: dataStatusTone[freshnessData.status],
-          marker: "◆",
-          "data-testid": "growth-data-status",
-        }}
-        lastUpdated={`${freshnessData.updatedAt} · model ${freshnessData.modelVersion}${fixtureHint ? ` · [${fixtureHint}]` : ""}`}
-      />
-      <div className="odp-content" data-testid="growth-workspace" data-source={vm.dataSource}>
-        <section className={styles.overviewGrid} aria-label="Growth overview">
-          <Metric label="分群數" value={String(vm.summary.segmentCount)} hint="納入成長評估的區隔" />
-          <Metric label="進行中活動" value={String(vm.summary.activeCount)} hint="已核准至觀察中的 Growth Action" />
-          <Metric label="判定有效" value={String(vm.summary.effectiveCount)} hint="達標且證據充足" />
-          <Metric
-            label="結案受阻"
-            value={String(vm.summary.blockedCloseoutCount)}
-            hint="無效／待判定，不可直接結案"
-          />
-        </section>
+      <div className={g.screen} data-testid="growth-workspace" data-source={vm.dataSource}>
+        <header className={g.header}>
+          <div className={g.headerTitle}>營收成長</div>
+          <div className={g.headerSub}>
+            機會 → 草稿 → 核准 → 執行 → 觀察 → 成效，含分群、PriceOps 與衝突檢查
+          </div>
+          <div className={g.headerStatus}>
+            <Badge
+              label={freshnessData.status}
+              tone={dataStatusTone[freshnessData.status]}
+              marker="◆"
+              data-testid="growth-data-status"
+            />
+            <span>
+              {freshnessData.updatedAt} · model {freshnessData.modelVersion}
+              {fixtureHint ? ` · [${fixtureHint}]` : ""}
+            </span>
+          </div>
+        </header>
 
         <EntryCardsSection href={href} />
 
-        <SegmentSection segments={vm.segments} selected={vm.selectedSegment} href={href} />
+        <nav className={g.tabBar} data-testid="growth-tabs" aria-label="Growth 分頁">
+          {GROWTH_TABS.map((tab) => (
+            <Link
+              key={tab.id}
+              href={href({ gtab: tab.id === "campaign" ? undefined : tab.id, item: undefined })}
+              className={[g.tab, activeTab === tab.id ? g.tabActive : ""].join(" ")}
+              aria-current={activeTab === tab.id ? "page" : undefined}
+              data-testid={`growth-tab-${tab.id}`}
+            >
+              {tab.label}
+            </Link>
+          ))}
+        </nav>
 
-        <RecommendationSection recommendations={vm.recommendations} href={href} />
-
-        <GrowthActionSection
-          items={vm.items}
-          selected={vm.selectedItem}
-          gate={vm.selectedItemGate}
-          href={href}
-        />
+        {activeTab === "segments" ? (
+          <SegmentSection segments={vm.segments} selected={vm.selectedSegment} href={href} />
+        ) : activeTab === "priceops" ? (
+          <RecommendationSection recommendations={vm.recommendations} href={href} />
+        ) : (
+          <CampaignWorkbench
+            items={vm.items}
+            selected={vm.selectedItem}
+            gate={vm.selectedItemGate}
+            segments={vm.segments}
+            kindFilter={kindFilter}
+            statusFilter={statusFilter}
+            href={href}
+          />
+        )}
       </div>
 
       {builderKind ? (
@@ -170,27 +263,25 @@ function EntryCardsSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section className={styles.section} aria-label="Growth create entries">
-      <h2 className={styles.sectionTitle}>建立入口</h2>
-      <p className={styles.sectionHint}>
-        三個建立入口各自預填對應的活動類型；建立後進入五步 Draft Builder，送審核准才進入生命週期。
-      </p>
-      <div className={styles.overviewGrid} data-testid="growth-entry-cards">
-        {GROWTH_ENTRY_CARDS.map((card) => (
-          <Link
-            key={card.kind}
-            href={href({ builder: card.kind, draft: undefined, item: undefined })}
-            className={styles.metric}
-            data-testid={`growth-entry-${card.kind}`}
-            aria-label={`${card.title}（${card.en}）`}
-          >
-            <span style={{ color: card.dot }}>● {card.en}</span>
-            <strong>＋ {card.title}</strong>
-            <span>{card.desc}</span>
-          </Link>
-        ))}
-      </div>
-    </section>
+    <div className={g.entryGrid} data-testid="growth-entry-cards">
+      {GROWTH_ENTRY_CARDS.map((card) => (
+        <Link
+          key={card.kind}
+          href={href({ builder: card.kind, draft: undefined, item: undefined })}
+          className={g.entryCard}
+          data-testid={`growth-entry-${card.kind}`}
+          aria-label={`${card.title}（${card.en}）`}
+        >
+          <span className={g.entryTop}>
+            <span className={g.entryDot} style={{ background: card.dot }} />
+            <span className={g.entryTitle}>＋ {card.title}</span>
+            <span className={g.entryEn}>{card.en}</span>
+          </span>
+          <span className={g.entryDesc}>{card.desc}</span>
+          <span className={g.entryCta}>開啟 Draft Builder →</span>
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -212,16 +303,7 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
   };
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return (
-    <article className={styles.metric}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <span>{hint}</span>
-    </article>
-  );
-}
-
+/** 會員分群 tab — segment cards with a scan-friendly filter chip bar. */
 function SegmentSection({
   segments,
   selected,
@@ -232,13 +314,11 @@ function SegmentSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section className={styles.section} aria-label="Segments">
-      <h2 className={styles.sectionTitle}>分群</h2>
-      <p className={styles.sectionHint}>選擇分群以聚焦其 PriceOps 建議與 Growth Action。</p>
-      <div className={styles.filterBar} data-testid="growth-segment-filter">
+    <section aria-label="Segments">
+      <div className={g.segFilter} data-testid="growth-segment-filter">
         <span>聚焦：</span>
         <Link
-          className={styles.chip}
+          className={g.statusChip}
           aria-current={selected === null ? "true" : undefined}
           href={href({ segment: undefined, item: undefined })}
         >
@@ -247,7 +327,7 @@ function SegmentSection({
         {segments.map((segment) => (
           <Link
             key={segment.id}
-            className={styles.chip}
+            className={[g.statusChip, selected?.id === segment.id ? g.statusChipActive : ""].join(" ")}
             aria-current={selected?.id === segment.id ? "true" : undefined}
             href={href({ segment: segment.id, item: undefined })}
           >
@@ -255,50 +335,42 @@ function SegmentSection({
           </Link>
         ))}
       </div>
-      <div className={styles.tableWrap}>
-        <table className={styles.table} data-testid="growth-segment-table">
-          <caption>分群定義、規模、營收占比、趨勢與成長機會。</caption>
-          <thead>
-            <tr>
-              <th>分群</th>
-              <th>定義</th>
-              <th>店數</th>
-              <th>營收占比</th>
-              <th>趨勢</th>
-              <th>資料狀態</th>
-            </tr>
-          </thead>
-          <tbody>
-            {segments.map((segment) => (
-              <tr key={segment.id} aria-selected={selected?.id === segment.id}>
-                <td>
-                  <Link className={styles.link} href={href({ segment: segment.id, item: undefined })}>
-                    {segment.name}
-                  </Link>
-                  <span className={styles.subtle}>{segment.opportunity}</span>
-                </td>
-                <td>{segment.definition}</td>
-                <td>{segment.storeCount}</td>
-                <td>{segment.revenueShare}</td>
-                <td>
-                  <Badge label={trendLabel[segment.trend]} tone={trendTone[segment.trend]} marker="●" />
-                </td>
-                <td>
-                  <Badge
-                    label={segment.dataStatus}
-                    tone={dataStatusTone[segment.dataStatus]}
-                    marker="◆"
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className={g.segGrid} data-testid="growth-segment-table">
+        {segments.map((segment) => (
+          <article
+            key={segment.id}
+            className={[g.segCard, selected?.id === segment.id ? g.segCardSelected : ""].join(" ")}
+            aria-selected={selected?.id === segment.id}
+          >
+            <div className={g.segTop}>
+              <span className={g.segName}>{segment.name}</span>
+              <Badge label={trendLabel[segment.trend]} tone={trendTone[segment.trend]} marker="●" />
+            </div>
+            <div className={g.segCount}>{segment.storeCount} 店</div>
+            <div className={g.segValue}>
+              營收占比 {segment.revenueShare} · {segment.definition}
+            </div>
+            <div className={g.segPlay}>建議打法：{segment.opportunity}</div>
+            <div className={g.segTop}>
+              <Badge label={segment.dataStatus} tone={dataStatusTone[segment.dataStatus]} marker="◆" />
+            </div>
+            <Link
+              className={g.segDraftBtn}
+              href={href({ segment: segment.id, builder: "offpeak" })}
+            >
+              建立活動草稿
+            </Link>
+          </article>
+        ))}
       </div>
+      <p className={g.tabNote}>
+        分群由 CRM 流失風險與消費行為模型每日更新（mock）— 由分群建立的草稿仍走核准流程。
+      </p>
     </section>
   );
 }
 
+/** PriceOps tab — pricing recommendation table (semantic rows for scan + tests). */
 function RecommendationSection({
   recommendations,
   href,
@@ -307,136 +379,214 @@ function RecommendationSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section className={styles.section} aria-label="PriceOps recommendations">
-      <h2 className={styles.sectionTitle}>PriceOps 建議</h2>
-      <p className={styles.sectionHint}>
-        系統建議僅為 SYSTEM_RECOMMENDED；硬限制未通過的建議不可建立草稿，需先由 PriceOps 修正。
-      </p>
-      <div className={styles.tableWrap}>
-        <table className={styles.table} data-testid="growth-recommendation-table">
-          <caption>現行價、候選價、預期營收/毛利增量、限制狀態與建立草稿入口。</caption>
-          <thead>
-            <tr>
-              <th>建議</th>
-              <th>價格</th>
-              <th>營收增量 P50</th>
-              <th>毛利增量 P50</th>
-              <th>信心</th>
-              <th>限制</th>
-              <th>動作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recommendations.map((rec) => {
-              const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
-              return (
-                <tr key={rec.id}>
-                  <td>
-                    {rec.title}
-                    <span className={styles.subtle}>{rec.id}</span>
-                  </td>
-                  <td>
-                    {rec.currentPrice}
-                    <span className={styles.subtle}>{rec.candidatePrice}</span>
-                  </td>
-                  <td>{formatLift(rec.expectedRevenueLift)}</td>
-                  <td>{formatLift(rec.expectedMarginLift)}</td>
-                  <td>
-                    <Badge label={rec.confidence} tone={confidenceTone[rec.confidence]} marker="▧" />
-                  </td>
-                  <td>
-                    <Badge
-                      label={rec.constraintStatus}
-                      tone={constraintTone[rec.constraintStatus]}
-                      marker="!"
-                    />
-                  </td>
-                  <td>
-                    {blocked ? (
-                      <span
-                        className={styles.secondaryButton}
-                        aria-disabled="true"
-                        title="硬限制未通過，不可建立草稿"
-                      >
-                        建立草稿
-                      </span>
-                    ) : (
-                      <Link
-                        className={styles.primaryButton}
-                        href={href({ draft: rec.id })}
-                        data-testid={`growth-draft-${rec.id}`}
-                      >
-                        建立草稿
-                      </Link>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <section aria-label="PriceOps recommendations">
+      <table className={g.priceTable} data-testid="growth-recommendation-table">
+        <caption className={g.tabNote} style={{ captionSide: "bottom" }}>
+          系統建議僅為 SYSTEM_RECOMMENDED；硬限制未通過的建議不可建立草稿，需先由 PriceOps 修正。
+        </caption>
+        <thead>
+          <tr>
+            <th>建議</th>
+            <th>價格</th>
+            <th>營收增量 P50</th>
+            <th>毛利增量 P50</th>
+            <th>信心</th>
+            <th>限制</th>
+            <th>動作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recommendations.map((rec) => {
+            const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
+            return (
+              <tr key={rec.id}>
+                <td>
+                  <strong>{rec.title}</strong>
+                  <div className={g.mono}>{rec.id}</div>
+                </td>
+                <td>
+                  {rec.currentPrice}
+                  <div className={g.priceMono}>{rec.candidatePrice}</div>
+                </td>
+                <td className={g.priceMono}>{formatLift(rec.expectedRevenueLift)}</td>
+                <td className={g.priceMono}>{formatLift(rec.expectedMarginLift)}</td>
+                <td>
+                  <Badge label={rec.confidence} tone={confidenceTone[rec.confidence]} marker="▧" />
+                </td>
+                <td>
+                  <Badge
+                    label={rec.constraintStatus}
+                    tone={constraintTone[rec.constraintStatus]}
+                    marker="!"
+                  />
+                </td>
+                <td>
+                  {blocked ? (
+                    <span
+                      className={styles.secondaryButton}
+                      aria-disabled="true"
+                      title="硬限制未通過，不可建立草稿"
+                    >
+                      建立草稿
+                    </span>
+                  ) : (
+                    <Link
+                      className={styles.primaryButton}
+                      href={href({ draft: rec.id })}
+                      data-testid={`growth-draft-${rec.id}`}
+                    >
+                      建立草稿
+                    </Link>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </section>
   );
 }
 
-function GrowthActionSection({
+/**
+ * 活動 tab — the three-column campaign workbench: a filter rail (＋新增 + type /
+ * status chips + rule reminder), the Growth Action card list, and a sticky
+ * lifecycle detail panel for the selected action.
+ */
+function CampaignWorkbench({
   items,
   selected,
   gate,
+  segments,
+  kindFilter,
+  statusFilter,
   href,
 }: {
   items: GrowthItem[];
   selected: GrowthItem;
   gate: CloseoutGate;
+  segments: GrowthSegment[];
+  kindFilter?: string;
+  statusFilter?: string;
   href: (o: Record<string, string | undefined>) => string;
 }) {
+  const segmentName = (id: string) => segments.find((s) => s.id === id)?.name ?? id;
+  const statuses = Array.from(new Set(items.map((i) => i.status)));
+  const filtered = items.filter((item) => {
+    if (kindFilter && itemKind(item) !== kindFilter) return false;
+    if (statusFilter && item.status !== statusFilter) return false;
+    return true;
+  });
+
   return (
-    <section className={styles.section} aria-label="Growth actions">
-      <h2 className={styles.sectionTitle}>Growth Actions</h2>
-      <p className={styles.sectionHint}>選擇活動檢視成效判斷與結案閘門。</p>
-      <div className={styles.detailGrid}>
-        <div className={styles.tableWrap}>
-          <table className={styles.table} data-testid="growth-item-table">
-            <caption>活動、分群、狀態、目標/觀察增量與成效判定。</caption>
-            <thead>
-              <tr>
-                <th>活動</th>
-                <th>狀態</th>
-                <th>目標</th>
-                <th>觀察</th>
-                <th>成效</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => {
-                const rowGate = closeoutGate(item);
-                return (
-                  <tr key={item.id} aria-selected={item.id === selected.id}>
-                    <td>
-                      <Link className={styles.link} href={href({ item: item.id })}>
-                        {item.name}
-                      </Link>
-                      <span className={styles.subtle}>{item.observationWindow}</span>
-                    </td>
-                    <td>{item.status}</td>
-                    <td>{formatLift(item.targetLift)}</td>
-                    <td>{formatLift(item.observedLift)}</td>
-                    <td>
+    <section className={g.campaign} aria-label="Growth actions">
+      {/* Filter rail */}
+      <aside className={g.rail}>
+        <Link className={g.railBtn} href={href({ builder: "offpeak" })} data-testid="growth-new-action">
+          ＋ 新增 Growth Action
+        </Link>
+        <div className={g.railCard}>
+          <div className={g.railLabel}>類型</div>
+          <div className={g.chipCol}>
+            <Link
+              className={[g.typeChip, !kindFilter ? g.typeChipActive : ""].join(" ")}
+              href={href({ gkind: undefined })}
+            >
+              全部類型
+            </Link>
+            {GROWTH_ENTRY_CARDS.map((card) => (
+              <Link
+                key={card.kind}
+                className={[g.typeChip, kindFilter === card.kind ? g.typeChipActive : ""].join(" ")}
+                href={href({ gkind: kindFilter === card.kind ? undefined : card.kind })}
+              >
+                {KIND_SHORT[card.kind]}
+              </Link>
+            ))}
+          </div>
+          <div className={[g.railLabel, g.railLabelMt].join(" ")}>狀態</div>
+          <div className={g.statusChipRow}>
+            <Link
+              className={[g.statusChip, !statusFilter ? g.statusChipActive : ""].join(" ")}
+              href={href({ gstatus: undefined })}
+            >
+              全部
+            </Link>
+            {statuses.map((s) => (
+              <Link
+                key={s}
+                className={[g.statusChip, statusFilter === s ? g.statusChipActive : ""].join(" ")}
+                href={href({ gstatus: statusFilter === s ? undefined : s })}
+              >
+                {statusLabel(s)}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div className={g.railRule}>
+          活動需經核准才能排程；成效判定「無效」不可直接結案，須調整重送或升級檢討。
+        </div>
+      </aside>
+
+      {/* Action card list */}
+      <div className={g.cardList} data-testid="growth-item-table">
+        {filtered.length === 0 ? (
+          <div className={g.emptyCard}>沒有符合條件的機會或活動。</div>
+        ) : (
+          filtered.map((item) => {
+            const rowGate = closeoutGate(item);
+            return (
+              <Link
+                key={item.id}
+                href={href({ item: item.id })}
+                className={[g.actionCard, item.id === selected.id ? g.actionCardSelected : ""].join(" ")}
+                aria-selected={item.id === selected.id}
+                data-testid={`growth-item-${item.id}`}
+              >
+                <div className={g.actionTop}>
+                  <span className={g.mono}>{item.id}</span>
+                  <Badge label={KIND_SHORT[itemKind(item)]} tone="blue" marker="▧" />
+                  <Badge label={statusLabel(item.status)} tone="gray" marker="◆" />
+                  <span className={g.actionNext}>下一步：{NEXT_STEP[item.status] ?? "—"}</span>
+                </div>
+                <div className={g.actionTitle}>{item.name}</div>
+                <div className={g.actionMeta}>
+                  {segmentName(item.segmentId)} · {item.observationWindow}
+                </div>
+                <div className={g.metricRow}>
+                  <div>
+                    <div className={g.metricK}>目標增量</div>
+                    <div className={g.metricV}>{formatLift(item.targetLift)}</div>
+                  </div>
+                  <div>
+                    <div className={g.metricK}>觀察增量</div>
+                    <div className={[g.metricV, (item.observedLift ?? 0) > 0 ? g.metricVpos : ""].join(" ")}>
+                      {formatLift(item.observedLift)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={g.metricK}>證據</div>
+                    <div className={g.metricV}>{item.evidenceLevel}</div>
+                  </div>
+                  <div>
+                    <div className={g.metricK}>成效</div>
+                    <div>
                       <Badge
                         label={outcomeLabel[rowGate.outcome]}
                         tone={outcomeTone[rowGate.outcome]}
                         marker="●"
                       />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <GrowthActionDetail item={selected} gate={gate} href={href} />
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            );
+          })
+        )}
       </div>
+
+      {/* Sticky lifecycle detail */}
+      <GrowthActionDetail item={selected} gate={gate} segmentName={segmentName} href={href} />
     </section>
   );
 }
@@ -444,39 +594,81 @@ function GrowthActionSection({
 function GrowthActionDetail({
   item,
   gate,
+  segmentName,
   href,
 }: {
   item: GrowthItem;
   gate: CloseoutGate;
+  segmentName: (id: string) => string;
   href: (o: Record<string, string | undefined>) => string;
 }) {
+  const stepIndex = STATUS_STEP[item.status] ?? 0;
   return (
-    <aside className={styles.drawer} data-testid="growth-item-detail" aria-label={`${item.name} 詳情`}>
-      <div className={styles.badgeRow}>
-        <Badge label={item.status} tone="blue" marker="◆" />
-        <Badge label={outcomeLabel[gate.outcome]} tone={outcomeTone[gate.outcome]} marker="●" />
-        <Badge label={`evidence ${item.evidenceLevel}`} tone={confidenceTone[item.evidenceLevel]} marker="▧" />
+    <aside className={g.detailPanel} data-testid="growth-item-detail" aria-label={`${item.name} 詳情`}>
+      <div>
+        <div className={g.detailIdRow}>
+          <span className={g.mono}>{item.id}</span>
+          <Badge label={statusLabel(item.status)} tone="blue" marker="◆" />
+          <Badge label={outcomeLabel[gate.outcome]} tone={outcomeTone[gate.outcome]} marker="●" />
+          <Badge label={`evidence ${item.evidenceLevel}`} tone={confidenceTone[item.evidenceLevel]} marker="▧" />
+        </div>
+        <div className={g.detailTitle}>{item.name}</div>
       </div>
-      <h2>{item.name}</h2>
+
+      {/* 8-step lifecycle stepper */}
+      <div className={g.stepper} data-testid="growth-lifecycle-stepper">
+        <div className={g.stepTrack} />
+        <div
+          className={g.stepFill}
+          style={{ width: `${(stepIndex / (LIFECYCLE_STEPS.length - 1)) * 100}%` }}
+        />
+        <div className={g.stepGrid}>
+          {LIFECYCLE_STEPS.map((label, i) => {
+            const done = i < stepIndex;
+            const current = i === stepIndex;
+            return (
+              <div key={label} className={g.stepNode}>
+                <span
+                  className={[
+                    g.stepDot,
+                    done ? g.stepDotDone : "",
+                    current ? g.stepDotCurrent : "",
+                  ].join(" ")}
+                >
+                  {done ? "✓" : i + 1}
+                </span>
+                <span className={[g.stepLabel, current ? g.stepLabelCurrent : ""].join(" ")}>
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className={g.detailStack} data-testid="growth-lift-comparison">
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>客群</span>
+          <span className={g.detailRowV}>{segmentName(item.segmentId)}</span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>目標增量</span>
+          <span className={g.detailRowV}>{formatLift(item.targetLift)}</span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>觀察增量</span>
+          <span className={g.detailRowV}>{formatLift(item.observedLift)}</span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>觀察窗</span>
+          <span className={g.detailRowV}>{item.observationWindow}</span>
+        </div>
+      </div>
+
       <div className={styles.softBlock}>
         <h3>目標</h3>
         <p>{item.objective}</p>
       </div>
-      <section className={styles.twoColumn} data-testid="growth-lift-comparison">
-        <div className={styles.softBlock}>
-          <h3>目標增量</h3>
-          <div className={styles.liftRow}>
-            <strong>{formatLift(item.targetLift)}</strong>
-          </div>
-        </div>
-        <div className={styles.softBlock}>
-          <h3>觀察增量</h3>
-          <div className={styles.liftRow}>
-            <strong>{formatLift(item.observedLift)}</strong>
-          </div>
-          <span className={styles.subtle}>觀察窗：{item.observationWindow}</span>
-        </div>
-      </section>
       <div className={styles.softBlock}>
         <h3>成效判斷</h3>
         <p>{item.rationale}</p>
@@ -485,10 +677,12 @@ function GrowthActionDetail({
         <h3>Rollback 計畫</h3>
         <p>{item.rollbackPlan}</p>
       </div>
+
       {item.status === "DRAFT" || item.status === "PENDING_APPROVAL" ? (
         <ApprovalFlowPanel item={item} href={href} />
       ) : null}
       <CloseoutPanel item={item} gate={gate} href={href} />
+
       <dl className={styles.auditGrid} data-testid="growth-item-audit">
         <dt>decision_id</dt>
         <dd>{item.audit.decisionId}</dd>
@@ -673,9 +867,7 @@ function CloseoutPanel({
       {isApproved ? (
         <div className={styles.successBlock} data-testid="growth-closeout-success">
           <p>結案已成功提交並記錄稽核日誌。等待後端決策回寫。</p>
-          {apiError ? (
-            <p className={styles.subtle}>{apiError}</p>
-          ) : null}
+          {apiError ? <p className={styles.subtle}>{apiError}</p> : null}
         </div>
       ) : (
         <div className={blockClass} data-testid="growth-closeout-gate" data-can-close={gate.canClose}>
