@@ -13,6 +13,9 @@ import {
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
+import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { NetworkShell } from "./network/NetworkShell";
+import type { ExpansionStep } from "./network/ExpansionStepper";
 import {
   buildNetworkFindAreasViewModel,
   type CandidatePipelineRow,
@@ -74,6 +77,124 @@ const networkTabs = [
   "低效重配 / Rebalance",
 ] as const;
 
+type NetworkListingDetail = Listing & {
+  archivedReason?: string;
+  convertedAt?: string;
+  firstSeenAt?: string;
+  fitScore?: number;
+  floor?: string;
+  frontageMeters?: number;
+  hardRuleSummary?: string;
+  mergeReason?: string;
+  mergedIntoId?: string;
+  sourceEvidence?: string[];
+  sourceListingId?: string;
+  sourceUrl?: string;
+};
+
+type NetworkListingsSnapshot = {
+  source?: "api" | "fixture";
+  heatZones?: OperatorHeatZone[];
+  listingSources?: ListingSource[];
+  listings?: NetworkListingDetail[];
+  candidates?: Candidate[];
+  siteReviews?: SiteReview[];
+  expansionSteps?: ExpansionStep[];
+  selectedHeatZoneId?: string;
+  selectedLens?: NetworkFindAreasLens;
+  correlationId?: string;
+};
+
+const NETWORK_OPERATOR_HEADERS = {
+  "X-Operator-Role": "expansion-manager",
+  "X-Roles": "expansion_user",
+  "X-Subject-Id": "operator-expansion-manager",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const NETWORK_ACTOR = {
+  actorName: "王若寧",
+  actorRoleId: "expansionManager",
+};
+
+async function fetchNetworkSnapshot(
+  selectedHeatZoneId: string,
+  lens: NetworkFindAreasLens,
+): Promise<NetworkListingsSnapshot | null> {
+  try {
+    const params = new URLSearchParams({
+      lens,
+      selectedHeatZoneId,
+    });
+    const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
+      cache: "no-store",
+      headers: {
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkListingsSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: boolean): ExpansionStep[] {
+  return [
+    {
+      id: "find",
+      label: "Find Area",
+      state: "completed",
+      tabIndex: 0,
+      entityId: selectedHeatZoneId,
+      summary: `${selectedHeatZoneId} selected.`,
+    },
+    {
+      id: "radar",
+      label: "Listing Radar",
+      state: hasCandidate ? "completed" : "current",
+      tabIndex: 1,
+      entityId: "L-2024",
+      summary: "Review clean, duplicate, and hard-rule listings.",
+    },
+    {
+      id: "candidate",
+      label: "Candidate",
+      state: hasCandidate ? "current" : "next",
+      tabIndex: 2,
+      entityId: hasCandidate ? "CS-1001" : "L-2024",
+      summary: "Convert listing into a candidate site.",
+    },
+    {
+      id: "sitescore",
+      label: "SiteScore",
+      state: hasCandidate ? "next" : "blocked",
+      tabIndex: 3,
+      entityId: "CS-1001",
+      summary: "Score candidate after conversion.",
+    },
+    {
+      id: "compare",
+      label: "Compare",
+      state: hasCandidate ? "next" : "blocked",
+      tabIndex: 4,
+      entityId: "CS-1001",
+      summary: "Compare candidate alternatives.",
+    },
+    {
+      id: "review",
+      label: "Review",
+      state: "blocked",
+      tabIndex: 5,
+      entityId: null,
+      summary: "Review opens after scoring gate.",
+    },
+  ];
+}
+
 export function NetworkFindAreasWorkspace({
   activeLens,
   callbacks,
@@ -88,32 +209,41 @@ export function NetworkFindAreasWorkspace({
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
-  // Resolve effective data: prefer live API items when the binding is ready;
-  // otherwise fall back to fixture defaults (or the prop passed by the parent).
-  const heatZones =
-    liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
-      ? liveHeatZones.items
-      : heatZonesProp;
-  const candidates =
-    liveCandidates?.source === "api" && liveCandidates.items.length > 0
-      ? liveCandidates.items
-      : candidatesProp;
-
-  // True when any data source fell back to fixtures (for status indicator).
-  const isFixtureFallback =
-    (liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
-    (liveCandidates !== undefined && liveCandidates.source !== "api");
-
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
   const [activeTab, setActiveTab] = useState(0);
-  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviews);
+  const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
+  const [networkApiError, setNetworkApiError] = useState<string | null>(null);
+  const [busyListingId, setBusyListingId] = useState<string | null>(null);
+
+  const snapshotHeatZones = networkSnapshot?.heatZones?.length ? networkSnapshot.heatZones : undefined;
+  const heatZones =
+    snapshotHeatZones ??
+    (liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
+      ? liveHeatZones.items
+      : heatZonesProp);
+  const listingsEffective = networkSnapshot?.listings?.length ? networkSnapshot.listings : listings;
+  const listingSourcesEffective = networkSnapshot?.listingSources?.length ? networkSnapshot.listingSources : listingSources;
+  const candidates =
+    networkSnapshot?.candidates ??
+    (liveCandidates?.source === "api" && liveCandidates.items.length > 0
+      ? liveCandidates.items
+      : candidatesProp);
+  const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
+
+  // True when every Network R4 intake binding is still falling back to fixtures.
+  const isFixtureFallback =
+    networkSnapshot?.source !== "api" &&
+    ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
+      (liveCandidates !== undefined && liveCandidates.source !== "api"));
+
+  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviewsEffective);
   const [localCandidates, setLocalCandidates] = useState<Candidate[]>(() => candidates);
 
   useEffect(() => {
-    setLocalSiteReviews(siteReviews);
-  }, [siteReviews]);
+    setLocalSiteReviews(siteReviewsEffective);
+  }, [siteReviewsEffective]);
 
   useEffect(() => {
     setLocalCandidates(candidates);
@@ -124,19 +254,36 @@ export function NetworkFindAreasWorkspace({
   const effectiveTrackedIds = trackedHeatZoneIds ?? Array.from(localTrackedIds);
   const trackedSet = useMemo(() => new Set(effectiveTrackedIds), [effectiveTrackedIds]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+      if (!cancelled && snapshot) {
+        setNetworkSnapshot(snapshot);
+        setNetworkApiError(null);
+      } else if (!cancelled && !snapshot) {
+        setNetworkApiError("network-listings API unavailable; using fixtures");
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveLens, effectiveSelectedId]);
+
   const viewModel = useMemo(
     () =>
       buildNetworkFindAreasViewModel({
         activeLens: effectiveLens,
         candidates: localCandidates,
         heatZones,
-        listings,
-        listingSources,
+        listings: listingsEffective,
+        listingSources: listingSourcesEffective,
         rebalanceStores,
         selectedHeatZoneId: effectiveSelectedId,
         siteReviews: localSiteReviews,
       }),
-    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listings, listingSources, rebalanceStores, localSiteReviews],
+    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStores, localSiteReviews],
   );
 
   const selectedZone = viewModel.selectedZone;
@@ -189,6 +336,69 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  async function reloadNetworkSnapshot() {
+    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+    if (snapshot) {
+      setNetworkSnapshot(snapshot);
+      setNetworkApiError(null);
+    }
+  }
+
+  async function postNetworkListingAction(
+    listingId: string,
+    action: "convert" | "merge" | "archive",
+    body: Record<string, unknown>,
+  ) {
+    setBusyListingId(listingId);
+    try {
+      const response = await fetch(`/api/v1/operator/network-listings/listings/${listingId}/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-005-${action}-${listingId}`,
+          "X-Correlation-Id": `corr-r4-005-${action}-${listingId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          ...NETWORK_ACTOR,
+          ...body,
+        }),
+      });
+      if (!response.ok) {
+        setNetworkApiError(`network-listings ${action} failed (${response.status})`);
+        return null;
+      }
+      const payload = (await response.json()) as NetworkListingsSnapshot;
+      await reloadNetworkSnapshot();
+      return payload;
+    } catch {
+      setNetworkApiError(`network-listings ${action} failed`);
+      return null;
+    } finally {
+      setBusyListingId(null);
+    }
+  }
+
+  async function convertListing(listingId: string) {
+    const payload = await postNetworkListingAction(listingId, "convert", {});
+    if (payload) {
+      setActiveTab(2);
+    }
+  }
+
+  async function mergeListing(sourceListingId: string, targetListingId: string) {
+    await postNetworkListingAction(sourceListingId, "merge", {
+      reason: "Same address, rent, and source evidence verified; retain source evidence on target.",
+      targetListingId,
+    });
+  }
+
+  async function archiveListing(listingId: string) {
+    await postNetworkListingAction(listingId, "archive", {
+      reason: "Hard-rule archive: area and floor exceed ODAY_G2 intake policy.",
+    });
+  }
+
   function handleDecideReview(reviewId: string, status: SiteReviewStatus, reason: string) {
     setLocalSiteReviews((prev) =>
       prev.map((r) =>
@@ -217,6 +427,14 @@ export function NetworkFindAreasWorkspace({
     callbacks?.onDecideReview?.(reviewId, status, reason);
   }
 
+  const expansionSteps =
+    networkSnapshot?.expansionSteps ??
+    buildFallbackExpansionSteps(
+      effectiveSelectedId,
+      viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
+    );
+  const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
+
   return (
     <section className={styles.workspace} data-testid="network-find-areas-workspace">
       <header className={styles.header}>
@@ -236,55 +454,51 @@ export function NetworkFindAreasWorkspace({
               fixture data
             </span>
           )}
+          {networkApiError ? <span className={styles.muted}>{networkApiError}</span> : null}
         </div>
       </header>
 
-      <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
-        {networkTabs.map((tab, index) => (
-          <button
-            aria-current={index === activeTab ? "page" : undefined}
-            aria-selected={index === activeTab}
-            className={classNames(styles.tab, index === activeTab && styles.tabActive)}
-            data-testid={`network-tab-${index}`}
-            key={tab}
-            onClick={() => setActiveTab(index)}
-            role="tab"
-            type="button"
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
-
-      {activeTab === 1 ? (
-        <ListingRadarPanel rows={viewModel.listingRadar} sources={listingSources} />
-      ) : activeTab === 2 ? (
-        <CandidatePipelinePanel rows={viewModel.candidatePipeline} />
-      ) : activeTab === 3 ? (
-        <SiteScoreLabPanel rows={viewModel.siteScoreLab} />
-      ) : activeTab === 4 ? (
-        <ComparePanel compare={viewModel.compare} />
-      ) : activeTab === 5 ? (
-        <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
-      ) : activeTab === 6 ? (
-        <RebalancePanel rows={viewModel.rebalanceQueue} />
-      ) : (
-        <FindAreasPanel
-          viewModel={viewModel}
-          selectedZone={selectedZone}
-          effectiveLens={effectiveLens}
-          isSelectedTracked={isSelectedTracked}
-          heatZones={heatZones}
-          listings={listings}
-          candidates={localCandidates}
-          onSelectZone={selectHeatZone}
-          onChangeLens={changeLens}
-          onToggleTracked={toggleTracked}
-          onSourceListings={sourceListings}
-          onScoreCandidate={scoreCandidate}
-          onSubmitReview={submitReview}
-        />
-      )}
+      <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
+        {activeTab === 1 ? (
+          <ListingRadarPanel
+            busyListingId={busyListingId}
+            listings={listingsEffective}
+            onArchive={archiveListing}
+            onConvert={convertListing}
+            onMerge={mergeListing}
+            rows={viewModel.listingRadar}
+            selectedHeatZoneId={effectiveSelectedId}
+            selectedZoneLabel={selectedZoneLabel}
+            sources={listingSourcesEffective}
+          />
+        ) : activeTab === 2 ? (
+          <CandidatePipelinePanel rows={viewModel.candidatePipeline} />
+        ) : activeTab === 3 ? (
+          <SiteScoreLabPanel rows={viewModel.siteScoreLab} />
+        ) : activeTab === 4 ? (
+          <ComparePanel compare={viewModel.compare} />
+        ) : activeTab === 5 ? (
+          <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
+        ) : activeTab === 6 ? (
+          <RebalancePanel rows={viewModel.rebalanceQueue} />
+        ) : (
+          <FindAreasPanel
+            viewModel={viewModel}
+            selectedZone={selectedZone}
+            effectiveLens={effectiveLens}
+            isSelectedTracked={isSelectedTracked}
+            heatZones={heatZones}
+            listings={listingsEffective}
+            candidates={localCandidates}
+            onSelectZone={selectHeatZone}
+            onChangeLens={changeLens}
+            onToggleTracked={toggleTracked}
+            onSourceListings={sourceListings}
+            onScoreCandidate={scoreCandidate}
+            onSubmitReview={submitReview}
+          />
+        )}
+      </NetworkShell>
     </section>
   );
 }
@@ -539,76 +753,6 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
     >
       {point.type === "candidate" ? "C" : "L"}
     </span>
-  );
-}
-
-function ListingRadarPanel({ rows, sources }: { rows: ListingRadarRow[]; sources: ListingSource[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-listings" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>物件雷達 / Listing Radar</h3>
-        <span>{rows.length} listings</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-listing-table">
-            <thead>
-              <tr>
-                <th>Listing</th>
-                <th>HeatZone</th>
-                <th>Status</th>
-                <th>Rent / area</th>
-                <th>Geocode</th>
-                <th>Signals</th>
-                <th>Candidate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} data-tone={row.tone}>
-                  <td>
-                    <strong>{row.id}</strong>
-                    <small>{row.address}</small>
-                    <small>{row.sourceName}</small>
-                  </td>
-                  <td>{row.zoneLabel}</td>
-                  <td>
-                    <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-                  </td>
-                  <td>
-                    {row.rentLabel}
-                    <small>{row.areaPing} ping</small>
-                  </td>
-                  <td>{row.geocodeConfidenceLabel}</td>
-                  <td>
-                    {row.isDuplicate ? <span className={styles.flag}>Dup {row.duplicateOfId ?? ""}</span> : null}
-                    {row.hardRuleFailures.length ? (
-                      <span className={styles.flagRisk}>{row.hardRuleFailures.join("; ")}</span>
-                    ) : null}
-                    {!row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
-                  </td>
-                  <td>{row.candidateId ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No listings sourced yet</div>
-      )}
-      <div className={styles.cardRow} aria-label="Listing sources">
-        {sources.map((source) => (
-          <article className={styles.sourceCard} key={source.id}>
-            <div className={styles.sourceCardHead}>
-              <strong>{source.name}</strong>
-              <span className={styles.muted}>{source.status}</span>
-            </div>
-            <p>{source.complianceNote}</p>
-            {source.lastSyncedAt ? <small className={styles.muted}>Synced {source.lastSyncedAt}</small> : null}
-          </article>
-        ))}
-      </div>
-    </div>
   );
 }
 

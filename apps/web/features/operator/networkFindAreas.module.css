@@ -81,6 +81,109 @@
   color: #0f172a;
 }
 
+.expansionStepper {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.expansionStep {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-areas:
+    "index body"
+    "state state";
+  gap: 6px 8px;
+  min-height: 78px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  font: inherit;
+  padding: 9px;
+  text-align: left;
+}
+
+.expansionStep:disabled {
+  cursor: not-allowed;
+}
+
+.expansionStep[aria-current="step"] {
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.expansionStep[data-state="completed"] {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.expansionStep[data-state="current"] {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.expansionStep[data-state="next"] {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.expansionStep[data-state="blocked"] {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #7a8799;
+}
+
+.expansionStepIndex {
+  grid-area: index;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #172033;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.expansionStepBody {
+  grid-area: body;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.expansionStepBody strong,
+.expansionStepBody small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expansionStepBody strong {
+  font-size: 13px;
+  line-height: 1.15;
+}
+
+.expansionStepBody small {
+  color: #59667c;
+  font-size: 11px;
+}
+
+.expansionStepState {
+  grid-area: state;
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 3px 7px;
+  text-transform: uppercase;
+}
+
 .tabDisabled {
   color: #8a96a8;
   cursor: default;
@@ -619,6 +722,15 @@
     grid-template-columns: 1fr;
   }
 
+  .expansionStepper {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .radarToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .mainGrid {
     grid-template-areas:
       "map"
@@ -652,6 +764,57 @@
 .tabPanel {
   display: grid;
   gap: 12px;
+}
+
+.radarToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zoneFilterChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 5px 10px;
+}
+
+.segmentedControl {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  overflow: hidden;
+  border: 1px solid #d5deea;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.segmentedControl button {
+  min-height: 32px;
+  border: 0;
+  border-right: 1px solid #d5deea;
+  background: transparent;
+  color: #4d5a70;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 6px 10px;
+}
+
+.segmentedControl button:last-child {
+  border-right: 0;
+}
+
+.segmentedControl button[aria-pressed="true"] {
+  background: #172033;
+  color: #ffffff;
 }
 
 .tableWrap {
@@ -769,6 +932,37 @@
 .flagRisk {
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.rowActions {
+  display: grid;
+  min-width: 86px;
+  gap: 5px;
+}
+
+.rowActions button {
+  min-height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 5px 8px;
+}
+
+.rowActions button:hover,
+.rowActions button:focus-visible,
+.segmentedControl button:focus-visible,
+.expansionStep:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.rowActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .bestTag {
@@ -1180,4 +1374,15 @@
 
 .btnReject:hover {
   background: #dc2626;
+}
+
+@media (max-width: 980px) {
+  .radarToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .segmentedControl {
+    width: 100%;
+  }
 }
