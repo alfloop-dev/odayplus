@@ -191,6 +191,26 @@ def create_operator_router(
         )
     )
 
+    # Govern — aggregation snapshot open; decisions require APPROVE, evidence
+    # export requires CREATE.  Shares the Growth service so live Growth
+    # decisions/approvals surface in the Govern snapshot.
+    from apps.api.app.routes.operator_modules.governance import (
+        create_governance_sub_router,
+    )
+    from modules.opsboard.application.governance import GovernanceService
+
+    router.include_router(
+        create_governance_sub_router(
+            GovernanceService(growth_service=growth_svc),
+            require_decision_permission_fn=require_permission(
+                "intervention", Action.APPROVE, engine=authz_engine
+            ),
+            require_export_permission_fn=require_permission(
+                "intervention", Action.CREATE, engine=authz_engine
+            ),
+        )
+    )
+
     return router
 
 
