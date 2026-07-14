@@ -1808,6 +1808,305 @@
 
 /* --- Rebalance AVM & NetPlan Extensions --- */
 
+.rebalanceWorkflowGrid {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.rebalanceStoreList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rebalanceStoreButton {
+  width: 100%;
+  border: 1px solid #e3e8f0;
+  border-radius: 11px;
+  background: #ffffff;
+  padding: 11px 14px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: #1c2333;
+}
+
+.rebalanceStoreButton[aria-current="true"] {
+  border-color: #b9c4ee;
+  background: #f1f4fd;
+}
+
+.rebalanceStoreButton[data-tone="risk"] {
+  border-color: #efb4ae;
+}
+
+.rebalanceStoreTopline,
+.rebalanceStoreMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.rebalanceStoreTopline i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #c4342c;
+  flex: none;
+}
+
+.rebalanceStoreTopline strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+
+.rebalanceStoreTopline small {
+  margin-left: auto;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #5a6472;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.rebalanceStoreButton > span:nth-child(2) {
+  color: #5a6478;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.rebalanceStoreMeta {
+  color: #3a4362;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  justify-content: space-between;
+}
+
+.rebalanceLights {
+  display: flex;
+  gap: 3px;
+}
+
+.rebalanceLights i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.rebalanceDetail {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.rebalanceDetailHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rebalanceDetailHeader h4 {
+  margin: 2px 0 4px;
+  font-size: 16px;
+}
+
+.rebalanceDetailHeader p {
+  margin: 0;
+  color: #5a6478;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rebalanceStatusPill {
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #2e3a97;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.rebalanceStepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  position: relative;
+}
+
+.rebalanceStep {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: #98a1b3;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 0;
+}
+
+.rebalanceStep i {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid #d6dce8;
+  display: grid;
+  place-items: center;
+  color: #2e3a97;
+  font-size: 10px;
+  font-style: normal;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.rebalanceStep b {
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.rebalanceStep[data-active="true"] {
+  color: #2e3a97;
+}
+
+.rebalanceStep[data-active="true"] i,
+.rebalanceStep[data-done="true"] i {
+  border-color: #2e3a97;
+}
+
+.rebalanceStep[data-done="true"] {
+  color: #3a4362;
+}
+
+.rebalanceStep[data-done="true"] i {
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.rebalanceSignalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rebalanceSignalGrid div {
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.rebalanceSignalGrid span {
+  color: #98a1b3;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.rebalanceSignalGrid strong {
+  color: #1c2333;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+
+.rebalanceTrend {
+  display: flex;
+  align-items: end;
+  gap: 3px;
+  height: 64px;
+}
+
+.rebalanceTrend i {
+  flex: 1 1 0;
+  border-radius: 3px 3px 0 0;
+  min-width: 4px;
+}
+
+.rebalanceRuntimeState,
+.rebalanceSelection,
+.rebalanceBoundary,
+.rebalanceError {
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rebalanceRuntimeState {
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+}
+
+.rebalanceSelection {
+  border: 1px solid #c6e6eb;
+  background: #f2fbfc;
+  color: #135e6b;
+}
+
+.rebalanceBoundary {
+  border: 1px solid #e0e5ef;
+  background: #f8fafc;
+  color: #3a4362;
+}
+
+.rebalanceBoundary b {
+  color: #2e3a97;
+}
+
+.rebalanceError {
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+  margin-bottom: 10px;
+}
+
+.rebalanceMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: #4a7c86;
+}
+
+.rebalanceMetadata span {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.64);
+  padding: 2px 6px;
+}
+
+.rebalancePrimary {
+  width: 100%;
+  border: none;
+  border-radius: 9px;
+  background: #2e3a97;
+  color: #ffffff;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.rebalancePrimary:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
 .rebalanceAvmBlock {
   border: 1px solid #c6e6eb;
   border-radius: 10px;
@@ -1898,6 +2197,9 @@
   display: grid;
   gap: 4px;
   transition: all 0.2s ease;
+  cursor: pointer;
+  width: 100%;
+  color: #1c2333;
 }
 
 .netPlanScenarioCardRec {
@@ -1905,11 +2207,21 @@
   background: #f4f6fc;
 }
 
+.netPlanScenarioCardSelected {
+  border-color: #2e3a97;
+  background: #eef1fb;
+}
+
+.netPlanScenarioCard:disabled {
+  cursor: default;
+}
+
 .scenarioTitleRow {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
 }
 
 .scenarioTitleRow strong {
@@ -2034,6 +2346,24 @@
 
   .segmentedControl {
     width: 100%;
+  }
+
+  .rebalanceWorkflowGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rebalanceSignalGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rebalanceDetailHeader,
+  .scenarioTitleRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .roiValue {
+    margin-left: 0;
   }
 }
 
