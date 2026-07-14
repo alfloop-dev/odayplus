@@ -12,6 +12,7 @@ Sub-module ownership (R4):
   evidence.py   → /operator/evidence/{id}/purpose
   seed.py       → /operator/seed/reset
   network_listings.py → /operator/network-listings/*
+  network_scoring.py → /operator/network-scoring/*
   network_rebalance.py → /operator/network-rebalance/*
 
 State contract: all sub-routers share a single OperatorStateService instance
@@ -131,10 +132,14 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.network_rebalance import (
         create_network_rebalance_sub_router,
     )
+    from apps.api.app.routes.operator_modules.network_scoring import (
+        create_network_scoring_sub_router,
+    )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
+    from modules.opsboard.application.network_scoring import NetworkScoringService
 
     # Shell — read-only, no permission guard needed.
     router.include_router(create_shell_sub_router(svc))
@@ -148,6 +153,21 @@ def create_operator_router(
             ),
             require_write_permission_fn=require_permission(
                 "listing", Action.UPDATE, engine=authz_engine
+            ),
+        )
+    )
+
+    # Network SiteScore scoring — read/write paths for R4 Candidate gate,
+    # SiteScore job, and Compare recommendation. Missing-data candidates are
+    # blocked server-side (422) by the service gate.
+    router.include_router(
+        create_network_scoring_sub_router(
+            NetworkScoringService(),
+            require_view_permission_fn=require_permission(
+                "sitescore", Action.VIEW, engine=authz_engine
+            ),
+            require_write_permission_fn=require_permission(
+                "sitescore", Action.EXECUTE, engine=authz_engine
             ),
         )
     )
@@ -207,6 +227,26 @@ def create_operator_router(
         create_growth_sub_router(
             growth_svc,
             require_permission_fn=require_permission(
+                "intervention", Action.CREATE, engine=authz_engine
+            ),
+        )
+    )
+
+    # Govern — aggregation snapshot open; decisions require APPROVE, evidence
+    # export requires CREATE.  Shares the Growth service so live Growth
+    # decisions/approvals surface in the Govern snapshot.
+    from apps.api.app.routes.operator_modules.governance import (
+        create_governance_sub_router,
+    )
+    from modules.opsboard.application.governance import GovernanceService
+
+    router.include_router(
+        create_governance_sub_router(
+            GovernanceService(growth_service=growth_svc),
+            require_decision_permission_fn=require_permission(
+                "intervention", Action.APPROVE, engine=authz_engine
+            ),
+            require_export_permission_fn=require_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
         )

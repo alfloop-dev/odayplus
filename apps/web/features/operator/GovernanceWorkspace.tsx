@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./governance.module.css";
 import type {
   GovernanceApproval,
@@ -12,6 +12,13 @@ import type {
   GovernanceRole,
   GovernanceWorkspaceCallbacks,
 } from "./governanceTypes";
+import {
+  exportEvidencePackage,
+  fetchGovernanceSnapshot,
+  submitGovernanceDecision,
+  type GovernanceStatusBoard,
+  type GovernanceStatusRow,
+} from "./governance/governanceLoader";
 
 type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard";
 
@@ -20,6 +27,8 @@ export type GovernanceWorkspaceProps = {
   decisions?: GovernanceDecisionRow[];
   auditRows?: GovernanceAuditRow[];
   role?: GovernanceRole;
+  /** Operator role id used for the X-Operator-Role snapshot header. */
+  roleId?: string;
   canDecide?: boolean;
   callbacks?: GovernanceWorkspaceCallbacks;
 };
@@ -255,12 +264,20 @@ export function GovernanceWorkspace({
   decisions,
   auditRows,
   role = "營運主管",
+  roleId,
   canDecide = true,
   callbacks,
 }: GovernanceWorkspaceProps) {
   const [localApprovals, setLocalApprovals] = useState<GovernanceApproval[]>(approvals ?? fallbackApprovals);
   const [localDecisions, setLocalDecisions] = useState<GovernanceDecisionRow[]>(decisions ?? fallbackDecisions);
   const [localAuditRows, setLocalAuditRows] = useState<GovernanceAuditRow[]>(auditRows ?? fallbackAuditRows);
+
+  // When the Govern API answers, it becomes the source of truth: approvals,
+  // decisions, audit trail, status board and evidence history all come from
+  // /api/v1/operator/governance/snapshot.  Until then the embedded fixtures
+  // render (SSR / offline / unit tests never break).
+  const [apiActive, setApiActive] = useState(false);
+  const [apiStatusBoard, setApiStatusBoard] = useState<GovernanceStatusBoard | null>(null);
 
   const [activeTab, setActiveTab] = useState<GovernanceTab>("approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(localApprovals[0]?.id ?? "");
@@ -290,25 +307,60 @@ export function GovernanceWorkspace({
     { id: "EVD-2026-0615-02", range: "2026-05-01 – 2026-05-31", mod: "Store Ops＋Network", fmt: "CSV", t: "2026-06-15 14:22", by: "周明德" }
   ]);
 
+  const refreshSnapshot = useCallback(async () => {
+    const snapshot = await fetchGovernanceSnapshot(roleId);
+    if (!snapshot) return false;
+    setLocalApprovals(snapshot.approvals);
+    setLocalDecisions(snapshot.decisions);
+    setLocalAuditRows(snapshot.auditRows);
+    if (snapshot.statusBoard) setApiStatusBoard(snapshot.statusBoard);
+    if (snapshot.evidencePackages?.length) {
+      setEvdHist(
+        snapshot.evidencePackages.map((pkg) => ({
+          id: pkg.id,
+          range: pkg.range,
+          mod: pkg.mod,
+          fmt: pkg.fmt,
+          t: pkg.t,
+          by: pkg.by,
+        })),
+      );
+    }
+    setSelectedApprovalId((current) =>
+      snapshot.approvals.some((approval) => approval.id === current)
+        ? current
+        : snapshot.approvals[0]?.id ?? "",
+    );
+    setApiActive(true);
+    return true;
+  }, [roleId]);
+
   useEffect(() => {
-    if (!approvals) return;
+    // Bind to the Govern API on mount / role change; fixtures stay until it answers.
+    void refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  useEffect(() => {
+    if (apiActive || !approvals) return;
     setLocalApprovals(approvals);
     setSelectedApprovalId((current) =>
       approvals.some((approval) => approval.id === current) ? current : approvals[0]?.id ?? "",
     );
-  }, [approvals]);
+  }, [approvals, apiActive]);
 
   useEffect(() => {
+    if (apiActive) return;
     if (decisions) {
       setLocalDecisions(decisions);
     }
-  }, [decisions]);
+  }, [decisions, apiActive]);
 
   useEffect(() => {
+    if (apiActive) return;
     if (auditRows) {
       setLocalAuditRows(auditRows);
     }
-  }, [auditRows]);
+  }, [auditRows, apiActive]);
 
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
   const selectedApproval =
@@ -330,59 +382,96 @@ export function GovernanceWorkspace({
     setTimeout(() => setLocalToast(null), 3200);
   };
 
-  const handleExport = () => {
+  const selectedExportModules = () =>
+    [
+      evModS ? "Store Ops" : null,
+      evModG ? "Growth" : null,
+      evModN ? "Network" : null,
+      evModV ? "Govern" : null,
+    ].filter((value): value is string => Boolean(value));
+
+  const selectedExportContents = () =>
+    [
+      incAudit ? "Audit Trail" : null,
+      incDec ? "Decision Log" : null,
+      incOut ? "Outcome 對比" : null,
+      incSla ? "SLA 報表" : null,
+    ].filter((value): value is string => Boolean(value));
+
+  const handleExport = async () => {
     if (evdRunning) return;
     setEvdRunning(true);
-    triggerToast("Evidence Package 產生中 (mock)...");
-    setTimeout(() => {
-      const selectedMods = [
-        evModS ? "Store Ops" : null,
-        evModG ? "Growth" : null,
-        evModN ? "Network" : null,
-        evModV ? "Govern" : null,
-      ].filter(Boolean).join("＋") || "全模組";
+    triggerToast("Evidence Package 產生中…");
 
-      const fileExtension = fmt === "CSV" ? "zip" : "pdf";
-      const randomSuffix = Math.floor(10 + Math.random() * 90);
-      const file = `EVD-2026-0705-${randomSuffix}.${fileExtension}`;
-      const nowStr = new Date().toISOString().replace("T", " ").substring(0, 16);
-      const result = {
-        file,
-        size: "4.2 MB",
-        t: nowStr.split(" ")[1],
-        range: `${evFrom} – ${evTo}`,
-      };
+    const modules = selectedExportModules();
+    const contents = selectedExportContents();
 
-      setEvdResult(result);
-      setEvdRunning(false);
+    if (apiActive) {
+      const record = await exportEvidencePackage({
+        dateFrom: evFrom,
+        dateTo: evTo,
+        modules,
+        contents,
+        format: fmt,
+        role,
+        actorName: role,
+        roleId,
+      });
+      if (record) {
+        setEvdResult({
+          file: record.file,
+          size: record.size,
+          t: record.generatedAt.split(" ")[1] ?? record.generatedAt,
+          range: record.range,
+        });
+        setEvdRunning(false);
+        // Refresh so the server-recorded audit event + history row appear.
+        await refreshSnapshot();
+        triggerToast(
+          `Evidence Package 已產生 — 保留策略 ${record.retentionPolicy} · 關聯 ${record.correlationId}`,
+        );
+        return;
+      }
+      // API unreachable — fall through to the offline record below.
+    }
 
-      const histItem = {
-        id: file.replace(/\.(pdf|zip)$/, ""),
-        range: result.range,
-        mod: selectedMods,
-        fmt: fmt,
-        t: `今日 ${result.t}`,
-        by: role,
-      };
-      setEvdHist((prev) => [histItem, ...prev]);
+    const selectedMods = modules.join("＋") || "全模組";
+    const fileExtension = fmt === "CSV" ? "zip" : "pdf";
+    const suffix = String(evdHist.length + 3).padStart(2, "0");
+    const file = `EVD-2026-0705-${suffix}.${fileExtension}`;
+    const nowStr = new Date().toISOString().replace("T", " ").substring(0, 16);
+    const result = {
+      file,
+      size: "4.2 MB",
+      t: nowStr.split(" ")[1],
+      range: `${evFrom} – ${evTo}`,
+    };
+    setEvdResult(result);
+    setEvdRunning(false);
 
-      // Write to audit trail
-      const newAuditId = `aud-${Math.floor(7000 + Math.random() * 999)}`;
-      const newAuditRow: GovernanceAuditRow = {
-        id: newAuditId,
-        category: "export",
-        timestamp: nowStr,
-        actor: `${role} (Antigravity6)`,
-        action: "Export Evidence Package",
-        module: "Govern",
-        entityRef: file.replace(/\.(pdf|zip)$/, ""),
-        summary: `匯出 Evidence Package: 範圍 ${result.range} · 模組 ${selectedMods} · 格式 ${fmt} · 含 Audit／Decision／Outcome`,
-        correlationId: `corr-exp-${randomSuffix}`,
-      };
-      setLocalAuditRows((prev) => [newAuditRow, ...prev]);
+    const histItem = {
+      id: file.replace(/\.(pdf|zip)$/, ""),
+      range: result.range,
+      mod: selectedMods,
+      fmt,
+      t: `今日 ${result.t}`,
+      by: role,
+    };
+    setEvdHist((prev) => [histItem, ...prev]);
 
-      triggerToast("Evidence Package 已產生 (mock) — 可於下方下載");
-    }, 1200);
+    const newAuditRow: GovernanceAuditRow = {
+      id: `aud-${7200 + localAuditRows.length}`,
+      category: "export",
+      timestamp: nowStr,
+      actor: role,
+      action: "Export Evidence Package",
+      module: "Govern",
+      entityRef: file.replace(/\.(pdf|zip)$/, ""),
+      summary: `匯出 Evidence Package（離線）: 範圍 ${result.range} · 模組 ${selectedMods} · 格式 ${fmt} · 內容 ${contents.join("／") || "Audit／Decision"}`,
+      correlationId: `corr-exp-${suffix}`,
+    };
+    setLocalAuditRows((prev) => [newAuditRow, ...prev]);
+    triggerToast("Evidence Package 已產生（離線）— 可於下方下載");
   };
 
   function selectApproval(approval: GovernanceApproval) {
@@ -393,7 +482,7 @@ export function GovernanceWorkspace({
     callbacks?.onSelectApproval?.(approval);
   }
 
-  function submitDecision(action: GovernanceDecisionAction) {
+  async function submitDecision(action: GovernanceDecisionAction) {
     if (!selectedApproval) {
       return;
     }
@@ -402,6 +491,43 @@ export function GovernanceWorkspace({
     if ((action === "return" || action === "reject") && trimmedReason.length < 10) {
       setReasonError("退回或駁回理由需至少 10 個字");
       return;
+    }
+
+    // API path: the server re-enforces the return/reject reason policy and
+    // persists the decision + audit event so it survives reload.
+    if (apiActive) {
+      const outcome = await submitGovernanceDecision({
+        approvalId: selectedApproval.id,
+        action,
+        reason: trimmedReason,
+        role,
+        actorName: role,
+        roleId,
+      });
+      if (outcome.ok) {
+        await refreshSnapshot();
+        setReason("");
+        setReasonError("");
+        setLastAction(`${outcome.finalDecision} submitted for ${selectedApproval.id}`);
+        const decisionPayload: GovernanceDecisionPayload = {
+          approvalId: selectedApproval.id,
+          action,
+          reason: trimmedReason,
+          role,
+        };
+        if (action === "approve") callbacks?.onApprove?.(decisionPayload);
+        else if (action === "return") callbacks?.onReturn?.(decisionPayload);
+        else callbacks?.onReject?.(decisionPayload);
+        triggerToast(
+          `已${action === "approve" ? "核准" : action === "return" ? "退回" : "駁回"}決策 ${selectedApproval.id} — 已寫入 Decision Log 與 Audit`,
+        );
+        return;
+      }
+      if (outcome.policyError) {
+        setReasonError(outcome.detail);
+        return;
+      }
+      // Network failure — fall back to the offline local decision below.
     }
 
     const finalDecisionLabel = action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
@@ -482,35 +608,63 @@ export function GovernanceWorkspace({
     setReasonError("");
   }
 
-  // System Status Board Fixtures
-  const dqRows = [
+  // System Status Board — API-bound when the snapshot answers, else fixtures.
+  const mapStatusRows = (
+    rows: GovernanceStatusRow[] | undefined,
+    fallback: Array<{ src?: string; name?: string; ver?: string; st: string; isGood: boolean; note: string }>,
+  ) =>
+    rows && rows.length
+      ? rows.map((row) => ({
+          src: row.source ?? row.name ?? "",
+          name: row.name ?? row.source ?? "",
+          ver: row.version ?? "",
+          st: row.status,
+          isGood: row.good,
+          note: row.note,
+        }))
+      : fallback;
+
+  const dqRows = mapStatusRows(apiStatusBoard?.dataQuality, [
     { src: "Google Reviews Connector", st: "正常", isGood: true, note: "15 分鐘前同步 · 覆蓋 12/12 門市" },
     { src: "Camera Events", st: "延遲", isGood: false, note: "事件延遲 12 分鐘 · 影響即時性" },
     { src: "POS／支付交易", st: "正常", isGood: true, note: "即時串流 · 缺漏 0.2%" },
     { src: "591 物件源", st: "正常", isGood: true, note: "每日 06:00 匯入 · 昨日新增 14 筆" },
-    { src: "IoT 心跳", st: "注意", isGood: false, note: "1 台設備 >3h 未回報（ISS-1021）" }
-  ];
+    { src: "IoT 心跳", st: "注意", isGood: false, note: "1 台設備 >3h 未回報（ISS-1021）" },
+  ]);
 
-  const modelRows = [
+  const modelRows = mapStatusRows(apiStatusBoard?.models, [
     { name: "SiteScore", ver: "v2.3", st: "上線", isGood: true, note: "選址評分 · 每週再訓練 · 用於 Network" },
     { name: "CS Intent", ver: "v1.8", st: "上線", isGood: true, note: "客服意圖分類 · 準確率 91%" },
     { name: "PriceOps", ver: "v0.9", st: "Shadow", isGood: false, note: "動態定價 · 影子模式驗證中" },
-    { name: "Camera Event", ver: "v1.2", st: "上線", isGood: true, note: "場域事件偵測 · 不含人臉" }
-  ];
+    { name: "Camera Event", ver: "v1.2", st: "上線", isGood: true, note: "場域事件偵測 · 不含人臉" },
+  ]);
 
-  const connRows = [
+  const connRows = mapStatusRows(apiStatusBoard?.connectors, [
     { name: "Google Business Profile", st: "已連接", isGood: true, note: "評價／回覆 API" },
     { name: "LINE 官方帳號", st: "已連接", isGood: true, note: "客服＋推播" },
     { name: "591 租屋網", st: "已連接", isGood: true, note: "每日物件匯入" },
-    { name: "TapPay 金流閘道", st: "已連接", isGood: true, note: "交易／退款 webhook" }
-  ];
+    { name: "TapPay 金流閘道", st: "已連接", isGood: true, note: "交易／退款 webhook" },
+  ]);
 
-  const runbookRows = [
+  const slaRows = mapStatusRows(apiStatusBoard?.sla, [
+    { name: "核准處理 SLA", st: "達成", isGood: true, note: "P95 42m · 目標 <2h" },
+    { name: "事件升級 SLA", st: "達成", isGood: true, note: "橘/紅燈 30m 內升級" },
+    { name: "證據匯出 SLA", st: "注意", isGood: false, note: "1 筆匯出等待簽章 >1h" },
+  ]);
+
+  const usersRows = mapStatusRows(apiStatusBoard?.users, [
+    { name: "營運主管", st: "啟用", isGood: true, note: "全域監控、跨域指派與核准" },
+    { name: "PM／稽核", st: "啟用", isGood: true, note: "模型、決策追蹤與稽核線索" },
+    { name: "行銷經理", st: "啟用", isGood: true, note: "活動、分群、定價建議" },
+    { name: "展店經理", st: "啟用", isGood: true, note: "HeatZone、候選點與 SiteScore" },
+  ]);
+
+  const runbookRows = mapStatusRows(apiStatusBoard?.runbooks, [
     { name: "災備演練 (Disaster Recovery)", st: "正常", isGood: true, note: "Completed 2026-07-01 · 復原時間 18m" },
     { name: "資料備份與還原 (Backup & Restore)", st: "正常", isGood: true, note: "每日 03:00 自動備份 · 驗證成功" },
     { name: "事件管理與升級 (Incident Management)", st: "運作中", isGood: true, note: "SLA 升級規則已啟用 · 監控端點正常" },
-    { name: "系統觀測性 (Observability)", st: "正常", isGood: true, note: "Prometheus/Grafana 指標正常 · 心跳正常" }
-  ];
+    { name: "系統觀測性 (Observability)", st: "正常", isGood: true, note: "Prometheus/Grafana 指標正常 · 心跳正常" },
+  ]);
 
   return (
     <section className={styles.workspace} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
@@ -531,6 +685,7 @@ export function GovernanceWorkspace({
           <button
             aria-current={activeTab === tab.id ? "page" : undefined}
             className={styles.tab}
+            data-testid={`governance-tab-${tab.id}`}
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             type="button"
@@ -925,11 +1080,12 @@ export function GovernanceWorkspace({
 
             <button
               className={styles.exportButton}
+              data-testid="governance-export-button"
               disabled={evdRunning}
               onClick={handleExport}
               type="button"
             >
-              {evdRunning ? "產生中… (mock)" : "產生 Evidence Package"}
+              {evdRunning ? "產生中…" : "產生 Evidence Package"}
             </button>
 
             {evdResult ? (
@@ -1025,6 +1181,44 @@ export function GovernanceWorkspace({
                       {cr.st}
                     </span>
                     <span className={styles.statusNote}>{cr.note}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.statusCard} data-testid="governance-sla-card">
+              <div className={styles.statusCardTitle}>SLA 監控</div>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {slaRows.map((sr) => (
+                  <div className={styles.statusRow} key={sr.name || sr.src}>
+                    <span className={styles.statusNameWide}>{sr.name || sr.src}</span>
+                    <span
+                      className={`${styles.statusBadge} ${
+                        sr.isGood ? styles.badgeGood : styles.badgeWarn
+                      }`}
+                    >
+                      {sr.st}
+                    </span>
+                    <span className={styles.statusNote}>{sr.note}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.statusCard} data-testid="governance-users-card">
+              <div className={styles.statusCardTitle}>Users 角色與權限</div>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {usersRows.map((ur) => (
+                  <div className={styles.statusRow} key={ur.name || ur.src}>
+                    <span className={styles.statusNameWide}>{ur.name || ur.src}</span>
+                    <span
+                      className={`${styles.statusBadge} ${
+                        ur.isGood ? styles.badgeGood : styles.badgeWarn
+                      }`}
+                    >
+                      {ur.st}
+                    </span>
+                    <span className={styles.statusNote}>{ur.note}</span>
                   </div>
                 ))}
               </div>

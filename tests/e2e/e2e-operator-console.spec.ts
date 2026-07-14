@@ -150,10 +150,12 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   const fileName = await resultPanel.locator("span").first().textContent();
   expect(fileName).toContain("EVD-2026-0705-");
 
-  // Go to Audit Trail tab and verify audit event has been written
+  // Go to Audit Trail tab and verify audit event has been written.
+  // The Govern workspace is now API-bound (ODP-OC-R4-009): the export audit is
+  // attributed to the acting role rather than the former hardcoded mock actor.
   await page.getByRole("button", { name: "Audit Trail" }).click();
   await expect(page.locator("table")).toContainText("Export Evidence Package");
-  await expect(page.locator("table")).toContainText("Antigravity6");
+  await expect(page.locator("table")).toContainText("營運主管");
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
@@ -221,10 +223,11 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
   await expect(page.getByTestId("sitescore-card-CS-1001")).toContainText("SiteScore v2.3");
 
-  // 比較 / Compare
+  // 比較 / Compare — ODP-OC-R4-006 productized the compare table to the
+  // score-sorted SiteScore comparison with a primary/alternate/avoid rec.
   await page.getByTestId("network-tab-4").click();
   await expect(page.getByTestId("network-panel-compare")).toBeVisible();
-  await expect(page.getByTestId("network-compare-table")).toContainText("Brand Fit");
+  await expect(page.getByTestId("network-compare-table")).toContainText("SiteScore");
 
   // 審核 / Review
   await page.getByTestId("network-tab-5").click();
@@ -246,10 +249,12 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   await expect(page.getByTestId("review-reason-RV-1001")).toContainText(reviewReason);
   await expect(page.getByTestId("review-card-RV-1001")).toContainText("Decided");
 
-  // Check that candidate status is updated in Candidates tab
+  // Candidates tab now surfaces the ODP-OC-R4-006 data-completeness Gate:
+  // CS-1003 is gate-blocked ("缺資料 — 無法評分") so scoring is locked.
   await page.getByTestId("network-tab-2").click();
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
-  await expect(page.getByTestId("network-candidate-table")).toContainText("觀望");
+  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1001");
+  await expect(page.getByTestId("candidate-gate-block-CS-1003")).toContainText("缺資料 — 無法評分");
 
   // 低效重配 / Rebalance
   await page.getByTestId("network-tab-6").click();

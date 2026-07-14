@@ -14,20 +14,21 @@ import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { CandidatePanel } from "./network/CandidatePanel";
+import { SiteScorePanel } from "./network/SiteScorePanel";
+import { ComparePanel } from "./network/ComparePanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
 import type { ExpansionStep } from "./network/ExpansionStepper";
+import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
 import {
   buildNetworkFindAreasViewModel,
-  type CandidatePipelineRow,
   type ListingRadarRow,
-  type NetworkCompareViewModel,
   type NetworkFindAreasLens,
   type NetworkFindAreasMapPoint,
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
   type ReviewQueueRow,
-  type SiteScoreLabRow,
 } from "./networkFindAreasViewModel";
 import { HeatZoneMap } from "../map/HeatZoneMap";
 import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
@@ -155,6 +156,24 @@ async function fetchNetworkSnapshot(
   }
 }
 
+async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | null> {
+  try {
+    const response = await fetch(`/api/v1/operator/network-scoring`, {
+      cache: "no-store",
+      headers: {
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": "corr-r4-006-scoring-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkScoringSnapshot;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
   try {
     const response = await fetch("/api/v1/operator/network-rebalance", {
@@ -247,6 +266,8 @@ export function NetworkFindAreasWorkspace({
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [busyListingId, setBusyListingId] = useState<string | null>(null);
+  const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
@@ -308,7 +329,21 @@ export function NetworkFindAreasWorkspace({
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    async function loadScoring() {
+      const snapshot = await fetchNetworkScoringSnapshot();
+      if (!cancelled && snapshot) {
+        setScoringSnapshot(snapshot);
+      }
+    }
+    loadScoring();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRebalance() {
       const snapshot = await fetchNetworkRebalanceSnapshot();
       if (!cancelled && snapshot) {
         setRebalanceSnapshot(snapshot);
@@ -317,93 +352,70 @@ export function NetworkFindAreasWorkspace({
         setRebalanceApiError("network-rebalance API unavailable; using fixtures");
       }
     }
-    load();
+    loadRebalance();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const viewModel = useMemo(
-    () =>
-      buildNetworkFindAreasViewModel({
-        activeLens: effectiveLens,
-        candidates: localCandidates,
-        heatZones,
-        listings: listingsEffective,
-        listingSources: listingSourcesEffective,
-        rebalanceStores: rebalanceStoresEffective,
-        selectedHeatZoneId: effectiveSelectedId,
-        siteReviews: localSiteReviews,
-      }),
-    [
-      localCandidates,
-      effectiveLens,
-      effectiveSelectedId,
-      heatZones,
-      listingsEffective,
-      listingSourcesEffective,
-      rebalanceStoresEffective,
-      localSiteReviews,
-    ],
-  );
-
-  const selectedZone = viewModel.selectedZone;
-  const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
-
-  function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
-    setLocalSelectedId(zone.id);
-    callbacks?.onSelectHeatZone?.(zone.zone);
-  }
-
-  function changeLens(lens: NetworkFindAreasLens) {
-    setLocalLens(lens);
-    callbacks?.onChangeLens?.(lens);
-  }
-
-  function toggleTracked() {
-    if (!selectedZone) {
-      return;
-    }
-    const nextTracked = !trackedSet.has(selectedZone.id);
-    if (!trackedHeatZoneIds) {
-      setLocalTrackedIds((current) => {
-        const next = new Set(current);
-        if (nextTracked) {
-          next.add(selectedZone.id);
-        } else {
-          next.delete(selectedZone.id);
-        }
-        return next;
-      });
-    }
-    callbacks?.onToggleTracked?.(selectedZone.zone, nextTracked);
-  }
-
-  function sourceListings() {
-    if (selectedZone) {
-      callbacks?.onSourceListings?.(selectedZone.zone);
-      setActiveTab(1);
-    }
-  }
-
-  function scoreCandidate() {
-    if (selectedZone?.bestCandidate) {
-      callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
-    }
-  }
-
-  function submitReview() {
-    if (selectedZone) {
-      callbacks?.onSubmitReview?.(selectedZone.zone);
-    }
-  }
-
-  async function reloadNetworkSnapshot() {
-    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+  async function reloadScoringSnapshot() {
+    const snapshot = await fetchNetworkScoringSnapshot();
     if (snapshot) {
-      setNetworkSnapshot(snapshot);
-      setNetworkApiError(null);
+      setScoringSnapshot(snapshot);
     }
+  }
+
+  async function postScoringAction(
+    path: string,
+    body: Record<string, unknown>,
+    busyId: string | null,
+    idempotencyKey?: string,
+  ) {
+    setBusyCandidateId(busyId);
+    try {
+      const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-Id": `corr-r4-006-${path.replace(/\//g, "-")}`,
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({ ...NETWORK_ACTOR, ...body }),
+      });
+      if (!response.ok) {
+        setNetworkApiError(`network-scoring ${path} failed (${response.status})`);
+        return false;
+      }
+      await reloadScoringSnapshot();
+      return true;
+    } catch {
+      setNetworkApiError(`network-scoring ${path} failed`);
+      return false;
+    } finally {
+      setBusyCandidateId(null);
+    }
+  }
+
+  async function runSiteScore(candidateId: string) {
+    await postScoringAction(
+      `candidates/${candidateId}/score`,
+      {},
+      candidateId,
+      `r4-006-score-${candidateId}`,
+    );
+  }
+
+  async function scoreAllCandidates() {
+    await postScoringAction("score", {}, "batch");
+  }
+
+  async function toggleCompareCandidate(candidateId: string) {
+    const current = scoringSnapshot?.compareSet ?? [];
+    const next = current.includes(candidateId)
+      ? current.filter((id) => id !== candidateId)
+      : [...current, candidateId];
+    await postScoringAction("compare", { candidateIds: next }, candidateId);
   }
 
   async function reloadRebalanceSnapshot() {
@@ -411,41 +423,6 @@ export function NetworkFindAreasWorkspace({
     if (snapshot) {
       setRebalanceSnapshot(snapshot);
       setRebalanceApiError(null);
-    }
-  }
-
-  async function postNetworkListingAction(
-    listingId: string,
-    action: "convert" | "merge" | "archive",
-    body: Record<string, unknown>,
-  ) {
-    setBusyListingId(listingId);
-    try {
-      const response = await fetch(`/api/v1/operator/network-listings/listings/${listingId}/${action}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": `r4-005-${action}-${listingId}`,
-          "X-Correlation-Id": `corr-r4-005-${action}-${listingId}`,
-          ...NETWORK_OPERATOR_HEADERS,
-        },
-        body: JSON.stringify({
-          ...NETWORK_ACTOR,
-          ...body,
-        }),
-      });
-      if (!response.ok) {
-        setNetworkApiError(`network-listings ${action} failed (${response.status})`);
-        return null;
-      }
-      const payload = (await response.json()) as NetworkListingsSnapshot;
-      await reloadNetworkSnapshot();
-      return payload;
-    } catch {
-      setNetworkApiError(`network-listings ${action} failed`);
-      return null;
-    } finally {
-      setBusyListingId(null);
     }
   }
 
@@ -512,6 +489,115 @@ export function NetworkFindAreasWorkspace({
       setRebalanceApiError("network-rebalance select failed");
     } finally {
       setBusyRebalanceAction(null);
+    }
+  }
+
+  const viewModel = useMemo(
+    () =>
+      buildNetworkFindAreasViewModel({
+        activeLens: effectiveLens,
+        candidates: localCandidates,
+        heatZones,
+        listings: listingsEffective,
+        listingSources: listingSourcesEffective,
+        rebalanceStores: rebalanceStoresEffective,
+        selectedHeatZoneId: effectiveSelectedId,
+        siteReviews: localSiteReviews,
+      }),
+    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
+  );
+
+  const selectedZone = viewModel.selectedZone;
+  const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
+
+  function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
+    setLocalSelectedId(zone.id);
+    callbacks?.onSelectHeatZone?.(zone.zone);
+  }
+
+  function changeLens(lens: NetworkFindAreasLens) {
+    setLocalLens(lens);
+    callbacks?.onChangeLens?.(lens);
+  }
+
+  function toggleTracked() {
+    if (!selectedZone) {
+      return;
+    }
+    const nextTracked = !trackedSet.has(selectedZone.id);
+    if (!trackedHeatZoneIds) {
+      setLocalTrackedIds((current) => {
+        const next = new Set(current);
+        if (nextTracked) {
+          next.add(selectedZone.id);
+        } else {
+          next.delete(selectedZone.id);
+        }
+        return next;
+      });
+    }
+    callbacks?.onToggleTracked?.(selectedZone.zone, nextTracked);
+  }
+
+  function sourceListings() {
+    if (selectedZone) {
+      callbacks?.onSourceListings?.(selectedZone.zone);
+      setActiveTab(1);
+    }
+  }
+
+  function scoreCandidate() {
+    if (selectedZone?.bestCandidate) {
+      callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
+    }
+  }
+
+  function submitReview() {
+    if (selectedZone) {
+      callbacks?.onSubmitReview?.(selectedZone.zone);
+    }
+  }
+
+  async function reloadNetworkSnapshot() {
+    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+    if (snapshot) {
+      setNetworkSnapshot(snapshot);
+      setNetworkApiError(null);
+    }
+  }
+
+  async function postNetworkListingAction(
+    listingId: string,
+    action: "convert" | "merge" | "archive",
+    body: Record<string, unknown>,
+  ) {
+    setBusyListingId(listingId);
+    try {
+      const response = await fetch(`/api/v1/operator/network-listings/listings/${listingId}/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-005-${action}-${listingId}`,
+          "X-Correlation-Id": `corr-r4-005-${action}-${listingId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          ...NETWORK_ACTOR,
+          ...body,
+        }),
+      });
+      if (!response.ok) {
+        setNetworkApiError(`network-listings ${action} failed (${response.status})`);
+        return null;
+      }
+      const payload = (await response.json()) as NetworkListingsSnapshot;
+      await reloadNetworkSnapshot();
+      return payload;
+    } catch {
+      setNetworkApiError(`network-listings ${action} failed`);
+      return null;
+    } finally {
+      setBusyListingId(null);
     }
   }
 
@@ -609,11 +695,25 @@ export function NetworkFindAreasWorkspace({
             sources={listingSourcesEffective}
           />
         ) : activeTab === 2 ? (
-          <CandidatePipelinePanel rows={viewModel.candidatePipeline} />
+          <CandidatePanel
+            busyCandidateId={busyCandidateId}
+            candidates={scoringSnapshot?.candidates ?? []}
+            fallbackRows={viewModel.candidatePipeline}
+            onScore={runSiteScore}
+            onScoreAll={scoreAllCandidates}
+            onToggleCompare={toggleCompareCandidate}
+          />
         ) : activeTab === 3 ? (
-          <SiteScoreLabPanel rows={viewModel.siteScoreLab} />
+          <SiteScorePanel
+            busyCandidateId={busyCandidateId}
+            candidates={scoringSnapshot?.candidates ?? []}
+            fallbackRows={viewModel.siteScoreLab}
+            modelVersion={scoringSnapshot?.modelVersion}
+            onRescore={runSiteScore}
+            scorecards={scoringSnapshot?.scorecards ?? []}
+          />
         ) : activeTab === 4 ? (
-          <ComparePanel compare={viewModel.compare} />
+          <ComparePanel compare={scoringSnapshot?.compare ?? null} fallback={viewModel.compare} />
         ) : activeTab === 5 ? (
           <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
         ) : activeTab === 6 ? (
@@ -902,156 +1002,6 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
   );
 }
 
-function CandidatePipelinePanel({ rows }: { rows: CandidatePipelineRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>候選點 / Candidates</h3>
-        <span>{rows.length} candidates</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-candidate-table">
-            <thead>
-              <tr>
-                <th>Candidate</th>
-                <th>HeatZone</th>
-                <th>SiteScore</th>
-                <th>Recommendation</th>
-                <th>Status</th>
-                <th>Missing data</th>
-                <th>Model / snapshot</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} data-tone={row.tone}>
-                  <td>
-                    <strong>
-                      {row.id}
-                      {row.isBestInZone ? <span className={styles.bestTag}>Top</span> : null}
-                    </strong>
-                    <small>{row.title}</small>
-                  </td>
-                  <td>{row.zoneLabel}</td>
-                  <td>
-                    <ScoreMeter score={row.score} meter={row.scoreMeter} tone={row.tone} />
-                  </td>
-                  <td>
-                    <ToneBadge tone={row.tone}>{row.recommendation}</ToneBadge>
-                  </td>
-                  <td>{row.statusLabel}</td>
-                  <td>{row.missingData.length ? row.missingData.join("; ") : <span className={styles.muted}>None</span>}</td>
-                  <td>
-                    {row.modelVersion}
-                    <small>{row.datasetSnapshotId}</small>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No candidates yet</div>
-      )}
-    </div>
-  );
-}
-
-function SiteScoreLabPanel({ rows }: { rows: SiteScoreLabRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-sitescore" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>SiteScore / Score Lab</h3>
-        <span>Recommendation ≠ decision · inputs frozen on approval</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.scoreCard} key={row.id} data-tone={row.tone} data-testid={`sitescore-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.title}</strong>
-                  <small>{row.zoneLabel}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.recommendation}</ToneBadge>
-              </header>
-              <ScoreMeter score={row.score} meter={row.scoreMeter} tone={row.tone} wide />
-              <p className={styles.scoreBand}>{row.band}</p>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>Model</dt>
-                  <dd>{row.modelVersion}</dd>
-                </div>
-                <div>
-                  <dt>Snapshot</dt>
-                  <dd>{row.datasetSnapshotId}</dd>
-                </div>
-              </dl>
-              <div className={styles.gateRow}>
-                <span className={row.evidenceReady ? styles.gateOk : styles.gateWarn}>{row.gateLabel}</span>
-              </div>
-              {row.missingData.length ? (
-                <ul className={styles.missingList}>
-                  {row.missingData.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No SiteScore runs</div>
-      )}
-    </div>
-  );
-}
-
-function ComparePanel({ compare }: { compare: NetworkCompareViewModel }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-compare" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <h3>比較 / Compare</h3>
-        <span>{compare.columns.length} HeatZones · leader highlighted</span>
-      </div>
-      {compare.columns.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-compare-table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                {compare.columns.map((column) => (
-                  <th key={column.zoneId}>
-                    {column.label}
-                    <small>rank #{column.rank}</small>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {compare.metrics.map((metric) => (
-                <tr key={metric.key}>
-                  <th scope="row">{metric.label}</th>
-                  {metric.values.map((value) => (
-                    <td key={value.zoneId} className={value.isLeader ? styles.leaderCell : undefined}>
-                      {value.label}
-                      {value.isLeader ? <span className={styles.leaderMark}>▲</span> : null}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>Nothing to compare</div>
-      )}
-    </div>
-  );
-}
-
 function ReviewQueuePanel({
   rows,
   onDecideReview,
@@ -1186,17 +1136,6 @@ function ReviewQueuePanel({
       ) : (
         <div className={styles.emptyState}>No reviews pending</div>
       )}
-    </div>
-  );
-}
-
-function ScoreMeter({ score, meter, tone, wide }: { score: number; meter: number; tone: "good" | "watch" | "risk"; wide?: boolean }) {
-  return (
-    <div className={classNames(styles.scoreMeter, wide && styles.scoreMeterWide)} data-tone={tone}>
-      <strong>{score}</strong>
-      <i aria-hidden="true">
-        <b style={{ width: `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%` }} />
-      </i>
     </div>
   );
 }
