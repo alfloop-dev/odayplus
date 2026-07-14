@@ -7,9 +7,9 @@ Composes with: create_operator_router() in operator.py
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from collections.abc import Callable
 from fastapi import APIRouter, Depends, Header, Query, Request
 
 from modules.opsboard.application.operator_state import OperatorStateService

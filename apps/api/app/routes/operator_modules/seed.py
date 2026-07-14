@@ -11,8 +11,8 @@ The seed payload is loaded from tests/fixtures/operator_console/seed_r4.json
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header
 
