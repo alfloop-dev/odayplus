@@ -127,12 +127,16 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.network_listings import (
         create_network_listings_sub_router,
     )
+    from apps.api.app.routes.operator_modules.network_reviews import (
+        create_network_review_sub_router,
+    )
     from apps.api.app.routes.operator_modules.network_scoring import (
         create_network_scoring_sub_router,
     )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
+    from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
 
     # Shell — read-only, no permission guard needed.
@@ -162,6 +166,23 @@ def create_operator_router(
             ),
             require_write_permission_fn=require_permission(
                 "sitescore", Action.EXECUTE, engine=authz_engine
+            ),
+        )
+    )
+
+    # Network Review decision — read open to viewers; the decide endpoint
+    # requires sitescore APPROVE, which Site Reviewer / Executive hold but
+    # Expansion does not. That is the "Expansion may submit but not decide"
+    # rule enforced at the HTTP boundary; the service adds a defense-in-depth
+    # allowlist. Candidate/Review/Approval/Decision/Audit sync atomically.
+    router.include_router(
+        create_network_review_sub_router(
+            NetworkReviewService(),
+            require_view_permission_fn=require_permission(
+                "sitescore", Action.VIEW, engine=authz_engine
+            ),
+            require_decide_permission_fn=require_permission(
+                "sitescore", Action.APPROVE, engine=authz_engine
             ),
         )
     )
