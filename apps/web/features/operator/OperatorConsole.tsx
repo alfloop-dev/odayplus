@@ -42,6 +42,11 @@ import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import type { Issue } from "./types";
 import { ISSUE_FIXTURES } from "./fixtures";
+import { createOdpApiClient } from "@oday-plus/openapi-client";
+import {
+  loadNetworkFindAreasBindings,
+  type NetworkFindAreasBindings,
+} from "./networkFindAreasLoader";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
@@ -514,6 +519,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveAuditFeed, setLiveAuditFeed] = useState(auditFeed);
   const [liveNotifications, setLiveNotifications] = useState(notifications);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  // Live API bindings for the Network Find Areas workspace.
+  // Null = not yet fetched; non-null = fetch attempted (may be fixture-sourced).
+  const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
   const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
@@ -631,6 +639,24 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       cancelled = true;
     };
   }, [activeRoleId, isTaskCenterOpen]);
+
+  // Fetch live network bindings on first navigation to the network workspace.
+  // Uses NEXT_PUBLIC_ODP_API_BASE_URL when available; falls back to fixtures
+  // transparently if the backend is unreachable or unconfigured.
+  useEffect(() => {
+    if (activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
+    const client = createOdpApiClient({
+      env: {
+        ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
+        NEXT_PUBLIC_ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
+      },
+    });
+    loadNetworkFindAreasBindings(client)
+      .then((bindings) => setLiveNetworkBindings(bindings))
+      .catch(() => {
+        // loadNetworkFindAreasBindings never throws, but guard defensively.
+      });
+  }, [activeWorkspaceId, liveNetworkBindings]);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -1242,6 +1268,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ) : activeWorkspaceId === "network" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <NetworkFindAreasWorkspace
+              liveHeatZones={liveNetworkBindings?.heatZones}
+              liveCandidates={liveNetworkBindings?.candidates}
               callbacks={{
                 onChangeLens: (lens) => showToast(`Network lens: ${lens}`),
                 onScoreCandidate: (candidate, heatZone) => showToast(`${candidate.id} scoring opened for ${heatZone.id}`),

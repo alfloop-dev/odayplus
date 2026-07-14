@@ -110,6 +110,21 @@ export type AdliftReport = {
 };
 
 /**
+ * Raw heatzone score row returned by GET /heatzones.
+ * Shape mirrors HeatZoneBatchScoreResult.to_dict().
+ */
+export type HeatZoneScore = {
+  /** H3 hex index used as a stable identifier. */
+  h3_index: string;
+  score: number;
+  rank: number;
+  unmet_demand: number;
+  confidence: number;
+  state: string;
+  [key: string]: unknown;
+};
+
+/**
  * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
  * endpoint). Mirrors `NetPlanScenario.to_dict()` in
  * modules/netplan/domain/planning.py — only the always-present summary fields
@@ -124,6 +139,41 @@ export type NetPlanScenarioSummary = {
   solver_version?: string;
   model_version?: string;
   correlation_id?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Candidate site card returned by GET /listings/candidates.
+ * Shape mirrors CandidateSiteDraft.to_card_dict().
+ */
+export type CandidateSiteCard = {
+  candidateSiteId: string;
+  address: string;
+  geocodeConfidence: number;
+  rent: number;
+  area: number;
+  frontage?: number | null;
+  floor?: string | null;
+  parkingOrTemporaryStop?: boolean;
+  feasibilityFlags: string[];
+  heatZone: string;
+  listingSource?: string | null;
+  status: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Site score report summary returned by GET /sitescore/reports.
+ * Shape mirrors SiteScoreReport.to_summary_dict().
+ */
+export type SiteScoreReportSummary = {
+  candidateSiteId: string;
+  reportVersion: number;
+  recommendation: string;
+  confidence: number;
+  modelVersion: string;
+  featureSnapshotTime: string;
+  cannibalizationRisk: string;
   [key: string]: unknown;
 };
 
@@ -315,6 +365,33 @@ export class OdpApiClient {
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
+  }
+
+  /**
+   * List heatzone scores from the most recent batch scoring run.
+   * Returns an empty `items` array when no scoring job has been run yet.
+   * Corresponds to GET /heatzones.
+   */
+  listHeatzones(options: { limit?: number } = {}): Promise<ListResponse<HeatZoneScore>> {
+    return this.request<ListResponse<HeatZoneScore>>("/heatzones", {
+      query: options.limit !== undefined ? { limit: String(options.limit) } : undefined,
+    });
+  }
+
+  /**
+   * List candidate sites that have passed hard-rule checks.
+   * Corresponds to GET /listings/candidates.
+   */
+  listCandidates(): Promise<{ candidates: CandidateSiteCard[] }> {
+    return this.request<{ candidates: CandidateSiteCard[] }>("/listings/candidates");
+  }
+
+  /**
+   * List the latest SiteScore report per candidate site.
+   * Corresponds to GET /sitescore/reports.
+   */
+  listSiteScoreReports(): Promise<ListResponse<SiteScoreReportSummary>> {
+    return this.request<ListResponse<SiteScoreReportSummary>>("/sitescore/reports");
   }
 
   listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
