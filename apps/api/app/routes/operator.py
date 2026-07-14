@@ -124,7 +124,9 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.evidence import create_evidence_sub_router
     from apps.api.app.routes.operator_modules.growth import create_growth_sub_router
     from apps.api.app.routes.operator_modules.issues import create_issues_sub_router
-    from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
