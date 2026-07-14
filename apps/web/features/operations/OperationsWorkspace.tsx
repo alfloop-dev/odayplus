@@ -2,6 +2,9 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import type { StatusTone } from "@oday-plus/domain-types";
+import type { ForecastAlert } from "@oday-plus/openapi-client";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   alerts,
   formatMoney,
@@ -21,6 +24,8 @@ type OperationsWorkspaceProps = {
   view?: OperationsView;
   storeId?: string;
   searchParams?: SearchParams;
+  /** Live `GET /forecastops/alerts` binding; supplied by the server route. */
+  liveAlerts?: ApiBinding<ForecastAlert>;
 };
 
 const navItems = [
@@ -53,14 +58,15 @@ export function OperationsWorkspace({
   view = "overview",
   storeId,
   searchParams = {},
+  liveAlerts,
 }: OperationsWorkspaceProps) {
   if (view === "forecast") return <ForecastPage searchParams={searchParams} />;
-  if (view === "alerts") return <AlertsPage searchParams={searchParams} />;
+  if (view === "alerts") return <AlertsPage searchParams={searchParams} liveAlerts={liveAlerts} />;
   if (view === "storeDetail") return <StoreDetailPage store={selectedStore(storeId)} />;
-  return <OperationsOverview />;
+  return <OperationsOverview liveAlerts={liveAlerts} />;
 }
 
-function OperationsOverview() {
+function OperationsOverview({ liveAlerts }: { liveAlerts?: ApiBinding<ForecastAlert> }) {
   const redOpen = alerts.filter((alert) => alert.light === "red" && alert.status === "open").length;
   const orangeOpen = alerts.filter((alert) => alert.light === "orange" && alert.status === "open").length;
 
@@ -98,6 +104,7 @@ function OperationsOverview() {
           </div>
           <DecisionSeparation />
         </section>
+        {liveAlerts ? <LiveAlertQueue binding={liveAlerts} /> : null}
       </main>
     </>
   );
@@ -141,7 +148,13 @@ function ForecastPage({ searchParams }: { searchParams: SearchParams }) {
   );
 }
 
-function AlertsPage({ searchParams }: { searchParams: SearchParams }) {
+function AlertsPage({
+  searchParams,
+  liveAlerts,
+}: {
+  searchParams: SearchParams;
+  liveAlerts?: ApiBinding<ForecastAlert>;
+}) {
   const selectedAlertId = selectedFromQuery(searchParams.selected) ?? alerts[0].alertId;
   const selectedAlert = alerts.find((alert) => alert.alertId === selectedAlertId) ?? alerts[0];
   const store = selectedStore(selectedAlert.storeId);
@@ -156,6 +169,7 @@ function AlertsPage({ searchParams }: { searchParams: SearchParams }) {
       <main className="odp-content" data-testid="ops-alerts-page">
         <WorkspaceNav active="alerts" />
         <FilterBar />
+        {liveAlerts ? <LiveAlertQueue binding={liveAlerts} /> : null}
         <section className={styles.overviewGrid}>
           <div className={styles.panel}>
             <h2>Alert center</h2>
@@ -475,6 +489,81 @@ function AlertsTable() {
       </table>
     </div>
   );
+}
+
+function LiveAlertQueue({ binding }: { binding: ApiBinding<ForecastAlert> }) {
+  return (
+    <section className={styles.panel} data-testid="ops-live-alerts" aria-label="API-bound four-light alerts">
+      <div className={styles.badgeRow}>
+        <h2>四燈預警（API live）</h2>
+        <DataSourceBadge binding={binding} testId="ops-alert-data-source" />
+      </div>
+      <p>
+        本區直接讀取 <code>GET /forecastops/alerts</code> 的持久化狀態（含 acknowledged 確認軌跡）；
+        下方固定佇列為 documented non-product fallback。
+      </p>
+      {binding.state === "ready" ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="ops-live-alerts-table">
+            <caption className={styles.subtle}>
+              Live alerts served by the backend ({binding.items.length})
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">alert_id</th>
+                <th scope="col">store</th>
+                <th scope="col">light</th>
+                <th scope="col">status</th>
+                <th scope="col">acknowledged_by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {binding.items.map((alert) => (
+                <tr key={alert.alert_id} data-testid="ops-live-alert-row">
+                  <td className={styles.mono}>{alert.alert_id}</td>
+                  <td>{stringField(alert.store_id)}</td>
+                  <td>
+                    <Badge
+                      label={String(alert.alert_level ?? "—").toUpperCase()}
+                      marker={lightMarker[normalizeLevel(alert.alert_level)]}
+                      tone={lightTone[normalizeLevel(alert.alert_level)]}
+                    />
+                  </td>
+                  <td data-testid="ops-live-alert-status">{stringField(alert.status)}</td>
+                  <td>{stringField(alert.acknowledged_by) || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p data-testid="ops-live-alerts-empty" className={styles.subtle}>
+          {liveAlertsFallbackMessage(binding)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function liveAlertsFallbackMessage(binding: ApiBinding<ForecastAlert>): string {
+  if (binding.state === "empty") {
+    return "後端可連線但尚無 alert（cold store）；顯示固定佇列作為非產品 fallback。";
+  }
+  if (binding.state === "error") {
+    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定佇列 fallback。`;
+  }
+  return "未設定 API base URL（ODP_API_BASE_URL）；以固定佇列渲染。";
+}
+
+function normalizeLevel(value: unknown): AlertLevel {
+  if (value === "red" || value === "orange" || value === "yellow" || value === "green") {
+    return value;
+  }
+  return "green";
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function FourLightBadge({ level, gap }: { level: AlertLevel; gap: number }) {

@@ -3,21 +3,38 @@
 These adapt the framework-agnostic :class:`shared.auth.AuthorizationEngine` to
 HTTP request handling:
 
-- :func:`principal_from_headers` builds a :class:`Principal` from request
-  headers (a stub for the real OIDC/JWT IdP integration, ODP-SD-09 §3);
+- :func:`principal_from_headers` establishes the caller's
+  :class:`Principal`. When the live auth boundary is configured
+  (``ODP_AUTH_*``), it delegates to :class:`modules.opsboard.auth.
+  AuthenticationBoundary` — cryptographically verifying a bearer JWT
+  (signature/issuer/audience/expiry) or a service credential (ODP-SD-09 §3,
+  ODP-GAP-AUTH-001) and failing **closed**. When no live IdP inputs are
+  configured, it falls back to the legacy header-trust stub (``x-subject-id`` /
+  ``x-roles``) for local dev / tests.
 - :func:`require_permission` / :func:`require_feature_flag` produce FastAPI
   dependencies that deny with HTTP 403 and leave a security audit trail.
+
+Authentication failures (untrusted / expired / missing credentials once the
+boundary is configured) surface as HTTP **401** — distinct from a 403
+authorization denial. RBAC/ABAC logic is unchanged; only how the principal is
+established becomes real.
 
 FastAPI is imported lazily so this module is importable without the dependency
 installed (the runtime backend task adds it). When FastAPI is absent, the
 returned dependencies are plain callables that still enforce policy and raise
-:class:`AuthorizationError` on denial.
+:class:`AuthorizationError` (403) or
+:class:`modules.opsboard.auth.AuthenticationError` (401) on denial.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from modules.opsboard.auth import AuthenticationBoundary
+    from modules.opsboard.auth.errors import AuthFailureReason
 
 from shared.audit.events import InMemoryAuditLog
 from shared.audit.policy import AuditRecorder
@@ -71,12 +88,87 @@ def _split(value: str | None) -> frozenset[str]:
     return frozenset(part.strip() for part in value.split(",") if part.strip())
 
 
-def principal_from_headers(headers: Mapping[str, str]) -> Principal:
-    """Build a Principal from request headers.
+# Lazily-built, process-wide auth boundary derived from the environment.
+# ``_UNSET`` distinguishes "not resolved yet" from a resolved ``None`` (no live
+# IdP inputs configured -> legacy header-trust stays active), so we build it at
+# most once.
+_UNSET: object = object()
+_default_boundary: object = _UNSET
 
-    STUB: a real deployment validates a JWT from the approved IdP
-    (ODP-SD-09 §3). Header names are lowercase to match FastAPI/Starlette.
-    Missing subject -> unauthenticated principal (ODP-AC-AUTH-001).
+
+def default_boundary() -> AuthenticationBoundary | None:
+    """Return the env-configured :class:`AuthenticationBoundary`, or ``None``.
+
+    The boundary is active whenever **any** live IdP input is present
+    (``ODP_AUTH_ISSUER`` / ``ODP_AUTH_AUDIENCES`` / ``ODP_AUTH_HS256_KEYS``).
+    ``None`` -- keeping the legacy header-trust behaviour -- is returned only
+    when the environment carries *no* ``ODP_AUTH_*`` live inputs at all.
+
+    This fails closed on a *partial* configuration: setting, say, the issuer and
+    audiences but forgetting the signing keys makes the boundary active but not
+    :attr:`~modules.opsboard.auth.config.AuthBoundaryConfig.is_configured`, so
+    every request is denied (401) instead of silently falling back to trusting
+    spoofable ``x-subject-id`` / ``x-roles`` headers (ODP-FIN-AUTH-001). A
+    deployer who set any auth input clearly intends live auth; a typo must never
+    downgrade to header trust.
+
+    Built once and cached; call :func:`reset_default_boundary` after mutating
+    ``ODP_AUTH_*`` (e.g. in tests) to force a rebuild.
+    """
+
+    global _default_boundary
+    if _default_boundary is _UNSET:
+        from modules.opsboard.auth import AuthenticationBoundary
+        from modules.opsboard.auth.config import config_from_env
+
+        config = config_from_env()
+        _default_boundary = (
+            AuthenticationBoundary(config) if config.has_live_inputs else None
+        )
+    return _default_boundary  # type: ignore[return-value]
+
+
+def reset_default_boundary() -> None:
+    """Clear the cached default boundary (test/reload hook)."""
+
+    global _default_boundary
+    _default_boundary = _UNSET
+
+
+def principal_from_headers(
+    headers: Mapping[str, str], *, boundary: AuthenticationBoundary | None = None
+) -> Principal:
+    """Establish the request principal.
+
+    When an auth boundary is active (the ``boundary`` argument or the
+    env-configured default), the request's credentials — an
+    ``Authorization: Bearer <jwt>`` token or a service identity — are verified
+    by :class:`modules.opsboard.auth.AuthenticationBoundary` (ODP-SD-09 §3,
+    ODP-GAP-AUTH-001). A verified credential yields an authenticated principal;
+    any authentication failure (untrusted/expired token, or — since the
+    configured boundary fails closed — no credentials at all) raises HTTP 401.
+
+    When no boundary is configured, the legacy header-trust stub is used so
+    local dev and the existing integration tests are unaffected.
+    """
+
+    boundary = boundary if boundary is not None else default_boundary()
+    if boundary is not None:
+        from modules.opsboard.auth import Credentials
+
+        outcome = boundary.authenticate(Credentials.from_headers(headers))
+        if outcome.authenticated:
+            return outcome.principal
+        _raise_unauthenticated(outcome.reason)
+
+    return _principal_from_trusted_headers(headers)
+
+
+def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
+    """Legacy header-trust principal (dev/test, or no live boundary configured).
+
+    Header names are lowercase to match FastAPI/Starlette. Missing subject ->
+    unauthenticated principal (ODP-AC-AUTH-001).
     """
 
     subject = headers.get("x-subject-id")
@@ -130,12 +222,32 @@ def _raise_forbidden(decision: Decision) -> None:
     raise AuthorizationError(decision)
 
 
+def _raise_unauthenticated(reason: AuthFailureReason | None) -> None:
+    """Reject with HTTP 401 (or the boundary's AuthenticationError in lean envs).
+
+    The stable :class:`~modules.opsboard.auth.errors.AuthFailureReason` value is
+    surfaced as the detail; it never contains token material.
+    """
+
+    from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
+
+    reason = reason if reason is not None else AuthFailureReason.NO_CREDENTIALS
+    if HTTPException is not None:
+        raise HTTPException(
+            status_code=401,
+            detail=reason.value,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    raise AuthenticationError(reason)
+
+
 def require_permission(
     resource_type: str,
     action: Action,
     *,
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
+    boundary: AuthenticationBoundary | None = None,
 ):
     """FastAPI dependency factory enforcing RBAC on a route.
 
@@ -159,7 +271,7 @@ def require_permission(
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
         from shared.audit.policy import build_security_event
 
-        principal = principal_from_headers(request.headers)
+        principal = principal_from_headers(request.headers, boundary=boundary)
         if rbac_allows(principal, resource_type, action):
             return principal
 
