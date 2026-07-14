@@ -6,19 +6,31 @@ import { useRouter } from "next/navigation";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
 import {
+  BUILDER_STEPS,
   buildGrowthViewModel,
+  checkGrowthConflicts,
   closeoutGate,
   confidenceTone,
+  conflictLevelTone,
   constraintTone,
+  createGrowthDraft,
   formatLift,
+  GROWTH_ENTRY_CARDS,
+  GROWTH_KIND_PRESETS,
+  growthKindLabel,
   outcomeLabel,
   outcomeTone,
+  resolveGrowthApproval,
+  submitGrowthForApproval,
   trendLabel,
   trendTone,
   writeGrowthOutcome,
   type CloseoutGate,
+  type ConflictCheck,
   type GrowthApiData,
+  type GrowthBuilderForm,
   type GrowthItem,
+  type GrowthKind,
   type GrowthSegment,
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
@@ -64,6 +76,11 @@ export function GrowthWorkspace({
   const segmentId = readParam(searchParams.segment);
   const itemId = readParam(searchParams.item);
   const draftId = readParam(searchParams.draft);
+  const builderParam = readParam(searchParams.builder);
+  const builderKind: GrowthKind | null =
+    builderParam === "offpeak" || builderParam === "winback" || builderParam === "priceops"
+      ? builderParam
+      : null;
 
   const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, apiData);
   const freshnessData = apiData?.freshness ?? {
@@ -117,6 +134,8 @@ export function GrowthWorkspace({
           />
         </section>
 
+        <EntryCardsSection href={href} />
+
         <SegmentSection segments={vm.segments} selected={vm.selectedSegment} href={href} />
 
         <RecommendationSection recommendations={vm.recommendations} href={href} />
@@ -129,11 +148,68 @@ export function GrowthWorkspace({
         />
       </div>
 
-      {vm.draftRecommendation ? (
-        <CreateDraftModal recommendation={vm.draftRecommendation} closeHref={href({ draft: undefined })} />
+      {builderKind ? (
+        <GrowthBuilderModal
+          initialForm={GROWTH_KIND_PRESETS[builderKind]}
+          closeHref={href({ builder: undefined, draft: undefined })}
+        />
+      ) : vm.draftRecommendation ? (
+        <GrowthBuilderModal
+          initialForm={formFromRecommendation(vm.draftRecommendation)}
+          closeHref={href({ builder: undefined, draft: undefined })}
+        />
       ) : null}
     </>
   );
+}
+
+/** The three create-entry cards; each opens the builder prefilled for its kind. */
+function EntryCardsSection({
+  href,
+}: {
+  href: (o: Record<string, string | undefined>) => string;
+}) {
+  return (
+    <section className={styles.section} aria-label="Growth create entries">
+      <h2 className={styles.sectionTitle}>建立入口</h2>
+      <p className={styles.sectionHint}>
+        三個建立入口各自預填對應的活動類型；建立後進入五步 Draft Builder，送審核准才進入生命週期。
+      </p>
+      <div className={styles.overviewGrid} data-testid="growth-entry-cards">
+        {GROWTH_ENTRY_CARDS.map((card) => (
+          <Link
+            key={card.kind}
+            href={href({ builder: card.kind, draft: undefined, item: undefined })}
+            className={styles.metric}
+            data-testid={`growth-entry-${card.kind}`}
+            aria-label={`${card.title}（${card.en}）`}
+          >
+            <span style={{ color: card.dot }}>● {card.en}</span>
+            <strong>＋ {card.title}</strong>
+            <span>{card.desc}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Seed a builder form from a PriceOps recommendation row. */
+function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm {
+  return {
+    kind: "priceops",
+    name: `${rec.title}（草稿）`,
+    segmentId: rec.segmentId,
+    objective: `以 PriceOps 建議 ${rec.id} 為基礎的 Growth Action 草稿。`,
+    store: "全品牌",
+    observationWindow: "平日 10:00–14:00",
+    channel: "店內告示＋App 價格頁",
+    targetLift: rec.expectedRevenueLift.toFixed(1),
+    budget: "0",
+    rationale: "以 PriceOps 建議為基礎；待補齊對照組與 pre-trend 檢定後送審。",
+    rollbackPlan: "14 天未達標即回滾。",
+    sourceRecommendationId: rec.id,
+  };
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
@@ -409,6 +485,9 @@ function GrowthActionDetail({
         <h3>Rollback 計畫</h3>
         <p>{item.rollbackPlan}</p>
       </div>
+      {item.status === "DRAFT" || item.status === "PENDING_APPROVAL" ? (
+        <ApprovalFlowPanel item={item} href={href} />
+      ) : null}
       <CloseoutPanel item={item} gate={gate} href={href} />
       <dl className={styles.auditGrid} data-testid="growth-item-audit">
         <dt>decision_id</dt>
@@ -423,6 +502,118 @@ function GrowthActionDetail({
         <dd>{item.audit.featureSnapshotTime}</dd>
       </dl>
     </aside>
+  );
+}
+
+/**
+ * Submit-for-approval + decide flow for DRAFT / PENDING_APPROVAL actions.
+ * Submitting creates a Govern approval item; approving advances the Growth
+ * state to APPROVED, rejecting returns it to DRAFT.
+ */
+function ApprovalFlowPanel({
+  item,
+  href,
+}: {
+  item: GrowthItem;
+  href: (o: Record<string, string | undefined>) => string;
+}) {
+  const [approvalId, setApprovalId] = useState<string | null>(null);
+  const [growthStatus, setGrowthStatus] = useState<string>(item.status);
+  const [busy, setBusy] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const audit = (action: string, extra: Record<string, unknown>) => {
+    console.log(
+      `[Console Audit] ${JSON.stringify({ action, itemId: item.id, ...extra, timestamp: new Date().toISOString() })}`,
+    );
+  };
+
+  const handleSubmit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setApiError(null);
+    const result = await submitGrowthForApproval({ actionId: item.id });
+    setBusy(false);
+    if (!result) {
+      setApiError("送審被伺服器衝突閘門拒絕或 API 不可用；請檢查衝突後重試。");
+      return;
+    }
+    setApprovalId(result.approval.id);
+    setGrowthStatus(result.status);
+    audit("SUBMIT_FOR_APPROVAL", { approvalId: result.approval.id, status: result.status });
+  };
+
+  const handleDecision = async (decision: "approved" | "rejected") => {
+    if (busy || !approvalId) return;
+    setBusy(true);
+    setApiError(null);
+    const result = await resolveGrowthApproval({ approvalId, decision, reason: decision === "approved" ? "符合政策" : "退回修改" });
+    setBusy(false);
+    if (!result) {
+      setApiError("核准決策寫入失敗；API 不可用。");
+      return;
+    }
+    setGrowthStatus(result.growthStatus);
+    audit("RESOLVE_APPROVAL", { approvalId, decision, growthStatus: result.growthStatus });
+  };
+
+  return (
+    <section className={styles.closeoutPanel} data-testid="growth-approval-panel" data-growth-status={growthStatus}>
+      <h3>送審與核准</h3>
+      {apiError ? (
+        <div className={styles.warningBlock} data-testid="growth-approval-error">
+          <p>{apiError}</p>
+        </div>
+      ) : null}
+      {approvalId ? (
+        <div className={styles.softBlock} data-testid="growth-approval-created">
+          <p>
+            已建立 Govern 核准項 <strong>{approvalId}</strong>（狀態：{growthStatus}）。
+          </p>
+        </div>
+      ) : (
+        <p className={styles.subtle}>送審後建立 Govern 核准項，核准通過才進入排程／執行。</p>
+      )}
+      <div className={styles.closeoutActions}>
+        {!approvalId ? (
+          <button
+            type="button"
+            className={styles.primaryButton}
+            onClick={handleSubmit}
+            disabled={busy || item.status !== "DRAFT"}
+            data-testid="growth-submit-approval"
+          >
+            {busy ? "送審中…" : "送主管核准"}
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={() => handleDecision("approved")}
+              disabled={busy || growthStatus === "APPROVED"}
+              data-testid="growth-approve"
+            >
+              核准
+            </button>
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => handleDecision("rejected")}
+              disabled={busy || growthStatus === "DRAFT"}
+              data-testid="growth-reject"
+            >
+              駁回
+            </button>
+          </>
+        )}
+      </div>
+      <p className={styles.subtle}>
+        <Link className={styles.link} href={href({ item: item.id })}>
+          重新整理狀態
+        </Link>
+      </p>
+    </section>
   );
 }
 
@@ -519,56 +710,124 @@ function CloseoutPanel({
   );
 }
 
-function CreateDraftModal({
-  recommendation,
+const CHANNEL_OPTIONS = ["LINE 推播", "App 首頁", "店內告示", "店內告示＋App 價格頁"];
+
+/**
+ * Five-step Draft Builder (package 6): 基本設定 → 客群／時段 → 預估效益 →
+ * 風險／衝突 → 送核准.  Step 4 runs the server conflict gate; a blocked
+ * (fail) gate disables submit and surfaces the server's actionable reasons.
+ * Step 5 either creates a DRAFT or creates-and-submits it for approval, which
+ * creates a Govern item and advances the Growth state.
+ */
+function GrowthBuilderModal({
+  initialForm,
   closeHref,
 }: {
-  recommendation: PriceOpsRecommendation;
+  initialForm: GrowthBuilderForm;
   closeHref: string;
 }) {
   const router = useRouter();
-  const [name, setName] = useState(`${recommendation.title}（草稿）`);
-  const [targetLift, setTargetLift] = useState(recommendation.expectedRevenueLift.toFixed(1));
-  const [observationWindow, setObservationWindow] = useState("14");
-  const [rationale, setRationale] = useState("以 PriceOps 建議為基礎；待補齊對照組與 pre-trend 檢定後送審。");
+  const [form, setForm] = useState<GrowthBuilderForm>(initialForm);
+  const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<ConflictCheck[] | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  const [checking, setChecking] = useState(false);
 
-  const handleSubmit = async () => {
-    if (isSubmitting) return;
+  const set = (patch: Partial<GrowthBuilderForm>) =>
+    setForm((prev) => ({ ...prev, ...patch }));
+
+  const runConflictCheck = async () => {
+    setChecking(true);
+    const result = await checkGrowthConflicts({
+      kind: form.kind,
+      store: form.store,
+      observationWindow: form.observationWindow,
+      channel: form.channel,
+      budget: parseInt(form.budget, 10) || 0,
+    });
+    setChecking(false);
+    if (result) {
+      setConflicts(result.checks);
+      setBlocked(result.blocked);
+    } else {
+      setConflicts(null);
+      setBlocked(false);
+    }
+  };
+
+  const goNext = async () => {
+    if (step === 1 && !form.name.trim()) {
+      setApiError("請填寫活動名稱");
+      return;
+    }
+    setApiError(null);
+    if (step === 3) {
+      await runConflictCheck();
+    }
+    setStep((s) => Math.min(5, s + 1));
+  };
+
+  const goPrev = () => {
+    setApiError(null);
+    setStep((s) => Math.max(1, s - 1));
+  };
+
+  const handleCreate = async (sendForApproval: boolean) => {
+    if (isSubmitting || blocked) return;
     setIsSubmitting(true);
     setApiError(null);
 
-    // Write draft to API with Idempotency-Key + X-Correlation-Id
-    const { createGrowthDraft } = await import("./growthViewModel.ts");
-    const result = await createGrowthDraft({
-      name,
-      segmentId: recommendation.segmentId,
-      sourceRecommendationId: recommendation.id,
-      objective: `以 PriceOps 建議 ${recommendation.id} 為基礎的 Growth Action 草稿。`,
-      targetLift: parseFloat(targetLift) || 0,
-      observationWindowDays: parseInt(observationWindow, 10) || 14,
-      rationale,
-      rollbackPlan: "",
+    const created = await createGrowthDraft({
+      name: form.name,
+      segmentId: form.segmentId,
+      sourceRecommendationId: form.sourceRecommendationId,
+      objective: form.objective,
+      targetLift: parseFloat(form.targetLift) || 0,
+      kind: form.kind,
+      store: form.store,
+      channel: form.channel,
+      budget: parseInt(form.budget, 10) || 0,
+      observationWindow: form.observationWindow,
+      rationale: form.rationale,
+      rollbackPlan: form.rollbackPlan,
     });
 
+    let approvalId: string | null = null;
+    let submitFailed = false;
+    if (created && sendForApproval) {
+      const submitted = await submitGrowthForApproval({ actionId: created.id });
+      if (submitted) {
+        approvalId = submitted.approval.id;
+      } else {
+        submitFailed = true;
+      }
+    }
+
     const auditPayload = {
-      action: "CREATE_DRAFT",
-      recommendationId: recommendation.id,
-      name,
-      targetLift: parseFloat(targetLift) || 0,
-      observationWindow: `${observationWindow} 天`,
-      rationale,
-      apiResult: result ? { id: result.id, correlationId: result.correlationId } : "offline-fallback",
+      action: sendForApproval ? "CREATE_AND_SUBMIT" : "CREATE_DRAFT",
+      kind: form.kind,
+      name: form.name,
+      store: form.store,
+      budget: form.budget,
+      apiResult: created
+        ? { id: created.id, correlationId: created.correlationId }
+        : "offline-fallback",
+      approvalId,
       timestamp: new Date().toISOString(),
     };
     console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
 
-    if (result === null) {
-      setApiError("API 暫時不可用，草稿建立已記錄於本機稽核日誌。");
-    }
-
     setIsSubmitting(false);
+    if (created === null) {
+      setApiError("API 暫時不可用，草稿建立已記錄於本機稽核日誌。");
+      return;
+    }
+    if (submitFailed) {
+      setApiError("草稿已建立，但送審被伺服器衝突閘門拒絕，請回上一步檢查衝突。");
+      return;
+    }
     router.push(closeHref);
   };
 
@@ -587,76 +846,203 @@ function CreateDraftModal({
         aria-labelledby="growth-draft-title"
         className={styles.modal}
         style={{ position: "relative", zIndex: 2 }}
+        data-step={step}
       >
         <div className={styles.modalHeader}>
           <div>
             <h2 id="growth-draft-title">建立 Growth Action 草稿</h2>
-            <p className={styles.subtle}>來源建議：{recommendation.id} · {recommendation.title}</p>
+            <p className={styles.subtle}>類型：{growthKindLabel[form.kind]}</p>
           </div>
           <Link href={closeHref} className={styles.secondaryButton} data-testid="growth-draft-close">
             關閉
           </Link>
         </div>
+
+        <ol className={styles.badgeRow} data-testid="growth-builder-steps">
+          {BUILDER_STEPS.map((label, i) => (
+            <li key={label} style={{ listStyle: "none" }}>
+              <Badge
+                label={`${i + 1}. ${label}`}
+                tone={step === i + 1 ? "blue" : step > i + 1 ? "green" : "gray"}
+                marker={step > i + 1 ? "✓" : "●"}
+              />
+            </li>
+          ))}
+        </ol>
+
         {apiError ? (
           <div className={styles.warningBlock} data-testid="growth-draft-api-error">
             <p>{apiError}</p>
           </div>
         ) : null}
+
         <form className={styles.modalForm}>
-          <label>
-            活動名稱
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              name="name"
-            />
-          </label>
-          <label>
-            目標增量（P50，%）
-            <input
-              value={targetLift}
-              onChange={(e) => setTargetLift(e.target.value)}
-              inputMode="decimal"
-              name="targetLift"
-            />
-          </label>
-          <label>
-            觀察窗
-            <select
-              value={observationWindow}
-              onChange={(e) => setObservationWindow(e.target.value)}
-              name="observationWindow"
-            >
-              <option value="7">7 天</option>
-              <option value="14">14 天</option>
-              <option value="28">28 天</option>
-            </select>
-          </label>
-          <label>
-            草稿理由
-            <textarea
-              value={rationale}
-              onChange={(e) => setRationale(e.target.value)}
-              name="rationale"
-            />
-          </label>
+          {step === 1 ? (
+            <div data-testid="growth-builder-step-1">
+              <label>
+                活動名稱
+                <input value={form.name} onChange={(e) => set({ name: e.target.value })} name="name" />
+              </label>
+              <label>
+                門市
+                <input value={form.store} onChange={(e) => set({ store: e.target.value })} name="store" />
+              </label>
+              <label>
+                目標
+                <input value={form.objective} onChange={(e) => set({ objective: e.target.value })} name="objective" />
+              </label>
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div data-testid="growth-builder-step-2">
+              <label>
+                客群
+                <input value={form.segmentId} onChange={(e) => set({ segmentId: e.target.value })} name="segmentId" />
+              </label>
+              <label>
+                時窗
+                <input
+                  value={form.observationWindow}
+                  onChange={(e) => set({ observationWindow: e.target.value })}
+                  name="observationWindow"
+                />
+              </label>
+              <label>
+                通路
+                <select value={form.channel} onChange={(e) => set({ channel: e.target.value })} name="channel">
+                  {CHANNEL_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          {step === 3 ? (
+            <div data-testid="growth-builder-step-3">
+              <label>
+                目標增量（P50，%）
+                <input
+                  value={form.targetLift}
+                  onChange={(e) => set({ targetLift: e.target.value })}
+                  inputMode="decimal"
+                  name="targetLift"
+                />
+              </label>
+              <label>
+                預算（NT$）
+                <input
+                  value={form.budget}
+                  onChange={(e) => set({ budget: e.target.value })}
+                  inputMode="numeric"
+                  name="budget"
+                />
+              </label>
+              <label>
+                回滾條件
+                <textarea value={form.rollbackPlan} onChange={(e) => set({ rollbackPlan: e.target.value })} name="rollbackPlan" />
+              </label>
+            </div>
+          ) : null}
+
+          {step === 4 ? (
+            <div data-testid="growth-builder-step-4">
+              <p className={styles.sectionHint}>
+                伺服器衝突閘門檢查（重疊／PriceOps／預算／打擾／核准）；任一項為 fail 即不可送審。
+              </p>
+              {checking ? <p className={styles.subtle}>檢查中…</p> : null}
+              <div
+                data-testid="growth-conflict-panel"
+                data-blocked={blocked}
+                className={blocked ? styles.warningBlock : styles.softBlock}
+              >
+                {conflicts === null ? (
+                  <p className={styles.subtle}>尚未取得伺服器衝突結果（API 不可用時以人工複核）。</p>
+                ) : (
+                  conflicts.map((c) => (
+                    <div key={c.id} className={styles.badgeRow} data-testid={`growth-conflict-${c.id}`}>
+                      <Badge
+                        label={c.label}
+                        tone={conflictLevelTone[c.level]}
+                        marker={c.level === "ok" ? "✓" : c.level === "fail" ? "✕" : "!"}
+                      />
+                      <span className={styles.subtle}>{c.note}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+              {blocked ? (
+                <p className={styles.auditLine} data-testid="growth-conflict-blocked">
+                  存在硬衝突，無法送審——請回上一步調整時段／門市後重新檢查。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {step === 5 ? (
+            <div data-testid="growth-builder-step-5">
+              <dl className={styles.auditGrid}>
+                <dt>活動名稱</dt>
+                <dd>{form.name}</dd>
+                <dt>類型</dt>
+                <dd>{growthKindLabel[form.kind]}</dd>
+                <dt>門市</dt>
+                <dd>{form.store}</dd>
+                <dt>時窗</dt>
+                <dd>{form.observationWindow}</dd>
+                <dt>通路</dt>
+                <dd>{form.channel}</dd>
+                <dt>目標增量</dt>
+                <dd>{form.targetLift}%</dd>
+                <dt>預算</dt>
+                <dd>NT${form.budget}</dd>
+              </dl>
+            </div>
+          ) : null}
+
           <div className={styles.modalActions}>
-            <Link href={closeHref} className={styles.secondaryButton}>
-              取消
-            </Link>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              data-testid="growth-draft-submit"
-            >
-              {isSubmitting ? "建立中…" : "建立草稿"}
-            </button>
+            {step > 1 ? (
+              <button type="button" className={styles.secondaryButton} onClick={goPrev} data-testid="growth-builder-prev">
+                上一步
+              </button>
+            ) : (
+              <Link href={closeHref} className={styles.secondaryButton}>
+                取消
+              </Link>
+            )}
+            {step < 5 ? (
+              <button type="button" className={styles.primaryButton} onClick={goNext} data-testid="growth-builder-next">
+                下一步
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => handleCreate(false)}
+                  disabled={isSubmitting || blocked}
+                  data-testid="growth-draft-submit"
+                >
+                  {isSubmitting ? "建立中…" : "建立草稿"}
+                </button>
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  onClick={() => handleCreate(true)}
+                  disabled={isSubmitting || blocked}
+                  data-testid="growth-draft-submit-approval"
+                >
+                  {isSubmitting ? "送審中…" : "建立並送核准"}
+                </button>
+              </>
+            )}
           </div>
         </form>
         <p className={styles.auditLine}>
-          建立草稿僅產生 DRAFT，不自動執行；送審核准後才進入干預生命週期。
+          建立草稿僅產生 DRAFT，不自動執行；送審核准（建立 Govern 核准項）後才進入生命週期。
         </p>
       </div>
     </div>

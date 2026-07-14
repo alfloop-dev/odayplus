@@ -35,6 +35,21 @@ import type {
 
 export type ConfidenceLevel = Confidence["level"];
 
+/** The three canonical create-entry draft types (package 6 entry cards). */
+export type GrowthKind = "offpeak" | "winback" | "priceops";
+
+/**
+ * Growth lifecycle status.  Extends the canonical DecisionStatus with the
+ * package 6 R4 states that the Growth workspace adds on top of the shared
+ * decision vocabulary.
+ */
+export type GrowthStatus =
+  | DecisionStatus
+  | "PENDING_APPROVAL"
+  | "SCHEDULED"
+  | "RUNNING"
+  | "INEFFECTIVE";
+
 /** 分群 — a store/customer segment used to target growth actions. */
 export type GrowthSegment = {
   id: string;
@@ -79,11 +94,13 @@ export type GrowthOutcome =
 export type GrowthItem = {
   id: string;
   name: string;
+  /** draft type / entry-card kind this action was created from. */
+  kind?: GrowthKind;
   segmentId: string;
   /** PriceOps recommendation that seeded this draft, if any. */
   sourceRecommendationId?: string;
   objective: string;
-  status: DecisionStatus;
+  status: GrowthStatus;
   observationWindow: string;
   /** target lift the action was approved against, percent. */
   targetLift: number;
@@ -347,43 +364,162 @@ async function apiFetch<T>(
   }
 }
 
-/** Create a Growth Action draft from a PriceOps recommendation. */
+/** Create a Growth Action draft from one of the three entry cards. */
 export async function createGrowthDraft(params: {
   name: string;
   segmentId: string;
   sourceRecommendationId?: string;
   objective: string;
   targetLift: number;
+  kind?: GrowthKind;
+  store?: string;
+  channel?: string;
+  budget?: number;
+  observationWindow?: string;
   observationWindowDays?: number;
   rationale?: string;
   rollbackPlan?: string;
-}): Promise<{ id: string; status: string; correlationId: string } | null> {
+}): Promise<{ id: string; status: string; kind: string; correlationId: string } | null> {
   const idempotencyKey = newIdempotencyKey();
   const correlationId = newCorrelationId();
-  const result = await apiFetch<{ id: string; status: string; correlation_id: string }>(
-    "/actions",
-    {
-      method: "POST",
-      correlationId,
-      headers: {
-        "Idempotency-Key": idempotencyKey,
-      },
-      body: JSON.stringify({
-        name: params.name,
-        segmentId: params.segmentId,
-        sourceRecommendationId: params.sourceRecommendationId,
-        objective: params.objective,
-        targetLift: params.targetLift,
-        observationWindowDays: params.observationWindowDays ?? 14,
-        rationale: params.rationale ?? "",
-        rollbackPlan: params.rollbackPlan ?? "",
-      }),
+  const result = await apiFetch<{
+    id: string;
+    status: string;
+    kind: string;
+    correlation_id: string;
+  }>("/actions", {
+    method: "POST",
+    correlationId,
+    headers: {
+      "Idempotency-Key": idempotencyKey,
     },
-  );
+    body: JSON.stringify({
+      name: params.name,
+      segmentId: params.segmentId,
+      sourceRecommendationId: params.sourceRecommendationId,
+      objective: params.objective,
+      targetLift: params.targetLift,
+      kind: params.kind ?? "offpeak",
+      store: params.store ?? "全品牌",
+      channel: params.channel ?? "LINE 推播",
+      budget: params.budget ?? 0,
+      observationWindow: params.observationWindow,
+      observationWindowDays: params.observationWindowDays ?? 14,
+      rationale: params.rationale ?? "",
+      rollbackPlan: params.rollbackPlan ?? "",
+    }),
+  });
   if (!result) return null;
   return {
     id: result.id,
     status: result.status,
+    kind: result.kind,
+    correlationId: result.correlation_id,
+  };
+}
+
+/** A single conflict-gate check returned by the server. */
+export type ConflictCheck = {
+  id: "overlap" | "priceops" | "budget" | "fatigue" | "approval";
+  label: string;
+  level: "ok" | "warn" | "fail";
+  note: string;
+};
+
+/** Server conflict-gate result for a draft payload. */
+export type ConflictResult = {
+  checks: ConflictCheck[];
+  /** true when any check is `fail` — the builder must not submit. */
+  blocked: boolean;
+  reasons: string[];
+};
+
+/** A Govern approval item created when a Growth draft is submitted. */
+export type GrowthApproval = {
+  id: string;
+  module: string;
+  kind: string;
+  ref: string;
+  title: string;
+  requester: string;
+  approver: string;
+  risk: string;
+  status: "pending" | "approved" | "rejected";
+  evidence: string[];
+  reason: string;
+  decidedBy: string;
+  decidedAt: string;
+};
+
+/** Run the five server-side conflict checks for a draft payload. */
+export async function checkGrowthConflicts(params: {
+  kind: GrowthKind;
+  store: string;
+  observationWindow: string;
+  channel: string;
+  budget: number;
+  excludeActionId?: string;
+}): Promise<ConflictResult | null> {
+  return apiFetch<ConflictResult>("/conflicts/check", {
+    method: "POST",
+    correlationId: newCorrelationId(),
+    body: JSON.stringify({
+      kind: params.kind,
+      store: params.store,
+      observationWindow: params.observationWindow,
+      channel: params.channel,
+      budget: params.budget,
+      excludeActionId: params.excludeActionId,
+    }),
+  });
+}
+
+/** Submit a DRAFT Growth Action for approval; creates a Govern item. */
+export async function submitGrowthForApproval(params: {
+  actionId: string;
+}): Promise<{ actionId: string; status: string; approval: GrowthApproval; correlationId: string } | null> {
+  const correlationId = newCorrelationId();
+  const result = await apiFetch<{
+    id: string;
+    status: string;
+    approval: GrowthApproval;
+    correlation_id: string;
+  }>(`/actions/${params.actionId}/submit`, {
+    method: "POST",
+    correlationId,
+    headers: { "Idempotency-Key": newIdempotencyKey() },
+    body: JSON.stringify({}),
+  });
+  if (!result) return null;
+  return {
+    actionId: result.id,
+    status: result.status,
+    approval: result.approval,
+    correlationId: result.correlation_id,
+  };
+}
+
+/** Approve or reject a Growth approval; advances the linked Growth state. */
+export async function resolveGrowthApproval(params: {
+  approvalId: string;
+  decision: "approved" | "rejected";
+  reason?: string;
+}): Promise<{ approvalId: string; growthStatus: string; correlationId: string } | null> {
+  const correlationId = newCorrelationId();
+  const result = await apiFetch<{
+    id: string;
+    growthStatus: string;
+    correlation_id: string;
+  }>(`/approvals/${params.approvalId}/decision`, {
+    method: "POST",
+    correlationId,
+    headers: { "Idempotency-Key": newIdempotencyKey() },
+    body: JSON.stringify({ decision: params.decision, reason: params.reason ?? "" }),
+  });
+  if (!result) return null;
+  return {
+    approvalId: result.id,
+    growthStatus: result.growthStatus,
     correlationId: result.correlation_id,
   };
 }
@@ -426,7 +562,132 @@ export async function writeGrowthOutcome(params: {
 }
 
 /** Bundled API client for Growth workspace write operations. */
-export const growthApiClient = { createGrowthDraft, writeGrowthOutcome };
+export const growthApiClient = {
+  createGrowthDraft,
+  writeGrowthOutcome,
+  checkGrowthConflicts,
+  submitGrowthForApproval,
+  resolveGrowthApproval,
+};
+
+// ---------------------------------------------------------------------------
+// Create-entry cards + five-step builder model (package 6)
+// ---------------------------------------------------------------------------
+
+/** The three create-entry cards shown at the top of the Growth workspace. */
+export type GrowthEntryCard = {
+  kind: GrowthKind;
+  title: string;
+  en: string;
+  desc: string;
+  /** accent dot color (design token). */
+  dot: string;
+};
+
+export const GROWTH_ENTRY_CARDS: GrowthEntryCard[] = [
+  {
+    kind: "offpeak",
+    title: "建立離峰促銷",
+    en: "Off-peak Promotion",
+    desc: "平日 10:00–14:00 · 離峰使用者／附近會員 · 洗烘組合 9 折",
+    dot: "#12909F",
+  },
+  {
+    kind: "winback",
+    title: "建立會員召回",
+    en: "Member Winback",
+    desc: "60 天未回訪會員 · LINE 推播＋折抵券",
+    dot: "#2E3A97",
+  },
+  {
+    kind: "priceops",
+    title: "建立 PriceOps 測試",
+    en: "PriceOps Test",
+    desc: "尖峰／離峰價格彈性測試 · 含回滾條件",
+    dot: "#8A6BC7",
+  },
+];
+
+/** The five builder steps: setup → audience/time → impact → risk/conflict → approval. */
+export const BUILDER_STEPS: string[] = [
+  "基本設定",
+  "客群／時段",
+  "預估效益",
+  "風險／衝突",
+  "送核准",
+];
+
+export const growthKindLabel: Record<GrowthKind, string> = {
+  offpeak: "離峰促銷 Off-peak Promotion",
+  winback: "會員召回 Member Winback",
+  priceops: "PriceOps 測試",
+};
+
+/** Draft form the five-step builder collects and submits. */
+export type GrowthBuilderForm = {
+  kind: GrowthKind;
+  name: string;
+  segmentId: string;
+  objective: string;
+  store: string;
+  observationWindow: string;
+  channel: string;
+  targetLift: string;
+  budget: string;
+  rationale: string;
+  rollbackPlan: string;
+  sourceRecommendationId?: string;
+};
+
+/** Per-kind builder presets that prefill each entry card's draft. */
+export const GROWTH_KIND_PRESETS: Record<GrowthKind, GrowthBuilderForm> = {
+  offpeak: {
+    kind: "offpeak",
+    name: "平日離峰洗烘組合促銷",
+    segmentId: "seg-metro-dinner",
+    objective: "提升離峰設備利用率",
+    store: "Oday 信義松仁店",
+    observationWindow: "平日 10:00–14:00",
+    channel: "LINE 推播",
+    targetLift: "2.0",
+    budget: "10000",
+    rationale: "洗烘組合 9 折／點數加倍，鎖定離峰使用者與附近會員。",
+    rollbackPlan: "14 天未達標即回復原價目表。",
+  },
+  winback: {
+    kind: "winback",
+    name: "60 天未回訪會員召回",
+    segmentId: "seg-latenight-delivery",
+    objective: "提升沉睡會員回訪率",
+    store: "全品牌",
+    observationWindow: "核准後 3 日內推播",
+    channel: "LINE 推播",
+    targetLift: "3.0",
+    budget: "18000",
+    rationale: "對 60 天未回訪會員推播 NT$50 折抵券，30 天觀察回訪。",
+    rollbackPlan: "核銷率低於門檻即停止推播。",
+  },
+  priceops: {
+    kind: "priceops",
+    name: "尖峰／離峰價格測試",
+    segmentId: "seg-metro-dinner",
+    objective: "尖峰／離峰價格彈性測試",
+    store: "Oday 信義松仁店",
+    observationWindow: "平日 10:00–14:00",
+    channel: "店內告示＋App 價格頁",
+    targetLift: "2.0",
+    budget: "0",
+    rationale: "離峰折扣 -15% 測試需求彈性，含回滾條件。",
+    rollbackPlan: "14 天未達標即回滾至原價。",
+  },
+};
+
+/** Tone for a conflict-check level. */
+export const conflictLevelTone: Record<ConflictCheck["level"], StatusTone> = {
+  ok: "green",
+  warn: "orange",
+  fail: "red",
+};
 
 // ---------------------------------------------------------------------------
 // Runtime data fetch with fixture fallback
@@ -507,7 +768,7 @@ export async function fetchGrowthApiData(params: {
 // ---------------------------------------------------------------------------
 
 /** Statuses whose observation window has matured enough to judge an outcome. */
-const OUTCOME_STAGES: DecisionStatus[] = ["OUTCOME_READY", "CLOSED"];
+const OUTCOME_STAGES: GrowthStatus[] = ["OUTCOME_READY", "CLOSED"];
 
 /**
  * 成效判斷 — classify the observed effectiveness of a growth action.
@@ -691,7 +952,7 @@ export function buildGrowthViewModel(
     ? allRecommendations.find((rec) => rec.id === params.draftId) ?? null
     : null;
 
-  const activeStatuses: DecisionStatus[] = [
+  const activeStatuses: GrowthStatus[] = [
     "APPROVED",
     "EXECUTED",
     "OBSERVING",

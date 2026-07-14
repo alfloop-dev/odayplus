@@ -36,6 +36,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from modules.opsboard.application.growth import GrowthService
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import InMemoryAuditLog
 
@@ -79,6 +80,7 @@ def create_operator_router(
     audit_log: InMemoryAuditLog | None = None,
     document_store: Any | None = None,
     state_service: OperatorStateService | None = None,
+    growth_service: GrowthService | None = None,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -119,6 +121,7 @@ def create_operator_router(
     # ------------------------------------------------------------------
     from apps.api.app.routes.operator_modules.approvals import create_approvals_sub_router
     from apps.api.app.routes.operator_modules.evidence import create_evidence_sub_router
+    from apps.api.app.routes.operator_modules.growth import create_growth_sub_router
     from apps.api.app.routes.operator_modules.issues import create_issues_sub_router
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
@@ -159,6 +162,17 @@ def create_operator_router(
     # Seed — deterministic reset for tests and dev (no auth guard).
     router.include_router(create_seed_sub_router(svc))
 
+    # Growth — read-only endpoints open; write endpoints require intervention CREATE guard.
+    growth_svc = growth_service or GrowthService()
+    router.include_router(
+        create_growth_sub_router(
+            growth_svc,
+            require_permission_fn=require_permission(
+                "intervention", Action.CREATE, engine=authz_engine
+            ),
+        )
+    )
+
     return router
 
 
@@ -168,4 +182,6 @@ __all__ = [
     "TransitionPayload",
     "ApprovalDecisionPayload",
     "EvidencePurposePayload",
+    # Re-exported for test convenience
+    "GrowthService",
 ]
