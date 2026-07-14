@@ -51,6 +51,7 @@ from shared.auth import (
     Role,
     Scope,
     default_registry,
+    evaluate_abac,
     rbac_allows,
 )
 
@@ -319,3 +320,217 @@ def known_roles(values: Iterable[str]) -> frozenset[Role]:
         except ValueError:
             continue
     return frozenset(parsed)
+
+
+OPERATOR_CONSOLE_RESOURCE = "operator_console"
+OPERATOR_TENANT_ID = "tenant-a"
+
+_OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
+    Role.OPERATIONS_MANAGER: ("ops-lead",),
+    Role.REGIONAL_SUPERVISOR: ("field-lead",),
+    Role.MARKETING_MANAGER: ("marketing-manager",),
+    Role.EXPANSION_USER: ("expansion-manager",),
+    Role.SITE_REVIEWER: ("expansion-manager",),
+    Role.AUDITOR: ("pm-audit",),
+    Role.EXECUTIVE: ("ops-lead", "expansion-manager", "pm-audit"),
+}
+
+_OPERATOR_ROLE_ALIASES = {
+    "opslead": "ops-lead",
+    "ops-lead": "ops-lead",
+    "cslead": "cs-lead",
+    "cs-lead": "cs-lead",
+    "fieldlead": "field-lead",
+    "field-lead": "field-lead",
+    "facilitieslead": "field-lead",
+    "marketingmanager": "marketing-manager",
+    "marketing-manager": "marketing-manager",
+    "growthmanager": "marketing-manager",
+    "growthlead": "marketing-manager",
+    "expansionmanager": "expansion-manager",
+    "expansion-manager": "expansion-manager",
+    "sitereviewer": "expansion-manager",
+    "site-reviewer": "expansion-manager",
+    "pm-audit": "pm-audit",
+    "pmaudit": "pm-audit",
+    "auditpm": "pm-audit",
+}
+
+_OPERATOR_ROLE_PRIORITY = (
+    "ops-lead",
+    "expansion-manager",
+    "marketing-manager",
+    "field-lead",
+    "pm-audit",
+    "cs-lead",
+)
+
+
+def _normalize_operator_role(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = value.strip()
+    if not compact:
+        return None
+    lowered = compact.replace("_", "-").strip().lower()
+    return _OPERATOR_ROLE_ALIASES.get(lowered.replace("-", ""), _OPERATOR_ROLE_ALIASES.get(lowered))
+
+
+def operator_role_ids_for(principal: Principal) -> frozenset[str]:
+    """Return Operator Console role ids implied by verified platform roles."""
+
+    roles: set[str] = set()
+    for role in principal.roles:
+        roles.update(_OPERATOR_ROLE_BY_PLATFORM_ROLE.get(role, ()))
+    return frozenset(roles)
+
+
+def _select_operator_role(request: Request, principal: Principal) -> tuple[str | None, Decision | None]:  # type: ignore[name-defined]
+    allowed = operator_role_ids_for(principal)
+    if not allowed:
+        return None, Decision.deny(
+            "principal has no Operator Console role", policy_id="operator.role"
+        )
+
+    requested = _normalize_operator_role(request.headers.get("x-operator-role"))
+    subject_role = None
+    if principal.subject_id.startswith("operator-"):
+        subject_role = _normalize_operator_role(
+            principal.subject_id.removeprefix("operator-")
+        )
+
+    for candidate in (requested, subject_role):
+        if candidate is None:
+            continue
+        if candidate not in allowed:
+            return None, Decision.deny(
+                "requested Operator Console role is outside principal roles",
+                policy_id="operator.role_scope",
+            )
+        return candidate, None
+
+    for role_id in _OPERATOR_ROLE_PRIORITY:
+        if role_id in allowed:
+            return role_id, None
+    return sorted(allowed)[0], None
+
+
+def _correlation_id_from_request(request: Request) -> str:  # type: ignore[name-defined]
+    return (
+        getattr(request.state, "correlation_id", None)
+        or request.headers.get("x-correlation-id")
+        or "unknown"
+    )
+
+
+def _operator_access_request(
+    request: Request,  # type: ignore[name-defined]
+    principal: Principal,
+    action: Action,
+    resource: ResourceDescriptor,
+) -> AccessRequest:
+    source_ip = request.client.host if request.client else None
+    return AccessRequest(
+        principal=principal,
+        action=action,
+        resource=resource,
+        environment=Environment(
+            source_ip=source_ip,
+            attributes={"correlation_id": _correlation_id_from_request(request)},
+        ),
+    )
+
+
+def _record_operator_denial(
+    engine: AuthorizationEngine,
+    access: AccessRequest,
+    decision: Decision,
+) -> None:
+    from shared.audit.policy import build_security_event
+
+    engine.audit_log.record(build_security_event(access, decision))
+
+
+def _operator_scope_decision(
+    principal: Principal, resource: ResourceDescriptor
+) -> Decision:
+    if resource.tenant_id and principal.tenant_id != resource.tenant_id:
+        return Decision.deny(
+            "Operator Console tenant scope mismatch",
+            policy_id="operator.tenant_isolation",
+        )
+    return evaluate_abac(
+        AccessRequest(
+            principal=principal,
+            action=Action.VIEW,
+            resource=resource,
+        )
+    )
+
+
+def require_operator_permission(
+    resource_type: str = OPERATOR_CONSOLE_RESOURCE,
+    action: Action = Action.VIEW,
+    *,
+    tenant_id: str = OPERATOR_TENANT_ID,
+    module: str = "operator_console",
+    data_classification: DataClassification = DataClassification.CONFIDENTIAL,
+    engine: AuthorizationEngine | None = None,
+    boundary: AuthenticationBoundary | None = None,
+):
+    """FastAPI dependency for Operator Console auth/RBAC/tenant isolation.
+
+    Unlike the legacy domain guard, Operator Console endpoints distinguish
+    authentication from authorization even in local header-trust mode: missing
+    credentials are HTTP 401, while an authenticated principal without the
+    required role/scope is HTTP 403. The guard also writes the verified
+    principal and server-selected Operator role to ``request.state`` so route
+    handlers do not rely on spoofable role headers.
+    """
+
+    active_engine = engine or build_engine()
+
+    def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        principal = principal_from_headers(request.headers, boundary=boundary)
+        resource = ResourceDescriptor(
+            type=resource_type,
+            tenant_id=tenant_id,
+            module=module,
+            data_classification=data_classification,
+        )
+        access = _operator_access_request(request, principal, action, resource)
+
+        if not principal.authenticated:
+            decision = Decision.deny(
+                "principal not authenticated", policy_id="authenticated"
+            )
+            _record_operator_denial(active_engine, access, decision)
+            _raise_unauthenticated(None)
+
+        selected_role, role_decision = _select_operator_role(request, principal)
+        if role_decision is not None:
+            _record_operator_denial(active_engine, access, role_decision)
+            _raise_forbidden(role_decision)
+
+        if not rbac_allows(principal, resource_type, action):
+            decision = Decision.deny(
+                f"role does not permit {action.value} on {resource_type}",
+                policy_id="rbac",
+            )
+            _record_operator_denial(active_engine, access, decision)
+            _raise_forbidden(decision)
+
+        scope_decision = _operator_scope_decision(principal, resource)
+        if not scope_decision.allowed:
+            _record_operator_denial(active_engine, access, scope_decision)
+            _raise_forbidden(scope_decision)
+
+        request.state.operator_principal = principal
+        request.state.operator_role_id = selected_role
+        request.state.operator_subject_id = principal.subject_id
+        request.state.operator_system_roles = ",".join(
+            sorted(role.value for role in principal.roles)
+        )
+        return principal
+
+    return dependency

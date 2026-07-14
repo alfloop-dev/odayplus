@@ -37,6 +37,7 @@ BASE = "/api/v1/operator/governance"
 WRITE_HEADERS = {
     "X-Subject-Id": "test-govern-lead",
     "X-Roles": "operations_manager",
+    "X-Tenant-Id": "tenant-a",
 }
 
 
@@ -59,7 +60,10 @@ def _headers(idem: str | None = None, correlation: str = "corr-govern-test") -> 
 
 def test_governance_snapshot_exposes_every_value_builder() -> None:
     client = _client()
-    resp = client.get(f"{BASE}/snapshot", headers={"X-Correlation-Id": "corr-snap"})
+    resp = client.get(
+        f"{BASE}/snapshot",
+        headers={**WRITE_HEADERS, "X-Correlation-Id": "corr-snap"},
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -77,7 +81,7 @@ def test_governance_snapshot_exposes_every_value_builder() -> None:
 
 def test_governance_snapshot_has_store_growth_network_rows() -> None:
     client = _client()
-    body = client.get(f"{BASE}/snapshot").json()
+    body = client.get(f"{BASE}/snapshot", headers=WRITE_HEADERS).json()
 
     approval_modules = {a["module"] for a in body["approvals"]}
     # Pending Network approval must be present alongside Store Ops + Growth.
@@ -109,7 +113,7 @@ def test_decision_persists_and_is_consistent_after_reload() -> None:
     assert decide.json()["finalDecision"] == "Approved"
 
     # Reload: the approval is now decided and a Decision Log row exists.
-    body = client.get(f"{BASE}/snapshot").json()
+    body = client.get(f"{BASE}/snapshot", headers=WRITE_HEADERS).json()
     target = next(a for a in body["approvals"] if a["id"] == "ap-store-1042")
     assert target["status"] == "approved"
     assert any(d["approvalId"] == "ap-store-1042" for d in body["decisions"])
@@ -215,7 +219,7 @@ def test_evidence_package_export_records_full_metadata() -> None:
     assert pkg["range"] == "2026-06-01 – 2026-07-03"
 
     # The export is recorded in the audit trail and the history list.
-    snap = client.get(f"{BASE}/snapshot").json()
+    snap = client.get(f"{BASE}/snapshot", headers=WRITE_HEADERS).json()
     assert any(row["category"] == "export" and row["entityRef"] == pkg["id"] for row in snap["auditRows"])
     assert any(item["id"] == pkg["id"] for item in snap["evidencePackages"])
 
@@ -245,7 +249,7 @@ def test_write_route_is_fail_closed_without_permission() -> None:
     assert resp.status_code in (401, 403)
 
 
-def test_snapshot_read_is_open() -> None:
+def test_snapshot_read_is_protected() -> None:
     client = _client()
-    resp = client.get(f"{BASE}/snapshot", headers={"X-Subject-Id": "anon"})
-    assert resp.status_code == 200
+    resp = client.get(f"{BASE}/snapshot")
+    assert resp.status_code == 401

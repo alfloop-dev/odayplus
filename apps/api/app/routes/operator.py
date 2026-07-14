@@ -106,7 +106,11 @@ def create_operator_router(
         a pre-seeded service with deterministic state.
     """
     _ = document_store
-    from apps.api.oday_api.security.dependencies import build_engine, require_permission
+    from apps.api.oday_api.security.dependencies import (
+        OPERATOR_CONSOLE_RESOURCE,
+        build_engine,
+        require_operator_permission,
+    )
     from shared.auth import Action
 
     active_audit_log = audit_log or InMemoryAuditLog()
@@ -145,17 +149,23 @@ def create_operator_router(
     from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
 
-    # Shell — read-only, no permission guard needed.
-    router.include_router(create_shell_sub_router(svc))
+    operator_view_guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
+    )
+
+    # Shell — protected read envelope; role is derived by the server guard.
+    router.include_router(
+        create_shell_sub_router(svc, require_view_permission_fn=operator_view_guard)
+    )
 
     # Network listing intake — read/write paths for R4 Listing Radar.
     router.include_router(
         create_network_listings_sub_router(
             NetworkListingService(),
-            require_view_permission_fn=require_permission(
+            require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),
-            require_write_permission_fn=require_permission(
+            require_write_permission_fn=require_operator_permission(
                 "listing", Action.UPDATE, engine=authz_engine
             ),
         )
@@ -167,10 +177,10 @@ def create_operator_router(
     router.include_router(
         create_network_scoring_sub_router(
             NetworkScoringService(),
-            require_view_permission_fn=require_permission(
+            require_view_permission_fn=require_operator_permission(
                 "sitescore", Action.VIEW, engine=authz_engine
             ),
-            require_write_permission_fn=require_permission(
+            require_write_permission_fn=require_operator_permission(
                 "sitescore", Action.EXECUTE, engine=authz_engine
             ),
         )
@@ -184,10 +194,10 @@ def create_operator_router(
     router.include_router(
         create_network_review_sub_router(
             NetworkReviewService(),
-            require_view_permission_fn=require_permission(
+            require_view_permission_fn=require_operator_permission(
                 "sitescore", Action.VIEW, engine=authz_engine
             ),
-            require_decide_permission_fn=require_permission(
+            require_decide_permission_fn=require_operator_permission(
                 "sitescore", Action.APPROVE, engine=authz_engine
             ),
         )
@@ -199,10 +209,10 @@ def create_operator_router(
             NetworkRebalanceService(
                 govern_approval_writer=svc.upsert_network_rebalance_approval
             ),
-            require_view_permission_fn=require_permission(
+            require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),
-            require_write_permission_fn=require_permission(
+            require_write_permission_fn=require_operator_permission(
                 "listing", Action.UPDATE, engine=authz_engine
             ),
             reset_govern_fn=svc.reset_to_seed,
@@ -213,7 +223,8 @@ def create_operator_router(
     router.include_router(
         create_issues_sub_router(
             svc,
-            require_permission_fn=require_permission(
+            require_view_permission_fn=operator_view_guard,
+            require_write_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
         )
@@ -223,7 +234,8 @@ def create_operator_router(
     router.include_router(
         create_approvals_sub_router(
             svc,
-            require_permission_fn=require_permission(
+            require_view_permission_fn=operator_view_guard,
+            require_write_permission_fn=require_operator_permission(
                 "intervention", Action.APPROVE, engine=authz_engine
             ),
         )
@@ -233,21 +245,29 @@ def create_operator_router(
     router.include_router(
         create_evidence_sub_router(
             svc,
-            require_permission_fn=require_permission(
+            require_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
         )
     )
 
-    # Seed — deterministic reset for tests and dev (no auth guard).
-    router.include_router(create_seed_sub_router(svc))
+    # Seed — deterministic reset for tests/dev, still protected by Operator auth.
+    router.include_router(
+        create_seed_sub_router(
+            svc,
+            require_reset_permission_fn=require_operator_permission(
+                OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
+            ),
+        )
+    )
 
-    # Growth — read-only endpoints open; write endpoints require intervention CREATE guard.
+    # Growth — reads require Operator Console view, writes require intervention CREATE.
     growth_svc = growth_service or GrowthService()
     router.include_router(
         create_growth_sub_router(
             growth_svc,
-            require_permission_fn=require_permission(
+            require_view_permission_fn=operator_view_guard,
+            require_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
         )
@@ -264,10 +284,11 @@ def create_operator_router(
     router.include_router(
         create_governance_sub_router(
             GovernanceService(growth_service=growth_svc),
-            require_decision_permission_fn=require_permission(
+            require_view_permission_fn=operator_view_guard,
+            require_decision_permission_fn=require_operator_permission(
                 "intervention", Action.APPROVE, engine=authz_engine
             ),
-            require_export_permission_fn=require_permission(
+            require_export_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
         )

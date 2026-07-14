@@ -574,7 +574,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function scoreAllCandidates() {
-    await postScoringAction("score", {}, "batch");
+    await postScoringAction("score", {}, "batch", "r4-006-score-batch");
   }
 
   async function toggleCompareCandidate(candidateId: string) {
@@ -582,7 +582,7 @@ export function NetworkFindAreasWorkspace({
     const next = current.includes(candidateId)
       ? current.filter((id) => id !== candidateId)
       : [...current, candidateId];
-    await postScoringAction("compare", { candidateIds: next }, candidateId);
+    await postScoringAction("compare", { candidateIds: next }, candidateId, `r4-006-compare-${candidateId}`);
   }
 
   async function reloadRebalanceSnapshot() {

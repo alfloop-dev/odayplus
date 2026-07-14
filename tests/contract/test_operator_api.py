@@ -37,6 +37,7 @@ from shared.infrastructure.persistence.factory import _durable_bundle
 OPERATOR_HEADERS = {
     "x-subject-id": "test-ops-manager",
     "x-roles": "operations_manager",
+    "x-tenant-id": "tenant-a",
 }
 
 
@@ -301,6 +302,7 @@ def test_store_ops_four_light_filter_returns_deterministic_queue() -> None:
     response = client.get(
         "/api/v1/operator/store-ops/issues",
         params={"light": "operations", "lightStatus": "red"},
+        headers=_store_ops_headers("read-four-light"),
     )
 
     assert response.status_code == 200
@@ -350,7 +352,10 @@ def test_store_ops_issue_1024_lifecycle_and_camera_purpose_survive_restart(tmp_p
     client, bundle = _store_ops_client(db_path)
     assert bundle is not None
     try:
-        locked = client.get("/api/v1/operator/store-ops/issues/ISS-1024/evidence")
+        locked = client.get(
+            "/api/v1/operator/store-ops/issues/ISS-1024/evidence",
+            headers=_store_ops_headers("read-locked"),
+        )
         assert locked.status_code == 200
         camera = next(item for item in locked.json()["evidence"] if item["kind"] == "camera")
         assert camera["lockedReason"]
@@ -439,15 +444,24 @@ def test_store_ops_issue_1024_lifecycle_and_camera_purpose_survive_restart(tmp_p
     reopened_client, reopened_bundle = _store_ops_client(db_path)
     assert reopened_bundle is not None
     try:
-        issue = reopened_client.get("/api/v1/operator/store-ops/issues/ISS-1024").json()["issue"]
+        issue = reopened_client.get(
+            "/api/v1/operator/store-ops/issues/ISS-1024",
+            headers=_store_ops_headers("read-reopened-issue"),
+        ).json()["issue"]
         assert issue["status"] == "closed"
 
-        evidence = reopened_client.get("/api/v1/operator/store-ops/issues/ISS-1024/evidence").json()["evidence"]
+        evidence = reopened_client.get(
+            "/api/v1/operator/store-ops/issues/ISS-1024/evidence",
+            headers=_store_ops_headers("read-reopened-evidence"),
+        ).json()["evidence"]
         camera = next(item for item in evidence if item["kind"] == "camera")
         assert camera["purpose"] == "payment incident quality audit"
         assert "lockedReason" not in camera
 
-        audit = reopened_client.get("/api/v1/operator/store-ops/issues").json()["auditEvents"]
+        audit = reopened_client.get(
+            "/api/v1/operator/store-ops/issues",
+            headers=_store_ops_headers("read-reopened-audit"),
+        ).json()["auditEvents"]
         assert any(event["action"] == "evidence.camera_purpose.recorded" for event in audit)
         assert any(event["action"] == "issue.outcome" for event in audit)
     finally:

@@ -94,22 +94,26 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("audit", Action.VIEW)
     ),
     Role.EXPANSION_USER: frozenset(
-        _grant("heatzone", Action.VIEW, Action.CREATE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("heatzone", Action.VIEW, Action.CREATE)
         | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE)
     ),
     Role.SITE_REVIEWER: frozenset(
-        _grant("heatzone", Action.VIEW)
+        _grant("operator_console", Action.VIEW)
+        | _grant("heatzone", Action.VIEW)
         | _grant("listing", Action.VIEW, Action.CREATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE, Action.APPROVE, Action.OVERRIDE)
     ),
     Role.OPERATIONS_MANAGER: frozenset(
-        _grant("forecastops", Action.VIEW, Action.CREATE, Action.EXECUTE)
+        _grant("operator_console", Action.VIEW, Action.UPDATE)
+        | _grant("forecastops", Action.VIEW, Action.CREATE, Action.EXECUTE)
         | _grant("intervention", Action.VIEW, Action.CREATE, Action.APPROVE)
         | _grant("audit", Action.VIEW)
     ),
     Role.REGIONAL_SUPERVISOR: frozenset(
-        _grant("forecastops", Action.VIEW)
+        _grant("operator_console", Action.VIEW)
+        | _grant("forecastops", Action.VIEW)
         | _grant("intervention", Action.VIEW, Action.EXECUTE)
         | _grant("audit", Action.VIEW)
     ),
@@ -117,7 +121,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("priceops", Action.VIEW, Action.CREATE, Action.APPROVE, Action.EXECUTE)
     ),
     Role.MARKETING_MANAGER: frozenset(
-        _grant("adlift", Action.VIEW, Action.CREATE, Action.APPROVE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("adlift", Action.VIEW, Action.CREATE, Action.APPROVE)
     ),
     Role.FINANCE_LEGAL: frozenset(
         _grant("avm", Action.VIEW, Action.CREATE, Action.APPROVE)
@@ -125,7 +130,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("avm", Action.EXPORT)
     ),
     Role.EXECUTIVE: frozenset(
-        _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
         | _grant("heatzone", Action.VIEW, Action.APPROVE)
         | _grant("sitescore", Action.VIEW, Action.APPROVE)
         | _grant("audit", Action.VIEW)
@@ -136,7 +142,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("audit", Action.VIEW)
     ),
     Role.AUDITOR: frozenset(
-        _grant("audit", Action.VIEW, Action.EXPORT)
+        _grant("operator_console", Action.VIEW)
+        | _grant("audit", Action.VIEW, Action.EXPORT)
         | _grant("model", Action.VIEW)
         | _grant("decision", Action.VIEW)
     ),

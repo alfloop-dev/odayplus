@@ -48,15 +48,25 @@ def create_operator_store_ops_router(
     repository: Any = None,
     audit_log: InMemoryAuditLog | None = None,
 ) -> APIRouter:
-    from apps.api.oday_api.security.dependencies import build_engine, require_permission
+    from apps.api.oday_api.security.dependencies import (
+        OPERATOR_CONSOLE_RESOURCE,
+        build_engine,
+        require_operator_permission,
+    )
     from shared.auth import Action
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
+    read_guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
+    )
+    write_guard = require_operator_permission(
+        "intervention", Action.CREATE, engine=authz_engine
+    )
     service = StoreOpsService(repository=repository, audit_log=active_audit_log)
     router = APIRouter(prefix="/operator/store-ops", tags=["operator-store-ops"])
 
-    @router.get("/summary")
+    @router.get("/summary", dependencies=[Depends(read_guard)])
     def get_summary(request: Request) -> dict[str, Any]:
         snapshot = service.snapshot()
         return {
@@ -65,7 +75,7 @@ def create_operator_store_ops_router(
             "correlation_id": request.state.correlation_id,
         }
 
-    @router.get("/issues")
+    @router.get("/issues", dependencies=[Depends(read_guard)])
     def list_issues(
         request: Request,
         query: str | None = None,
@@ -83,14 +93,14 @@ def create_operator_store_ops_router(
             sources=sources or (),
             severities=severities or (),
             mine_only=mineOnly,
-            role_id=roleId,
+            role_id=_store_ops_role_from_request(request, roleId),
             light=light,
             light_status=lightStatus,
         )
         snapshot["correlation_id"] = request.state.correlation_id
         return snapshot
 
-    @router.get("/issues/{issue_id}")
+    @router.get("/issues/{issue_id}", dependencies=[Depends(read_guard)])
     def get_issue(issue_id: str, request: Request) -> dict[str, Any]:
         try:
             return {
@@ -100,7 +110,7 @@ def create_operator_store_ops_router(
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    @router.get("/issues/{issue_id}/evidence")
+    @router.get("/issues/{issue_id}/evidence", dependencies=[Depends(read_guard)])
     def get_issue_evidence(issue_id: str, request: Request) -> dict[str, Any]:
         try:
             result = service.issue_evidence(issue_id)
@@ -111,7 +121,7 @@ def create_operator_store_ops_router(
 
     @router.post(
         "/issues/{issue_id}/{action_type}",
-        dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))],
+        dependencies=[Depends(write_guard)],
     )
     def transition_issue(
         issue_id: str,
@@ -148,7 +158,7 @@ def create_operator_store_ops_router(
 
     @router.post(
         "/issues/{issue_id}/camera-purpose",
-        dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))],
+        dependencies=[Depends(write_guard)],
     )
     def record_camera_purpose(
         issue_id: str,
@@ -184,6 +194,18 @@ def _actor_name_from_role(role_id: str | None) -> str:
         "expansionManager": "展店經理",
         "auditPm": "PM／稽核",
     }.get(role_id or "opsLead", "Operator")
+
+
+def _store_ops_role_from_request(request: Request, fallback: str) -> str:
+    role_id = getattr(request.state, "operator_role_id", None)
+    return {
+        "ops-lead": "opsLead",
+        "cs-lead": "supportLead",
+        "field-lead": "facilitiesLead",
+        "marketing-manager": "marketingManager",
+        "expansion-manager": "expansionManager",
+        "pm-audit": "auditPm",
+    }.get(role_id or "", fallback)
 
 
 __all__ = ["create_operator_store_ops_router"]

@@ -90,12 +90,16 @@ class EvidencePackagePayload(BaseModel):
 def create_governance_sub_router(
     service: GovernanceService,
     *,
+    require_view_permission_fn: Any = None,
     require_decision_permission_fn: Any = None,
     require_export_permission_fn: Any = None,
 ) -> APIRouter:
     """Return the Govern sub-router wired to a shared GovernanceService."""
     router = APIRouter(prefix="/governance", tags=["operator-governance"])
 
+    read_deps: list[Any] = (
+        [Depends(require_view_permission_fn)] if require_view_permission_fn else []
+    )
     decision_deps: list[Any] = (
         [Depends(require_decision_permission_fn)] if require_decision_permission_fn else []
     )
@@ -107,17 +111,17 @@ def create_governance_sub_router(
     # Read endpoints
     # ------------------------------------------------------------------
 
-    @router.get("/snapshot")
+    @router.get("/snapshot", dependencies=read_deps)
     def get_snapshot(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
         return service.snapshot(
-            role_id=x_operator_role,
+            role_id=getattr(request.state, "operator_role_id", None) or x_operator_role,
             correlation_id=request.state.correlation_id,
         )
 
-    @router.get("/evidence-packages")
+    @router.get("/evidence-packages", dependencies=read_deps)
     def list_evidence_packages(request: Request) -> dict[str, Any]:
         snap = service.snapshot(correlation_id=request.state.correlation_id)
         items = snap["evidencePackages"]

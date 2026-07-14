@@ -11,18 +11,23 @@ The seed payload is loaded from tests/fixtures/operator_console/seed_r4.json
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 
 from modules.opsboard.application.operator_state import OperatorStateService
 
 
-def create_seed_sub_router(state_service: OperatorStateService) -> APIRouter:
+def create_seed_sub_router(
+    state_service: OperatorStateService,
+    *,
+    require_reset_permission_fn: Callable[..., Any],
+) -> APIRouter:
     """Return the seed sub-router."""
     router = APIRouter()
 
-    @router.post("/seed/reset")
+    @router.post("/seed/reset", dependencies=[Depends(require_reset_permission_fn)])
     def reset_seed(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
