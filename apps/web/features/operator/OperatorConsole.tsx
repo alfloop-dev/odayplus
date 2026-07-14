@@ -1,21 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
-  AuditRow,
   Button,
   Chip,
-  DecisionCard,
-  EvidenceCard,
-  MetricCard,
-  QueueRow,
-  RiskRow,
   SectionPanel,
   StatusBadge,
   TabBar,
   type Tone,
 } from "./components";
-import { DesignStoreOpsWorkspace, DesignTodayWorkspace } from "./DesignAlignedWorkspaces";
+import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -31,6 +25,12 @@ import {
   type WorkspaceId,
 } from "./navigation";
 import styles from "./operator.module.css";
+import {
+  TodayWorkspace as ApiTodayWorkspace,
+  normalizeShellEnvelope,
+  type OperatorShellEnvelope,
+  type ShellTarget,
+} from "./TodayWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import type { Issue } from "./types";
@@ -39,217 +39,22 @@ import { ISSUE_FIXTURES } from "./fixtures";
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
 
-const kpis: Array<{ label: string; value: string; delta: string; meta: string; tone: Tone }> = [
-  {
-    label: "Critical SLA",
-    value: "9",
-    delta: "+3 since 09:00",
-    meta: "4 due in 2h",
-    tone: "danger",
-  },
-  {
-    label: "待核准",
-    value: "5",
-    delta: "2 SiteScore",
-    meta: "1 returned",
-    tone: "warning",
-  },
-  {
-    label: "高風險門市",
-    value: "7",
-    delta: "3 payment",
-    meta: "2 hygiene",
-    tone: "accent",
-  },
-  {
-    label: "今日待處理",
-    value: "18",
-    delta: "-6 vs yesterday",
-    meta: "72% owned",
-    tone: "info",
-  },
-  {
-    label: "AI 建議",
-    value: "12",
-    delta: "8 high confidence",
-    meta: "v2.6",
-    tone: "success",
-  },
-  {
-    label: "觀察中",
-    value: "6",
-    delta: "3 outcome-ready",
-    meta: "M3/M6 watch",
-    tone: "neutral",
-  },
-];
+const rolePermissionHeaders: Record<OperatorRoleId, string> = {
+  "cs-lead": "operations_manager",
+  "expansion-manager": "expansion_user",
+  "field-lead": "regional_supervisor",
+  "marketing-manager": "marketing_manager",
+  "ops-lead": "operations_manager",
+  "pm-audit": "auditor",
+};
 
-const workQueue: Array<{
-  description: string;
-  id: string;
-  meta: string;
-  owner: string;
-  status: string;
-  time: string;
-  title: string;
-  tone: Tone;
-  workspace: WorkspaceId;
-}> = [
-  {
-    id: "ISS-1024",
-    title: "支付失敗率異常升高",
-    description: "大安復興店 12 分鐘內連續 18 筆失敗，收銀機 A3 需 triage。",
-    meta: "Payment + Google review + ForecastOps 四燈號",
-    owner: "營運",
-    status: "SLA 1h",
-    time: "09:42",
-    tone: "danger",
-    workspace: "store",
-  },
-  {
-    id: "ISS-1021",
-    title: "Kiosk offline 影響午尖峰",
-    description: "板橋中山店設備離線 24 分鐘，工務主任可直接指派現場處理。",
-    meta: "IoT device state + CS cases",
-    owner: "工務",
-    status: "New",
-    time: "09:20",
-    tone: "warning",
-    workspace: "store",
-  },
-  {
-    id: "GRW-201",
-    title: "夜間會員回流活動建議",
-    description: "忠孝商圈夜間需求未滿足，建議 20:00-23:00 定向券。",
-    meta: "Segment fit 84 / conflict clear",
-    owner: "行銷",
-    status: "Draft",
-    time: "08:55",
-    tone: "success",
-    workspace: "growth",
-  },
-  {
-    id: "APR-501",
-    title: "CS-1002 SiteScore WAIT",
-    description: "候選點信心 76，需要營運主管判定是否進入複審。",
-    meta: "Model SiteScore v2.3 / snapshot FS-20260703-0600",
-    owner: "展店",
-    status: "Review",
-    time: "08:30",
-    tone: "info",
-    workspace: "govern",
-  },
-  {
-    id: "RV-701",
-    title: "物件看板照片缺漏",
-    description: "Listing Radar 已完成去重，仍缺路口可視性佐證。",
-    meta: "Source compliance checked",
-    owner: "展店",
-    status: "Need data",
-    time: "08:18",
-    tone: "warning",
-    workspace: "network",
-  },
-  {
-    id: "NET-305",
-    title: "低效門市重配建議",
-    description: "西門小南門店進入 AVM request，NetPlan 三方案待比較。",
-    meta: "Rent pressure + cannibalization risk",
-    owner: "PM",
-    status: "Observe",
-    time: "07:54",
-    tone: "accent",
-    workspace: "network",
-  },
-];
+function isOperatorRoleId(value: string): value is OperatorRoleId {
+  return OPERATOR_ROLES.some((role) => role.id === value);
+}
 
-const decisions: Array<{
-  cta: string;
-  id: string;
-  meta: string;
-  status: string;
-  title: string;
-  tone: Tone;
-}> = [
-  {
-    id: "APR-501",
-    title: "SiteScore 複審",
-    meta: "CS-1002 WAIT 76，租金合理但競品密度偏高。",
-    status: "2h SLA",
-    cta: "Open Govern",
-    tone: "warning",
-  },
-  {
-    id: "APR-487",
-    title: "Google review 回覆",
-    meta: "負評涉及付款失敗，客服主管已補充草稿。",
-    status: "Needs reason",
-    cta: "Review",
-    tone: "danger",
-  },
-  {
-    id: "GRW-207",
-    title: "PriceOps 折扣上限",
-    meta: "模型建議 8%，需確認毛利保護線。",
-    status: "Policy",
-    cta: "Compare",
-    tone: "info",
-  },
-];
-
-const riskRows: Array<{ label: string; score: number; signal: string; tone: Tone }> = [
-  {
-    label: "大安復興店",
-    score: 92,
-    signal: "Payment failure + queue spike",
-    tone: "danger",
-  },
-  {
-    label: "板橋中山店",
-    score: 78,
-    signal: "Kiosk offline + CS wait",
-    tone: "warning",
-  },
-  {
-    label: "忠孝敦化店",
-    score: 64,
-    signal: "Demand gap with staff buffer",
-    tone: "accent",
-  },
-  {
-    label: "台北車站店",
-    score: 38,
-    signal: "Recovered after remote restart",
-    tone: "success",
-  },
-];
-
-const auditFeed = [
-  {
-    actor: "system / ForecastOps",
-    category: "Model snapshot",
-    detail: "Updated four-light evidence for ISS-1024 with payment confidence 0.91.",
-    time: "09:46",
-  },
-  {
-    actor: "客服主管",
-    category: "Decision log",
-    detail: "Returned APR-487 reply draft for clearer compensation reason.",
-    time: "09:33",
-  },
-  {
-    actor: "展店經理",
-    category: "Network review",
-    detail: "Marked RV-701 as pending street-front visibility evidence.",
-    time: "09:12",
-  },
-  {
-    actor: "PM／稽核",
-    category: "Audit trail",
-    detail: "Exported approval packet for CS-1002 SiteScore comparison.",
-    time: "08:41",
-  },
-];
+function isWorkspaceId(value: string): value is WorkspaceId {
+  return WORKSPACES.some((workspace) => workspace.id === value);
+}
 
 const notifications = [
   {
@@ -272,62 +77,58 @@ const notifications = [
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
+  const [activeTabId, setActiveTabId] = useState("overview");
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
   const [selectedStoreOpsIssue, setSelectedStoreOpsIssue] = useState<Issue | undefined>(undefined);
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
+  const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [liveKpis, setLiveKpis] = useState(kpis);
-  const [liveWorkQueue, setLiveWorkQueue] = useState(workQueue);
-  const [liveDecisions, setLiveDecisions] = useState(decisions);
-  const [liveRiskRows, setLiveRiskRows] = useState(riskRows);
-  const [liveAuditFeed, setLiveAuditFeed] = useState(auditFeed);
-  const [liveNotifications, setLiveNotifications] = useState(notifications);
-  const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() => normalizeShellEnvelope());
+  const [liveNotifications, setLiveNotifications] = useState<any[]>(notifications);
+  const [liveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
 
-  const getSecurityHeaders = (roleId: string) => {
-    let systemRole = "operations_manager";
-    if (roleId === "opsLead") systemRole = "operations_manager";
-    else if (roleId === "supportLead") systemRole = "operations_manager";
-    else if (roleId === "facilitiesLead") systemRole = "regional_supervisor";
-    else if (roleId === "marketingManager") systemRole = "marketing_manager";
-    else if (roleId === "expansionManager") systemRole = "expansion_user";
-    else if (roleId === "auditPm") systemRole = "auditor";
-
+  const getSecurityHeaders = (roleId: OperatorRoleId) => {
     return {
+      "X-Operator-Role": roleId,
+      "X-Roles": rolePermissionHeaders[roleId],
       "X-Subject-Id": `operator-${roleId}`,
-      "X-Roles": systemRole,
       "X-Tenant-Id": "tenant-a",
     };
   };
 
-  const activeRole = getOperatorRole(activeRoleId);
-  const activeWorkspace = getWorkspace(activeWorkspaceId);
+  const applyOperatorEnvelope = (payload: unknown) => {
+    const nextEnvelope = normalizeShellEnvelope(payload);
+    setShellEnvelope(nextEnvelope);
+    setLiveNotifications(nextEnvelope.notifications);
+  };
 
-  useEffect(() => {
-    async function loadBootstrap() {
-      try {
-        const res = await fetch("/api/v1/operator/bootstrap", {
-          headers: getSecurityHeaders(activeRoleId),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.kpis) setLiveKpis(data.kpis);
-          if (data.workQueue) setLiveWorkQueue(data.workQueue);
-          if (data.decisions) setLiveDecisions(data.decisions);
-          if (data.riskRows) setLiveRiskRows(data.riskRows);
-          if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
-          if (data.notifications) setLiveNotifications(data.notifications);
-          if (data.issues) setLiveIssues(data.issues);
-        }
-      } catch (err) {
-        console.error("Error loading operator bootstrap:", err);
-      }
-    }
-    loadBootstrap();
-  }, []);
+  const rolesForShell = useMemo(() => {
+    return shellEnvelope.navigation.roles.length
+      ? shellEnvelope.navigation.roles.map((role) => ({
+          allowedWorkspaces: role.allowedWorkspaces,
+          id: isOperatorRoleId(role.id) ? role.id : DEFAULT_OPERATOR_ROLE_ID,
+          label: role.label,
+          subtitle: role.subtitle,
+        }))
+      : OPERATOR_ROLES;
+  }, [shellEnvelope.navigation.roles]);
+
+  const activeRole = useMemo(() => {
+    return rolesForShell.find((role) => role.id === activeRoleId) ?? getOperatorRole(activeRoleId);
+  }, [activeRoleId, rolesForShell]);
+
+  const workspaceNavItems = useMemo(() => {
+    return shellEnvelope.navigation.workspaces.length ? shellEnvelope.navigation.workspaces : WORKSPACES;
+  }, [shellEnvelope.navigation.workspaces]);
+
+  const activeWorkspace = getWorkspace(activeWorkspaceId);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -344,6 +145,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       targetWorkspaceId = storedWorkspace.id;
     }
 
+    const entity = searchParams && typeof searchParams.entity === "string" ? searchParams.entity : null;
+    const tab = searchParams && typeof searchParams.tab === "string" ? searchParams.tab : "overview";
+
     if (isWorkspaceAllowed(storedRole, targetWorkspaceId)) {
       setActiveWorkspaceId(targetWorkspaceId);
       window.sessionStorage.setItem(workspaceStorageKey, targetWorkspaceId);
@@ -351,7 +155,33 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
       window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
     }
+    setSelectedEntityId(entity);
+    setActiveTabId(tab);
+    setHasHydratedPreferences(true);
   }, [searchParams?.ws]);
+
+  useEffect(() => {
+    if (!hasHydratedPreferences) return;
+
+    async function loadShellEnvelope() {
+      try {
+        const headers = getSecurityHeaders(activeRoleId);
+        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", { headers });
+        if (bootstrapRes.ok) {
+          applyOperatorEnvelope(await bootstrapRes.json());
+        }
+
+        const todayRes = await fetch("/api/v1/operator/today", { headers });
+        if (todayRes.ok) {
+          applyOperatorEnvelope(await todayRes.json());
+        }
+      } catch (err) {
+        console.error("Error loading operator shell envelope:", err);
+      }
+    }
+
+    loadShellEnvelope();
+  }, [activeRoleId, hasHydratedPreferences]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -360,12 +190,66 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  const queueForRole = useMemo(() => {
-    return liveWorkQueue.filter((item) => item.workspace === "today" || isWorkspaceAllowed(activeRole, item.workspace));
-  }, [activeRole, liveWorkQueue]);
+  useEffect(() => {
+    setSearchActiveIndex(0);
+  }, [searchValue]);
+
+  const searchMatches = useMemo(() => {
+    const normalized = searchValue.trim().toLocaleLowerCase();
+    if (!normalized) return shellEnvelope.search.items.slice(0, 6);
+    return shellEnvelope.search.items
+      .filter((item) =>
+        [item.label, item.description, item.entityId, item.keywords ?? ""].join(" ").toLocaleLowerCase().includes(normalized),
+      )
+      .slice(0, 8);
+  }, [searchValue, shellEnvelope.search.items]);
 
   function showToast(message: string) {
     setToast(message);
+  }
+
+  function updateDeepLink(target: ShellTarget) {
+    if (typeof window === "undefined") return;
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("ws", target.workspace);
+    if (target.entityId) {
+      nextUrl.searchParams.set("entity", target.entityId);
+    } else {
+      nextUrl.searchParams.delete("entity");
+    }
+    if (target.tab) {
+      nextUrl.searchParams.set("tab", target.tab);
+    } else {
+      nextUrl.searchParams.delete("tab");
+    }
+    window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}`);
+  }
+
+  function handleTargetSelect(target: ShellTarget, label: string) {
+    const workspaceId = isWorkspaceId(target.workspace) ? target.workspace : DEFAULT_WORKSPACE_ID;
+    const workspace = getWorkspace(workspaceId);
+
+    if (!isWorkspaceAllowed(activeRole, workspaceId)) {
+      showToast(`${activeRole.label} 暫無 ${workspace.label} 權限`);
+      return;
+    }
+
+    setActiveWorkspaceId(workspaceId);
+    setSelectedEntityId(target.entityId ?? null);
+    setActiveTabId(target.tab ?? "overview");
+    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
+    updateDeepLink({ ...target, workspace: workspaceId });
+    setIsSearchOpen(false);
+    setSearchValue("");
+
+    if (workspaceId === "store") {
+      const issue = liveIssues.find((item) => item.id === target.entityId);
+      setSelectedStoreOpsIssue(issue);
+    } else {
+      setActiveStoreOpsDialog(null);
+    }
+
+    showToast(`${label} opened: ${workspace.label}${target.tab ? ` / ${target.tab}` : ""}`);
   }
 
   async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
@@ -384,15 +268,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       });
       if (res.ok) {
         showToast("決策已送出");
-        const freshRes = await fetch("/api/v1/operator/bootstrap", {
-          headers: getSecurityHeaders(activeRoleId),
-        });
-        if (freshRes.ok) {
-          const freshData = await freshRes.json();
-          if (freshData.decisions) setLiveDecisions(freshData.decisions);
-          if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
-          if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
-        }
+        applyOperatorEnvelope(await res.json());
       }
     } catch (err) {
       console.error("Error submitting approval decision:", err);
@@ -409,6 +285,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
     setActiveWorkspaceId(workspaceId);
     window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
+    setSelectedEntityId(null);
+    setActiveTabId("overview");
+    updateDeepLink({ workspace: workspaceId, tab: "overview" });
     if (workspaceId !== "store") {
       setActiveStoreOpsDialog(null);
     }
@@ -427,7 +306,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     if (!isWorkspaceAllowed(nextRole, activeWorkspaceId)) {
       setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
       window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
+      updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
     }
+    setSelectedEntityId(null);
+    setActiveTabId("overview");
 
     showToast(`已切換為 ${nextRole.label}`);
   }
@@ -437,13 +319,53 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     window.sessionStorage.removeItem(workspaceStorageKey);
     setActiveRoleId(DEFAULT_OPERATOR_ROLE_ID);
     setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
+    setSelectedEntityId(null);
+    setActiveTabId("overview");
     setSearchValue("");
+    updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
     showToast("POC session 已重置為營運主管 Today");
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
     setSelectedStoreOpsIssue(issue);
     setActiveStoreOpsDialog(dialog);
+  }
+
+  useEffect(() => {
+    function handleGlobalKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+        event.preventDefault();
+        setIsSearchOpen(true);
+        searchInputRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
+  function handleSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSearchActiveIndex((index) => Math.min(index + 1, Math.max(searchMatches.length - 1, 0)));
+      setIsSearchOpen(true);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSearchActiveIndex((index) => Math.max(index - 1, 0));
+      setIsSearchOpen(true);
+      return;
+    }
+    if (event.key === "Escape") {
+      setIsSearchOpen(false);
+      return;
+    }
+    if (event.key === "Enter" && searchMatches[searchActiveIndex]) {
+      event.preventDefault();
+      const selected = searchMatches[searchActiveIndex];
+      handleTargetSelect(selected.target, selected.entityId);
+    }
   }
 
   return (
@@ -459,9 +381,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         </div>
 
         <nav className={styles.workspaceNav} aria-label="Operator workspaces">
-          {WORKSPACES.map((workspace) => {
-            const isActive = activeWorkspaceId === workspace.id;
-            const isLocked = !isWorkspaceAllowed(activeRole, workspace.id);
+          {workspaceNavItems.map((workspace) => {
+            const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
+            const isActive = activeWorkspaceId === workspaceId;
+            const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
 
             return (
               <button
@@ -473,7 +396,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                   isLocked ? styles.workspaceNavItem_locked : "",
                 ].join(" ")}
                 key={workspace.id}
-                onClick={() => handleWorkspaceClick(workspace.id)}
+                onClick={() => handleWorkspaceClick(workspaceId)}
                 title={isLocked ? `${activeRole.label} locked` : workspace.description}
                 type="button"
               >
@@ -488,11 +411,49 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           <label className={styles.searchBox}>
             <span aria-hidden="true">/</span>
             <input
+              aria-activedescendant={
+                isSearchOpen && searchMatches[searchActiveIndex] ? `operator-search-${searchMatches[searchActiveIndex].id}` : undefined
+              }
+              aria-controls="operator-search-results"
               aria-label="Global search"
-              onChange={(event) => setSearchValue(event.target.value)}
+              aria-expanded={isSearchOpen}
+              aria-haspopup="listbox"
+              onBlur={() => window.setTimeout(() => setIsSearchOpen(false), 120)}
+              onChange={(event) => {
+                setSearchValue(event.target.value);
+                setIsSearchOpen(true);
+              }}
+              onFocus={() => setIsSearchOpen(true)}
+              onKeyDown={handleSearchKeyDown}
               placeholder="搜尋門市、案件、物件..."
+              ref={searchInputRef}
+              role="combobox"
               value={searchValue}
             />
+            {isSearchOpen && searchMatches.length ? (
+              <div className={styles.searchResults} id="operator-search-results" role="listbox">
+                {searchMatches.map((item, index) => (
+                  <button
+                    aria-selected={index === searchActiveIndex}
+                    className={index === searchActiveIndex ? styles.searchResult_active : styles.searchResult}
+                    data-target-entity={item.target.entityId}
+                    data-target-tab={item.target.tab}
+                    data-target-workspace={item.target.workspace}
+                    id={`operator-search-${item.id}`}
+                    key={item.id}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      handleTargetSelect(item.target, item.entityId);
+                    }}
+                    role="option"
+                    type="button"
+                  >
+                    <strong>{item.label}</strong>
+                    <span>{item.description}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </label>
 
           <div className={styles.popoverAnchor}>
@@ -503,13 +464,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               size="sm"
               variant="ghost"
             >
-              ! 3
+              ! {shellEnvelope.header.counts.notifications}
             </Button>
             {isNotificationOpen ? (
               <div className={styles.notificationPanel}>
                 <div className={styles.popoverTitle}>Notifications</div>
-                {notifications.map((notification) => (
-                  <article className={styles.notificationItem} key={notification.title}>
+                {liveNotifications.map((notification) => (
+                  <article className={styles.notificationItem} key={notification.id ?? notification.title}>
                     <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
                     <p>{notification.detail}</p>
                   </article>
@@ -520,10 +481,20 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
           <button
             className={styles.approvalChip}
+            data-testid="operator-approval-count"
             onClick={() => handleWorkspaceClick("govern")}
             type="button"
           >
-            待核准 <strong>5</strong>
+            待核准 <strong>{shellEnvelope.header.counts.approvals}</strong>
+          </button>
+
+          <button
+            className={styles.taskCenterChip}
+            data-testid="operator-task-center-count"
+            onClick={() => handleWorkspaceClick("today")}
+            type="button"
+          >
+            Task Center <strong>{shellEnvelope.header.counts.taskCenter}</strong>
           </button>
 
           <div className={styles.popoverAnchor}>
@@ -538,7 +509,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             {isRoleMenuOpen ? (
               <div className={styles.roleMenu}>
                 <div className={styles.popoverTitle}>Role switcher</div>
-                {OPERATOR_ROLES.map((role) => (
+                {rolesForShell.map((role) => (
                   <button
                     className={role.id === activeRole.id ? styles.roleOption_active : styles.roleOption}
                     key={role.id}
@@ -577,7 +548,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       <div className={styles.pocBanner}>
         <div>
           <strong>• POC Demo</strong>
-          <span>資料為 mock，操作僅保存在本 session，用於驗證流程與使用情境。</span>
+          <span>Shell、Today、通知與核准數字由 Operator API envelope 驅動；寫入後即時刷新本 session。</span>
         </div>
         <Button onClick={handleReset} size="sm" variant="secondary">
           重設示範資料
@@ -586,16 +557,18 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <main className={styles.shell}>
         {activeWorkspaceId === "today" ? (
-          <DesignTodayWorkspace
-            onQueueSelect={(workspaceId) => handleWorkspaceClick(workspaceId)}
-            kpis={liveKpis}
-            todayRows={queueForRole}
-            decisions={liveDecisions}
-            riskStores={liveRiskRows}
-            auditFeed={liveAuditFeed}
+          <ApiTodayWorkspace
+            envelope={shellEnvelope}
+            onApprovalDecision={(approvalId, status, payload) => handleApprovalDecision(approvalId, status, payload)}
+            onTargetSelect={handleTargetSelect}
           />
         ) : activeWorkspaceId === "store" ? (
-          <DesignStoreOpsWorkspace onOpenWorkflow={openStoreOpsWorkflow} issues={liveIssues} />
+          <DesignStoreOpsWorkspace
+            initialIssueId={selectedEntityId ?? undefined}
+            initialTabId={activeTabId}
+            onOpenWorkflow={openStoreOpsWorkflow}
+            issues={liveIssues}
+          />
         ) : activeWorkspaceId === "network" ? (
           <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
             <NetworkFindAreasWorkspace
@@ -668,21 +641,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                   body: JSON.stringify(event.payload),
                 });
                 if (res.ok) {
-                  const data = await res.json();
-                  if (data.workQueue) setLiveWorkQueue(data.workQueue);
-                  if (data.decisions) setLiveDecisions(data.decisions);
-                  if (data.auditFeed) setLiveAuditFeed(data.auditFeed);
-                  // Refresh bootstrap
-                  const freshRes = await fetch("/api/v1/operator/bootstrap", {
-                    headers: getSecurityHeaders(activeRoleId),
-                  });
-                  if (freshRes.ok) {
-                    const freshData = await freshRes.json();
-                    if (freshData.workQueue) setLiveWorkQueue(freshData.workQueue);
-                    if (freshData.decisions) setLiveDecisions(freshData.decisions);
-                    if (freshData.auditFeed) setLiveAuditFeed(freshData.auditFeed);
-                    if (freshData.issues) setLiveIssues(freshData.issues);
-                  }
+                  applyOperatorEnvelope(await res.json());
                 }
               } catch (err) {
                 console.error("Error submitting workflow write:", err);
@@ -722,114 +681,6 @@ function WorkspaceChrome({
         </div>
       </div>
       {children}
-    </>
-  );
-}
-
-function TodayWorkspace({
-  onQueueSelect,
-  queueRows,
-}: {
-  onQueueSelect: (workspaceId: WorkspaceId) => void;
-  queueRows: typeof workQueue;
-}) {
-  return (
-    <>
-      <section className={styles.metricGrid} aria-label="Today KPI cards">
-        {kpis.map((metric) => (
-          <MetricCard
-            delta={metric.delta}
-            key={metric.label}
-            label={metric.label}
-            meta={metric.meta}
-            tone={metric.tone}
-            value={metric.value}
-          />
-        ))}
-      </section>
-
-      <div className={styles.todayGrid}>
-        <div className={styles.todayPrimary}>
-          <SectionPanel
-            actions={<Chip tone="danger">{queueRows.length} urgent</Chip>}
-            eyebrow="Role-aware queue"
-            title="Today most important"
-          >
-            <div className={styles.queueList}>
-              {queueRows.map((item) => (
-                <QueueRow
-                  description={item.description}
-                  id={item.id}
-                  key={item.id}
-                  meta={item.meta}
-                  onClick={() => onQueueSelect(item.workspace)}
-                  owner={item.owner}
-                  status={item.status}
-                  time={item.time}
-                  title={item.title}
-                  tone={item.tone}
-                />
-              ))}
-            </div>
-          </SectionPanel>
-
-          <div className={styles.lowerGrid}>
-            <SectionPanel eyebrow="Store signal" title="Risk snapshot">
-              <div className={styles.riskList}>
-                {riskRows.map((row) => (
-                  <RiskRow key={row.label} label={row.label} score={row.score} signal={row.signal} tone={row.tone} />
-                ))}
-              </div>
-            </SectionPanel>
-
-            <SectionPanel eyebrow="Evidence health" title="Operational signals">
-              <div className={styles.evidenceGrid}>
-                <EvidenceCard label="Data freshness" tone="success" value="06:00">
-                  ForecastOps, payment, review connectors refreshed.
-                </EvidenceCard>
-                <EvidenceCard label="Camera privacy" tone="warning" value="Locked">
-                  Purpose flow required before any media surface.
-                </EvidenceCard>
-                <EvidenceCard label="Model confidence" tone="info" value="0.84">
-                  8 recommendations above confidence threshold.
-                </EvidenceCard>
-              </div>
-            </SectionPanel>
-          </div>
-        </div>
-
-        <aside className={styles.todayRail}>
-          <SectionPanel eyebrow="Approval center" title="Decision rail">
-            <div className={styles.decisionList}>
-              {decisions.map((decision) => (
-                <DecisionCard
-                  cta={decision.cta}
-                  id={decision.id}
-                  key={decision.id}
-                  meta={decision.meta}
-                  status={decision.status}
-                  title={decision.title}
-                  tone={decision.tone}
-                />
-              ))}
-            </div>
-          </SectionPanel>
-
-          <SectionPanel eyebrow="Traceability" title="Recent audit feed">
-            <div className={styles.auditList}>
-              {auditFeed.map((event) => (
-                <AuditRow
-                  actor={event.actor}
-                  category={event.category}
-                  detail={event.detail}
-                  key={`${event.time}-${event.category}`}
-                  time={event.time}
-                />
-              ))}
-            </div>
-          </SectionPanel>
-        </aside>
-      </div>
     </>
   );
 }
