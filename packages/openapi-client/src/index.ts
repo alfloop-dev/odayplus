@@ -79,6 +79,38 @@ export type AdliftReport = {
   [key: string]: unknown;
 };
 
+export type ForecastAlert = {
+  alert_id: string;
+  store_id: string;
+  alert_level: "green" | "yellow" | "orange" | "red" | string;
+  alert_reason_code?: string;
+  evidence_json?: Record<string, unknown>;
+  opened_at?: string;
+  closed_at?: string | null;
+  status: string;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  acknowledgement_note?: string | null;
+  [key: string]: unknown;
+};
+
+export type SourceFreshnessEvidence = {
+  provider_id: string;
+  source_snapshot_id: string;
+  data_status: string;
+  provider_observed_at?: string | null;
+  ingested_at?: string | null;
+  freshness_sla_seconds: number;
+  correlation_id: string;
+  quality_flags?: string[];
+  [key: string]: unknown;
+};
+
+export type ExternalDataFreshnessResponse = {
+  freshness: SourceFreshnessEvidence[];
+  correlation_id?: string;
+};
+
 
 // ---------------------------------------------------------------------------
 // Expansion, SiteScore, NetPlan, LearningHub types (from dev)
@@ -429,6 +461,18 @@ export class OdpApiClient {
 
   listAdliftReports(): Promise<ListResponse<AdliftReport>> {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
+  }
+
+  listForecastAlerts(
+    options: { level?: string } = {},
+  ): Promise<ListResponse<ForecastAlert>> {
+    return this.request<ListResponse<ForecastAlert>>("/forecastops/alerts", {
+      query: { level: options.level },
+    });
+  }
+
+  listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
+    return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
   }
 
 
