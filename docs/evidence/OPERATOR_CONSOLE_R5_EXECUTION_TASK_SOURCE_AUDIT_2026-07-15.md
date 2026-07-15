@@ -16,6 +16,8 @@ longer authorized from package 6.
 |---|---|---|
 | `ODP-OC-R5-000` | Archive and source publication | Direct package 7 manifest and interactive source |
 | `ODP-OC-R5-001` | Assisted intake product implementation | Interactive source, R5 summary, UX requirement, and ODP-EXT-002 |
+| `ODP-OC-R5-004` | Assisted-listing functional product E2E validation | Package 7 / R5 functional specifications and ODP-EXT-002-R5-ADDENDUM.md |
+| `ODP-OC-R5-005` | Assisted-listing retrieval security validation | Package 7 / R5 security requirements and ODP-EXT-002-R5-ADDENDUM.md |
 | `ODP-OC-R5-002` | Product E2E, visual, a11y, regression gate | Package 7 SHA and 37 labels |
 | `ODP-OC-R5-003` | Staging, rollback, release | Package 7 release provenance and R5 gate dependency |
 | `ODP-EXT-002` | Historical ingestion contract | Preserved unchanged; R5 requirements are isolated in `ODP-EXT-002-R5-ADDENDUM.md` and owned by R5-001 |

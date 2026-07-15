@@ -25,6 +25,20 @@
       "release_authority": false
     },
     {
+      "task_id": "ODP-OC-R5-004",
+      "role": "assisted_listing_functional_product_e2e_validation",
+      "source_alignment": "package_7_interactive_plus_requirements_plus_ODP-EXT-002",
+      "required_screen_label_count": 5,
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-005",
+      "role": "assisted_listing_retrieval_security_validation",
+      "source_alignment": "package_7_interactive_plus_requirements_plus_ODP-EXT-002",
+      "required_screen_label_count": 5,
+      "release_authority": false
+    },
+    {
       "task_id": "ODP-OC-R5-002",
       "role": "product_visual_accessibility_and_regression_gate",
       "source_alignment": "package_7_hash_and_37_labels",
