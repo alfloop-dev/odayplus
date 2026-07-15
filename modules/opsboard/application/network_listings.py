@@ -204,13 +204,274 @@ def _seed_state() -> dict[str, Any]:
 class NetworkListingService:
     """Application service for R4 Listing Radar intake actions."""
 
-    def __init__(self) -> None:
+    def __init__(self, listing_repository: Any | None = None, document_store: Any | None = None) -> None:
+        self._listing_repository = listing_repository
+        self._document_store = document_store
         self._state = _seed_state()
         self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._load_intakes()
+        self._load_idempotency_cache()
+        self._load_listings()
+        self._load_candidates()
+
+    def _load_listings(self) -> None:
+        if self._listing_repository is not None:
+            repo_listings = self._listing_repository.list_listings()
+            if repo_listings:
+                self._state["listings"] = []
+                for lst in repo_listings:
+                    self._state["listings"].append(self._listing_to_dict(lst))
+            else:
+                for lst_dict in self._state["listings"]:
+                    lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
+                    self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+
+    def _load_candidates(self) -> None:
+        if self._listing_repository is not None:
+            repo_candidates = self._listing_repository.list_candidates()
+            if repo_candidates:
+                self._state["candidates"] = []
+                for cand in repo_candidates:
+                    self._state["candidates"].append(self._candidate_to_dict(cand))
+            else:
+                for cand_dict in self._state["candidates"]:
+                    cand_obj = self._dict_to_candidate(cand_dict)
+                    self._listing_repository.save_candidate(cand_obj)
+
+    def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
+        if self._document_store is not None:
+            meta = self._document_store.get("operator.listing_metadata", listing_id)
+            if meta:
+                return meta
+        return {}
+
+    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
+        if self._document_store is not None:
+            self._document_store.put("operator.listing_metadata", listing_id, metadata)
+
+    def _get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
+        if self._document_store is not None:
+            meta = self._document_store.get("operator.candidate_metadata", candidate_id)
+            if meta:
+                return meta
+        return {}
+
+    def _save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
+        if self._document_store is not None:
+            self._document_store.put("operator.candidate_metadata", candidate_id, metadata)
+
+    def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
+        res = {
+            "id": lst.listing_id,
+            "sourceId": lst.source_id,
+            "sourceListingId": lst.source_listing_id,
+            "status": lst.listing_status,
+            "rentPerMonth": int(lst.rent_amount),
+            "areaPing": lst.area_ping,
+            "floor": lst.floor,
+            "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
+            "geocodeConfidence": lst.confidence,
+            "sourceUrl": lst.snapshot_id,
+        }
+        meta = self._get_listing_metadata(lst.listing_id)
+        if meta:
+            res.update(meta)
+        else:
+            for item in _seed_state()["listings"]:
+                if item["id"] == lst.listing_id:
+                    for k, v in item.items():
+                        if k not in res:
+                            res[k] = v
+                    break
+        return res
+
+    def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
+        from shared.domain.models import Listing, AddressLocation
+        from modules.listing.domain.models import ListingDedupKey
+        lst = Listing(
+            listing_id=d["id"],
+            source_listing_id=d["sourceListingId"],
+            source_id=d["sourceId"],
+            listing_status=d["status"],
+            rent_amount=float(d["rentPerMonth"]),
+            area_ping=float(d["areaPing"]),
+            floor=d["floor"],
+            frontage_m=float(d.get("frontageMeters") or 0),
+            confidence=float(d.get("geocodeConfidence") or 1.0),
+            snapshot_id=d.get("sourceUrl") or "",
+        )
+        addr = AddressLocation(
+            address_id=f"ADDR-{d['id']}",
+            raw_address=d.get("address") or "",
+            normalized_address=d.get("address") or "",
+            geocode_confidence=float(d.get("geocodeConfidence") or 1.0),
+        )
+        key = ListingDedupKey(
+            source_id=d["sourceId"],
+            source_listing_id=d["sourceListingId"],
+            normalized_address=d.get("address") or "",
+            rent_amount=float(d["rentPerMonth"]),
+            area_ping=float(d["areaPing"]),
+        )
+        return lst, addr, key
+
+    def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
+        res = {
+            "id": cand.candidate_site.candidate_site_id,
+            "listingId": cand.listing.listing_id,
+            "heatZoneId": cand.heat_zone_id,
+            "title": f"{cand.listing.listing_id} 候選點",
+            "address": cand.address.raw_address,
+            "status": cand.status.value if hasattr(cand.status, "value") else str(cand.status),
+            "score": 68,
+            "recommendation": "WAIT",
+            "modelVersion": "SiteScore v2.3",
+            "datasetSnapshotId": "FS-20260704-0600",
+            "missingData": [],
+        }
+        meta = self._get_candidate_metadata(cand.candidate_site.candidate_site_id)
+        if meta:
+            res.update(meta)
+        else:
+            if res["id"] == "CS-1001":
+                res["title"] = "信義松仁候選點"
+                res["score"] = 82
+                res["recommendation"] = "GO"
+                res["reviewId"] = "RV-1001"
+        return res
+
+    def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
+        from shared.domain.models import CandidateSite
+        from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
+        listing = self._listing(d["listingId"])
+        lst_obj, addr_obj, _ = self._dict_to_listing(listing)
+        
+        cand_site = CandidateSite(
+            candidate_site_id=d["id"],
+            listing_id=d["listingId"],
+            address_id=addr_obj.address_id,
+            site_status=d["status"],
+        )
+        return CandidateSiteDraft(
+            listing=lst_obj,
+            address=addr_obj,
+            candidate_site=cand_site,
+            heat_zone_id=d["heatZoneId"],
+            listing_source=listing.get("sourceId") or "",
+            status=ListingPipelineStatus.CANDIDATE,
+        )
+
+    def _sync_listing_to_repo(self, listing_id: str) -> None:
+        if self._listing_repository is not None:
+            listing = self._listing(listing_id)
+            lst_obj, addr_obj, key_obj = self._dict_to_listing(listing)
+            self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+            
+            meta = {
+                "heatZoneId": listing.get("heatZoneId"),
+                "hardRuleFailures": listing.get("hardRuleFailures"),
+                "hardRuleSummary": listing.get("hardRuleSummary"),
+                "sourceEvidence": listing.get("sourceEvidence"),
+                "fitScore": listing.get("fitScore"),
+                "firstSeenAt": listing.get("firstSeenAt"),
+            }
+            self._save_listing_metadata(listing_id, meta)
+
+    def _sync_candidate_to_repo(self, candidate_id: str) -> None:
+        if self._listing_repository is not None:
+            candidate = None
+            for cand in self._state["candidates"]:
+                if cand["id"] == candidate_id:
+                    candidate = cand
+                    break
+            if candidate:
+                cand_obj = self._dict_to_candidate(candidate)
+                self._listing_repository.save_candidate(cand_obj)
+                
+                meta = {
+                    "title": candidate.get("title"),
+                    "score": candidate.get("score"),
+                    "recommendation": candidate.get("recommendation"),
+                    "modelVersion": candidate.get("modelVersion"),
+                    "datasetSnapshotId": candidate.get("datasetSnapshotId"),
+                    "missingData": candidate.get("missingData"),
+                    "reviewId": candidate.get("reviewId"),
+                }
+                self._save_candidate_metadata(candidate_id, meta)
+
+    def _load_intakes(self) -> None:
+        if self._document_store is not None:
+            intakes = self._document_store.list_all("operator.assisted_intakes")
+            self._state["assistedIntakes"] = intakes
+        else:
+            self._state.setdefault("assistedIntakes", [])
+
+    def _load_idempotency_cache(self) -> None:
+        self._idempotency_cache = {}
+        if self._document_store is not None:
+            items = self._document_store.list_all("operator.idempotency_cache")
+            for item in items:
+                action = item.get("action")
+                key = item.get("key")
+                response = item.get("response")
+                if action is not None and key is not None:
+                    self._idempotency_cache[(action, key)] = response
+
+    def _save_idempotency(self, action: str, key: str, response: dict[str, Any]) -> None:
+        self._idempotency_cache[(action, key)] = _copy(response)
+        if self._document_store is not None:
+            self._document_store.put(
+                "operator.idempotency_cache",
+                f"{action}:{key}",
+                {
+                    "action": action,
+                    "key": key,
+                    "response": response,
+                }
+            )
+
+    def _save_intake(self, intake: dict[str, Any]) -> None:
+        self._state.setdefault("assistedIntakes", [])
+        found = False
+        for idx, item in enumerate(self._state["assistedIntakes"]):
+            if item["id"] == intake["id"]:
+                self._state["assistedIntakes"][idx] = intake
+                found = True
+                break
+        if not found:
+            self._state["assistedIntakes"].append(intake)
+
+        if self._document_store is not None:
+            self._document_store.put("operator.assisted_intakes", intake["id"], intake)
 
     def reset(self) -> dict[str, Any]:
         self._state = _seed_state()
         self._idempotency_cache = {}
+        if self._document_store is not None:
+            # Clean up intakes from database
+            self._document_store.delete_collection("operator.assisted_intakes")
+            self._document_store.delete_collection("operator.idempotency_cache")
+            self._document_store.delete_collection("operator.listing_metadata")
+            self._document_store.delete_collection("operator.candidate_metadata")
+            self._document_store.delete_collection("listing.listings")
+            self._document_store.delete_collection("listing.addresses")
+            self._document_store.delete_collection("listing.candidates")
+            self._document_store.delete_collection("listing.dedup_keys")
+            self._state["assistedIntakes"] = []
+        else:
+            self._state["assistedIntakes"] = []
+
+        if self._listing_repository is not None:
+            if hasattr(self._listing_repository, "listings"):
+                self._listing_repository.listings.clear()
+                self._listing_repository.addresses.clear()
+                self._listing_repository.candidates.clear()
+                self._listing_repository.source_keys.clear()
+                self._listing_repository.property_keys.clear()
+            for lst_dict in self._state["listings"]:
+                lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
+                self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+
         return self.snapshot()
 
     def snapshot(
@@ -222,6 +483,7 @@ class NetworkListingService:
     ) -> dict[str, Any]:
         selected_id = selected_heat_zone_id or "HZ-01"
         active_lens = lens or "demand"
+        self._state.setdefault("assistedIntakes", [])
         return {
             "source": "api",
             "heatZones": _copy(self._state["heatZones"]),
@@ -229,6 +491,7 @@ class NetworkListingService:
             "listings": _copy(self._state["listings"]),
             "candidates": _copy(self._state["candidates"]),
             "siteReviews": _copy(self._state["siteReviews"]),
+            "assistedIntakes": _copy(self._state["assistedIntakes"]),
             "expansionSteps": self._expansion_steps(selected_id=selected_id),
             "selectedHeatZoneId": selected_id,
             "selectedLens": active_lens,
@@ -239,6 +502,7 @@ class NetworkListingService:
                 "listings": len(self._state["listings"]),
                 "candidates": len(self._state["candidates"]),
                 "siteReviews": len(self._state["siteReviews"]),
+                "assistedIntakes": len(self._state["assistedIntakes"]),
             },
         }
 
@@ -251,6 +515,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to convert listing")
+
         cache_key = ("convert", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
             return _copy(self._idempotency_cache[cache_key])
@@ -298,6 +567,9 @@ class NetworkListingService:
         listing["status"] = "candidate"
         listing["candidateId"] = existing["id"]
         listing["convertedAt"] = listing.get("convertedAt") or _now()
+        self._sync_listing_to_repo(listing_id)
+        self._sync_candidate_to_repo(existing["id"])
+
         audit = self._audit(
             action="listing.convert",
             target_id=listing_id,
@@ -318,7 +590,7 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("convert", idempotency_key, result)
         return result
 
     def merge_listing(
@@ -332,6 +604,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
+
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("merge reason is required")
@@ -345,6 +622,9 @@ class NetworkListingService:
         if source_listing_id == target_listing_id:
             raise NetworkListingConflict("source and target listing must be different")
 
+        source_before_status = source.get("status")
+        target_before_evidence = list(target.get("sourceEvidence", []))
+
         source_evidence = list(source.get("sourceEvidence", []))
         target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + source_evidence)
         target["mergedSourceListingIds"] = _dedupe(
@@ -357,6 +637,8 @@ class NetworkListingService:
         source["mergedIntoId"] = target_listing_id
         source["mergedAt"] = source.get("mergedAt") or _now()
         source["mergeReason"] = reason
+        self._sync_listing_to_repo(source_listing_id)
+        self._sync_listing_to_repo(target_listing_id)
 
         audit = self._audit(
             action="listing.merge",
@@ -368,6 +650,15 @@ class NetworkListingService:
                 "sourceListingId": source_listing_id,
                 "sourceEvidenceRetained": len(source_evidence),
                 "targetEvidenceCount": len(target["sourceEvidence"]),
+                "before": {
+                    "sourceStatus": source_before_status,
+                    "targetEvidenceCount": len(target_before_evidence),
+                },
+                "after": {
+                    "sourceStatus": "duplicate",
+                    "targetEvidenceCount": len(target["sourceEvidence"]),
+                },
+                "riskSummary": f"Merge source {source_listing_id} into target {target_listing_id}.",
             },
         )
         result = {
@@ -379,7 +670,7 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=target["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("merge", idempotency_key, result)
         return result
 
     def archive_listing(
@@ -392,6 +683,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
+
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("archive reason is required")
@@ -401,9 +697,13 @@ class NetworkListingService:
             return _copy(self._idempotency_cache[cache_key])
 
         listing = self._listing(listing_id)
+        before_status = listing.get("status")
+
         listing["status"] = "archived"
         listing["archivedReason"] = reason
         listing["archivedAt"] = listing.get("archivedAt") or _now()
+        self._sync_listing_to_repo(listing_id)
+
         audit = self._audit(
             action="listing.archive",
             target_id=listing_id,
@@ -414,6 +714,13 @@ class NetworkListingService:
                 "reason": reason,
                 "hardRuleFailures": list(listing.get("hardRuleFailures", [])),
                 "sourceEvidenceCount": len(listing.get("sourceEvidence", [])),
+                "before": {
+                    "status": before_status,
+                },
+                "after": {
+                    "status": "archived",
+                },
+                "riskSummary": f"Archive listing {listing_id}. Reason: {reason}",
             },
         )
         result = {
@@ -423,8 +730,668 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("archive", idempotency_key, result)
         return result
+
+    def submit_intake(
+        self,
+        *,
+        url: str,
+        heat_zone_id: str | None,
+        actor_role_id: str,
+        actor_name: str | None,
+        idempotency_key: str | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        cache_key = ("submit_intake", idempotency_key or "")
+        if idempotency_key and cache_key in self._idempotency_cache:
+            return _copy(self._idempotency_cache[cache_key])
+
+        from modules.external_data.application.assisted_intake import (
+            validate_url,
+            normalize_url,
+            resolve_source_policy,
+            retrieve,
+            parse_snapshot,
+            match_listing,
+            effective_fields,
+            content_fingerprint,
+            PARSER_VERSION,
+        )
+
+        url = url.strip()
+        validate_url(url)
+        canon_url = normalize_url(url)
+
+        self._state.setdefault("assistedIntakes", [])
+        for intake in self._state["assistedIntakes"]:
+            if intake.get("canonicalUrl") == canon_url:
+                if intake.get("stage") in {"NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"}:
+                    # Exact duplicate before retrieval (terminal state idempotency)
+                    return _copy(intake)
+                else:
+                    raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
+
+        policy = resolve_source_policy(url)
+        intake_id = f"IN-{3001 + len(self._state['assistedIntakes'])}"
+
+        intake = {
+            "id": intake_id,
+            "originalUrl": url,
+            "canonicalUrl": canon_url,
+            "submitter": actor_name or "林曉青（展店）",
+            "owner": actor_name or "林曉青",
+            "heatZoneId": heat_zone_id,
+            "stage": "SUBMITTED",
+            "sourceId": policy.source_id,
+            "policy": policy.policy,
+            "policyLabel": policy.policy_label,
+            "policyReason": policy.policy_reason,
+            "rawSnapshot": None,
+            "snapshotId": None,
+            "capturedAt": None,
+            "parserVersion": PARSER_VERSION,
+            "correlationId": correlation_id,
+            "parsedFields": {},
+            "matchResult": None,
+            "auditEvents": [],
+            "idempotencyKey": idempotency_key,
+        }
+
+        if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:
+            intake["stage"] = "QUARANTINED"
+            intake["matchResult"] = {
+                "outcome": "QUARANTINED",
+                "outcomeLabel": "已隔離",
+                "confidence": 0.0,
+                "targetListingId": None,
+                "agreeingSignals": [],
+                "contradictingSignals": [],
+                "summary": f"依來源政策 {policy.policy} 予以隔離：{policy.policy_reason}",
+            }
+        elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
+            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+        elif policy.policy == "APPROVED_RETRIEVAL":
+            intake["stage"] = "RETRIEVING"
+            retrieval = retrieve(canon_url, policy=policy)
+            if retrieval.ok:
+                intake["stage"] = "PARSING"
+                intake["rawSnapshot"] = retrieval.raw
+                intake["snapshotId"] = retrieval.snapshot_id
+                intake["capturedAt"] = retrieval.captured_at
+                intake["parsedFields"] = parse_snapshot(retrieval)
+
+                effective_vals = effective_fields(intake["parsedFields"])
+
+                from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
+                has_all_required = True
+                for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
+                    val = effective_vals.get(rf)
+                    if val in (None, ""):
+                        has_all_required = False
+                        break
+                    if rf in ("rent", "areaPing"):
+                        try:
+                            if float(val) <= 0:
+                                has_all_required = False
+                                break
+                        except (ValueError, TypeError):
+                            has_all_required = False
+                            break
+
+                if has_all_required:
+                    intake["stage"] = "MATCHING"
+                    fingerprint = content_fingerprint(effective_vals)
+
+                    match_res = match_listing(
+                        values=effective_vals,
+                        canonical_url=canon_url,
+                        source_id=policy.source_id,
+                        fingerprint=fingerprint,
+                        listings=self._get_match_listings(),
+                    )
+                    intake["matchResult"] = match_res.to_dict()
+                    if match_res.outcome == "POSSIBLE_MATCH":
+                        intake["stage"] = "NEEDS_REVIEW"
+                    else:
+                        intake["stage"] = "READY"
+                else:
+                    intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            else:
+                intake["stage"] = "FAILED"
+                intake["failure"] = retrieval.failure.to_dict()
+
+        audit_evt = {
+            "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "occurredAt": _now(),
+            "actorRoleId": actor_role_id,
+            "actorName": actor_name or "Expansion Manager",
+            "action": "intake.create",
+            "targetId": intake_id,
+            "message": f"Intake record {intake_id} created for {url}.",
+            "correlationId": correlation_id,
+            "metadata": {
+                "policy": policy.policy,
+                "stage": intake["stage"],
+                "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
+            }
+        }
+        intake["auditEvents"].append(audit_evt)
+        self._save_intake(intake)
+
+        if idempotency_key:
+            self._save_idempotency("submit_intake", idempotency_key, intake)
+        return _copy(intake)
+
+    def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
+        self._state.setdefault("assistedIntakes", [])
+        intakes = self._state["assistedIntakes"]
+        if selected_heat_zone_id is not None:
+            intakes = [item for item in intakes if item.get("heatZoneId") == selected_heat_zone_id]
+        return _copy(intakes)
+
+    def get_intake(self, intake_id: str) -> dict[str, Any]:
+        self._state.setdefault("assistedIntakes", [])
+        for intake in self._state["assistedIntakes"]:
+            if intake["id"] == intake_id:
+                return _copy(intake)
+        raise NetworkListingNotFound(f"assisted intake record {intake_id} not found")
+
+    def correct_intake(
+        self,
+        *,
+        intake_id: str,
+        fields: dict[str, Any],
+        reason: str | None,
+        actor_role_id: str,
+        actor_name: str | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
+
+        intake = self._listing_intake(intake_id)
+
+        from modules.external_data.application.assisted_intake import (
+            IDENTITY_FIELDS,
+            effective_fields,
+            content_fingerprint,
+            match_listing,
+        )
+
+        requires_reason = False
+        for key in fields:
+            if key in IDENTITY_FIELDS:
+                requires_reason = True
+                break
+        if requires_reason and (not reason or not reason.strip()):
+            raise NetworkListingPolicyError("reason is required for modifying identity-affecting fields")
+
+        corrections_made = []
+        before_after_changes = []
+        for key, val in fields.items():
+            if key not in intake["parsedFields"]:
+                intake["parsedFields"][key] = {
+                    "key": key,
+                    "label": key,
+                    "sourceValue": None,
+                    "normalizedValue": None,
+                    "correctedValue": None,
+                    "correctionReason": None,
+                    "identity": key in IDENTITY_FIELDS,
+                    "lowConfidence": False,
+                }
+            
+            before_val = intake["parsedFields"][key].get("correctedValue") or intake["parsedFields"][key].get("normalizedValue")
+            intake["parsedFields"][key]["correctedValue"] = val
+            intake["parsedFields"][key]["correctionReason"] = reason
+            after_val = val
+            corrections_made.append(f"'{key}' corrected from '{before_val}' to '{after_val}'")
+            before_after_changes.append({
+                "field": key,
+                "before": before_val,
+                "after": val,
+            })
+
+        effective_vals = effective_fields(intake["parsedFields"])
+
+        from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
+        has_all_required = True
+        for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
+            val = effective_vals.get(rf)
+            if val in (None, ""):
+                has_all_required = False
+                break
+            if rf in ("rent", "areaPing"):
+                try:
+                    if float(val) <= 0:
+                        has_all_required = False
+                        break
+                except (ValueError, TypeError):
+                    has_all_required = False
+                    break
+
+        if has_all_required:
+            fingerprint = content_fingerprint(effective_vals)
+            match_res = match_listing(
+                values=effective_vals,
+                canonical_url=intake["canonicalUrl"],
+                source_id=intake["sourceId"],
+                fingerprint=fingerprint,
+                listings=self._get_match_listings(),
+            )
+            intake["matchResult"] = match_res.to_dict()
+            if match_res.outcome == "POSSIBLE_MATCH":
+                intake["stage"] = "NEEDS_REVIEW"
+            else:
+                intake["stage"] = "READY"
+        else:
+            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+
+        audit_evt = {
+            "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "occurredAt": _now(),
+            "actorRoleId": actor_role_id,
+            "actorName": actor_name or "Expansion Manager",
+            "action": "intake.correct",
+            "targetId": intake_id,
+            "message": f"Fields corrected: {'; '.join(corrections_made)}. Reason: {reason}",
+            "correlationId": correlation_id,
+            "metadata": {
+                "fields": list(fields.keys()),
+                "reason": reason,
+                "stage": intake["stage"],
+                "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
+                "beforeAfter": before_after_changes,
+                "riskSummary": f"Manual correction of fields: {', '.join(fields.keys())}.",
+            }
+        }
+        intake["auditEvents"].append(audit_evt)
+        self._save_intake(intake)
+        return _copy(intake)
+
+    def decide_intake(
+        self,
+        *,
+        intake_id: str,
+        action: str,
+        reason: str | None,
+        actor_role_id: str,
+        actor_name: str | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to decide intake")
+
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            raise NetworkListingPolicyError("decision reason is required")
+
+        intake = self._listing_intake(intake_id)
+        action = action.strip().lower()
+
+        if action not in {"create", "revise", "duplicate", "quarantine", "reject"}:
+            raise NetworkListingPolicyError(f"invalid action: {action}")
+
+        from modules.external_data.application.assisted_intake import effective_fields
+        effective_vals = effective_fields(intake["parsedFields"])
+
+        before_stage = intake["stage"]
+        before_after = {"stage": {"before": before_stage}}
+        risk_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
+
+        if action == "create":
+            new_id = f"L-{2031 + len(self._state['listings'])}"
+            new_listing = {
+                "id": new_id,
+                "sourceId": intake["sourceId"],
+                "sourceListingId": effective_vals.get("providerListingId", ""),
+                "heatZoneId": intake["heatZoneId"] or "HZ-01",
+                "address": effective_vals.get("address", ""),
+                "status": "new",
+                "rentPerMonth": effective_vals.get("rent", 0),
+                "areaPing": effective_vals.get("areaPing", 0),
+                "floor": effective_vals.get("floor", ""),
+                "frontageMeters": 5,
+                "geocodeConfidence": 0.9,
+                "hardRuleFailures": [],
+                "hardRuleSummary": "3/3 pass: area, floor, permitted use",
+                "sourceEvidence": [f"EV-{new_id}-RAW", f"EV-{new_id}-GEOCODE"],
+                "fitScore": 70,
+                "firstSeenAt": _now(),
+                "sourceUrl": intake["originalUrl"],
+            }
+            self._state["listings"].append(new_listing)
+            self._sync_listing_to_repo(new_id)
+            intake["stage"] = "READY"
+            if not intake.get("matchResult"):
+                intake["matchResult"] = {
+                    "outcome": "NEW",
+                    "outcomeLabel": "新物件",
+                    "confidence": 1.0,
+                    "targetListingId": new_id,
+                    "agreeingSignals": [],
+                    "contradictingSignals": [],
+                    "summary": f"已手動建立為新物件 {new_id}。"
+                }
+            else:
+                intake["matchResult"]["targetListingId"] = new_id
+                intake["matchResult"]["outcome"] = "NEW"
+                intake["matchResult"]["outcomeLabel"] = "新物件"
+                intake["matchResult"]["summary"] = f"已手動建立為新物件 {new_id}。"
+
+            before_after["stage"]["after"] = "READY"
+            before_after["listings_count"] = {"before": len(self._state["listings"]) - 1, "after": len(self._state["listings"])}
+            risk_summary = f"Created new listing {new_id} from intake {intake_id}."
+            
+        elif action == "revise":
+            target_id = intake["matchResult"].get("targetListingId")
+            if not target_id:
+                raise NetworkListingConflict("no target listing found for revision")
+            target = self._listing(target_id)
+            before_rent = target["rentPerMonth"]
+            before_area = target["areaPing"]
+            before_floor = target["floor"]
+
+            target["rentPerMonth"] = effective_vals.get("rent", target["rentPerMonth"])
+            target["areaPing"] = effective_vals.get("areaPing", target["areaPing"])
+            target["floor"] = effective_vals.get("floor", target["floor"])
+            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-REVISION"])
+            target["status"] = "watching"
+            self._sync_listing_to_repo(target_id)
+            intake["stage"] = "READY"
+            intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
+
+            before_after["stage"]["after"] = "READY"
+            before_after["target_rent"] = {"before": before_rent, "after": target["rentPerMonth"]}
+            before_after["target_area"] = {"before": before_area, "after": target["areaPing"]}
+            before_after["target_floor"] = {"before": before_floor, "after": target["floor"]}
+            risk_summary = f"Revised listing {target_id} from intake {intake_id}."
+
+        elif action == "duplicate":
+            target_id = intake["matchResult"].get("targetListingId")
+            if not target_id:
+                raise NetworkListingConflict("no target listing found for duplicate merge")
+            target = self._listing(target_id)
+            before_evidence_count = len(target.get("sourceEvidence", []))
+
+            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-DUPLICATE"])
+            target["status"] = "watching"
+            self._sync_listing_to_repo(target_id)
+            intake["stage"] = "READY"
+            intake["matchResult"]["summary"] = f"已手動標記為重複並合併至 {target_id}。"
+
+            before_after["stage"]["after"] = "READY"
+            before_after["target_evidence_count"] = {"before": before_evidence_count, "after": len(target["sourceEvidence"])}
+            risk_summary = f"Merged duplicate intake {intake_id} into listing {target_id}."
+
+        elif action == "quarantine":
+            intake["stage"] = "QUARANTINED"
+            if not intake.get("matchResult"):
+                intake["matchResult"] = {
+                    "outcome": "QUARANTINED",
+                    "outcomeLabel": "已隔離",
+                    "confidence": 0.0,
+                    "targetListingId": None,
+                    "agreeingSignals": [],
+                    "contradictingSignals": [],
+                    "summary": f"已手動送交隔離。原因：{reason_text}"
+                }
+            else:
+                intake["matchResult"]["outcome"] = "QUARANTINED"
+                intake["matchResult"]["summary"] = f"已手動送交隔離。原因：{reason_text}"
+
+            before_after["stage"]["after"] = "QUARANTINED"
+            risk_summary = f"Quarantined intake {intake_id}."
+
+        elif action == "reject":
+            intake["stage"] = "FAILED"
+            if not intake.get("matchResult"):
+                intake["matchResult"] = {
+                    "outcome": "QUARANTINED",
+                    "outcomeLabel": "已隔離",
+                    "confidence": 0.0,
+                    "targetListingId": None,
+                    "agreeingSignals": [],
+                    "contradictingSignals": [],
+                    "summary": f"已拒絕此送件。原因：{reason_text}"
+                }
+            else:
+                intake["matchResult"]["summary"] = f"已拒絕此送件。原因：{reason_text}"
+
+            before_after["stage"]["after"] = "FAILED"
+            risk_summary = f"Rejected intake {intake_id}."
+
+        audit_evt = {
+            "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "occurredAt": _now(),
+            "actorRoleId": actor_role_id,
+            "actorName": actor_name or "Expansion Manager",
+            "action": f"intake.decide.{action}",
+            "targetId": intake_id,
+            "message": f"Intake decision '{action}' recorded. Reason: {reason_text}",
+            "correlationId": correlation_id,
+            "metadata": {
+                "decision": action,
+                "reason": reason_text,
+                "stage": intake["stage"],
+                "targetListingId": intake["matchResult"].get("targetListingId"),
+                "beforeAfter": before_after,
+                "riskSummary": risk_summary,
+            }
+        }
+        intake["auditEvents"].append(audit_evt)
+        self._save_intake(intake)
+        return _copy(intake)
+
+    def retry_intake(
+        self,
+        *,
+        intake_id: str,
+        actor_role_id: str,
+        actor_name: str | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        intake = self._listing_intake(intake_id)
+        if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
+            raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
+
+        from modules.external_data.application.assisted_intake import (
+            resolve_source_policy,
+            retrieve,
+            parse_snapshot,
+            match_listing,
+            effective_fields,
+            content_fingerprint,
+        )
+
+        policy = resolve_source_policy(intake["originalUrl"])
+        intake["stage"] = "RETRIEVING"
+        retrieval = retrieve(intake["canonicalUrl"], policy=policy)
+        
+        if retrieval.ok:
+            intake["stage"] = "PARSING"
+            intake["rawSnapshot"] = retrieval.raw
+            intake["snapshotId"] = retrieval.snapshot_id
+            intake["capturedAt"] = retrieval.captured_at
+            
+            preserved_corrections = {
+                k: (v.get("correctedValue"), v.get("correctionReason"))
+                for k, v in intake["parsedFields"].items()
+                if v.get("correctedValue") is not None
+            }
+            
+            intake["parsedFields"] = parse_snapshot(retrieval)
+            for k, (c_val, c_reason) in preserved_corrections.items():
+                if k in intake["parsedFields"]:
+                    intake["parsedFields"][k]["correctedValue"] = c_val
+                    intake["parsedFields"][k]["correctionReason"] = c_reason
+
+            effective_vals = effective_fields(intake["parsedFields"])
+
+            from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
+            has_all_required = True
+            for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
+                val = effective_vals.get(rf)
+                if val in (None, ""):
+                    has_all_required = False
+                    break
+                if rf in ("rent", "areaPing"):
+                    try:
+                        if float(val) <= 0:
+                            has_all_required = False
+                            break
+                    except (ValueError, TypeError):
+                        has_all_required = False
+                        break
+
+            if has_all_required:
+                intake["stage"] = "MATCHING"
+                fingerprint = content_fingerprint(effective_vals)
+                
+                match_res = match_listing(
+                    values=effective_vals,
+                    canonical_url=intake["canonicalUrl"],
+                    source_id=policy.source_id,
+                    fingerprint=fingerprint,
+                    listings=self._get_match_listings(),
+                )
+                intake["matchResult"] = match_res.to_dict()
+                if match_res.outcome == "POSSIBLE_MATCH":
+                    intake["stage"] = "NEEDS_REVIEW"
+                else:
+                    intake["stage"] = "READY"
+            else:
+                intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+        else:
+            intake["stage"] = "FAILED"
+            intake["failure"] = retrieval.failure.to_dict()
+
+        audit_evt = {
+            "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "occurredAt": _now(),
+            "actorRoleId": actor_role_id,
+            "actorName": actor_name or "Expansion Manager",
+            "action": "intake.retry",
+            "targetId": intake_id,
+            "message": f"Retried URL retrieval for {intake['originalUrl']}.",
+            "correlationId": correlation_id,
+            "metadata": {
+                "stage": intake["stage"],
+                "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
+            }
+        }
+        intake["auditEvents"].append(audit_evt)
+        self._save_intake(intake)
+        return _copy(intake)
+
+    def promote_intake(
+        self,
+        *,
+        intake_id: str,
+        reason: str | None = None,
+        actor_role_id: str,
+        actor_name: str | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
+
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            raise NetworkListingPolicyError("promotion reason is required")
+
+        intake = self._listing_intake(intake_id)
+        target_listing_id = intake["matchResult"].get("targetListingId")
+        if not target_listing_id:
+            raise NetworkListingConflict("intake must be resolved to a listing before promotion")
+
+        listing = self._listing(target_listing_id)
+        before_listing_status = listing.get("status")
+        before_candidate_count = len(self._state["candidates"])
+
+        result = self.convert_listing(
+            listing_id=target_listing_id,
+            actor_role_id=actor_role_id,
+            actor_name=actor_name,
+            idempotency_key=f"promote-intake-{intake_id}",
+            correlation_id=correlation_id,
+        )
+        
+        audit_evt = {
+            "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "occurredAt": _now(),
+            "actorRoleId": actor_role_id,
+            "actorName": actor_name or "Expansion Manager",
+            "action": "intake.promote",
+            "targetId": intake_id,
+            "message": f"Promoted target listing {target_listing_id} to candidate. Reason: {reason_text}",
+            "correlationId": correlation_id,
+            "metadata": {
+                "targetListingId": target_listing_id,
+                "candidateId": result["candidate"]["id"],
+                "reason": reason_text,
+                "before": {
+                    "listingStatus": before_listing_status,
+                    "candidateCount": before_candidate_count,
+                },
+                "after": {
+                    "listingStatus": result["listing"]["status"],
+                    "candidateCount": len(self._state["candidates"]),
+                },
+                "riskSummary": f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}.",
+            }
+        }
+        intake["auditEvents"].append(audit_evt)
+        self._save_intake(intake)
+        return result
+
+    def _get_match_listings(self) -> list[dict[str, Any]]:
+        res = []
+        for lst in self._state["listings"]:
+            source_id = lst.get("sourceId", "")
+            source_listing_id = lst.get("sourceListingId", "")
+
+            fp = lst.get("contentFingerprint")
+            if not fp:
+                from modules.external_data.application.assisted_intake import content_fingerprint
+                fields_for_fp = {
+                    "address": lst.get("address", ""),
+                    "floor": lst.get("floor", ""),
+                    "areaPing": lst.get("areaPing"),
+                    "rent": lst.get("rentPerMonth"),
+                    "listingType": lst.get("listingType", "店面"),
+                    "listingStatus": lst.get("listingStatus", "active"),
+                }
+                fp = content_fingerprint(fields_for_fp)
+                lst["contentFingerprint"] = fp
+
+            res.append({
+                "id": lst["id"],
+                "sourceId": source_id,
+                "sourceListingId": source_listing_id,
+                "canonicalUrl": lst.get("sourceUrl", ""),
+                "contentFingerprint": fp,
+                "address": lst.get("address", ""),
+                "floor": lst.get("floor", ""),
+                "areaPing": lst.get("areaPing"),
+                "rentPerMonth": lst.get("rentPerMonth"),
+                "listingType": lst.get("listingType"),
+            })
+        return res
+
+    def _listing_intake(self, intake_id: str) -> dict[str, Any]:
+        self._state.setdefault("assistedIntakes", [])
+        for intake in self._state["assistedIntakes"]:
+            if intake["id"] == intake_id:
+                return intake
+        raise NetworkListingNotFound(f"assisted intake record {intake_id} not found")
 
     def _listing(self, listing_id: str) -> dict[str, Any]:
         for listing in self._state["listings"]:

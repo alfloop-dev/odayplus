@@ -38,6 +38,30 @@ class NetworkListingMergePayload(NetworkListingActorPayload):
     targetListingId: str
 
 
+class IntakeSubmitPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    url: str
+    heatZoneId: str | None = None
+    actorRoleId: str = "expansionManager"
+    actorName: str | None = None
+
+
+class IntakeCorrectPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    fields: dict[str, Any]
+    reason: str | None = None
+    actorRoleId: str = "expansionManager"
+    actorName: str | None = None
+
+
+class IntakeDecidePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str
+    reason: str | None = None
+    actorRoleId: str = "expansionManager"
+    actorName: str | None = None
+
+
 def create_network_listings_sub_router(
     service: NetworkListingService,
     *,
@@ -135,6 +159,151 @@ def create_network_listings_sub_router(
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 idempotency_key=idempotency_key,
+                correlation_id=x_correlation_id,
+            )
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkListingConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # --- Assisted Ingestion (Intake) Routes (ODP-OC-R5-001) ---
+
+    @router.post(
+        "/intake/submit",
+        dependencies=[Depends(require_write_permission_fn)],
+    )
+    def submit_intake(
+        body: IntakeSubmitPayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        try:
+            return service.submit_intake(
+                url=body.url,
+                heat_zone_id=body.heatZoneId,
+                actor_role_id=body.actorRoleId,
+                actor_name=body.actorName,
+                idempotency_key=idempotency_key,
+                correlation_id=x_correlation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkListingConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.get(
+        "/intake",
+        dependencies=[Depends(require_view_permission_fn)],
+    )
+    def list_intakes(
+        selected_heat_zone_id: str | None = Query(default=None, alias="selectedHeatZoneId"),
+    ) -> list[dict[str, Any]]:
+        return service.list_intakes(selected_heat_zone_id=selected_heat_zone_id)
+
+    @router.get(
+        "/intake/{intake_id}",
+        dependencies=[Depends(require_view_permission_fn)],
+    )
+    def get_intake(intake_id: str) -> dict[str, Any]:
+        try:
+            return service.get_intake(intake_id)
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @router.post(
+        "/intake/{intake_id}/correct",
+        dependencies=[Depends(require_write_permission_fn)],
+    )
+    def correct_intake(
+        intake_id: str,
+        body: IntakeCorrectPayload,
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        try:
+            return service.correct_intake(
+                intake_id=intake_id,
+                fields=body.fields,
+                reason=body.reason,
+                actor_role_id=body.actorRoleId,
+                actor_name=body.actorName,
+                correlation_id=x_correlation_id,
+            )
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkListingConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post(
+        "/intake/{intake_id}/decide",
+        dependencies=[Depends(require_write_permission_fn)],
+    )
+    def decide_intake(
+        intake_id: str,
+        body: IntakeDecidePayload,
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        try:
+            return service.decide_intake(
+                intake_id=intake_id,
+                action=body.action,
+                reason=body.reason,
+                actor_role_id=body.actorRoleId,
+                actor_name=body.actorName,
+                correlation_id=x_correlation_id,
+            )
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkListingConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post(
+        "/intake/{intake_id}/retry",
+        dependencies=[Depends(require_write_permission_fn)],
+    )
+    def retry_intake(
+        intake_id: str,
+        body: NetworkListingActorPayload,
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        try:
+            return service.retry_intake(
+                intake_id=intake_id,
+                actor_role_id=body.actorRoleId,
+                actor_name=body.actorName,
+                correlation_id=x_correlation_id,
+            )
+        except NetworkListingNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkListingConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post(
+        "/intake/{intake_id}/promote",
+        dependencies=[Depends(require_write_permission_fn)],
+    )
+    def promote_intake(
+        intake_id: str,
+        body: NetworkListingActorPayload,
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    ) -> dict[str, Any]:
+        try:
+            return service.promote_intake(
+                intake_id=intake_id,
+                reason=body.reason,
+                actor_role_id=body.actorRoleId,
+                actor_name=body.actorName,
                 correlation_id=x_correlation_id,
             )
         except NetworkListingNotFound as exc:

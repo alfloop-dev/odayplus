@@ -1568,6 +1568,12 @@ class DurableListingRepository:
     def list_candidates(self) -> list[CandidateSiteDraft]:
         return self._store.list_all(self._CANDIDATES)
 
+    def list_listings(self) -> list[Listing]:
+        return self._store.list_all(self._LISTINGS)
+
+    def get_listing(self, listing_id: str) -> Listing | None:
+        return self._store.get(self._LISTINGS, listing_id)
+
 
 class DurableDecisionStore:
     """Durable mirror of ``InMemoryDecisionStore`` (ODP-FLOW-002).

@@ -115,6 +115,7 @@ type NetworkListingsSnapshot = {
   selectedHeatZoneId?: string;
   selectedLens?: NetworkFindAreasLens;
   correlationId?: string;
+  assistedIntakes?: any[];
 };
 
 type NetworkRebalanceSnapshot = {
@@ -823,6 +824,7 @@ export function NetworkFindAreasWorkspace({
       <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
         {activeTab === 1 ? (
           <ListingRadarPanel
+            activeRoleId={activeRoleId}
             busyListingId={busyListingId}
             listings={listingsEffective}
             onArchive={archiveListing}

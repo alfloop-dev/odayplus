@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { Listing, ListingSource } from "../types";
 import type { ListingRadarRow } from "../networkFindAreasViewModel";
+import type { OperatorRoleId } from "../navigation";
 import styles from "../networkFindAreas.module.css";
+import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -23,6 +25,7 @@ type NetworkListingDetail = Listing & {
 };
 
 export function ListingRadarPanel({
+  activeRoleId,
   busyListingId,
   listings,
   onArchive,
@@ -33,6 +36,7 @@ export function ListingRadarPanel({
   selectedZoneLabel,
   sources,
 }: {
+  activeRoleId: OperatorRoleId;
   busyListingId?: string | null;
   listings: NetworkListingDetail[];
   onArchive?: (listingId: string) => void;
@@ -75,6 +79,13 @@ export function ListingRadarPanel({
         <span>COMPLIANCE</span>
         正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。
       </div>
+
+      {/*
+        "Network URL 收件佇列" sits directly under the compliance banner and
+        above the source cards, per the Package 7 layout. It owns its own API
+        binding — the radar's fixture-backed list below is a different surface.
+      */}
+      <AssistedIntakeSection activeRoleId={activeRoleId} selectedHeatZoneId={selectedHeatZoneId} />
 
       <div className={styles.sourceSummaryGrid} aria-label="Listing sources">
         {sources.map((source) => (
