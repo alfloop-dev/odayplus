@@ -626,9 +626,10 @@ Not self-finalized. Handing back to Codex for independent re-review.
 **Finding:** The E2E test for in-flight merge must perform a real pointer/mouse mousedown or click on the backdrop overlay at a coordinate outside the dialog panel while the first merge request is held; assert the dialog remains visible and no write/result is hidden or advanced. Retain disabled close/cancel, Escape, retry, and identical idempotency-key assertions.
 
 **Fix:**
-- Added backdrop overlay click using coordinates `{ x: 10, y: 10 }` to click outside the centered dialog panel in the E2E test `an in-flight merge cannot be dismissed and retries reuse one idempotency key` (in [operator-network-listings.spec.ts](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-011/tests/e2e/operator-network-listings.spec.ts#L298-L300)).
+- Added backdrop overlay click using coordinates `{ x: 10, y: 10 }` to click outside the centered dialog panel in the E2E test `an in-flight merge cannot be dismissed and retries reuse one idempotency key` (in `tests/e2e/operator-network-listings.spec.ts`).
 - Retained the existing disabled close/cancel, Escape, retry, and identical idempotency-key assertions in the same test block.
 - Asserted the dialog remains visible (`toBeVisible()`) after both the `Escape` key press and the backdrop overlay `click`.
+- Added assertion verifying that while the first route is still held and after the backdrop click, the listing row for L-2029 does not contain 'merged into' and only the single in-flight request was sent (`sentKeys` has length 1), proving no optimistic/result advance or duplicate write was hidden.
 
 **Exact Assertions and Observed Results:**
 1. **Button disabling assertions**:
@@ -641,8 +642,11 @@ Not self-finalized. Handing back to Codex for independent re-review.
 3. **Backdrop overlay click dismissal prevention assertion**:
    - `await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });`
    - `await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();` -> **Observed:** Click on the backdrop overlay outside the dialog panel is processed while `busy` is true; the dialog remains visible.
-4. **Idempotency key consistency assertion**:
-   - `expect(sentKeys).toHaveLength(2);` and `expect(sentKeys[0]).toBe(sentKeys[1]);` -> **Observed:** The two consecutive merge attempts (first failing with 503, second retrying) carry the exact same idempotency key.
+4. **Optimistic UI and single in-flight request assertions**:
+   - `await expect(page.getByTestId("listing-row-L-2029")).not.toContainText("merged into");` -> **Observed:** The listing row L-2029 does not prematurely display a merged status while in-flight.
+   - `expect(sentKeys).toHaveLength(1);` -> **Observed:** `sentKeys` contains exactly 1 entry, confirming no duplicate write occurred or was hidden while the request was in-flight.
+5. **Idempotency key consistency assertion**:
+   - `expect(sentKeys).toHaveLength(2);` (after release) and `expect(sentKeys[0]).toBe(sentKeys[1]);` -> **Observed:** The two consecutive merge attempts carry the exact same idempotency key.
 
 All assertions passed successfully.
 
@@ -654,7 +658,7 @@ All assertions passed successfully.
 | `npm run typecheck --workspace=@oday-plus/web` | **pass** |
 | `npm run build --workspace=@oday-plus/web` | **pass** |
 | `uv run pytest tests/contract tests/integration` | **486 passed** |
-| `npx playwright test tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts` | **22 passed** (fresh ports, reuse disabled) |
+| `OPSBOARD_PORT=3379 ODP_API_PORT=8379 ODP_API_BASE_URL=http://127.0.0.1:8379 ODP_PLAYWRIGHT_REUSE_EXISTING=0 CI=1 uv run npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts` | **22 passed** (fresh ports, reuse disabled) |
 | `git diff --check` | **clean** |
 
 Not self-finalized. Handing back to Codex for independent re-review.

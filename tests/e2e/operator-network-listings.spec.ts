@@ -299,6 +299,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });
     await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
 
+    // Verify no optimistic UI updates occurred and only the single in-flight request was sent
+    await expect(page.getByTestId("listing-row-L-2029")).not.toContainText("merged into");
+    expect(sentKeys).toHaveLength(1);
+
     release?.();
     await expect(page.getByTestId("listing-merge-error")).toBeVisible();
     // The dialog stayed open and kept the operator's reason.
