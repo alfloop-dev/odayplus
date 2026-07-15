@@ -110,6 +110,9 @@ export function QueueRow({
   onClick,
   owner,
   status,
+  targetEntityId,
+  targetTab,
+  targetWorkspace,
   time,
   title,
   tone = "neutral",
@@ -120,12 +123,22 @@ export function QueueRow({
   onClick?: () => void;
   owner: string;
   status: string;
+  targetEntityId?: string;
+  targetTab?: string;
+  targetWorkspace?: string;
   time: string;
   title: string;
   tone?: Tone;
 }) {
   return (
-    <button className={styles.queueRow} onClick={onClick} type="button">
+    <button
+      className={styles.queueRow}
+      data-target-entity={targetEntityId}
+      data-target-tab={targetTab}
+      data-target-workspace={targetWorkspace}
+      onClick={onClick}
+      type="button"
+    >
       <span className={classNames(styles.queueMarker, styles[`marker_${tone}`])} aria-hidden="true" />
       <span className={styles.queueMain}>
         <span className={styles.queueTitleLine}>

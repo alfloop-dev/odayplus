@@ -1,0 +1,60 @@
+{
+  "checks": [
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_DEPLOY_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_API_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_SECRET_OWNER",
+      "ok": true
+    },
+    {
+      "detail": "aab092e1a73a1a633b3a3410df59fe3fb9f58045",
+      "name": "expected_sha",
+      "ok": true
+    },
+    {
+      "detail": "status=ok correlation_id=corr-odp-pv-stage-001",
+      "name": "smoke:/platform/health",
+      "ok": true
+    },
+    {
+      "detail": "release_sha=aab092e1a73a1a633b3a3410df59fe3fb9f58045",
+      "name": "smoke:/platform/version",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-odp-pv-stage-001",
+  "expected_sha": "aab092e1a73a1a633b3a3410df59fe3fb9f58045",
+  "generated_at": "2026-07-11T02:53:14Z",
+  "health": {
+    "correlation_id": "corr-odp-pv-stage-001",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-07-11T02:53:15.020440+00:00",
+    "version": "0.1.0"
+  },
+  "ok": true,
+  "schema_version": 1,
+  "staging": {
+    "api_url": "http://127.0.0.1:8001",
+    "deploy_url": "http://127.0.0.1:8001",
+    "secret_owner": "Platform/Ops",
+    "secret_values_redacted": true
+  },
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-odp-pv-stage-001",
+    "release_sha": "aab092e1a73a1a633b3a3410df59fe3fb9f58045",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-07-11T02:53:15.031417+00:00"
+  }
+}

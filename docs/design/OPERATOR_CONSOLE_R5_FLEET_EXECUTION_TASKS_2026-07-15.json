@@ -1,0 +1,158 @@
+{
+  "schema": "oday-plus.operator-console-r5-fleet-execution-tasks.v1",
+  "generated_at": "2026-07-15T00:00:00Z",
+  "status": "ready_for_fleet_dispatch",
+  "target_branch": "dev",
+  "baseline_ref": "origin/dev",
+  "source_truth": {
+    "latest_pointer": "docs_archive/00_source_zips/operator_console/LATEST.json",
+    "canonical_archive": "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/Oday Plus 營運管理後台 (7).zip",
+    "manifest": "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/manifest.json",
+    "interactive_source": "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/extracted/Oday Plus Operator Console.dc.html",
+    "summary_source": "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/extracted/Oday Plus Operator Console R5 Design Summary.dc.html",
+    "requirements": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS.md",
+    "ingestion_addendum": "docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md",
+    "diff_receipt": "docs/evidence/OPERATOR_CONSOLE_DESIGN_PACKAGE_7_DIFF_2026-07-15.md",
+    "archive_zip_sha256": "fa1a980d1d0c3fe2102e11ac009a57a1fe25bdb5539f9bd03378c2a628a9b552",
+    "interactive_html_sha256": "1e1bcfa329842216422b1d3ae2a44e7014dc8005cc156e2dcc978a6e4a5c3a2d",
+    "demo_state_version": "oday-plus-r5-20260714",
+    "screen_label_count": 37,
+    "added_screen_labels": [
+      "Network URL 收件佇列",
+      "Dialog 從網址新增物件",
+      "Dialog 收件處理詳情",
+      "Dialog 欄位修正",
+      "Dialog 收件決策確認"
+    ]
+  },
+  "global_rules": [
+    "Open the extracted interactive HTML before implementation or review.",
+    "Package 6 and 32-label evidence are historical and cannot prove current parity.",
+    "Do not embed or import prototype HTML into the product.",
+    "Compose ODP-EXT-002 ingestion contracts rather than duplicating them.",
+    "Every write requires server authorization, idempotency, correlation, persistence, and audit.",
+    "Unknown or blocked source policies fail closed without page retrieval."
+  ],
+  "tasks": [
+    {
+      "id": "ODP-OC-R5-000",
+      "title": "Publish canonical R5 package 7 and supersession packet",
+      "priority": "P0",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "depends_on": [],
+      "owned_paths": [
+        "docs_archive/00_source_zips/operator_console/",
+        ".orchestrator/test_task_brief_source_docs.py",
+        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS.md",
+        "docs/design/OPERATOR_CONSOLE_R5_FLEET_EXECUTION_TASKS_2026-07-15.md",
+        "docs/design/OPERATOR_CONSOLE_R5_FLEET_EXECUTION_TASKS_2026-07-15.json",
+        "docs/evidence/OPERATOR_CONSOLE_DESIGN_PACKAGE_7_DIFF_2026-07-15.md",
+        "docs/evidence/OPERATOR_CONSOLE_R5_EXECUTION_TASK_SOURCE_AUDIT_2026-07-15.md",
+        "docs/evidence/OPERATOR_CONSOLE_R5_EXECUTION_TASK_SOURCE_AUDIT_2026-07-15.json",
+        "docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md"
+      ],
+      "acceptance": [
+        "Canonical ZIP and five extracted files match the manifest.",
+        "LATEST resolves to R5 package 7 with 37 labels.",
+        "R5 task briefs and the ODP-EXT-002 R5 addendum reference package 7 directly.",
+        "Historical R4 evidence remains intact and is identified as superseded for current parity."
+      ]
+    },
+    {
+      "id": "ODP-OC-R5-001",
+      "title": "Implement durable R5 assisted listing intake",
+      "priority": "P0",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "depends_on": ["ODP-OC-R5-000"],
+      "composes": [
+        "ODP-EXT-002",
+        "docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md",
+        "ODP-OC-R4-005"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+        "apps/web/features/operator/networkFindAreas.module.css",
+        "apps/web/features/operator/networkFindAreasViewModel.ts",
+        "apps/web/features/operator/types.ts",
+        "apps/api/app/routes/operator.py",
+        "modules/opsboard/",
+        "modules/external_data/",
+        "packages/openapi-client/",
+        "packages/schemas/source_contracts/external/",
+        "tests/contract/",
+        "tests/integration/",
+        "tests/e2e/operator-network-assisted-intake.spec.ts"
+      ],
+      "required_labels": [
+        "Network URL 收件佇列",
+        "Dialog 從網址新增物件",
+        "Dialog 收件處理詳情",
+        "Dialog 欄位修正",
+        "Dialog 收件決策確認"
+      ],
+      "acceptance": [
+        "All five R5 surfaces match package 7 at desktop and constrained width.",
+        "URL submission and every decision survive reload through API-backed durable storage.",
+        "New duplicate revision possible-match and quarantine outcomes have deterministic tests.",
+        "Unknown or blocked source policies do not retrieve the page and offer the specified fallback.",
+        "Ambiguous matches require an explicit human reason and never auto-merge.",
+        "Audit includes actor role source snapshot parser version before/after reason and correlation ID."
+      ]
+    },
+    {
+      "id": "ODP-OC-R5-002",
+      "title": "Make R5 37-label product visual and accessibility gates mandatory",
+      "priority": "P0",
+      "owner": "Antigravity4",
+      "reviewer": "Claude",
+      "depends_on": ["ODP-OC-R5-001"],
+      "absorbs": ["ODP-OC-R4-011"],
+      "owned_paths": [
+        "tests/e2e/",
+        "scripts/e2e/",
+        ".github/workflows/",
+        "docs/evidence/completion/ODP-OC-R5-002/"
+      ],
+      "acceptance": [
+        "Static source gate pins package 7 SHA and all 37 labels.",
+        "The five new R5 surfaces pass desktop and constrained-width screenshots plus axe checks.",
+        "The 32 retained R4 labels pass regression coverage.",
+        "Browser E2E covers policy fail-closed duplicate revision ambiguous review persistence and audit.",
+        "Known R4-011 product-gate failures are fixed rather than waived or skipped.",
+        "CI runs the R5 product gate by default."
+      ]
+    },
+    {
+      "id": "ODP-OC-R5-003",
+      "title": "Deploy verify and cut over R5 Operator Console",
+      "priority": "P0",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R5-002", "ODP-FIN-LIVE-001"],
+      "supersedes": ["ODP-OC-R4-012"],
+      "owned_paths": [
+        "infra/",
+        "scripts/deploy_cloud_run_waji.sh",
+        "cloudbuild.waji.yaml",
+        "docs/evidence/completion/ODP-OC-R5-003/",
+        "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
+      ],
+      "acceptance": [
+        "Staging revision contains R5 code and package 7 provenance.",
+        "Authenticated staging E2E passes the mandatory R5 gate.",
+        "URL intake persists through reload and produces decision and audit evidence.",
+        "Rollback revision and recovery proof are recorded before promotion.",
+        "Release evidence identifies package 7 SHA 37 labels and exact deployed revision.",
+        "Dev is promoted to main only after all R5 stop conditions are clear."
+      ]
+    }
+  ],
+  "waves": [
+    {"wave": 0, "tasks": ["ODP-OC-R5-000"]},
+    {"wave": 1, "tasks": ["ODP-OC-R5-001"]},
+    {"wave": 2, "tasks": ["ODP-OC-R5-002"]},
+    {"wave": 3, "tasks": ["ODP-OC-R5-003"]}
+  ]
+}

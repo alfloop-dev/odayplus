@@ -76,11 +76,13 @@ else:
         sitescore_repository: Any = None,
         sitescore_workflow: Any = None,
         adlift_repository: Any = None,
+        store_ops_repository: Any = None,
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
+        external_ingestion_service: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
@@ -93,7 +95,14 @@ else:
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
-        heatzone_store = heatzone_store or HeatZoneResultStore()
+        heatzone_store = heatzone_store or bundle.heatzone_store
+
+        from modules.external_data.application.ingestion_service import ExternalIngestionService
+
+        ingestion_service = external_ingestion_service or ExternalIngestionService(
+            store=bundle.ingestion_run_store,
+            audit_log=audit_log,
+        )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
 
         @api.middleware("http")
@@ -183,10 +192,15 @@ else:
         from apps.api.app.routes.listings import create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.operator import create_operator_router
+        from apps.api.app.routes.operator_modules import create_operator_store_ops_router
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
-        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+        from shared.infrastructure.persistence import SqliteDocumentStore
+        from shared.workflow.sitescore import (
+            CandidateSiteRealizationHook,
+            SiteScoreDecisionWorkflow,
+        )
 
         forecast_repository = forecastops_repository or bundle.forecastops_repository
         netplan_repo = netplan_repository or bundle.netplan_repository
@@ -195,25 +209,69 @@ else:
         price_repo = priceops_repository or bundle.priceops_repository
         avm_repo = avm_repository or bundle.avm_repository
         site_repository = sitescore_repository or bundle.sitescore_repository
-        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(audit_log=audit_log)
+        # ODP-FLOW-002: back the decision workflow and its realization hook with
+        # the persistence bundle so decisions and realized sites survive restart.
+        realization_hook = CandidateSiteRealizationHook(
+            store=bundle.sitescore_realized_store
+        )
+        decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(
+            audit_log=audit_log,
+            hooks=[realization_hook],
+            store=bundle.sitescore_decision_store,
+        )
+        listing_repository = bundle.listing_repository
         adlift_repo = adlift_repository or bundle.adlift_repository
+        store_ops_repo = store_ops_repository or bundle.store_ops_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
+        operator_document_store = SqliteDocumentStore(bundle.engine) if bundle.is_durable else None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
             label_hooks=[label_registry],
         )
 
-        api.include_router(create_heatzone_router(store=heatzone_store, audit_log=audit_log))
+        # ODP-GAP-ML-002: register the baseline production model for each
+        # scoring/forecast service in the durable registry (idempotent) and bind
+        # each router to its resolved PRODUCTION ModelVersion so runs carry
+        # auditable governance metadata and fail closed when the model or the
+        # live inputs are absent.
+        from models.shared_ml import seed_scoring_models
+
+        release_sha = (
+            os.environ.get("ODAY_RELEASE_SHA")
+            or os.environ.get("GITHUB_SHA")
+            or os.environ.get("COMMIT_SHA")
+        )
+        scoring_bindings = seed_scoring_models(learning_repo, git_sha=release_sha)
+
+        api.include_router(
+            create_heatzone_router(
+                store=heatzone_store,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("heatzone"),
+            )
+        )
         api.include_router(
             create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(create_external_data_router(audit_log=audit_log))
-        api.include_router(create_listings_router(audit_log=audit_log))
+        api.include_router(
+            create_external_data_router(
+                ingestion_service=ingestion_service, audit_log=audit_log
+            )
+        )
+        api.include_router(
+            create_listings_router(
+                audit_log=audit_log, repository=listing_repository
+            )
+        )
         api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
         api.include_router(
-            create_forecastops_router(repository=forecast_repository, audit_log=audit_log)
+            create_forecastops_router(
+                repository=forecast_repository,
+                audit_log=audit_log,
+                model_binding=scoring_bindings.get("forecastops"),
+            )
         )
         api.include_router(create_netplan_router(repository=netplan_repo, audit_log=audit_log))
         api.include_router(
@@ -228,17 +286,32 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                realization_hook=realization_hook,
                 audit_log=audit_log,
+                model_binding=scoring_bindings.get("sitescore"),
             )
         )
         api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
+        api.include_router(
+            create_operator_store_ops_router(
+                repository=store_ops_repo,
+                audit_log=audit_log,
+            ),
+            prefix="/api/v1",
+        )
         api.include_router(
             create_interventions_router(
                 workflow=interventions_workflow,
                 label_registry=label_registry,
             )
         )
-        api.include_router(create_operator_router(audit_log=audit_log), prefix="/api/v1")
+        api.include_router(
+            create_operator_router(
+                audit_log=audit_log,
+                document_store=operator_document_store,
+            ),
+            prefix="/api/v1",
+        )
 
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
@@ -248,14 +321,19 @@ else:
         api.state.forecastops_repository = forecast_repository
         api.state.netplan_repository = netplan_repo
         api.state.learninghub_repository = learning_repo
+        api.state.scoring_bindings = scoring_bindings
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository
         api.state.sitescore_workflow = decision_workflow
+        api.state.sitescore_realization_hook = realization_hook
+        api.state.listing_repository = listing_repository
         api.state.adlift_repository = adlift_repo
+        api.state.store_ops_repository = store_ops_repo
         api.state.intervention_workflow = interventions_workflow
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
+        api.state.operator_document_store = operator_document_store
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         return api

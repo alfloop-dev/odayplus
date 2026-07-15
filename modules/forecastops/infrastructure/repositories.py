@@ -55,12 +55,18 @@ class InMemoryForecastOpsRepository:
     def list_alerts(self) -> list[Alert]:
         return list(self._alerts.values())
 
+    def get_alert(self, alert_id: str) -> Alert | None:
+        return self._alerts.get(alert_id)
+
     def save_handoff(self, handoff: InterventionHandoff) -> InterventionHandoff:
         self._handoffs[handoff.handoff_id] = handoff
         return handoff
 
     def list_handoffs(self) -> list[InterventionHandoff]:
         return list(self._handoffs.values())
+
+    def get_handoff(self, handoff_id: str) -> InterventionHandoff | None:
+        return self._handoffs.get(handoff_id)
 
     def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
         self._prediction_runs[run.prediction_run_id] = run

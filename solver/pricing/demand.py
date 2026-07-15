@@ -8,6 +8,7 @@ confidence yields the P10/P50/P90 envelope.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,63 @@ class Band:
 
     def to_dict(self) -> dict[str, float]:
         return {"p10": self.p10, "p50": self.p50, "p90": self.p90}
+
+
+@dataclass(frozen=True)
+class ElasticityFit:
+    """Result of estimating a constant price elasticity from observed data."""
+
+    elasticity: float
+    confidence: float
+    r_squared: float
+    sample_size: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "elasticity": self.elasticity,
+            "confidence": self.confidence,
+            "r_squared": self.r_squared,
+            "sample_size": self.sample_size,
+        }
+
+
+def estimate_elasticity(
+    price_demand_observations: Sequence[tuple[float, float]],
+) -> ElasticityFit:
+    """Estimate a constant price elasticity from ``(price, demand)`` history.
+
+    Fits the log-log constant-elasticity model ``log q = a + e * log p`` with an
+    ordinary-least-squares regression (scikit-learn ``LinearRegression``). The
+    slope ``e`` is the elasticity and the coefficient of determination (R²) of
+    the fit serves as an estimate confidence in ``[0, 1]``. At least two distinct
+    positive prices are required; otherwise the elasticity is not identified and
+    a zero-confidence fallback is returned so callers can degrade gracefully.
+    """
+    points = [
+        (float(price), float(demand))
+        for price, demand in price_demand_observations
+        if price > 0 and demand > 0
+    ]
+    distinct_prices = {round(price, 10) for price, _ in points}
+    if len(points) < 2 or len(distinct_prices) < 2:
+        return ElasticityFit(
+            elasticity=0.0, confidence=0.0, r_squared=0.0, sample_size=len(points)
+        )
+
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    log_price = np.log(np.asarray([price for price, _ in points], dtype=float)).reshape(-1, 1)
+    log_demand = np.log(np.asarray([demand for _, demand in points], dtype=float))
+    model = LinearRegression().fit(log_price, log_demand)
+    r_squared = float(model.score(log_price, log_demand))
+    confidence = min(max(r_squared, 0.0), 1.0)
+    return ElasticityFit(
+        elasticity=round(float(model.coef_[0]), 6),
+        confidence=round(confidence, 6),
+        r_squared=round(r_squared, 6),
+        sample_size=len(points),
+    )
 
 
 @dataclass(frozen=True)
@@ -137,7 +195,9 @@ def simulate_price(
 
 __all__ = [
     "Band",
+    "ElasticityFit",
     "SimulationResult",
+    "estimate_elasticity",
     "expected_demand",
     "simulate_price",
 ]

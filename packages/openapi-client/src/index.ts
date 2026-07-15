@@ -79,6 +79,233 @@ export type AdliftReport = {
   [key: string]: unknown;
 };
 
+export type ForecastAlert = {
+  alert_id: string;
+  store_id: string;
+  alert_level: "green" | "yellow" | "orange" | "red" | string;
+  alert_reason_code?: string;
+  evidence_json?: Record<string, unknown>;
+  opened_at?: string;
+  closed_at?: string | null;
+  status: string;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  acknowledgement_note?: string | null;
+  [key: string]: unknown;
+};
+
+export type SourceFreshnessEvidence = {
+  provider_id: string;
+  source_snapshot_id: string;
+  data_status: string;
+  provider_observed_at?: string | null;
+  ingested_at?: string | null;
+  freshness_sla_seconds: number;
+  correlation_id: string;
+  quality_flags?: string[];
+  [key: string]: unknown;
+};
+
+export type ExternalDataFreshnessResponse = {
+  freshness: SourceFreshnessEvidence[];
+  correlation_id?: string;
+};
+
+
+// ---------------------------------------------------------------------------
+// Expansion, SiteScore, NetPlan, LearningHub types (from dev)
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw heatzone score row returned by GET /heatzones.
+ * Shape mirrors HeatZoneBatchScoreResult.to_dict().
+ */
+export type HeatZoneScore = {
+  /** H3 hex index used as a stable identifier. */
+  h3_index: string;
+  score: number;
+  rank: number;
+  unmet_demand: number;
+  confidence: number;
+  state: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
+ * endpoint). Mirrors `NetPlanScenario.to_dict()` in
+ * modules/netplan/domain/planning.py — only the always-present summary fields
+ * are typed; the full solve/execution/outcome detail lives on the
+ * `/netplan/scenarios/{id}` response and is left open via the index signature.
+ */
+export type NetPlanScenarioSummary = {
+  scenario_id: string;
+  scenario_name?: string;
+  planning_horizon?: string;
+  status?: string;
+  solver_version?: string;
+  model_version?: string;
+  correlation_id?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Candidate site card returned by GET /listings/candidates.
+ * Shape mirrors CandidateSiteDraft.to_card_dict().
+ */
+export type CandidateSiteCard = {
+  candidateSiteId: string;
+  address: string;
+  geocodeConfidence: number;
+  rent: number;
+  area: number;
+  frontage?: number | null;
+  floor?: string | null;
+  parkingOrTemporaryStop?: boolean;
+  feasibilityFlags: string[];
+  heatZone: string;
+  listingSource?: string | null;
+  status: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Site score report summary returned by GET /sitescore/reports.
+ * Shape mirrors SiteScoreReport.to_summary_dict().
+ */
+export type SiteScoreReportSummary = {
+  candidateSiteId: string;
+  reportVersion: number;
+  recommendation: string;
+  confidence: number;
+  modelVersion: string;
+  featureSnapshotTime: string;
+  cannibalizationRisk: string;
+  [key: string]: unknown;
+};
+
+/**
+ * A model release decision as served by `GET /learninghub/releases` (the
+ * Learning Hub release/rollback log the UI binds to). Mirrors
+ * `ModelReleaseDecision.to_dict()` in
+ * modules/learninghub/application/release.py — only the always-present summary
+ * fields are typed; the full success/fail criteria detail is left open via the
+ * index signature.
+ */
+export type ModelReleaseSummary = {
+  release_id: string;
+  model_name?: string;
+  from_version?: string | null;
+  to_version?: string;
+  release_type?: string;
+  approval_id?: string;
+  monitoring_window?: string;
+  rollback_target?: string | null;
+  approved_by?: string;
+  created_at?: string;
+  audit_event_id?: string | null;
+  [key: string]: unknown;
+};
+
+// ---------------------------------------------------------------------------
+// Operator Console R4 DTOs (ODP-OC-R4-001)
+// ---------------------------------------------------------------------------
+
+/** Work-queue item shape returned by GET /operator/issues. */
+export type OperatorWorkQueueItem = {
+  id: string;
+  title: string;
+  description?: string;
+  meta?: string;
+  owner?: string;
+  status: string;
+  time?: string;
+  tone?: string;
+  workspace?: string;
+  [key: string]: unknown;
+};
+
+/** Approval item shape returned by GET /operator/approvals. */
+export type OperatorApprovalItem = {
+  id: string;
+  title: string;
+  meta?: string;
+  status: string;
+  cta?: string;
+  tone?: string;
+  [key: string]: unknown;
+};
+
+/** Full bootstrap/today response shape. */
+export type OperatorBootstrapResponse = {
+  kpis: Array<{ label: string; value: string; delta?: string; meta?: string; tone?: string }>;
+  workQueue: OperatorWorkQueueItem[];
+  decisions: OperatorApprovalItem[];
+  riskRows?: Array<{ label: string; score: number; signal?: string; tone?: string }>;
+  auditFeed?: Array<{ actor: string; category: string; detail: string; time: string; auditEventId?: string }>;
+  notifications?: Array<{ title: string; detail: string; tone?: string }>;
+  [key: string]: unknown;
+};
+
+/** Valid action types for issue lifecycle transitions. */
+export type OperatorIssueActionType = "triage" | "assign" | "actions" | "outcome";
+
+/** Request body for POST /operator/issues/{id}/{action_type}. */
+export type OperatorIssueTransitionRequest = {
+  actorRoleId: string;
+  actorName?: string;
+  issueId?: string;
+  status?: string;
+  note?: string;
+};
+
+/** Response from POST /operator/issues/{id}/{action_type}. */
+export type OperatorIssueTransitionResponse = {
+  issueId: string;
+  newStatus: string;
+  auditEventId: string;
+  correlationId?: string | null;
+};
+
+/** Request body for POST /operator/approvals/{id}/decision. */
+export type OperatorApprovalDecisionRequest = {
+  actorRoleId: string;
+  actorName?: string;
+  status: "approved" | "returned" | "rejected";
+  /** Required. Must be non-empty for all approval decisions. */
+  reason: string;
+};
+
+/** Response from POST /operator/approvals/{id}/decision. */
+export type OperatorApprovalDecisionResponse = {
+  approvalId: string;
+  newStatus: string;
+  auditEventId: string;
+  correlationId?: string | null;
+};
+
+/** Request body for POST /operator/evidence/{id}/purpose. */
+export type OperatorEvidencePurposeRequest = {
+  actorRoleId: string;
+  actorName?: string;
+  purpose: string;
+  cameraLocation?: string;
+  timeWindow?: string;
+  /** Must not exceed 72 (policy ceiling). */
+  retentionHours?: number;
+  /** Must be true for camera evidence kinds. */
+  privacyAcknowledged?: boolean;
+  auditNote?: string;
+};
+
+/** Response from POST /operator/evidence/{id}/purpose. */
+export type OperatorEvidencePurposeResponse = {
+  evidenceId: string;
+  purpose: string;
+  auditEventId: string;
+  correlationId?: string | null;
+};
+
 /** Env keys checked, in priority order, when resolving the API base URL. */
 export const API_BASE_URL_ENV_KEYS = [
   "ODP_API_BASE_URL",
@@ -142,6 +369,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   correlationId?: string;
+  idempotencyKey?: string;
   query?: Record<string, string | undefined>;
 };
 
@@ -182,6 +410,7 @@ export class OdpApiClient {
           accept: "application/json",
           ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
           ...(options.correlationId ? { [CORRELATION_ID_HEADER]: options.correlationId } : {}),
+          ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
           ...this.defaultHeaders,
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -234,47 +463,162 @@ export class OdpApiClient {
     return this.request<ListResponse<AdliftReport>>("/adlift/reports");
   }
 
-  getOperatorBootstrap(): Promise<any> {
-    return this.request("/api/v1/operator/bootstrap");
+  listForecastAlerts(
+    options: { level?: string } = {},
+  ): Promise<ListResponse<ForecastAlert>> {
+    return this.request<ListResponse<ForecastAlert>>("/forecastops/alerts", {
+      query: { level: options.level },
+    });
   }
 
+  listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
+    return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
+  }
+
+
+  /**
+   * List heatzone scores from the most recent batch scoring run.
+   * Returns an empty `items` array when no scoring job has been run yet.
+   * Corresponds to GET /heatzones.
+   */
+  listHeatzones(options: { limit?: number } = {}): Promise<ListResponse<HeatZoneScore>> {
+    return this.request<ListResponse<HeatZoneScore>>("/heatzones", {
+      query: options.limit !== undefined ? { limit: String(options.limit) } : undefined,
+    });
+  }
+
+  /**
+   * List candidate sites that have passed hard-rule checks.
+   * Corresponds to GET /listings/candidates.
+   */
+  listCandidates(): Promise<{ candidates: CandidateSiteCard[] }> {
+    return this.request<{ candidates: CandidateSiteCard[] }>("/listings/candidates");
+  }
+
+  /**
+   * List the latest SiteScore report per candidate site.
+   * Corresponds to GET /sitescore/reports.
+   */
+  listSiteScoreReports(): Promise<ListResponse<SiteScoreReportSummary>> {
+    return this.request<ListResponse<SiteScoreReportSummary>>("/sitescore/reports");
+  }
+
+  listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
+    return this.request<ListResponse<NetPlanScenarioSummary>>("/netplan/scenarios");
+  }
+
+  listLearningReleases(
+    options: { modelName?: string } = {},
+  ): Promise<ListResponse<ModelReleaseSummary>> {
+    return this.request<ListResponse<ModelReleaseSummary>>("/learninghub/releases", {
+      query: { model_name: options.modelName },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Operator Console — R4 typed contracts (ODP-OC-R4-001)
+  // ---------------------------------------------------------------------------
+
+  /** Fetch the full operator bootstrap/today payload. */
+  getOperatorBootstrap(): Promise<OperatorBootstrapResponse> {
+    return this.request<OperatorBootstrapResponse>("/api/v1/operator/bootstrap");
+  }
+
+  /** Fetch today operational snapshot (alias of bootstrap for FE compat). */
+  getOperatorToday(): Promise<OperatorBootstrapResponse> {
+    return this.request<OperatorBootstrapResponse>("/api/v1/operator/today");
+  }
+
+  /** List current work-queue issues. */
+  listOperatorIssues(): Promise<ListResponse<OperatorWorkQueueItem>> {
+    return this.request<ListResponse<OperatorWorkQueueItem>>("/api/v1/operator/issues");
+  }
+
+  /**
+   * Transition an issue through its lifecycle.
+   *
+   * actionType: "triage" | "assign" | "actions" | "outcome"
+   * Requires actorRoleId + actorName in payload.
+   * Idempotency-Key header is sent when idempotencyKey is provided.
+   */
   transitionOperatorIssue(
     issueId: string,
-    actionType: string,
-    payload: any,
+    actionType: OperatorIssueActionType,
+    payload: OperatorIssueTransitionRequest,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/issues/${issueId}/${actionType}`, {
-      method: "POST",
-      body: payload,
-      correlationId: options.correlationId,
-      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
-    });
+  ): Promise<OperatorIssueTransitionResponse> {
+    return this.request<OperatorIssueTransitionResponse>(
+      `/api/v1/operator/issues/${issueId}/${actionType}`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
   }
 
+  /** List current pending approval decisions. */
+  listOperatorApprovals(): Promise<ListResponse<OperatorApprovalItem>> {
+    return this.request<ListResponse<OperatorApprovalItem>>("/api/v1/operator/approvals");
+  }
+
+  /**
+   * Record an approval decision.
+   *
+   * status: "approved" | "returned" | "rejected"
+   * reason is required and must be non-empty.
+   * Idempotency-Key header is sent when idempotencyKey is provided.
+   */
   decideOperatorApproval(
     approvalId: string,
-    payload: any,
+    payload: OperatorApprovalDecisionRequest,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/approvals/${approvalId}/decision`, {
-      method: "POST",
-      body: payload,
-      correlationId: options.correlationId,
-      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
-    });
+  ): Promise<OperatorApprovalDecisionResponse> {
+    return this.request<OperatorApprovalDecisionResponse>(
+      `/api/v1/operator/approvals/${approvalId}/decision`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
   }
 
+  /**
+   * Unlock a locked evidence item by declaring its access purpose.
+   *
+   * privacyAcknowledged must be true for camera evidence.
+   * retentionHours must not exceed 72 (policy ceiling).
+   * Idempotency-Key header is sent when idempotencyKey is provided.
+   */
   confirmOperatorEvidencePurpose(
     evidenceId: string,
-    payload: any,
+    payload: OperatorEvidencePurposeRequest,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/evidence/${evidenceId}/purpose`, {
+  ): Promise<OperatorEvidencePurposeResponse> {
+    return this.request<OperatorEvidencePurposeResponse>(
+      `/api/v1/operator/evidence/${evidenceId}/purpose`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
+  }
+
+  /**
+   * Reset the in-memory operator state to the canonical R4 seed.
+   * Idempotent — used by integration tests and dev-environment setup.
+   */
+  resetOperatorSeed(
+    options: { correlationId?: string } = {},
+  ): Promise<{ status: string; message: string; correlation_id?: string }> {
+    return this.request("/api/v1/operator/seed/reset", {
       method: "POST",
-      body: payload,
       correlationId: options.correlationId,
-      query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
     });
   }
 }
