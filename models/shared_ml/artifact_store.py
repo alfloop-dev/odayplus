@@ -31,7 +31,7 @@ class LocalModelArtifactStore:
         Returns:
             The absolute path to the saved model card file.
         """
-        if artifact_uri:
+        if artifact_uri and (artifact_uri.startswith("file://") or "://" not in artifact_uri):
             path_str = artifact_uri
             if path_str.startswith("file://"):
                 path_str = path_str[7:]
@@ -66,7 +66,7 @@ class LocalModelArtifactStore:
         Returns:
             The ModelCard instance if found, otherwise None.
         """
-        if artifact_uri:
+        if artifact_uri and (artifact_uri.startswith("file://") or "://" not in artifact_uri):
             path_str = artifact_uri
             if path_str.startswith("file://"):
                 path_str = path_str[7:]
