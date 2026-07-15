@@ -211,6 +211,193 @@ class NetworkListingService:
         self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._load_intakes()
         self._load_idempotency_cache()
+        self._load_listings()
+        self._load_candidates()
+
+    def _load_listings(self) -> None:
+        if self._listing_repository is not None:
+            repo_listings = self._listing_repository.list_listings()
+            if repo_listings:
+                self._state["listings"] = []
+                for lst in repo_listings:
+                    self._state["listings"].append(self._listing_to_dict(lst))
+            else:
+                for lst_dict in self._state["listings"]:
+                    lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
+                    self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+
+    def _load_candidates(self) -> None:
+        if self._listing_repository is not None:
+            repo_candidates = self._listing_repository.list_candidates()
+            if repo_candidates:
+                self._state["candidates"] = []
+                for cand in repo_candidates:
+                    self._state["candidates"].append(self._candidate_to_dict(cand))
+            else:
+                for cand_dict in self._state["candidates"]:
+                    cand_obj = self._dict_to_candidate(cand_dict)
+                    self._listing_repository.save_candidate(cand_obj)
+
+    def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
+        if self._document_store is not None:
+            meta = self._document_store.get("operator.listing_metadata", listing_id)
+            if meta:
+                return meta
+        return {}
+
+    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
+        if self._document_store is not None:
+            self._document_store.put("operator.listing_metadata", listing_id, metadata)
+
+    def _get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
+        if self._document_store is not None:
+            meta = self._document_store.get("operator.candidate_metadata", candidate_id)
+            if meta:
+                return meta
+        return {}
+
+    def _save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
+        if self._document_store is not None:
+            self._document_store.put("operator.candidate_metadata", candidate_id, metadata)
+
+    def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
+        res = {
+            "id": lst.listing_id,
+            "sourceId": lst.source_id,
+            "sourceListingId": lst.source_listing_id,
+            "status": lst.listing_status,
+            "rentPerMonth": int(lst.rent_amount),
+            "areaPing": lst.area_ping,
+            "floor": lst.floor,
+            "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
+            "geocodeConfidence": lst.confidence,
+            "sourceUrl": lst.snapshot_id,
+        }
+        meta = self._get_listing_metadata(lst.listing_id)
+        if meta:
+            res.update(meta)
+        else:
+            for item in _seed_state()["listings"]:
+                if item["id"] == lst.listing_id:
+                    for k, v in item.items():
+                        if k not in res:
+                            res[k] = v
+                    break
+        return res
+
+    def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
+        from shared.domain.models import Listing, AddressLocation
+        from modules.listing.domain.models import ListingDedupKey
+        lst = Listing(
+            listing_id=d["id"],
+            source_listing_id=d["sourceListingId"],
+            source_id=d["sourceId"],
+            listing_status=d["status"],
+            rent_amount=float(d["rentPerMonth"]),
+            area_ping=float(d["areaPing"]),
+            floor=d["floor"],
+            frontage_m=float(d.get("frontageMeters") or 0),
+            confidence=float(d.get("geocodeConfidence") or 1.0),
+            snapshot_id=d.get("sourceUrl") or "",
+        )
+        addr = AddressLocation(
+            address_id=f"ADDR-{d['id']}",
+            raw_address=d.get("address") or "",
+            normalized_address=d.get("address") or "",
+            geocode_confidence=float(d.get("geocodeConfidence") or 1.0),
+        )
+        key = ListingDedupKey(
+            source_id=d["sourceId"],
+            source_listing_id=d["sourceListingId"],
+            normalized_address=d.get("address") or "",
+            rent_amount=float(d["rentPerMonth"]),
+            area_ping=float(d["areaPing"]),
+        )
+        return lst, addr, key
+
+    def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
+        res = {
+            "id": cand.candidate_site.candidate_site_id,
+            "listingId": cand.listing.listing_id,
+            "heatZoneId": cand.heat_zone_id,
+            "title": f"{cand.listing.listing_id} 候選點",
+            "address": cand.address.raw_address,
+            "status": cand.status.value if hasattr(cand.status, "value") else str(cand.status),
+            "score": 68,
+            "recommendation": "WAIT",
+            "modelVersion": "SiteScore v2.3",
+            "datasetSnapshotId": "FS-20260704-0600",
+            "missingData": [],
+        }
+        meta = self._get_candidate_metadata(cand.candidate_site.candidate_site_id)
+        if meta:
+            res.update(meta)
+        else:
+            if res["id"] == "CS-1001":
+                res["title"] = "信義松仁候選點"
+                res["score"] = 82
+                res["recommendation"] = "GO"
+                res["reviewId"] = "RV-1001"
+        return res
+
+    def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
+        from shared.domain.models import CandidateSite
+        from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
+        listing = self._listing(d["listingId"])
+        lst_obj, addr_obj, _ = self._dict_to_listing(listing)
+        
+        cand_site = CandidateSite(
+            candidate_site_id=d["id"],
+            listing_id=d["listingId"],
+            address_id=addr_obj.address_id,
+            site_status=d["status"],
+        )
+        return CandidateSiteDraft(
+            listing=lst_obj,
+            address=addr_obj,
+            candidate_site=cand_site,
+            heat_zone_id=d["heatZoneId"],
+            listing_source=listing.get("sourceId") or "",
+            status=ListingPipelineStatus.CANDIDATE,
+        )
+
+    def _sync_listing_to_repo(self, listing_id: str) -> None:
+        if self._listing_repository is not None:
+            listing = self._listing(listing_id)
+            lst_obj, addr_obj, key_obj = self._dict_to_listing(listing)
+            self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+            
+            meta = {
+                "heatZoneId": listing.get("heatZoneId"),
+                "hardRuleFailures": listing.get("hardRuleFailures"),
+                "hardRuleSummary": listing.get("hardRuleSummary"),
+                "sourceEvidence": listing.get("sourceEvidence"),
+                "fitScore": listing.get("fitScore"),
+                "firstSeenAt": listing.get("firstSeenAt"),
+            }
+            self._save_listing_metadata(listing_id, meta)
+
+    def _sync_candidate_to_repo(self, candidate_id: str) -> None:
+        if self._listing_repository is not None:
+            candidate = None
+            for cand in self._state["candidates"]:
+                if cand["id"] == candidate_id:
+                    candidate = cand
+                    break
+            if candidate:
+                cand_obj = self._dict_to_candidate(candidate)
+                self._listing_repository.save_candidate(cand_obj)
+                
+                meta = {
+                    "title": candidate.get("title"),
+                    "score": candidate.get("score"),
+                    "recommendation": candidate.get("recommendation"),
+                    "modelVersion": candidate.get("modelVersion"),
+                    "datasetSnapshotId": candidate.get("datasetSnapshotId"),
+                    "missingData": candidate.get("missingData"),
+                    "reviewId": candidate.get("reviewId"),
+                }
+                self._save_candidate_metadata(candidate_id, meta)
 
     def _load_intakes(self) -> None:
         if self._document_store is not None:
@@ -264,9 +451,27 @@ class NetworkListingService:
             # Clean up intakes from database
             self._document_store.delete_collection("operator.assisted_intakes")
             self._document_store.delete_collection("operator.idempotency_cache")
+            self._document_store.delete_collection("operator.listing_metadata")
+            self._document_store.delete_collection("operator.candidate_metadata")
+            self._document_store.delete_collection("listing.listings")
+            self._document_store.delete_collection("listing.addresses")
+            self._document_store.delete_collection("listing.candidates")
+            self._document_store.delete_collection("listing.dedup_keys")
             self._state["assistedIntakes"] = []
         else:
             self._state["assistedIntakes"] = []
+
+        if self._listing_repository is not None:
+            if hasattr(self._listing_repository, "listings"):
+                self._listing_repository.listings.clear()
+                self._listing_repository.addresses.clear()
+                self._listing_repository.candidates.clear()
+                self._listing_repository.source_keys.clear()
+                self._listing_repository.property_keys.clear()
+            for lst_dict in self._state["listings"]:
+                lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
+                self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+
         return self.snapshot()
 
     def snapshot(
@@ -362,6 +567,9 @@ class NetworkListingService:
         listing["status"] = "candidate"
         listing["candidateId"] = existing["id"]
         listing["convertedAt"] = listing.get("convertedAt") or _now()
+        self._sync_listing_to_repo(listing_id)
+        self._sync_candidate_to_repo(existing["id"])
+
         audit = self._audit(
             action="listing.convert",
             target_id=listing_id,
@@ -429,6 +637,8 @@ class NetworkListingService:
         source["mergedIntoId"] = target_listing_id
         source["mergedAt"] = source.get("mergedAt") or _now()
         source["mergeReason"] = reason
+        self._sync_listing_to_repo(source_listing_id)
+        self._sync_listing_to_repo(target_listing_id)
 
         audit = self._audit(
             action="listing.merge",
@@ -492,6 +702,8 @@ class NetworkListingService:
         listing["status"] = "archived"
         listing["archivedReason"] = reason
         listing["archivedAt"] = listing.get("archivedAt") or _now()
+        self._sync_listing_to_repo(listing_id)
+
         audit = self._audit(
             action="listing.archive",
             target_id=listing_id,
@@ -766,7 +978,7 @@ class NetworkListingService:
             match_res = match_listing(
                 values=effective_vals,
                 canonical_url=intake["canonicalUrl"],
-                source_id=intake.get("sourceId", intake["policy"]),
+                source_id=intake["sourceId"],
                 fingerprint=fingerprint,
                 listings=self._get_match_listings(),
             )
@@ -836,7 +1048,7 @@ class NetworkListingService:
             new_id = f"L-{2031 + len(self._state['listings'])}"
             new_listing = {
                 "id": new_id,
-                "sourceId": intake.get("sourceId", intake["policy"]),
+                "sourceId": intake["sourceId"],
                 "sourceListingId": effective_vals.get("providerListingId", ""),
                 "heatZoneId": intake["heatZoneId"] or "HZ-01",
                 "address": effective_vals.get("address", ""),
@@ -854,6 +1066,7 @@ class NetworkListingService:
                 "sourceUrl": intake["originalUrl"],
             }
             self._state["listings"].append(new_listing)
+            self._sync_listing_to_repo(new_id)
             intake["stage"] = "READY"
             if not intake.get("matchResult"):
                 intake["matchResult"] = {
@@ -889,6 +1102,7 @@ class NetworkListingService:
             target["floor"] = effective_vals.get("floor", target["floor"])
             target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-REVISION"])
             target["status"] = "watching"
+            self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
@@ -906,6 +1120,8 @@ class NetworkListingService:
             before_evidence_count = len(target.get("sourceEvidence", []))
 
             target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-DUPLICATE"])
+            target["status"] = "watching"
+            self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
             intake["matchResult"]["summary"] = f"已手動標記為重複並合併至 {target_id}。"
 
@@ -1141,10 +1357,6 @@ class NetworkListingService:
         for lst in self._state["listings"]:
             source_id = lst.get("sourceId", "")
             source_listing_id = lst.get("sourceListingId", "")
-            if source_id == "SRC-591":
-                source_id = "SRC-SYNTHETIC"
-                if source_listing_id.startswith("s591-"):
-                    source_listing_id = source_listing_id.replace("s591-", "synthetic-")
 
             fp = lst.get("contentFingerprint")
             if not fp:

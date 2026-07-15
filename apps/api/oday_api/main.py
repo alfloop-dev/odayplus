@@ -309,6 +309,7 @@ else:
             create_operator_router(
                 audit_log=audit_log,
                 document_store=operator_document_store,
+                listing_repository=listing_repository,
             ),
             prefix="/api/v1",
         )

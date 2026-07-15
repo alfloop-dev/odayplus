@@ -626,11 +626,11 @@ export class OdpApiClient {
 
   getNetworkListings(
     options: { selectedHeatZoneId?: string; lens?: string; correlationId?: string } = {},
-  ): Promise<any> {
+  ): Promise<NetworkListingRadarSnapshot> {
     const query: Record<string, string> = {};
     if (options.selectedHeatZoneId) query.selectedHeatZoneId = options.selectedHeatZoneId;
     if (options.lens) query.lens = options.lens;
-    return this.request("/api/v1/operator/network-listings", {
+    return this.request<NetworkListingRadarSnapshot>("/api/v1/operator/network-listings", {
       query,
       correlationId: options.correlationId,
     });
@@ -638,8 +638,8 @@ export class OdpApiClient {
 
   resetNetworkListings(
     options: { correlationId?: string } = {},
-  ): Promise<any> {
-    return this.request("/api/v1/operator/network-listings/reset", {
+  ): Promise<NetworkListingRadarSnapshot> {
+    return this.request<NetworkListingRadarSnapshot>("/api/v1/operator/network-listings/reset", {
       method: "POST",
       correlationId: options.correlationId,
     });
@@ -649,8 +649,8 @@ export class OdpApiClient {
     listingId: string,
     payload: NetworkListingActorPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/convert`, {
+  ): Promise<ConvertListingResponse> {
+    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/convert`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -662,8 +662,8 @@ export class OdpApiClient {
     listingId: string,
     payload: NetworkListingMergePayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/merge`, {
+  ): Promise<MergeListingResponse> {
+    return this.request<MergeListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/merge`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -675,8 +675,8 @@ export class OdpApiClient {
     listingId: string,
     payload: NetworkListingActorPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/archive`, {
+  ): Promise<ArchiveListingResponse> {
+    return this.request<ArchiveListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/archive`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -687,8 +687,8 @@ export class OdpApiClient {
   submitIntake(
     payload: IntakeSubmitPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<any> {
-    return this.request("/api/v1/operator/network-listings/intake/submit", {
+  ): Promise<AssistedIntake> {
+    return this.request<AssistedIntake>("/api/v1/operator/network-listings/intake/submit", {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -698,24 +698,24 @@ export class OdpApiClient {
 
   listIntakes(
     options: { selectedHeatZoneId?: string } = {},
-  ): Promise<any[]> {
+  ): Promise<AssistedIntake[]> {
     const query: Record<string, string> = {};
     if (options.selectedHeatZoneId) query.selectedHeatZoneId = options.selectedHeatZoneId;
-    return this.request("/api/v1/operator/network-listings/intake", {
+    return this.request<AssistedIntake[]>("/api/v1/operator/network-listings/intake", {
       query,
     });
   }
 
-  getIntake(intakeId: string): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}`);
+  getIntake(intakeId: string): Promise<AssistedIntake> {
+    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}`);
   }
 
   correctIntake(
     intakeId: string,
     payload: IntakeCorrectPayload,
     options: { correlationId?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
+  ): Promise<AssistedIntake> {
+    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -726,8 +726,8 @@ export class OdpApiClient {
     intakeId: string,
     payload: IntakeDecidePayload,
     options: { correlationId?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
+  ): Promise<AssistedIntake> {
+    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -738,8 +738,8 @@ export class OdpApiClient {
     intakeId: string,
     payload: NetworkListingActorPayload,
     options: { correlationId?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
+  ): Promise<AssistedIntake> {
+    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -750,13 +750,183 @@ export class OdpApiClient {
     intakeId: string,
     payload: NetworkListingActorPayload,
     options: { correlationId?: string } = {},
-  ): Promise<any> {
-    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/promote`, {
+  ): Promise<ConvertListingResponse> {
+    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/intake/${intakeId}/promote`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
     });
   }
+}
+
+export type IntakeFieldCell = {
+  key: string;
+  label: string;
+  sourceValue: any;
+  normalizedValue: any;
+  correctedValue: any;
+  correctionReason: string | null;
+  identity: boolean;
+  lowConfidence: boolean;
+};
+
+export type MatchSignalDto = {
+  key: string;
+  label: string;
+  agrees: boolean;
+  detail: string;
+};
+
+export type MatchResultDto = {
+  outcome: "NEW" | "EXACT_DUPLICATE" | "REVISION" | "POSSIBLE_MATCH" | "QUARANTINED";
+  outcomeLabel: string;
+  confidence: number;
+  targetListingId: string | null;
+  agreeingSignals: MatchSignalDto[];
+  contradictingSignals: MatchSignalDto[];
+  summary: string;
+};
+
+export type IntakeAuditEvent = {
+  id: string;
+  occurredAt: string;
+  actorRoleId: string;
+  actorName: string;
+  action: string;
+  targetId: string;
+  message: string;
+  correlationId: string | null;
+  metadata?: Record<string, any>;
+};
+
+export type AssistedIntake = {
+  id: string;
+  originalUrl: string;
+  canonicalUrl: string;
+  submitter: string;
+  owner: string;
+  heatZoneId: string | null;
+  stage: string;
+  sourceId: string;
+  policy: string;
+  policyLabel: string;
+  policyReason: string;
+  rawSnapshot: any | null;
+  snapshotId: string | null;
+  capturedAt: string | null;
+  parserVersion: string;
+  correlationId: string | null;
+  parsedFields: Record<string, IntakeFieldCell>;
+  matchResult: MatchResultDto | null;
+  auditEvents: IntakeAuditEvent[];
+  idempotencyKey?: string | null;
+  failure?: {
+    code: string;
+    summary: string;
+    nextAction: string;
+    retryable: boolean;
+  } | null;
+};
+
+export type NetworkListingRadarSnapshot = {
+  source: string;
+  heatZones: Array<{
+    id: string;
+    label: string;
+    rank: number;
+    centroid: [number, number];
+    demandGap: number;
+    competitionIndex: number;
+    cannibalizationRisk: string;
+    rentBand: string;
+    confidence: number;
+    recommendedLens: string;
+    reasons: string[];
+    risks: string[];
+    nextStep: string;
+  }>;
+  listingSources: Array<{
+    id: string;
+    name: string;
+    status: string;
+    complianceNote: string;
+    lastSyncedAt: string;
+  }>;
+  listings: Array<{
+    id: string;
+    sourceId: string;
+    sourceListingId: string;
+    heatZoneId: string;
+    address: string;
+    status: string;
+    rentPerMonth: number;
+    areaPing: number;
+    floor: string;
+    frontageMeters: number;
+    geocodeConfidence: number;
+    hardRuleFailures: string[];
+    hardRuleSummary: string;
+    sourceEvidence: string[];
+    fitScore: number;
+    firstSeenAt: string;
+    sourceUrl: string;
+    contentFingerprint?: string;
+  }>;
+  candidates: Array<{
+    id: string;
+    listingId: string;
+    heatZoneId: string;
+    title: string;
+    address: string;
+    status: string;
+    score: number;
+    recommendation: string;
+    modelVersion: string;
+    datasetSnapshotId: string;
+    missingData: string[];
+    reviewId?: string | null;
+  }>;
+  siteReviews: any[];
+  assistedIntakes: AssistedIntake[];
+  expansionSteps: any[];
+  selectedHeatZoneId: string;
+  selectedLens: string;
+  auditEvents: any[];
+  correlationId: string | null;
+  counts: {
+    heatZones: number;
+    listings: number;
+    candidates: number;
+    siteReviews: number;
+    assistedIntakes: number;
+  };
+};
+
+export type ConvertListingResponse = {
+  listing: any;
+  candidate: any;
+  created: boolean;
+  auditEvent: any;
+  candidateCount: number;
+  correlationId: string | null;
+  expansionSteps: any[];
+};
+
+export type MergeListingResponse = {
+  source: any;
+  target: any;
+  sourceEvidenceRetained: string[];
+  auditEvent: any;
+  correlationId: string | null;
+  expansionSteps: any[];
+};
+
+export type ArchiveListingResponse = {
+  listing: any;
+  auditEvent: any;
+  correlationId: string | null;
+  expansionSteps: any[];
+};
 }
 
 export type NetworkListingActorPayload = {

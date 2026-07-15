@@ -84,6 +84,7 @@ def create_operator_router(
     document_store: Any | None = None,
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
+    listing_repository: Any | None = None,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -161,7 +162,7 @@ def create_operator_router(
     # Network listing intake — read/write paths for R4 Listing Radar.
     router.include_router(
         create_network_listings_sub_router(
-            NetworkListingService(document_store=document_store),
+            NetworkListingService(listing_repository=listing_repository, document_store=document_store),
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),
