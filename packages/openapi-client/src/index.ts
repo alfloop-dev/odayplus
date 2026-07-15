@@ -927,7 +927,6 @@ export type ArchiveListingResponse = {
   correlationId: string | null;
   expansionSteps: any[];
 };
-}
 
 export type NetworkListingActorPayload = {
   actorRoleId?: string;
