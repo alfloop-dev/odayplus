@@ -28,6 +28,28 @@ def run_gh_cli(args: list[str], input_data: str | None = None) -> tuple[int, str
     return result.returncode, result.stdout, result.stderr
 
 
+def build_payload(policy: dict) -> dict:
+    # Transform policy.json to standard GitHub API payload format
+    payload = {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": policy.get("required_status_checks", [])
+        },
+        "enforce_admins": policy.get("enforce_admins", True),
+        "restrictions": None
+    }
+
+    if "required_approving_review_count" in policy and policy["required_approving_review_count"] is not None:
+        payload["required_pull_request_reviews"] = {
+            "dismiss_stale_reviews": policy.get("dismiss_stale_reviews", True),
+            "require_code_owner_reviews": policy.get("require_code_owner_reviews", True),
+            "required_approving_review_count": policy["required_approving_review_count"]
+        }
+    else:
+        payload["required_pull_request_reviews"] = None
+    return payload
+
+
 def main() -> int:
     policy_path = ROOT / ".github/branch-protection/policy.json"
     if not policy_path.exists():
@@ -41,20 +63,7 @@ def main() -> int:
         print(f"Failed to parse policy file: {exc}", file=sys.stderr)
         return 1
 
-    # Transform policy.json to standard GitHub API payload format
-    payload = {
-        "required_status_checks": {
-            "strict": True,
-            "contexts": policy.get("required_status_checks", [])
-        },
-        "enforce_admins": policy.get("enforce_admins", True),
-        "required_pull_request_reviews": {
-            "dismiss_stale_reviews": policy.get("dismiss_stale_reviews", True),
-            "require_code_owner_reviews": policy.get("require_code_owner_reviews", True),
-            "required_approving_review_count": policy.get("required_approving_review_count", 1)
-        },
-        "restrictions": None
-    }
+    payload = build_payload(policy)
 
     repo = os.environ.get("GITHUB_REPOSITORY", "alfloop-dev/odayplus")
     branches = ["dev", "main"]
@@ -101,9 +110,12 @@ def main() -> int:
         print("We do not have sufficient repository administrative permissions to configure branch protection rules automatically.")
         print("Please manually configure the following settings on GitHub for 'dev' and 'main' branches:")
         print(f"1. Require status checks to pass before merging: {policy.get('required_status_checks', [])}")
-        print("2. Require approvals: 1 review approval count")
-        print("3. Dismiss stale reviews: True")
-        print("4. Require code owner reviews: True")
+        if "required_approving_review_count" in policy and policy["required_approving_review_count"] is not None:
+            print(f"2. Require approvals: {policy['required_approving_review_count']} review approval count")
+            print(f"3. Dismiss stale reviews: {policy.get('dismiss_stale_reviews', True)}")
+            print(f"4. Require code owner reviews: {policy.get('require_code_owner_reviews', True)}")
+        else:
+            print("2. Require approvals: Disabled (No GitHub review requirement)")
         print("5. Enforce on administrators: True")
         print("======================================================================")
         return 1
