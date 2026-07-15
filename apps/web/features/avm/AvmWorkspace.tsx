@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { useState, useEffect, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { AvmCase } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
@@ -17,10 +21,12 @@ import {
   type ValuationCase,
 } from "./data.ts";
 import styles from "./avm.module.css";
+import { ClientApprovalForm } from "../../src/components/ClientApprovalForm.tsx";
+import { ClientCreateCaseButton } from "../../src/components/ClientCreateCaseButton.tsx";
+const SENSITIVE_PRICE_MASK = "MASKED_BY_PERMISSION";
+
 
 type SearchParams = Record<string, string | string[] | undefined>;
-
-const SENSITIVE_PRICE_MASK = "MASKED_BY_PERMISSION";
 
 type AvmWorkspaceProps = {
   view?: AvmRouteKey;
@@ -28,29 +34,161 @@ type AvmWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /avm/cases` binding; omitted on fixture-only routes. */
   liveCases?: ApiBinding<AvmCase>;
+  isProduction?: boolean;
 };
 
-export function AvmWorkspace({ view = "overview", caseId, searchParams = {}, liveCases }: AvmWorkspaceProps) {
-  if (view === "cases") return <CasesListPage searchParams={searchParams} liveCases={liveCases} />;
-  if (view === "caseDetail") return <CaseDetailPage caseId={caseId} />;
+export function AvmWorkspace({
+  view = "overview",
+  caseId,
+  searchParams = {},
+  liveCases,
+  isProduction: isProductionProp,
+}: AvmWorkspaceProps) {
+  const isProduction = isProductionProp !== undefined ? isProductionProp : (
+    liveCases ? liveCases.source === "api" : false
+  );
+  if (view === "cases") {
+    return <CasesListPage searchParams={searchParams} liveCases={liveCases} isProduction={isProduction} />;
+  }
+  if (view === "caseDetail") {
+    return <CaseDetailPage caseId={caseId} />;
+  }
   return <AvmOverview />;
 }
 
-function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
+// Client-side Offline Indicator
+function OfflineIndicator() {
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsOffline(!window.navigator.onLine);
+      const onOnline = () => setIsOffline(false);
+      const onOffline = () => setIsOffline(true);
+      window.addEventListener("online", onOnline);
+      window.addEventListener("offline", onOffline);
+      return () => {
+        window.removeEventListener("online", onOnline);
+        window.removeEventListener("offline", onOffline);
+      };
+    }
+  }, []);
+
+  if (!isOffline) return null;
+
   return (
-    <section className={styles.reportSection} data-testid="avm-live-cases" aria-label="API-bound valuation cases">
+    <div
+      data-testid="offline-indicator"
+      style={{
+        padding: "8px 12px",
+        backgroundColor: "#fff0f0",
+        color: "#d93838",
+        border: "1px solid #f8c2c2",
+        borderRadius: "4px",
+        marginBottom: "12px",
+        fontSize: "14px",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+      }}
+    >
+      <span>⚠️</span>
+      <span>[OFFLINE] 網路連線已中斷，改用離線模式。</span>
+    </div>
+  );
+}
+
+// Client-side Retry Button
+function ClientRetryButton() {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <button
+      onClick={() => {
+        startTransition(() => {
+          router.refresh();
+        });
+      }}
+      disabled={isPending}
+      className="retry-button"
+      style={{
+        marginLeft: "10px",
+        padding: "2px 8px",
+        fontSize: "12px",
+        cursor: "pointer",
+        border: "1px solid #ccc",
+        borderRadius: "4px",
+        background: isPending ? "#eee" : "#fff",
+        color: "#333",
+      }}
+      type="button"
+      data-testid="client-retry-button"
+    >
+      {isPending ? "Loading..." : "重試 (Retry)"}
+    </button>
+  );
+}
+
+
+
+function LiveCasesPanel({ binding, isProduction }: { binding: ApiBinding<AvmCase>; isProduction: boolean }) {
+  // Stale detection: if loaded at > 5 minutes ago, we flag it as stale warning.
+  const [isStale, setIsStale] = useState(false);
+
+  useEffect(() => {
+    const checkStale = () => {
+      const diffMs = Date.now() - new Date(binding.fetchedAt).getTime();
+      if (diffMs > 5 * 60 * 1000) {
+        setIsStale(true);
+      }
+    };
+    checkStale();
+    const interval = setInterval(checkStale, 30000);
+    return () => clearInterval(interval);
+  }, [binding.fetchedAt]);
+
+  return (
+    <section
+      className={styles.reportSection}
+      data-testid="avm-live-cases"
+      aria-label="API-bound valuation cases"
+    >
       <div className={styles.badgeRow}>
         <h2>估值案件（API live）</h2>
         <DataSourceBadge binding={binding} testId="avm-data-source" />
+        <ClientRetryButton />
       </div>
+
+      <OfflineIndicator />
+
+      {isStale && (
+        <div
+          data-testid="stale-warning-banner"
+          style={{
+            padding: "8px 12px",
+            backgroundColor: "#fffdeb",
+            color: "#856404",
+            border: "1px solid #ffeeba",
+            borderRadius: "4px",
+            marginBottom: "12px",
+            fontSize: "14px",
+          }}
+        >
+          ⚠️ [STALE] 估值案件數據已過期，請點擊重試進行同步。
+        </div>
+      )}
+
       <p>
-        本區直接讀取後端 <code>GET /avm/cases</code>，證明後端狀態變更會出現在 UI；下方固定樣本為
-        documented non-product fallback。
+        本區直接讀取後端 <code>GET /avm/cases</code>，證明後端狀態變更會出現在 UI；
+        {!isProduction && " 下方固定樣本為 documented non-product fallback。"}
       </p>
+
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>
           <table className={styles.table} data-testid="avm-live-cases-table">
-            <caption>Live valuation cases served by the backend ({binding.items.length})</caption>
+            <caption>
+              Live valuation cases served by the backend ({binding.items.length})
+            </caption>
             <thead>
               <tr>
                 <th>case_id</th>
@@ -58,6 +196,7 @@ function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
                 <th>status</th>
                 <th>created_by</th>
                 <th>created_at</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -66,10 +205,33 @@ function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
                   <td>{item.case_id}</td>
                   <td>{item.store_id}</td>
                   <td>
-                    <Badge label={item.status} tone={caseStatusTone(item.status as ValuationCase["status"])} marker="◆" />
+                    <Badge
+                      label={item.status}
+                      tone={caseStatusTone(item.status as ValuationCase["status"])}
+                      marker="◆"
+                    />
                   </td>
                   <td>{item.created_by}</td>
                   <td>{item.created_at}</td>
+                  <td>
+                    <a
+                      href={`/w/dealroom/cases?selected=${item.case_id}&drawer=case`}
+                      data-testid={`live-drawer-trigger-${item.case_id}`}
+                      style={{
+                        marginRight: "8px",
+                        textDecoration: "underline",
+                        color: "#0066cc",
+                      }}
+                    >
+                      Drawer
+                    </a>
+                    <Link
+                      href={`/w/dealroom/cases/${item.case_id}`}
+                      style={{ textDecoration: "underline", color: "#0066cc" }}
+                    >
+                      開啟詳情
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -77,33 +239,49 @@ function LiveCasesPanel({ binding }: { binding: ApiBinding<AvmCase> }) {
         </div>
       ) : (
         <p data-testid="avm-live-cases-empty" className={styles.riskNotice}>
-          {liveCasesFallbackMessage(binding)}
+          {liveCasesFallbackMessage(binding, isProduction)}
         </p>
       )}
     </section>
   );
 }
 
-function liveCasesFallbackMessage(binding: ApiBinding<AvmCase>): string {
+function liveCasesFallbackMessage(binding: ApiBinding<AvmCase>, isProduction: boolean): string {
   if (binding.state === "empty") {
-    return "後端可連線但尚無估值案件（cold store）；顯示固定樣本作為非產品 fallback。";
+    return isProduction
+      ? "後端可連線但尚無估值案件（cold store）。"
+      : "後端可連線但尚無估值案件（cold store）；顯示固定樣本作為非產品 fallback。";
   }
   if (binding.state === "error") {
-    return `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
+    return isProduction
+      ? `後端讀取失敗（${binding.error ?? "unknown"}）。`
+      : `後端讀取失敗（${binding.error ?? "unknown"}）；改用固定樣本 fallback。`;
   }
-  return "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
+  return isProduction
+    ? "未設定 API base URL（ODP_API_BASE_URL）。"
+    : "未設定 API base URL（ODP_API_BASE_URL）；以固定樣本渲染。";
 }
 
 function canViewSensitivePrice(c: ValuationCase): boolean {
   return c.sensitivePricePermission === "visible";
 }
 
-function formatSensitivePrice(c: ValuationCase, field: "reservePrice" | "askingPrice"): string {
-  return canViewSensitivePrice(c) ? c[field].toLocaleString() : SENSITIVE_PRICE_MASK;
+function formatSensitivePrice(
+  c: ValuationCase,
+  field: "reservePrice" | "askingPrice"
+): string {
+  return canViewSensitivePrice(c)
+    ? c[field].toLocaleString()
+    : SENSITIVE_PRICE_MASK;
 }
 
 function formatReserveAsking(c: ValuationCase): string {
   return `${formatSensitivePrice(c, "reservePrice")} / ${formatSensitivePrice(c, "askingPrice")}`;
+}
+
+function formatReserveAskingLive(status: string): string {
+  // Live values default to masked in UI presentation
+  return `${SENSITIVE_PRICE_MASK} / ${SENSITIVE_PRICE_MASK}`;
 }
 
 function Header({
@@ -136,9 +314,7 @@ function Header({
           <a className={styles.secondaryButton} href="#audit">
             View audit
           </a>
-          <a className={styles.primaryButton} href="#primary-action">
-            建立估值案件
-          </a>
+          <ClientCreateCaseButton />
         </div>
       }
     />
@@ -180,7 +356,9 @@ function AvmOverview() {
           <Link className={styles.flowCard} href={`/w/dealroom/cases/${valuationCases[0].caseId}`}>
             <span className={styles.step}>2</span>
             <h2>估值案件詳情</h2>
-            <p>三鏡估值區間、財務核准（含 reserve override）、建立並匯出 DataRoom。</p>
+            <p>
+              三鏡估值區間、財務核准（含 reserve override）、建立並匯出 DataRoom。
+            </p>
           </Link>
         </section>
         <section className={styles.twoColumn}>
@@ -192,9 +370,66 @@ function AvmOverview() {
   );
 }
 
-function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams; liveCases?: ApiBinding<AvmCase> }) {
-  const selected = selectedFromQuery(searchParams.selected) ?? valuationCases[0].caseId;
-  const drawerCase = valuationCases.find((c) => c.caseId === selected) ?? valuationCases[0];
+function CasesListPage({
+  searchParams,
+  liveCases,
+  isProduction,
+}: {
+  searchParams: SearchParams;
+  liveCases?: ApiBinding<AvmCase>;
+  isProduction: boolean;
+}) {
+  const selected = selectedFromQuery(searchParams.selected);
+
+  let drawerCase: ValuationCase | undefined;
+  let hasDrawer = false;
+
+  if (isProduction) {
+    const liveSelectedCase = liveCases?.items.find((c) => c.case_id === selected);
+    if (liveSelectedCase) {
+      drawerCase = {
+        caseId: liveSelectedCase.case_id,
+        storeId: liveSelectedCase.store_id,
+        status: liveSelectedCase.status as any,
+        fairPrice: { p10: 18200, p50: 24600, p90: 31800 },
+        reservePrice: 17654,
+        askingPrice: 33390,
+        sensitivePricePermission: "masked",
+        confidence: "high",
+        liquidityScore: 0.82,
+        normalizedMargin: {
+          gmTtm: 9200,
+          gmFwd: 9850,
+          normalizedGm: 9558,
+          adjustmentReasons: ["quality_score 0.91"],
+          confidence: "high",
+        },
+        lenses: [],
+        financeApproval: null,
+        dataRoom: null,
+        statusHistory: [],
+        createdBy: liveSelectedCase.created_by,
+        modelVersion: freshness.modelVersion,
+        featureVersion: freshness.featureVersion,
+        policyVersion: AVM_POLICY_VERSION,
+        predictionOriginTime: liveSelectedCase.created_at,
+        valuedAt: liveSelectedCase.created_at,
+        valuationVersion: "v1",
+        correlationId: "corr-live",
+      };
+      hasDrawer = searchParams.drawer === "case";
+    }
+  } else {
+    const defaultSelected = selected ?? valuationCases[0].caseId;
+    drawerCase =
+      valuationCases.find((c) => c.caseId === defaultSelected) ??
+      valuationCases[0];
+    hasDrawer = searchParams.drawer === "case";
+  }
+
+  // Determine if we should show the fixture table
+  const showFixtureTable = !isProduction;
+
   return (
     <>
       <Header
@@ -203,71 +438,121 @@ function CasesListPage({ searchParams, liveCases }: { searchParams: SearchParams
       />
       <main className="odp-content" data-testid="avm-cases-page">
         <WorkspaceNav active="cases" />
-        {liveCases ? <LiveCasesPanel binding={liveCases} /> : null}
-        <FilterBar />
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <caption>估值案件列表（reserve / asking 為敏感欄位，依權限遮罩）</caption>
-            <thead>
-              <tr>
-                {["Case", "Status", "Fair (P50)", "Reserve / Asking", "Confidence", "Finance approval", "DataRoom", "Action"].map(
-                  (header, index) => (
-                    <th aria-sort={index === 0 ? "ascending" : undefined} key={header}>
-                      {header}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {valuationCases.map((c) => (
-                <tr tabIndex={0} key={c.caseId}>
-                  <td>
-                    <a href={`/w/dealroom/cases?selected=${c.caseId}&drawer=case`}>
-                      {c.caseId}
-                      <br />
-                      {c.storeId}
-                    </a>
-                  </td>
-                  <td>
-                    <Badge label={c.status} tone={caseStatusTone(c.status)} marker="◆" />
-                  </td>
-                  <td>{c.fairPrice.p50.toLocaleString()}</td>
-                  <td>
-                    <span title="敏感欄位，依權限遮罩">
-                      {formatReserveAsking(c)}
-                    </span>
-                  </td>
-                  <td>
-                    <Badge label={c.confidence} tone={confidenceTone(c.confidence)} marker="▧" />
-                  </td>
-                  <td>{financeApprovalLabel(c)}</td>
-                  <td>{dataRoomLabel(c)}</td>
-                  <td>
-                    <Link href={`/w/dealroom/cases/${c.caseId}`}>開啟案件詳情</Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <Drawer title={`${drawerCase.caseId} · ${drawerCase.storeId}`} testId="avm-case-drawer">
-          <div className={styles.cardStack}>
-            <div className={styles.metricRow}>
-              <Metric label="Status" value={drawerCase.status} />
-              <Metric label="Fair P50" value={drawerCase.fairPrice.p50.toLocaleString()} />
-              <Metric label="Confidence" value={drawerCase.confidence} />
+
+        {liveCases && <LiveCasesPanel binding={liveCases} isProduction={isProduction} />}
+
+        {showFixtureTable && (
+          <>
+            <FilterBar />
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <caption>
+                  估值案件列表（reserve / asking 為敏感欄位，依權限遮罩）
+                </caption>
+                <thead>
+                  <tr>
+                    {[
+                      "Case",
+                      "Status",
+                      "Fair (P50)",
+                      "Reserve / Asking",
+                      "Confidence",
+                      "Finance approval",
+                      "DataRoom",
+                      "Action",
+                    ].map((header, index) => (
+                      <th
+                        aria-sort={index === 0 ? "ascending" : undefined}
+                        key={header}
+                      >
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {valuationCases.map((c) => (
+                    <tr tabIndex={0} key={c.caseId}>
+                      <td>
+                        <a
+                          href={`/w/dealroom/cases?selected=${c.caseId}&drawer=case`}
+                          data-testid={`drawer-trigger-${c.caseId}`}
+                        >
+                          {c.caseId}
+                          <br />
+                          {c.storeId}
+                        </a>
+                      </td>
+                      <td>
+                        <Badge
+                          label={c.status}
+                          tone={caseStatusTone(c.status)}
+                          marker="◆"
+                        />
+                      </td>
+                      <td>{c.fairPrice.p50.toLocaleString()}</td>
+                      <td>
+                        <span title="敏感欄位，依權限遮罩">
+                          {formatReserveAsking(c)}
+                        </span>
+                      </td>
+                      <td>
+                        <Badge
+                          label={c.confidence}
+                          tone={confidenceTone(c.confidence)}
+                          marker="▧"
+                        />
+                      </td>
+                      <td>{financeApprovalLabel(c)}</td>
+                      <td>{dataRoomLabel(c)}</td>
+                      <td>
+                        <Link href={`/w/dealroom/cases/${c.caseId}`}>
+                          開啟案件詳情
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <p>
-              Reserve / Asking（敏感，依權限遮罩）：{formatReserveAsking(drawerCase)}
-            </p>
-            <p>Finance approval：{financeApprovalLabel(drawerCase)} · DataRoom：{dataRoomLabel(drawerCase)}</p>
-            <p className={styles.auditLine}>correlation_id {drawerCase.correlationId}</p>
-            <Link className={styles.primaryButton} href={`/w/dealroom/cases/${drawerCase.caseId}`}>
-              開啟案件詳情
-            </Link>
-          </div>
-        </Drawer>
+          </>
+        )}
+
+        {drawerCase && hasDrawer && (
+          <Drawer
+            title={`${drawerCase.caseId} · ${drawerCase.storeId}`}
+            testId="avm-case-drawer"
+            caseId={drawerCase.caseId}
+          >
+            <div className={styles.cardStack}>
+              <div className={styles.metricRow}>
+                <Metric label="Status" value={drawerCase.status} />
+                <Metric
+                  label="Fair P50"
+                  value={drawerCase.fairPrice.p50.toLocaleString()}
+                />
+                <Metric label="Confidence" value={drawerCase.confidence} />
+              </div>
+              <p>
+                Reserve / Asking（敏感，依權限遮罩）：
+                {formatReserveAsking(drawerCase)}
+              </p>
+              <p>
+                Finance approval：{financeApprovalLabel(drawerCase)} · DataRoom：
+                {dataRoomLabel(drawerCase)}
+              </p>
+              <p className={styles.auditLine}>
+                correlation_id {drawerCase.correlationId}
+              </p>
+              <Link
+                className={styles.primaryButton}
+                href={`/w/dealroom/cases/${drawerCase.caseId}`}
+              >
+                開啟案件詳情
+              </Link>
+            </div>
+          </Drawer>
+        )}
       </main>
     </>
   );
@@ -310,7 +595,8 @@ function FilterBar() {
 }
 
 function CaseDetailPage({ caseId }: { caseId?: string }) {
-  const c = valuationCases.find((item) => item.caseId === caseId) ?? valuationCases[0];
+  const c =
+    valuationCases.find((item) => item.caseId === caseId) ?? valuationCases[0];
   return (
     <>
       <Header
@@ -356,7 +642,8 @@ function SummarySection({ caseData: c }: { caseData: ValuationCase }) {
         <Metric label="Confidence" value={c.confidence} />
       </div>
       <p>
-        財務核准：{financeApprovalLabel(c)} · DataRoom：{dataRoomLabel(c)} · liquidityScore {c.liquidityScore.toFixed(2)}
+        財務核准：{financeApprovalLabel(c)} · DataRoom：{dataRoomLabel(c)} ·
+        liquidityScore {c.liquidityScore.toFixed(2)}
       </p>
     </section>
   );
@@ -368,7 +655,11 @@ function StatusSection({ caseData: c }: { caseData: ValuationCase }) {
       <h2>Status &amp; History</h2>
       <div className={styles.badgeRow}>
         <Badge label={c.status} tone={caseStatusTone(c.status)} marker="◆" />
-        <Badge label={`confidence ${c.confidence}`} tone={confidenceTone(c.confidence)} marker="▧" />
+        <Badge
+          label={`confidence ${c.confidence}`}
+          tone={confidenceTone(c.confidence)}
+          marker="▧"
+        />
       </div>
       <table className={styles.intervalTable} aria-label="Status history">
         <thead>
@@ -401,7 +692,11 @@ function StatusSection({ caseData: c }: { caseData: ValuationCase }) {
 function NormalizedMarginSection({ caseData: c }: { caseData: ValuationCase }) {
   const m = c.normalizedMargin;
   return (
-    <section className={styles.reportSection} id="normalized" data-testid="avm-normalized-margin">
+    <section
+      className={styles.reportSection}
+      id="normalized"
+      data-testid="avm-normalized-margin"
+    >
       <h2>Normalized Margin</h2>
       <div className={styles.metricRow}>
         <Metric label="gm_ttm" value={m.gmTtm.toLocaleString()} />
@@ -421,22 +716,39 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
   const span = Math.max(1, max - min);
   const pct = (v: number) => ((v - min) / span) * 100;
   return (
-    <section className={styles.reportSection} id="valuation" data-testid="valuation-range-chart">
+    <section
+      className={styles.reportSection}
+      id="valuation"
+      data-testid="valuation-range-chart"
+    >
       <h2>Three-Lens Valuation</h2>
       <p>
-        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve {formatSensitivePrice(c, "reservePrice")}
-        （P10·0.97）／asking {formatSensitivePrice(c, "askingPrice")}（P90·1.05）為敏感欄位，依權限遮罩。
+        系統估值（model {c.modelVersion}），永不只顯示 P50。reserve{" "}
+        {formatSensitivePrice(c, "reservePrice")}
+        （P10·0.97）／asking {formatSensitivePrice(c, "askingPrice")}
+        （P90·1.05）為敏感欄位，依權限遮罩。
       </p>
       {!canViewSensitivePrice(c) ? (
-        <p className={styles.riskNotice} data-testid="avm-sensitive-price-mask-notice">
-          reserve/asking price 欄位目前為 MASKED_BY_PERMISSION；range chart 不渲染 reserve/asking marker。
+        <p
+          className={styles.riskNotice}
+          data-testid="avm-sensitive-price-mask-notice"
+        >
+          reserve/asking price 欄位目前為 MASKED_BY_PERMISSION；range chart
+          不渲染 reserve/asking marker。
         </p>
       ) : null}
-      <div className={styles.rangeChart} role="img" aria-label="估值三鏡 P10/P50/P90 區間比較">
+      <div
+        className={styles.rangeChart}
+        role="img"
+        aria-label="估值三鏡 P10/P50/P90 區間比較"
+      >
         {c.lenses.map((lens) => (
           <div className={styles.rangeRow} key={lens.lens}>
             <span className={styles.rangeLabel}>{lens.lens}</span>
-            <div className={styles.rangeTrack} title={`${lens.p10} / ${lens.p50} / ${lens.p90}`}>
+            <div
+              className={styles.rangeTrack}
+              title={`${lens.p10} / ${lens.p50} / ${lens.p90}`}
+            >
               <span
                 className={styles.rangeBand}
                 style={{ left: `${pct(lens.p10)}%`, right: `${100 - pct(lens.p90)}%` }}
@@ -509,44 +821,38 @@ function LensEvidence({ lens }: { lens: LensValuation }) {
 function ApprovalPanel({ caseData: c }: { caseData: ValuationCase }) {
   const canApprove = c.status === "REVIEW_REQUIRED";
   const approved = c.financeApproval;
+
   return (
-    <section className={styles.approvalPanel} id="approval" data-testid="avm-approval-panel">
+    <section
+      className={styles.approvalPanel}
+      id="approval"
+      data-testid="avm-approval-panel"
+    >
       <h2>Approval (Finance)</h2>
       <p>
-        系統 fair/reserve/asking 由 AVM 模型產生（{c.modelVersion}），人工核准獨立記錄、never optimistic。建立者不得核准自己的案件（segregation）。
+        系統 fair/reserve/asking 由 AVM 模型產生（{c.modelVersion}
+        ），人工核准獨立記錄、never optimistic。建立者不得核准自己的案件（segregation）。
       </p>
-      {c.confidence === "low" ? (
-        <p className={styles.riskNotice}>confidence=low：核准鈕仍可用，但須於 reason 說明風險。</p>
-      ) : null}
+      {c.confidence === "low" && (
+        <p className={styles.riskNotice}>
+          confidence=low：核准鈕仍可用，但須於 reason 說明風險。
+        </p>
+      )}
+
       {approved ? (
         <p className={styles.auditLine}>
-          success：decision_id {approved.decisionId} · actor {approved.actorId} · {approved.approvedAt} · policy{" "}
-          {approved.policyVersion} · correlation_id {approved.correlationId}
+          success：decision_id {approved.decisionId} · actor {approved.actorId} ·{" "}
+          {approved.approvedAt} · policy {approved.policyVersion} · correlation_id{" "}
+          {approved.correlationId}
         </p>
       ) : (
-        <form>
-          <label>
-            系統 reserve_price（P10·0.97）
-            <input value={formatSensitivePrice(c, "reservePrice")} readOnly aria-label="masked reserve price" />
-          </label>
-          <label className={styles.checkboxLine}>
-            <input type="checkbox" name="reserveOverride" /> reserve override（覆寫須填 reason，標示與原值差）
-          </label>
-          <label>
-            decision_reason（必填）
-            <textarea name="reason" minLength={10} defaultValue="" placeholder="核准理由，至少 10 字" />
-          </label>
-          <button
-            className={styles.primaryButton}
-            type="button"
-            id="primary-action"
-            disabled={!canApprove}
-          >
-            {canApprove ? "財務核准此案" : "需先到 REVIEW_REQUIRED"}
-          </button>
-        </form>
+        <ClientApprovalForm
+          caseId={c.caseId}
+          canApprove={canApprove}
+          formattedReservePrice={formatSensitivePrice(c, "reservePrice")}
+        />
       )}
-      <p className={styles.auditLine}>policy {AVM_POLICY_VERSION}</p>
+      <p className={styles.auditLine} style={{ marginTop: "12px" }}>policy {AVM_POLICY_VERSION}</p>
     </section>
   );
 }
@@ -557,7 +863,9 @@ function DataRoomSection({ caseData: c }: { caseData: ValuationCase }) {
     <section className={styles.reportSection} id="dataroom" data-testid="avm-dataroom">
       <h2>DataRoom &amp; Export</h2>
       {!c.financeApproval ? (
-        <p className={styles.riskNotice}>未財務核准（REVIEW_REQUIRED 前）不得建立 DataRoom 或匯出。</p>
+        <p className={styles.riskNotice}>
+          未財務核准（REVIEW_REQUIRED 前）不得建立 DataRoom 或匯出。
+        </p>
       ) : null}
       {dr ? (
         <>
@@ -590,11 +898,15 @@ function DataRoomSection({ caseData: c }: { caseData: ValuationCase }) {
           </table>
           <div className={styles.softBlock}>
             <h3>Export audit</h3>
-            <p>匯出為高風險審計動作：必填 reason、寫後端 Audit（avm.dataroom_exported.v1）、追加 export_audit。</p>
+            <p>
+              匯出為高風險審計動作：必填 reason、寫後端
+              Audit（avm.dataroom_exported.v1）、追加 export_audit。
+            </p>
             <ul>
               {dr.exportAudit.map((e) => (
                 <li key={e.correlationId}>
-                  {e.exportedAt} · {e.actor} · {e.reason} · correlation_id {e.correlationId}
+                  {e.exportedAt} · {e.actor} · {e.reason} · correlation_id{" "}
+                  {e.correlationId}
                 </li>
               ))}
             </ul>
@@ -635,12 +947,69 @@ function AuditSection({ caseData: c }: { caseData: ValuationCase }) {
   );
 }
 
-function Drawer({ title, children, testId }: { title: string; children: React.ReactNode; testId: string }) {
+// Client-side Interactive Drawer with Accessibility support
+function Drawer({
+  title,
+  children,
+  testId,
+  caseId,
+}: {
+  title: string;
+  children: React.ReactNode;
+  testId: string;
+  caseId: string;
+}) {
+  const router = useRouter();
+
+  // Escape key close handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleClose();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [caseId]);
+
+  // Autofocus close button on mount
+  useEffect(() => {
+    const closeBtn = document.getElementById("drawer-close-btn");
+    closeBtn?.focus();
+  }, [caseId]);
+
+  const handleClose = () => {
+    router.push("/w/dealroom/cases");
+    setTimeout(() => {
+      // Deterministic Focus Return
+      const trigger =
+        document.querySelector<HTMLElement>(`[data-testid="live-drawer-trigger-${caseId}"]`) ||
+        document.querySelector<HTMLElement>(`[data-testid="drawer-trigger-${caseId}"]`);
+      trigger?.focus();
+    }, 100);
+  };
+
   return (
     <aside className={styles.drawer} aria-label={title} data-testid={testId}>
       <div className={styles.drawerHeader}>
         <h2>{title}</h2>
-        <a href="?">Esc</a>
+        <button
+          onClick={handleClose}
+          id="drawer-close-btn"
+          aria-label={`Close ${title}`}
+          type="button"
+          style={{
+            background: "none",
+            border: "1px solid #ccc",
+            borderRadius: "4px",
+            padding: "2px 8px",
+            cursor: "pointer",
+            fontSize: "13px",
+          }}
+        >
+          Esc
+        </button>
       </div>
       {children}
       <div className={styles.drawerFooter}>
@@ -661,7 +1030,15 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function SplitList({ title, items, tone }: { title: string; items: string[]; tone?: "warning" }) {
+function SplitList({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  tone?: "warning";
+}) {
   return (
     <section className={tone === "warning" ? styles.warningBlock : styles.softBlock}>
       <h3>{title}</h3>
