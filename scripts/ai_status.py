@@ -1211,9 +1211,20 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
     return result.returncode == 0
 
 
+def get_gh_executable() -> str:
+    gh_path = shutil.which("gh")
+    if gh_path:
+        if ".orchestrator/bin/gh" in gh_path:
+            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
+                if os.path.exists(p):
+                    return p
+        return gh_path
+    return "gh"
+
+
 def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
     result = subprocess.run(
-        ["gh", *args],
+        [get_gh_executable(), *args],
         cwd=cwd or ROOT,
         capture_output=True,
         text=True,
@@ -4106,7 +4117,7 @@ def resolve_task_sha(task_id: str) -> str | None:
     # 1. Try gh pr view for task/TASK-ID
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         result = subprocess.run(
-            ["gh", "pr", "view", branch_name, "--json", "headRefOid"],
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
             capture_output=True,
             text=True,
             check=False,
@@ -4223,7 +4234,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
     print(f"Emitting GitHub status check '{context}'={state} on {repo}@{sha}...")
 
     cmd = [
-        "gh", "api",
+        get_gh_executable(), "api",
         "-X", "POST",
         f"repos/{repo}/statuses/{sha}",
         "-F", f"state={state}",

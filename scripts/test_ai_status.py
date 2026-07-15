@@ -2781,7 +2781,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
         mock_result.returncode = 0
         mock_result.stdout = '{"headRefOid": "abc12345"}'
 
-        with mock.patch("subprocess.run", return_value=mock_result) as mock_run:
+        with mock.patch("subprocess.run", return_value=mock_result) as mock_run, \
+             mock.patch.object(ai_status, "get_gh_executable", return_value="gh"):
             sha = ai_status.resolve_task_sha("ODP-001")
             self.assertEqual(sha, "abc12345")
             mock_run.assert_any_call(
@@ -2814,6 +2815,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
         with mock.patch.object(ai_status, "resolve_task_sha", return_value="sha123"), \
              mock.patch.object(ai_status, "get_repository_slug_safe", return_value="owner/repo"), \
+             mock.patch.object(ai_status, "get_gh_executable", return_value="gh"), \
              mock.patch("subprocess.run", return_value=mock_run) as mock_subprocess:
             ai_status.emit_task_review_status_check(task, "review_approved")
             mock_subprocess.assert_called_once_with(

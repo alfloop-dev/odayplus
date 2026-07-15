@@ -33,8 +33,20 @@ def load_json_file(path: Path) -> dict[str, Any]:
         raise ValueError(f"Failed to parse JSON from {path}: {exc}") from exc
 
 
+def get_gh_executable() -> str:
+    import shutil
+    gh_path = shutil.which("gh")
+    if gh_path:
+        if ".orchestrator/bin/gh" in gh_path:
+            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
+                if os.path.exists(p):
+                    return p
+        return gh_path
+    return "gh"
+
+
 def run_gh_cli(args: list[str], repo: str | None = None) -> str:
-    cmd = ["gh"] + args
+    cmd = [get_gh_executable()] + args
     if repo:
         cmd += ["--repo", repo]
     try:

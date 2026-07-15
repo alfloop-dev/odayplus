@@ -23,7 +23,7 @@ def main() -> int:
         return 1
 
     try:
-        with open(policy_path, "r", encoding="utf-8") as f:
+        with open(policy_path, encoding="utf-8") as f:
             policy = json.load(f)
     except Exception as exc:
         print(f"Failed to parse policy file: {exc}", file=sys.stderr)
@@ -48,7 +48,7 @@ def main() -> int:
     branches = ["dev", "main"]
     
     print(f"Target repository: {repo}")
-    print(f"Policy configuration to enforce:")
+    print("Policy configuration to enforce:")
     print(json.dumps(payload, indent=2))
 
     has_failures = False
@@ -94,11 +94,10 @@ def main() -> int:
         print("4. Require code owner reviews: True")
         print("5. Enforce on administrators: True")
         print("======================================================================")
-        # We do not fail the build if it's a permission issue, but we log the manual requirement.
+        return 1
     else:
         print("\nAll branch protections configured successfully.")
-
-    return 0
+        return 0
 
 
 if __name__ == "__main__":
