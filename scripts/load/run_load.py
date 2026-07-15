@@ -56,7 +56,7 @@ def run_load_test(db_path: str, concurrency: int, volume: int) -> dict:
                 # If leased another job, that's fine under concurrency, but we must complete this one specifically
                 # For safety under thread concurrency, let's complete the job we enqueued
                 pass
-            
+
             # Atomically complete the enqueued job
             bundle.job_queue.complete(job_id)
 

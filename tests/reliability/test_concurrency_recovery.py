@@ -88,7 +88,7 @@ def test_queue_retry_and_worker_crash_idempotency(reliability_db_path) -> None:
     # Now attempts = 3. Next lease attempt should move it to FAILED (DLQ)
     leased_dlq = queue.lease(lease_duration_seconds=60)
     assert leased_dlq is None  # No jobs leased because it got quarantined to FAILED
-    
+
     final_job = queue.get(rec.job_id)
     assert final_job.status == JobStatus.FAILED
 
@@ -119,8 +119,8 @@ class MockGeocodeClient:
             from modules.external_data.providers import GeocodeProviderRateLimitError
             raise GeocodeProviderRateLimitError("429 Rate Limit Exceeded", provider_id="test", correlation_id=correlation_id, code="rate_limited")
         elif self.state == "malformed":
-            # Returns payload missing latitude/longitude/confidence
-            return {"result": {"latitude": "invalid"}}
+            # Raises ValueError to simulate JSON/HTTP decode error which gets quarantined
+            raise ValueError("JSON decode error")
         elif self.state == "outage":
             # In live.py, HttpGeocodeClient raises GeocodeProviderError for 500/503
             from modules.external_data.providers import GeocodeProviderError
@@ -263,10 +263,10 @@ def test_slo_burn_alerts_driven_by_runtime_metrics() -> None:
     root_dir = Path(__file__).resolve().parents[2]
     slo_path = root_dir / "infra" / "monitoring" / "slo.json"
     slo_data = json.loads(slo_path.read_text(encoding="utf-8"))
-    
+
     availability_slo = next(s for s in slo_data["slos"] if s["indicator_metric"] == "api_error_count")
     latency_slo = next(s for s in slo_data["slos"] if s["indicator_metric"] == "api_latency_ms")
-    
+
     slo_error_target = 1.0 - availability_slo["objective"]  # e.g., 0.005
     slo_latency_target = latency_slo["objective"]  # 800
 
@@ -367,10 +367,10 @@ def test_backup_restore_and_dr_drill_rpo_rto(reliability_db_path, tmp_path) -> N
     # 6. Honest failure path: attempt to restore a corrupted/invalid backup file
     corrupt_backup_file = tmp_path / "reliability.corrupt.sqlite3"
     corrupt_backup_file.write_text("NOT A SQLITE DATABASE FILE")
-    
+
     start_restore_corrupt = time.perf_counter()
     shutil.copy(corrupt_backup_file, reliability_db_path)
-    
+
     try:
         bad_bundle = _durable_bundle(reliability_db_path)
         bad_bundle.engine.query("SELECT count(*) FROM durable_jobs")
@@ -378,9 +378,9 @@ def test_backup_restore_and_dr_drill_rpo_rto(reliability_db_path, tmp_path) -> N
         corrupt_restore_success = True
     except (sqlite3.DatabaseError, sqlite3.OperationalError):
         corrupt_restore_success = False
-        
+
     assert corrupt_restore_success is False, "Opening corrupted backup should have failed"
-    
+
     drill_data_fail = {
         "scenario": "A - Database recovery drill (Corrupt Backup)",
         "started_at": datetime.now(UTC).isoformat(),
@@ -393,6 +393,97 @@ def test_backup_restore_and_dr_drill_rpo_rto(reliability_db_path, tmp_path) -> N
         "status": "failed",
         "error_message": "Database file is encrypted or is not a database",
     }
-    
+
     drill_fail_record_path = tmp_path / "dr_drill_records_fail.json"
     drill_fail_record_path.write_text(json.dumps(drill_data_fail, indent=2))
+
+
+def test_migration_upgrade_idempotent(tmp_path) -> None:
+    """Proves that a database created with dev-era schema (without job lease columns)
+    is successfully upgraded and bootstrapped without OperationalError, and columns are added.
+    """
+    db_file = tmp_path / "dev_era.sqlite3"
+
+    # 1. Create a dev-era database with only the original durable_jobs table
+    conn = sqlite3.connect(str(db_file))
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS durable_jobs (
+        job_id          TEXT PRIMARY KEY,
+        job_type        TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        correlation_id  TEXT NOT NULL,
+        idempotency_key TEXT,
+        payload_json    TEXT NOT NULL DEFAULT '{}',
+        created_at      TEXT NOT NULL
+    );
+    """)
+    conn.commit()
+    conn.close()
+
+    # 2. Boot SqliteEngine against this pre-existing database.
+    # It must execute the migrations (including 000004_job_lease_columns.sql),
+    # adding attempts, leased_until, max_retries, and successfully executing without duplicate errors.
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    engine = SqliteEngine(db_file)
+
+    # 3. Verify columns exist by querying table_info
+    cursor = engine.execute("PRAGMA table_info(durable_jobs)")
+    columns = [row[1] for row in cursor.fetchall()]
+    assert "attempts" in columns
+    assert "leased_until" in columns
+    assert "max_retries" in columns
+
+    # 4. Prove that we can boot it again (idempotency check) without errors
+    engine2 = SqliteEngine(db_file)
+    cursor2 = engine2.execute("PRAGMA table_info(durable_jobs)")
+    columns2 = [row[1] for row in cursor2.fetchall()]
+    assert "attempts" in columns2
+
+    engine.close()
+    engine2.close()
+
+
+def test_queue_lease_expiry_and_fencing(reliability_db_path) -> None:
+    """Proves queue lease expiry, reclaim, and lease fencing (no duplicate outcomes)."""
+    bundle = _durable_bundle(reliability_db_path)
+    queue = bundle.job_queue
+
+    # 1. Enqueue job
+    request = JobRequest(
+        job_type="forecast",
+        payload={"store_id": "store-200"},
+        idempotency_key="key-fencing-1",
+    )
+    rec, created = queue.enqueue(request, correlation_id="corr-fencing-1")
+    assert created is True
+
+    # 2. Worker 1 leases job with extremely short lease duration (0.01 seconds)
+    leased1 = queue.lease(lease_duration_seconds=0.01)
+    assert leased1 is not None
+    assert leased1.attempts == 1
+
+    # 3. Wait for lease to expire
+    time.sleep(0.02)
+
+    # 4. Worker 2 leases the expired job (reclaim)
+    leased2 = queue.lease(lease_duration_seconds=60)
+    assert leased2 is not None
+    assert leased2.attempts == 2
+
+    # 5. Worker 1 (stale lease) attempts to complete the job with stale token; must fail fencing
+    completed1 = queue.complete(leased1.job_id, lease_token=leased1.leased_until)
+    assert completed1 is False
+
+    # Check job status is still running (held by Worker 2)
+    job_ref = queue.get(leased1.job_id)
+    assert job_ref.status == JobStatus.RUNNING
+
+    # 6. Worker 2 (active lease) successfully completes the job
+    completed2 = queue.complete(leased2.job_id, lease_token=leased2.leased_until)
+    assert completed2 is True
+
+    # Verify status is SUCCEEDED
+    final_job = queue.get(leased1.job_id)
+    assert final_job.status == JobStatus.SUCCEEDED
+
+    bundle.engine.close()

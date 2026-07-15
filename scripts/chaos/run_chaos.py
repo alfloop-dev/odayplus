@@ -11,11 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from modules.external_data.geo.pipeline import NormalizedAddress
 from modules.external_data.providers import (
     PrimaryGeocodeProvider,
-    GeocodeQuarantineError,
 )
-from modules.external_data.geo.pipeline import NormalizedAddress
 from tests.reliability.test_concurrency_recovery import MockGeocodeClient
 
 EVIDENCE_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-RELIABILITY-001"

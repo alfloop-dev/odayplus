@@ -78,7 +78,7 @@ class InMemoryJobQueue:
         import dataclasses
         from datetime import timedelta
         now = datetime.now(UTC)
-        
+
         # Sort by creation time to act as a FIFO queue
         for record in sorted(self._jobs.values(), key=lambda r: r.created_at):
             is_eligible = record.status == JobStatus.QUEUED or (
@@ -94,7 +94,7 @@ class InMemoryJobQueue:
                     )
                     self._jobs[record.job_id] = new_record
                     continue
-                
+
                 leased_until = now + timedelta(seconds=lease_duration_seconds)
                 new_record = dataclasses.replace(
                     record,
@@ -106,17 +106,30 @@ class InMemoryJobQueue:
                 return new_record
         return None
 
-    def complete(self, job_id: str) -> None:
-        import dataclasses
-        if job_id in self._jobs:
-            self._jobs[job_id] = dataclasses.replace(
-                self._jobs[job_id], status=JobStatus.SUCCEEDED, leased_until=None
-            )
-
-    def fail(self, job_id: str) -> None:
+    def complete(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
         import dataclasses
         if job_id in self._jobs:
             record = self._jobs[job_id]
+            if lease_token is not None:
+                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                current_token_str = record.leased_until.isoformat() if record.leased_until else None
+                if record.status != JobStatus.RUNNING or current_token_str != token_str:
+                    return False
+            self._jobs[job_id] = dataclasses.replace(
+                record, status=JobStatus.SUCCEEDED, leased_until=None
+            )
+            return True
+        return False
+
+    def fail(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
+        import dataclasses
+        if job_id in self._jobs:
+            record = self._jobs[job_id]
+            if lease_token is not None:
+                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                current_token_str = record.leased_until.isoformat() if record.leased_until else None
+                if record.status != JobStatus.RUNNING or current_token_str != token_str:
+                    return False
             if record.attempts < record.max_retries:
                 self._jobs[job_id] = dataclasses.replace(
                     record, status=JobStatus.QUEUED, leased_until=None
@@ -125,4 +138,5 @@ class InMemoryJobQueue:
                 self._jobs[job_id] = dataclasses.replace(
                     record, status=JobStatus.FAILED, leased_until=None
                 )
-
+            return True
+        return False
