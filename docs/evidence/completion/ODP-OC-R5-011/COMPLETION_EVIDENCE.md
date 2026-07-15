@@ -533,3 +533,88 @@ The `IntakeDialogShell` refactor is behaviour-preserving: the intake dialogs'
 | `git diff --check origin/dev...HEAD` | clean |
 
 The governance failure of §9.5 is unchanged and still not from this branch.
+
+## 11. Review round 5 — merge was not terminal
+
+Codex rejected PR #300 with one P1 finding. **It was real, and it was worse than
+reported**: the same defect also existed below the layer the finding described.
+
+### 11.1 The finding, reproduced before fixing
+
+After a successful merge, both merge entry points stayed live. `ListingRadarPanel`
+row `canMerge` checked only id/target/permission, and `detailPrimaryLabel` labelled
+any duplicate as mergeable; neither consulted `mergedIntoId`. A second click minted
+a **new** idempotency key, so it bypassed the replay cache, and `merge_listing`
+accepted it.
+
+Reproduced on this branch before any change (TestClient, matching Codex's proof):
+
+```
+first merge: 200
+second merge (different key): 200
+listing.merge audit events: 2
+source mergeReason: SECOND reason
+```
+
+The audit trail gained a phantom second merge and the first merge's reason — the
+operator's own words, on a high-impact write — was silently overwritten.
+
+### 11.2 A second, deeper hole the finding did not name
+
+Fixing only the in-memory check would have left the defect reachable. The durable
+listing metadata (`_sync_listing_to_repo`) persisted `heatZoneId`, hard rules,
+evidence, fitScore and firstSeenAt — **but not `mergedIntoId`**. The domain
+`Listing` carries only `status`, and a merged source and a merge-eligible
+duplicate are *both* `"duplicate"`, so status cannot carry terminality.
+
+Proven against the durable SQLite bundle, with the UI/service check already in
+place:
+
+```
+first merge: 200
+after restart -> status: duplicate | mergedIntoId: None
+second merge after restart: 200
+```
+
+The terminal marker did not survive a restart, so the double-merge came straight
+back. `duplicateOfId`, `mergedAt`, `mergeReason` and `mergedSourceListingIds` were
+lost the same way. All are now persisted; after the fix the restarted process
+returns `mergedIntoId: L-2025` and refuses the second merge with 409.
+
+### 11.3 The fix
+
+| Layer | Change |
+|---|---|
+| Service (`modules/opsboard/application/network_listings.py`) | `merge_listing` raises `NetworkListingConflict` (→ **409**) when `source.mergedIntoId` is set. Placed **after** the idempotency cache lookup, so replaying one request still returns its cached 200 — only a genuinely new request is refused. |
+| Durability (same file) | Merge fields added to the persisted listing metadata, so terminal state is restart-safe. |
+| UI (`ListingRadarPanel.tsx`) | Row `canMerge` requires `!listing?.mergedIntoId`. Detail primary reads 「已合併至 L-2025」, is disabled, and its handler returns early. Terminal outranks permission: `detailMergeDenied` now excludes merged listings, so the denial note never miscasts a completed merge as a missing grant. |
+
+Server-side rejection and UI retirement are both present deliberately: the UI
+stops offering the action, and the server refuses it regardless of caller.
+
+### 11.4 Tests that fail without the fix
+
+| Test | Asserts |
+|---|---|
+| `test_merge_is_terminal_and_rejects_a_second_request_for_the_same_source` (contract) | Second merge with a different key → **409**; exactly **one** `listing.merge` audit event; `mergeReason` still the first reason |
+| `test_merge_replay_of_the_same_idempotency_key_still_returns_the_cached_result` (contract) | The terminal check did not break idempotent retry: same key replays → 200, still one audit event |
+| `test_merge_terminal_state_survives_restart` (integration) | After a real process restart on durable SQLite: `mergedIntoId` present, second merge → 409, reason intact |
+| `a merged listing retires both merge entry points` (E2E) | Row button gone; detail primary reads 「已合併至 L-2025」 and is disabled; forced click opens no dialog; denial note absent; exactly one merge landed |
+
+The E2E was **verified to fail with the UI guard reverted** (`merge-L-2029`
+`toHaveCount(0)` → "unexpected value 1"), then to pass with it restored — it
+tests the requirement, not the fix. The round-4 lesson in §10.1 applied.
+
+### 11.5 Round-5 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check` (changed files) | All checks passed |
+| `npm run typecheck --workspace=@oday-plus/web` | pass |
+| `npm run build --workspace=@oday-plus/web` | pass |
+| `uv run pytest tests/contract tests/integration` | **486 passed** |
+| `npx playwright test tests/e2e/operator-network-listings.spec.ts` | **8 passed** |
+| `npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts` | **14 passed** |
+| `git diff --check` | clean |
+
+Not self-finalized. Handing back to Codex for independent re-review.
