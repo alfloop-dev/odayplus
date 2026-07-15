@@ -816,7 +816,7 @@ export class OdpApiClient {
 
   promoteIntake(
     intakeId: string,
-    payload: NetworkListingActorPayload,
+    payload: IntakePromotePayload,
     options: { correlationId?: string } = {},
   ): Promise<ConvertListingResponse> {
     return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/intake/${intakeId}/promote`, {
@@ -985,12 +985,20 @@ export type MatchResultDto = {
 };
 
 /**
- * Written by decide/correct so the audit trail keeps the before/after values
- * and the risk summary the reviewer was shown at the point of decision.
+ * Written by decide/correct/promote/merge so the audit trail keeps the
+ * before/after values and the risk disclosure made at the point of decision.
  */
 export type IntakeAuditMetadata = {
   beforeAfter?: Record<string, { before?: IntakeFieldValue; after?: IntakeFieldValue }>;
+  /** The caller-supplied text the operator was shown and accepted. */
   riskSummary?: string;
+  /** True only when the operator explicitly acknowledged `riskSummary`. */
+  riskAcknowledged?: boolean;
+  /**
+   * Server-derived description of what the write actually did. Kept separate
+   * from `riskSummary` so it is never mistaken for acknowledged text.
+   */
+  effectSummary?: string;
   [key: string]: unknown;
 };
 
@@ -1143,9 +1151,24 @@ export type NetworkListingActorPayload = {
   reason?: string | null;
 };
 
-export type NetworkListingMergePayload = NetworkListingActorPayload & {
-  targetListingId: string;
+/**
+ * The disclosure a high-impact write must carry.
+ *
+ * `riskSummary` is the exact text shown to the operator and `riskAcknowledged`
+ * records that they accepted it; both are stored in the audit event. They are
+ * required (not optional) so a caller cannot omit the disclosure and have the
+ * server 422 at runtime — the server rejects a missing or unacknowledged
+ * summary rather than inventing one.
+ */
+export type RiskDisclosure = {
+  riskSummary: string;
+  riskAcknowledged: boolean;
 };
+
+export type NetworkListingMergePayload = NetworkListingActorPayload &
+  RiskDisclosure & {
+    targetListingId: string;
+  };
 
 export type IntakeSubmitPayload = {
   url: string;
@@ -1154,7 +1177,7 @@ export type IntakeSubmitPayload = {
   actorName?: string | null;
 };
 
-export type IntakeCorrectPayload = {
+export type IntakeCorrectPayload = RiskDisclosure & {
   /** Keyed by IntakeCorrectableField; a reason is mandatory for identity fields. */
   fields: Partial<Record<IntakeCorrectableField, IntakeFieldValue>>;
   reason?: string | null;
@@ -1162,12 +1185,14 @@ export type IntakeCorrectPayload = {
   actorName?: string | null;
 };
 
-export type IntakeDecidePayload = {
+export type IntakeDecidePayload = RiskDisclosure & {
   action: IntakeDecideAction;
   reason?: string | null;
   actorRoleId?: string;
   actorName?: string | null;
 };
+
+export type IntakePromotePayload = NetworkListingActorPayload & RiskDisclosure;
 
 /**
  * Build a client from explicit options or the environment. Returns `null`

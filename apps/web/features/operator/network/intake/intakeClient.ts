@@ -212,14 +212,24 @@ export const intakeApi = {
     );
   },
 
+  /**
+   * Promotion requires the caller to pass the risk summary it showed the
+   * operator plus their acknowledgement; the server rejects (422) a missing or
+   * unacknowledged summary rather than inventing one.
+   */
   promote(
     client: OdpApiClient,
     intakeId: string,
     actorRoleId: string,
     reason: string,
+    risk: { riskSummary: string; riskAcknowledged: boolean },
   ): Promise<IntakeResult<ConvertListingResponse>> {
     return guard(() =>
-      client.promoteIntake(intakeId, { actorRoleId, reason }, { correlationId: newCorrelationId() }),
+      client.promoteIntake(
+        intakeId,
+        { actorRoleId, reason, ...risk },
+        { correlationId: newCorrelationId() },
+      ),
     );
   },
 };

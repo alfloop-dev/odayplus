@@ -7,13 +7,18 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.opsboard.application.network_listings import (
+    IntakeIdempotencyRecord,
     NetworkListingConflict,
     NetworkListingNotFound,
     NetworkListingPolicyError,
     NetworkListingService,
 )
 from shared.infrastructure.persistence import build_persistence
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.infrastructure.persistence.operator_network_listings import (
+    DurableAssistedIntakeRepository,
+)
 from shared.auth import Role
 from tests.integration._authz import auth_headers
 
@@ -89,7 +94,13 @@ def test_duplicate_and_revision_contract_test() -> None:
     # First, let's decide revision (action="revise")
     decide_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{data['id']}/decide",
-        json={"action": "revise", "reason": "降價更新", "actorRoleId": "expansionManager"},
+        json={
+            "action": "revise",
+            "reason": "降價更新",
+            "riskSummary": "將以送件版本覆寫既有物件 L-2024 的租金。",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
         headers=HEADERS,
     )
     assert decide_resp.status_code == 200
@@ -125,6 +136,8 @@ def test_ambiguous_entity_match_review_test() -> None:
         json={
             "fields": {"address": "新北市板橋區府中路 99 號 1F"},
             "reason": "勘誤地址以避開衝突",
+            "riskSummary": "修改地址會改變比對結果。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,
@@ -202,12 +215,14 @@ def test_timeout_contract_test() -> None:
         json={
             "fields": {"rent": 48000, "address": "新莊興德路店面"},
             "reason": "手動補錄超時物件",
+            "riskSummary": "手動補錄的欄位不具來源證據。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,
     )
     assert correct_resp.status_code == 200
-    
+
     # Retry - in tests retrieve will fail again since it's the timeout fixture,
     # but we verify it tries and user's corrections (rent: 48000) survive in parsedFields
     retry_resp = client.post(
@@ -250,5 +265,93 @@ def test_process_restart_survival(db_path) -> None:
         assert get_resp.status_code == 200
         assert get_resp.json()["originalUrl"] == url
         assert get_resp.json()["stage"] == "READY"
+    finally:
+        reopened.engine.close()
+
+
+def test_durable_intake_repository_round_trips_through_public_contract(db_path) -> None:
+    """The durable repository satisfies the public contract across a restart.
+
+    Exercised directly against the contract methods (not the document store) so
+    the application layer's only persistence dependency is the one under test.
+    """
+    bundle = _durable_bundle(db_path)
+    try:
+        repo = DurableAssistedIntakeRepository(SqliteDocumentStore(bundle.engine))
+        repo.save_intake({"id": "IN-CONTRACT-1", "stage": "READY", "originalUrl": "https://a.invalid"})
+        repo.save_idempotency_record(
+            IntakeIdempotencyRecord(action="submit", key="k-1", response={"id": "IN-CONTRACT-1"})
+        )
+        repo.save_listing_metadata("L-2030", {"heatZoneId": "HZ-01"})
+        repo.save_candidate_metadata("C-1", {"reviewId": "REV-1"})
+    finally:
+        bundle.engine.close()
+
+    # --- Simulated process restart ---
+    reopened = _durable_bundle(db_path)
+    try:
+        repo2 = DurableAssistedIntakeRepository(SqliteDocumentStore(reopened.engine))
+
+        intakes = repo2.list_intakes()
+        assert [item["id"] for item in intakes] == ["IN-CONTRACT-1"]
+        assert intakes[0]["stage"] == "READY"
+
+        records = repo2.list_idempotency_records()
+        assert len(records) == 1
+        assert records[0].action == "submit"
+        assert records[0].key == "k-1"
+        assert records[0].response == {"id": "IN-CONTRACT-1"}
+
+        assert repo2.get_listing_metadata("L-2030") == {"heatZoneId": "HZ-01"}
+        assert repo2.get_candidate_metadata("C-1") == {"reviewId": "REV-1"}
+
+        # Unknown ids read as empty, never None, so callers can merge directly.
+        assert repo2.get_listing_metadata("L-UNKNOWN") == {}
+        assert repo2.get_candidate_metadata("C-UNKNOWN") == {}
+
+        repo2.clear()
+        assert repo2.list_intakes() == []
+        assert repo2.list_idempotency_records() == []
+        assert repo2.get_listing_metadata("L-2030") == {}
+    finally:
+        reopened.engine.close()
+
+
+def test_service_replays_idempotent_write_through_repository_after_restart(db_path) -> None:
+    """A replayed write returns the cached response from durable state."""
+    bundle = _durable_bundle(db_path)
+    url = "https://www.synthetic.example/detail-77120345.html"
+    try:
+        app = create_app(persistence=bundle)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/operator/network-listings/intake/submit",
+            json={"url": url, "heatZoneId": "HZ-01"},
+            headers={**HEADERS, "Idempotency-Key": "idem-restart"},
+        )
+        assert resp.status_code == 200
+        intake_id = resp.json()["id"]
+    finally:
+        bundle.engine.close()
+
+    # --- Simulated process restart: the replay must not create a second intake ---
+    reopened = _durable_bundle(db_path)
+    try:
+        app2 = create_app(persistence=reopened)
+        client2 = TestClient(app2)
+        replay = client2.post(
+            "/api/v1/operator/network-listings/intake/submit",
+            json={"url": url, "heatZoneId": "HZ-01"},
+            headers={**HEADERS, "Idempotency-Key": "idem-restart"},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["id"] == intake_id
+
+        snapshot = client2.get("/api/v1/operator/network-listings", headers=HEADERS)
+        assert snapshot.status_code == 200
+        matching = [
+            item for item in snapshot.json()["assistedIntakes"] if item["id"] == intake_id
+        ]
+        assert len(matching) == 1
     finally:
         reopened.engine.close()

@@ -128,7 +128,13 @@ def test_changed_price_revision_contract_test() -> None:
     # Perform decision: action="revise"
     decide_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{data['id']}/decide",
-        json={"action": "revise", "reason": "降價更新至 55000", "actorRoleId": "expansionManager"},
+        json={
+            "action": "revise",
+            "reason": "降價更新至 55000",
+            "riskSummary": "將以送件版本覆寫既有物件 L-2024 的租金與樓層。",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
         headers=HEADERS,
     )
     assert decide_resp.status_code == 200
@@ -176,6 +182,8 @@ def test_ambiguous_entity_match_review_test() -> None:
         json={
             "fields": {"address": "新北市板橋區府中路 99 號 1F"},
             "reason": "勘誤地址以避開衝突",
+            "riskSummary": "修改地址會改變比對結果，可能指向不同物件。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,
@@ -253,12 +261,14 @@ def test_timeout_contract_test() -> None:
         json={
             "fields": {"rent": 48000, "address": "新莊興德路店面"},
             "reason": "手動補錄超時物件",
+            "riskSummary": "手動補錄的欄位不具來源證據。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,
     )
     assert correct_resp.status_code == 200
-    
+
     # Retry - fails again due to timeout fixture, but checks that manual rent correction survives
     retry_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{data['id']}/retry",
@@ -333,10 +343,178 @@ def test_promote_intake_contract_test() -> None:
     # Promote with valid reason
     promote_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
-        json={"actorRoleId": "expansionManager", "reason": "核准物件轉換為候選店"},
+        json={
+            "actorRoleId": "expansionManager",
+            "reason": "核准物件轉換為候選店",
+            "riskSummary": "轉換為候選店會建立 SiteScore 待審紀錄。",
+            "riskAcknowledged": True,
+        },
         headers=HEADERS,
     )
     assert promote_resp.status_code == 200
     res_data = promote_resp.json()
     assert res_data["candidate"]["id"] == "CS-1001"
     assert res_data["listing"]["status"] == "candidate"
+
+
+# --- Risk disclosure contract (ODP-OC-R5-011 review finding P0-2) ---
+#
+# High-impact writes must carry a caller-supplied risk summary AND an explicit
+# acknowledgement. The server must not invent the summary: an audit record is
+# only evidence of consent if it stores the text the operator actually saw.
+
+
+def _ready_intake_id(client) -> str:
+    resp = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    return resp.json()["id"]
+
+
+CORRECT_FIELDS = {"fields": {"address": "新北市板橋區府中路 99 號 1F"}, "reason": "勘誤地址"}
+DECIDE_BODY = {"action": "revise", "reason": "降價更新"}
+PROMOTE_BODY = {"reason": "核准物件轉換為候選店"}
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("correct", CORRECT_FIELDS),
+        ("decide", DECIDE_BODY),
+        ("promote", PROMOTE_BODY),
+    ],
+)
+def test_high_impact_write_rejects_missing_risk_summary(path, body) -> None:
+    app = create_app()
+    client = TestClient(app)
+    intake_id = _ready_intake_id(client)
+
+    resp = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/{path}",
+        json={**body, "riskAcknowledged": True, "actorRoleId": "expansionManager"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422
+    assert "risk summary is required" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("correct", CORRECT_FIELDS),
+        ("decide", DECIDE_BODY),
+        ("promote", PROMOTE_BODY),
+    ],
+)
+def test_high_impact_write_rejects_unacknowledged_risk(path, body) -> None:
+    app = create_app()
+    client = TestClient(app)
+    intake_id = _ready_intake_id(client)
+
+    # Summary supplied, but the operator never accepted it.
+    resp = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/{path}",
+        json={
+            **body,
+            "riskSummary": "此變更會覆寫既有物件。",
+            "riskAcknowledged": False,
+            "actorRoleId": "expansionManager",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422
+    assert "risk acknowledgement is required" in resp.json()["detail"]
+
+
+def test_merge_rejects_missing_risk_disclosure() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/operator/network-listings/listings/L-2029/merge",
+        json={"targetListingId": "L-2025", "reason": "重複來源", "actorRoleId": "expansionManager"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422
+    assert "risk summary is required" in resp.json()["detail"]
+
+
+def test_correct_persists_caller_risk_summary_in_audit() -> None:
+    app = create_app()
+    client = TestClient(app)
+    intake_id = _ready_intake_id(client)
+
+    caller_summary = "修改地址會改變比對結果，可能指向不同物件。"
+    resp = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/correct",
+        json={
+            **CORRECT_FIELDS,
+            "riskSummary": caller_summary,
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+
+    audit = resp.json()["auditEvents"][-1]
+    assert audit["action"] == "intake.correct"
+    # The stored summary is the caller's text verbatim, not a server-built one.
+    assert audit["metadata"]["riskSummary"] == caller_summary
+    assert audit["metadata"]["riskAcknowledged"] is True
+
+
+def test_decide_persists_caller_risk_summary_alongside_server_effect() -> None:
+    app = create_app()
+    client = TestClient(app)
+    intake_id = _ready_intake_id(client)
+
+    caller_summary = "將以送件版本覆寫既有物件 L-2024 的租金。"
+    resp = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
+        json={
+            **DECIDE_BODY,
+            "riskSummary": caller_summary,
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+
+    audit = resp.json()["auditEvents"][-1]
+    assert audit["metadata"]["riskSummary"] == caller_summary
+    assert audit["metadata"]["riskAcknowledged"] is True
+    # The server-derived description of what happened is kept, but under a
+    # separate key so it can never be mistaken for acknowledged text.
+    assert "L-2024" in audit["metadata"]["effectSummary"]
+
+
+def test_promote_persists_caller_risk_summary_in_audit() -> None:
+    app = create_app()
+    client = TestClient(app)
+    intake_id = _ready_intake_id(client)
+
+    caller_summary = "轉換為候選店會建立 SiteScore 待審紀錄。"
+    resp = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
+        json={
+            **PROMOTE_BODY,
+            "riskSummary": caller_summary,
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+
+    detail = client.get(
+        f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS
+    )
+    audit = detail.json()["auditEvents"][-1]
+    assert audit["action"] == "intake.promote"
+    assert audit["metadata"]["riskSummary"] == caller_summary
+    assert audit["metadata"]["riskAcknowledged"] is True

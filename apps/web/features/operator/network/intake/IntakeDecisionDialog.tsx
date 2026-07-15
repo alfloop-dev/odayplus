@@ -19,6 +19,10 @@ import { decisionTitle, matchLabel, shortUrl, stageLabel, type IntakeDecisionKin
 //   2. No optimistic UI. The dialog stays open and busy until the server
 //      answers, because a decision that only *looks* applied would leave the
 //      operator believing an audit record exists when it does not.
+//
+// The risk summary sent to the server is the SAME string rendered above the
+// checkbox. It is deliberately not rebuilt at submit time: the audit record
+// must store the text the operator actually read, not a re-derivation of it.
 
 export function IntakeDecisionDialog({
   busy,
@@ -32,15 +36,17 @@ export function IntakeDecisionDialog({
   error: IntakeApiError | null;
   kind: IntakeDecisionKind;
   onClose: () => void;
-  onSubmit: (input: { reason: string }) => void;
+  onSubmit: (input: { reason: string; riskSummary: string; riskAcknowledged: boolean }) => void;
   record: AssistedIntake;
 }) {
   const [reason, setReason] = useState("");
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const title = decisionTitle(kind, record);
   const outcome = record.matchResult?.outcome;
   const target = record.matchResult?.targetListingId ?? "";
+  const riskSummary = buildRiskSummary(record, kind, target);
 
   function handleSubmit() {
     if (busy) return;
@@ -50,8 +56,12 @@ export function IntakeDecisionDialog({
       setLocalError("此決策必須填寫原因。");
       return;
     }
+    if (!riskAcknowledged) {
+      setLocalError("請先確認你已了解此決策的影響。");
+      return;
+    }
     setLocalError(null);
-    onSubmit({ reason: reason.trim() });
+    onSubmit({ reason: reason.trim(), riskSummary, riskAcknowledged });
   }
 
   const summaryRows = buildSummaryRows(record, kind, target);
@@ -109,6 +119,23 @@ export function IntakeDecisionDialog({
           />
         </div>
 
+        <div className={styles.sectionBox}>
+          <div className={styles.sectionHead}>風險摘要 RISK SUMMARY</div>
+          <div className={styles.riskSummaryText} data-testid="intake-decide-risk-summary">
+            {riskSummary}
+          </div>
+          <label className={styles.checkboxRow} htmlFor="intake-decide-risk-ack">
+            <input
+              checked={riskAcknowledged}
+              data-testid="intake-decide-risk-ack"
+              id="intake-decide-risk-ack"
+              onChange={(event) => setRiskAcknowledged(event.target.checked)}
+              type="checkbox"
+            />
+            <span>我已閱讀並了解上述風險，確認執行此決策（將連同此摘要寫入 Audit）</span>
+          </label>
+        </div>
+
         {shownError ? (
           <div className={styles.errorPanel} data-testid="intake-decide-error" role="alert">
             <span className={styles.errorSummary}>{shownError}</span>
@@ -147,6 +174,41 @@ export function IntakeDecisionDialog({
       </div>
     </IntakeDialogShell>
   );
+}
+
+/**
+ * The disclosure text shown to the operator and stored in the audit event.
+ *
+ * Each decision kind states the durable effect and what is irreversible about
+ * it, because "確認決策" alone does not tell the operator what they are about
+ * to change.
+ */
+function buildRiskSummary(record: AssistedIntake, kind: IntakeDecisionKind, target: string): string {
+  const evidence = `快照 ${record.snapshotId ?? "—"} · ${record.parserVersion}`;
+  switch (kind) {
+    case "revise":
+      return (
+        `將以收件 ${record.id} 的內容覆寫既有物件 ${target || "（未指定）"} 並建立新版本；` +
+        `既有欄位值會被取代，僅能由後續修正還原。依據：${evidence}。`
+      );
+    case "create":
+      return (
+        `將以收件 ${record.id} 於物件收件匣建立一筆新物件（來源標記：URL 收件）。` +
+        `若此物件實為既有物件的重複，將造成重複紀錄。依據：${evidence}。`
+      );
+    case "dup":
+      return (
+        `將收件 ${record.id} 標記為重複${target ? `並保留 ${target}` : ""}；` +
+        `不會建立新物件，此收件的內容不會進入網絡評估。依據：${evidence}。`
+      );
+    case "steward":
+      return (
+        `將收件 ${record.id} 送交人工品質判定並停止自動處理；` +
+        `在解除隔離前不會建立或更新任何物件。依據：${evidence}。`
+      );
+    default:
+      return `將對收件 ${record.id} 寫入決策並記錄於 Audit。依據：${evidence}。`;
+  }
 }
 
 function buildSummaryRows(

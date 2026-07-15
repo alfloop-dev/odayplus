@@ -777,8 +777,18 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function mergeListing(sourceListingId: string, targetListingId: string) {
+    // Merge is a high-impact write: the server requires the risk summary shown
+    // to the operator plus their acknowledgement, and rejects (422) without it.
+    const riskSummary =
+      `Merging marks ${sourceListingId} a duplicate of ${targetListingId} and moves its source ` +
+      `evidence onto the target. ${sourceListingId} stops being evaluated on its own.`;
+    const confirmed =
+      typeof window === "undefined" ? false : window.confirm(`${riskSummary}\n\nProceed?`);
+    if (!confirmed) return;
     await postNetworkListingAction(sourceListingId, "merge", {
       reason: "Same address, rent, and source evidence verified; retain source evidence on target.",
+      riskSummary,
+      riskAcknowledged: true,
       targetListingId,
     });
   }

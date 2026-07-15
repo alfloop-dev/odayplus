@@ -1,4 +1,8 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import {
+  acquireOperatorBackendLock,
+  releaseOperatorBackendLock,
+} from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const NETWORK_HEADERS = {
@@ -9,6 +13,16 @@ const NETWORK_HEADERS = {
 };
 
 test.describe.configure({ mode: "serial" });
+
+// This file's reset wipes the shared operator backend, which other spec files
+// also reset; hold the lock for its whole run. See ./_operatorBackendLock.ts.
+test.beforeAll(async () => {
+  await acquireOperatorBackendLock();
+});
+
+test.afterAll(() => {
+  releaseOperatorBackendLock();
+});
 
 test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test.beforeEach(async () => {
@@ -56,7 +70,20 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
 
     await page.getByTestId("listing-filter-all").click();
     await expect(page.getByTestId("listing-row-L-2029")).toContainText("EV-L-2029-RAW-591");
+
+    // ODP-OC-R5-011: merge is a high-impact write and now discloses its risk
+    // before committing. Playwright auto-dismisses dialogs, which would cancel
+    // the merge, so accept it explicitly and assert the operator was told what
+    // the merge does.
+    const riskTexts: string[] = [];
+    page.on("dialog", (dialog) => {
+      riskTexts.push(dialog.message());
+      void dialog.accept();
+    });
     await page.getByTestId("merge-L-2029").click();
+    await expect
+      .poll(() => riskTexts.join(" "))
+      .toContain("marks L-2029 a duplicate of L-2025");
     await expect(page.getByTestId("listing-row-L-2029")).toContainText("merged into L-2025");
     await expect(page.getByTestId("listing-row-L-2025")).toContainText("EV-L-2029-RAW-591");
 

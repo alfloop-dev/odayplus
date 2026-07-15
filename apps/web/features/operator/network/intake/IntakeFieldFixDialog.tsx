@@ -13,6 +13,10 @@ import { isIdentityField } from "./intakeTypes";
 //                gate enforced client-side BEFORE the request. The server also
 //                enforces it (422); blocking here means the operator gets the
 //                requirement as guidance rather than as a rejection.
+//
+// A correction is a high-impact write, so it also carries the risk disclosure
+// the operator acknowledged. The summary sent is the string rendered above the
+// checkbox, so the audit stores what was actually read.
 
 export function IntakeFieldFixDialog({
   busy,
@@ -25,14 +29,27 @@ export function IntakeFieldFixDialog({
   error: IntakeApiError | null;
   field: IntakeFieldCell;
   onClose: () => void;
-  onSubmit: (input: { value: string; reason: string }) => void;
+  onSubmit: (input: {
+    value: string;
+    reason: string;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) => void;
 }) {
   const identity = isIdentityField(field.key);
   const [value, setValue] = useState(
     String(field.correctedValue ?? field.normalizedValue ?? ""),
   );
   const [reason, setReason] = useState(field.correctionReason ?? "");
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const before = formatCell(field.correctedValue ?? field.normalizedValue);
+  const riskSummary = identity
+    ? `修正識別欄位「${field.label}」：${before} → ${value.trim() || "（空白）"}。` +
+      `此欄位影響物件比對，修正後可能指向不同的既有物件或改判為新物件。前後值會寫入 Audit。`
+    : `修正欄位「${field.label}」：${before} → ${value.trim() || "（空白）"}。` +
+      `修正值會取代來源正規化值作為後續評估依據。前後值會寫入 Audit。`;
 
   function handleSubmit() {
     if (busy) return;
@@ -44,8 +61,12 @@ export function IntakeFieldFixDialog({
       setLocalError("識別欄位修正必須填寫原因（前後值會寫入 Audit）。");
       return;
     }
+    if (!riskAcknowledged) {
+      setLocalError("請先確認你已了解此修正的影響。");
+      return;
+    }
     setLocalError(null);
-    onSubmit({ value: value.trim(), reason: reason.trim() });
+    onSubmit({ value: value.trim(), reason: reason.trim(), riskSummary, riskAcknowledged });
   }
 
   const shownError = localError ?? error?.summary ?? null;
@@ -102,6 +123,23 @@ export function IntakeFieldFixDialog({
             rows={2}
             value={reason}
           />
+        </div>
+
+        <div className={styles.sectionBox}>
+          <div className={styles.sectionHead}>風險摘要 RISK SUMMARY</div>
+          <div className={styles.riskSummaryText} data-testid="intake-fix-risk-summary">
+            {riskSummary}
+          </div>
+          <label className={styles.checkboxRow} htmlFor="intake-fix-risk-ack">
+            <input
+              checked={riskAcknowledged}
+              data-testid="intake-fix-risk-ack"
+              id="intake-fix-risk-ack"
+              onChange={(event) => setRiskAcknowledged(event.target.checked)}
+              type="checkbox"
+            />
+            <span>我已閱讀並了解上述風險，確認儲存此修正（將連同此摘要寫入 Audit）</span>
+          </label>
         </div>
 
         {shownError ? (

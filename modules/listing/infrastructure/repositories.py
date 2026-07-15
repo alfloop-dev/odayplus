@@ -48,3 +48,10 @@ class InMemoryListingRepository:
             if lst.listing_id == listing_id:
                 return lst
         return None
+
+    def clear(self) -> None:
+        self.listings.clear()
+        self.addresses.clear()
+        self.candidates.clear()
+        self.source_keys.clear()
+        self.property_keys.clear()

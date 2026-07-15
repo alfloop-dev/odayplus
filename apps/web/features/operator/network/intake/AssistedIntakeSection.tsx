@@ -168,13 +168,25 @@ export function AssistedIntakeSection({
     void refresh();
   }
 
-  async function handleFix({ value, reason }: { value: string; reason: string }) {
+  async function handleFix({
+    value,
+    reason,
+    riskSummary,
+    riskAcknowledged,
+  }: {
+    value: string;
+    reason: string;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) {
     if (!client || !selected || !fixFieldKey || busy) return;
     setBusy(true);
     setActionError(null);
     const result = await intakeApi.correct(client, selected.id, {
       fields: { [fixFieldKey as IntakeCorrectableField]: value as IntakeFieldValue },
       reason: reason || null,
+      riskSummary,
+      riskAcknowledged,
       actorRoleId: activeRoleId,
       actorName: role.label,
     });
@@ -190,13 +202,23 @@ export function AssistedIntakeSection({
     setToast("已記錄人工修正（前後值已寫入 Audit）");
   }
 
-  async function handleAssistedEntry(fields: Record<string, string>) {
+  async function handleAssistedEntry({
+    fields,
+    riskSummary,
+    riskAcknowledged,
+  }: {
+    fields: Record<string, string>;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) {
     if (!client || !selected || busy) return;
     setBusy(true);
     setActionError(null);
     const result = await intakeApi.correct(client, selected.id, {
       fields: fields as Partial<Record<IntakeCorrectableField, IntakeFieldValue>>,
       reason: "人工補錄：此來源未經核准擷取，依來源頁內容補錄必要欄位",
+      riskSummary,
+      riskAcknowledged,
       actorRoleId: activeRoleId,
       actorName: role.label,
     });
@@ -211,13 +233,23 @@ export function AssistedIntakeSection({
     void refresh();
   }
 
-  async function handleDecide({ reason }: { reason: string }) {
+  async function handleDecide({
+    reason,
+    riskSummary,
+    riskAcknowledged,
+  }: {
+    reason: string;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) {
     if (!client || !selected || !decisionKind || busy) return;
     setBusy(true);
     setActionError(null);
     const result = await intakeApi.decide(client, selected.id, {
       action: DECISION_API_ACTION[decisionKind],
       reason,
+      riskSummary,
+      riskAcknowledged,
       actorRoleId: activeRoleId,
       actorName: role.label,
     });

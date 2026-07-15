@@ -1,4 +1,8 @@
 import { expect, test, type Locator } from "@playwright/test";
+import {
+  acquireOperatorBackendLock,
+  releaseOperatorBackendLock,
+} from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const NETWORK_HEADERS = {
@@ -7,6 +11,12 @@ const NETWORK_HEADERS = {
   "x-operator-role": "expansion-manager",
   "x-tenant-id": "tenant-a",
 };
+
+// No-op unless the running test actually took the operator backend lock, so it
+// is safe for every test in this file and releases even on failure.
+test.afterEach(() => {
+  releaseOperatorBackendLock();
+});
 
 test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog", async ({
   page,
@@ -180,6 +190,11 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
 
 test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page, request }) => {
+  // Only this test resets the shared operator listing backend, so the lock is
+  // taken here rather than for the whole file. Released by the afterEach below,
+  // which is a no-op for the tests that never took it.
+  await acquireOperatorBackendLock();
+
   const resetRebalance = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-rebalance/reset`, {
     headers: NETWORK_HEADERS,
   });
