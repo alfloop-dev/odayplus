@@ -38,6 +38,7 @@ refusal in the UI. ``error`` is therefore added *alongside* ``detail``, and
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -90,6 +91,8 @@ _STATUS_MAP: dict[int, tuple[str, str]] = {
 }
 
 _FALLBACK = (ErrorCode.INTERNAL, "Retry later; if it persists, escalate with the correlation ID.")
+
+logger = logging.getLogger("oday-api.errors")
 
 
 class ErrorEnvelope(BaseModel):
@@ -296,6 +299,38 @@ def install_error_handlers(app: Any) -> None:
             # 401 carries WWW-Authenticate; dropping it would break the
             # challenge contract for authenticating clients.
             headers=getattr(exc, "headers", None),
+        )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        """Unhandled exceptions must honour the declared 500 contract.
+
+        ``ERROR_RESPONSES`` declares ``500: ErrorResponse`` on every versioned
+        operation, so the generated client is told a 500 carries the envelope.
+        Without this handler Starlette returns a plain-text "Internal Server
+        Error" and the contract is a lie exactly when a caller most needs the
+        correlation ID to find the failure in the audit log.
+
+        The exception is logged at ERROR with the correlation ID before the
+        envelope is returned, so nothing is swallowed, and ``str(exc)`` is
+        deliberately *not* surfaced -- an unhandled error's text may carry
+        internals a caller must not see.
+        """
+        correlation_id = _correlation_id(request)
+        logger.exception(
+            "Unhandled exception on %s %s (correlation_id=%s)",
+            request.method,
+            request.url.path,
+            correlation_id,
+        )
+        return JSONResponse(
+            status_code=500,
+            content=error_response_body(
+                code=ErrorCode.INTERNAL,
+                message="Internal server error",
+                next_action=_FALLBACK[1],
+                correlation_id=correlation_id,
+            ),
         )
 
     @app.exception_handler(RequestValidationError)

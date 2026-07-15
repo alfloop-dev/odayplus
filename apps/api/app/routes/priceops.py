@@ -3,10 +3,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.api.errors import ApiError, ErrorCode
+from shared.api.idempotency import (
+    MISSING,
+    REPLAY_FIELD,
+    IdempotencyConflictError,
+    IdempotencyStore,
+    apply_replay_marker,
+    request_fingerprint,
+)
+from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -141,7 +151,11 @@ else:
         authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or PriceOpsJobStore()
         service = PriceOpsService(repository=price_repository)
-        idempotency_index: dict[str, str] = {}
+        # One store for every priceops mutation, replacing the router-local
+        # `idempotency_index` dict. Unlike that dict this one fingerprints the
+        # request body, so reusing a key for a different payload is a 409
+        # rather than a silent replay of the first response.
+        idempotency = IdempotencyStore()
 
         @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
         def create_plan(
@@ -150,12 +164,32 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            if effective_key and effective_key in idempotency_index:
-                plan = service.repository.get_plan(idempotency_index[effective_key])
-                if plan is not None:
-                    payload = plan.to_dict()
-                    payload["created"] = False
-                    return payload
+            if effective_key:
+                try:
+                    replayed_plan_id = idempotency.lookup(
+                        key=effective_key,
+                        scope="priceops:create_plan",
+                        fingerprint=request_fingerprint(body.model_dump(mode="json")),
+                    )
+                except IdempotencyConflictError as exc:
+                    raise ApiError(
+                        status.HTTP_409_CONFLICT,
+                        str(exc),
+                        code=ErrorCode.IDEMPOTENCY_CONFLICT,
+                        next_action=(
+                            "Use a new Idempotency-Key, or resend the original request body."
+                        ),
+                    ) from exc
+                if replayed_plan_id is not MISSING:
+                    plan = service.repository.get_plan(replayed_plan_id)
+                    if plan is not None:
+                        payload = plan.to_dict()
+                        # `created` is retained: existing callers and tests
+                        # branch on it. REPLAY_FIELD is the uniform signal that
+                        # every other guarded mutation now also emits.
+                        payload["created"] = False
+                        payload[REPLAY_FIELD] = True
+                        return payload
             try:
                 resolved = [_resolve_item(item) for item in body.items]
             except ElasticityInputError as exc:
@@ -171,7 +205,12 @@ else:
                 created_at=_parse_time(body.created_at),
             )
             if effective_key:
-                idempotency_index[effective_key] = plan.plan_id
+                idempotency.remember(
+                    key=effective_key,
+                    scope="priceops:create_plan",
+                    fingerprint=request_fingerprint(body.model_dump(mode="json")),
+                    value=plan.plan_id,
+                )
             _record_audit(
                 active_audit_log,
                 request,
@@ -182,6 +221,7 @@ else:
             )
             payload = plan.to_dict()
             payload["created"] = True
+            payload[REPLAY_FIELD] = False
             payload["elasticity_bindings"] = bindings
             return payload
 
@@ -243,9 +283,29 @@ else:
             return result.to_dict()
 
         @router.get("/plans", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
-        def list_plans() -> dict[str, Any]:
-            plans = service.repository.list_plans()
-            return {"items": [plan.to_dict() for plan in plans], "count": len(plans)}
+        def list_plans(
+            tenant_id: str | None = Query(default=None),
+            plan_status: str | None = Query(default=None, alias="status"),
+            limit: int | None = Query(default=None),
+            offset: int = Query(default=0),
+            sort: str | None = Query(default=None),
+            order: str = Query(default="asc"),
+        ) -> dict[str, Any]:
+            """List plans with consistent pagination, filtering and sorting.
+
+            The response keeps `items` and `count` with their existing meaning
+            (`count` is this page's size) and adds `total`/`limit`/`offset`/
+            `has_more`, so a caller that ignores the new fields and passes no
+            query parameters sees what it saw before.
+            """
+            rows = [plan.to_dict() for plan in service.repository.list_plans()]
+            if tenant_id is not None:
+                rows = [row for row in rows if row.get("tenant_id") == tenant_id]
+            if plan_status is not None:
+                rows = [row for row in rows if row.get("status") == plan_status]
+            return paginate(
+                rows, page_params(limit=limit, offset=offset, sort=sort, order=order)
+            )
 
         @router.get("/plans/{plan_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def get_plan(plan_id: str) -> dict[str, Any]:
@@ -309,7 +369,12 @@ else:
             )
 
         @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
-        def submit(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
+        def submit(
+            plan_id: str,
+            body: PriceOpsActorPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
             return _run(
                 lambda: service.submit_for_approval(
                     plan_id,
@@ -322,11 +387,17 @@ else:
                 "priceops.submitted.v1",
                 "submit",
                 plan_id,
+                idempotency=idempotency,
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
         def approve(
-            plan_id: str, body: PriceOpsApprovalPayload, request: Request
+            plan_id: str,
+            body: PriceOpsApprovalPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             return _run(
                 lambda: service.approve(
@@ -341,11 +412,17 @@ else:
                 "priceops.approved.v1",
                 body.decision,
                 plan_id,
+                idempotency=idempotency,
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def activate(
-            plan_id: str, body: PriceOpsActivationPayload, request: Request
+            plan_id: str,
+            body: PriceOpsActivationPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             return _run(
                 lambda: service.activate(
@@ -362,6 +439,9 @@ else:
                 "priceops.activated.v1",
                 "execute",
                 plan_id,
+                idempotency=idempotency,
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
@@ -411,7 +491,12 @@ else:
             )
 
         @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
-        def rollback(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
+        def rollback(
+            plan_id: str,
+            body: PriceOpsActorPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
             return _run(
                 lambda: service.rollback(
                     plan_id,
@@ -424,6 +509,9 @@ else:
                 "priceops.rollback.v1",
                 "rollback",
                 plan_id,
+                idempotency=idempotency,
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         return router
@@ -509,27 +597,73 @@ else:
         event_type: str,
         audit_action: str,
         plan_id: str,
+        *,
+        idempotency: IdempotencyStore | None = None,
+        idempotency_key: str | None = None,
+        body: Any = None,
     ) -> dict[str, Any]:
+        """Execute a plan transition, audit it, and return the plan payload.
+
+        Every transition routes through here, so threading the idempotency
+        policy in at this one point covers submit/approve/activate/observation/
+        evaluate/rollback together. These were the transitions with no policy at
+        all -- the ones where a double-submit approves a plan twice rather than
+        merely creating a duplicate row.
+
+        The guard wraps the audit record as well as the state change: replaying
+        a transition must not append a second audit event claiming the
+        transition happened again.
+        """
+
+        def _execute() -> dict[str, Any]:
+            try:
+                result = action()
+            except PlanNotFoundError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except (ApprovalBlockedError, MissingRollbackPlanError, ValueError, RuntimeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            audit_event = _record_audit(
+                audit_log,
+                request,
+                event_type,
+                audit_action,
+                f"priceops/plans/{plan_id}",
+                {"plan_id": plan_id},
+            )
+            payload = result.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
+        if idempotency is None:
+            return _execute()
+
         try:
-            result = action()
-        except PlanNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except (ApprovalBlockedError, MissingRollbackPlanError, ValueError, RuntimeError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            outcome = idempotency.run(
+                key=idempotency_key,
+                # Scope by event type and plan: the same client key on a
+                # different plan is a different mutation, not a replay.
+                #
+                # event_type, not audit_action: audit_action is `body.decision`
+                # for approve, so scoping on it would put APPROVE and REJECT in
+                # different scopes and let one key both approve *and* reject the
+                # same plan. event_type ("priceops.approved.v1") is stable for
+                # the operation, so the differing body is seen as the conflict
+                # it is.
+                scope=f"priceops:{event_type}:{plan_id}",
+                payload=body.model_dump(mode="json") if hasattr(body, "model_dump") else body,
+                operation=_execute,
+            )
+        except IdempotencyConflictError as exc:
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                str(exc),
+                code=ErrorCode.IDEMPOTENCY_CONFLICT,
+                next_action="Use a new Idempotency-Key, or resend the original request body.",
             ) from exc
-        audit_event = _record_audit(
-            audit_log,
-            request,
-            event_type,
-            audit_action,
-            f"priceops/plans/{plan_id}",
-            {"plan_id": plan_id},
-        )
-        payload = result.to_dict()
-        payload["audit_event_id"] = audit_event.event_id
-        payload["correlation_id"] = request.state.correlation_id
-        return payload
+        return apply_replay_marker(outcome.value, replayed=outcome.replayed)
 
     def _run_read(action: Any) -> dict[str, Any]:
         try:

@@ -24,6 +24,7 @@ unaffected.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from typing import Any
 
 __all__ = [
@@ -38,7 +39,31 @@ __all__ = [
 API_V1_PREFIX = "/api/v1"
 DEPRECATION_HEADER = "Deprecation"
 
+_ALIAS_TEMPLATES_KEY = "_odp_alias_templates"
 _ALIAS_MATCHERS_KEY = "_odp_alias_matchers"
+
+
+def _iter_router_paths(router: Any, prefix: str = "") -> Iterator[str]:
+    """Yield every path template ``router`` contributes, mounted at ``prefix``.
+
+    Walks nested routers explicitly. FastAPI 0.138 does not flatten an included
+    router into its parent: it wraps it in a ``_IncludedRouter`` that reports no
+    ``path`` of its own and keeps the real router in ``original_router``, with
+    the mount prefix on ``include_context``. A naive ``router.routes`` scan
+    therefore silently misses the whole operator sub-tree (~57 paths). The
+    ``getattr`` fallbacks keep this working on a FastAPI that does flatten.
+    """
+    for route in getattr(router, "routes", []):
+        path = getattr(route, "path", "")
+        if path:
+            yield f"{prefix}{path}"
+            continue
+        nested = getattr(route, "original_router", None)
+        if nested is None:
+            continue
+        context = getattr(route, "include_context", None)
+        nested_prefix = getattr(context, "prefix", "") or ""
+        yield from _iter_router_paths(nested, f"{prefix}{nested_prefix}")
 
 
 def mount_versioned(app: Any, router: Any, *, prefix: str = "") -> None:
@@ -47,6 +72,8 @@ def mount_versioned(app: Any, router: Any, *, prefix: str = "") -> None:
     ``prefix`` is any extra prefix the caller would have passed to
     ``include_router``.
     """
+    from starlette.routing import compile_path
+
     from shared.api.errors import ERROR_RESPONSES
 
     app.include_router(router, prefix=f"{API_V1_PREFIX}{prefix}", responses=ERROR_RESPONSES)
@@ -54,19 +81,27 @@ def mount_versioned(app: Any, router: Any, *, prefix: str = "") -> None:
     # the generated client only ever targets the versioned contract.
     app.include_router(router, prefix=prefix, include_in_schema=False)
 
+    # Record the alias templates here, at mount time, from the router itself.
+    # Deriving them from app.openapi() instead would be exact but costs ~1.5s to
+    # build the schema -- paid either inside the first aliased request or on
+    # every create_app(), and the test suite builds a fresh app per test.
+    templates: set[str] = getattr(app.state, _ALIAS_TEMPLATES_KEY, set())
+    matchers: list[re.Pattern[str]] = getattr(app.state, _ALIAS_MATCHERS_KEY, [])
+    for template in _iter_router_paths(router, prefix):
+        if template in templates:
+            continue
+        templates.add(template)
+        # Match on the compiled path regex, not a string prefix: a prefix test
+        # would wrongly flag any app-level route that happens to sit under a
+        # mounted router's prefix but has no versioned counterpart.
+        matchers.append(compile_path(template)[0])
+    setattr(app.state, _ALIAS_TEMPLATES_KEY, templates)
+    setattr(app.state, _ALIAS_MATCHERS_KEY, matchers)
+
 
 def alias_paths(app: Any) -> list[str]:
-    """Unversioned path templates served as compatibility aliases.
-
-    Derived from the versioned schema by stripping the prefix, because
-    :func:`mount_versioned` creates the two mounts together -- an alias exists
-    if and only if its versioned counterpart does. Deriving the set this way is
-    exact by construction and uses only public API. Walking ``router.routes``
-    instead would silently miss the operator sub-tree, whose nested routers
-    FastAPI 0.138 hides behind a private ``_IncludedRouter`` that reports no
-    path of its own.
-    """
-    return [path[len(API_V1_PREFIX) :] for path in versioned_paths(app)]
+    """Unversioned path templates served as compatibility aliases."""
+    return sorted(getattr(app.state, _ALIAS_TEMPLATES_KEY, set()))
 
 
 def versioned_paths(app: Any) -> list[str]:
@@ -87,25 +122,6 @@ def install_deprecation_headers(app: Any) -> None:
     than from documentation it may never read.
     """
     from starlette.requests import Request
-    from starlette.routing import compile_path
-
-    def _matchers() -> list[re.Pattern[str]]:
-        """Compiled alias matchers, built once on first use.
-
-        Built lazily rather than at install time because the routers are
-        mounted after this middleware is registered, so the schema is not yet
-        complete here. Cached on app.state -- regenerating it per request would
-        rebuild the whole OpenAPI schema on every call.
-        """
-        cached = getattr(app.state, _ALIAS_MATCHERS_KEY, None)
-        if cached is None:
-            # Match on the compiled path regex, not a string prefix. A prefix
-            # test would wrongly flag the app-level /audit/events (which has no
-            # versioned counterpart) merely because the audit router mounts
-            # /audit.
-            cached = [compile_path(template)[0] for template in alias_paths(app)]
-            setattr(app.state, _ALIAS_MATCHERS_KEY, cached)
-        return cached
 
     @app.middleware("http")
     async def _mark_deprecated_alias(request: Request, call_next: Any) -> Any:
@@ -113,7 +129,8 @@ def install_deprecation_headers(app: Any) -> None:
         path = request.url.path
         if path.startswith(API_V1_PREFIX):
             return response
-        if any(matcher.fullmatch(path) for matcher in _matchers()):
+        matchers: list[re.Pattern[str]] = getattr(app.state, _ALIAS_MATCHERS_KEY, [])
+        if any(matcher.fullmatch(path) for matcher in matchers):
             response.headers[DEPRECATION_HEADER] = "true"
             response.headers["Link"] = f'<{API_V1_PREFIX}{path}>; rel="successor-version"'
         return response

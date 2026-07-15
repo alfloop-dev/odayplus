@@ -41,7 +41,9 @@ def build_schema() -> dict[str, Any]:
         os.environ.pop(env_key, None)
     # In-memory persistence: exporting a schema must not create a database file
     # or require one to exist.
-    os.environ.setdefault("ODP_PERSISTENCE_MODE", "memory")
+    # The factory reads ODP_PERSISTENCE (not ..._MODE); the wrong name silently
+    # did nothing and a durable env would have written a real SQLite file.
+    os.environ["ODP_PERSISTENCE"] = "memory"
 
     from apps.api.oday_api.main import create_app
 

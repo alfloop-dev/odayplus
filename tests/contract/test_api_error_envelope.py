@@ -118,3 +118,39 @@ def test_unknown_route_also_returns_the_envelope() -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == ErrorCode.NOT_FOUND
+
+
+def test_unhandled_exception_honours_the_declared_500_contract() -> None:
+    """ERROR_RESPONSES declares 500: ErrorResponse on every versioned operation.
+
+    Without an Exception handler the server returns plain-text "Internal Server
+    Error", so the artifact — and therefore the generated client — would be
+    lying exactly when a caller most needs the correlation ID to find the
+    failure in the audit log.
+    """
+    app = create_app()
+
+    @app.get("/api/v1/_boom")
+    def _boom() -> dict[str, str]:
+        raise RuntimeError("database exploded: password=hunter2")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/api/v1/_boom", headers={"x-correlation-id": "corr-boom-1"})
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == ErrorCode.INTERNAL
+    assert body["error"]["correlation_id"] == "corr-boom-1"
+    assert body["error"]["next_action"]
+    # The raw exception text may carry internals, so it must not be echoed.
+    assert "hunter2" not in response.text
+
+
+def test_declared_error_responses_reach_the_openapi_artifact() -> None:
+    """A declared response the server does not honour is worse than none."""
+    app = create_app()
+    responses = app.openapi()["paths"]["/api/v1/priceops/plans"]["get"]["responses"]
+
+    for code in ("403", "404", "500"):
+        schema = responses[code]["content"]["application/json"]["schema"]
+        assert schema["$ref"].endswith("/ErrorResponse"), code

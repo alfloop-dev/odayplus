@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "MISSING",
     "IdempotencyStore",
     "IdempotencyConflictError",
     "IdempotencyOutcome",
@@ -69,6 +70,11 @@ class IdempotencyOutcome:
     replayed: bool
 
 
+# `None` is a legitimate stored value, so it cannot double as "no record".
+MISSING: Any = object()
+_MISSING = MISSING
+
+
 def request_fingerprint(payload: Any) -> str:
     """Stable hash of a request payload.
 
@@ -91,10 +97,11 @@ class IdempotencyStore:
     def __init__(self, *, max_entries: int = 10_000) -> None:
         self._entries: dict[tuple[str, str], tuple[str, Any]] = {}
         self._lock = threading.Lock()
+        self._entry_locks: dict[tuple[str, str], threading.Lock] = {}
         self._max_entries = max_entries
 
-    def lookup(self, *, key: str, scope: str, fingerprint: str) -> Any | None:
-        """Return the stored response for a replay, or ``None`` to execute.
+    def lookup(self, *, key: str, scope: str, fingerprint: str) -> Any:
+        """Return the stored response for a replay, or ``_MISSING`` to execute.
 
         Raises :class:`IdempotencyConflictError` when the key was used for a
         different payload.
@@ -102,7 +109,7 @@ class IdempotencyStore:
         with self._lock:
             record = self._entries.get((scope, key))
             if record is None:
-                return None
+                return _MISSING
             stored_fingerprint, value = record
             if stored_fingerprint != fingerprint:
                 raise IdempotencyConflictError(key, scope)
@@ -110,11 +117,20 @@ class IdempotencyStore:
 
     def remember(self, *, key: str, scope: str, fingerprint: str, value: Any) -> None:
         with self._lock:
-            if len(self._entries) >= self._max_entries:
+            entry_key = (scope, key)
+            # Evict only when adding a *new* entry: overwriting an existing key
+            # does not grow the dict, and evicting on it would discard a live
+            # record while the store is under its cap.
+            if entry_key not in self._entries and len(self._entries) >= self._max_entries:
                 # dict preserves insertion order; drop the oldest record.
                 oldest = next(iter(self._entries))
                 self._entries.pop(oldest, None)
-            self._entries[(scope, key)] = (fingerprint, value)
+                self._entry_locks.pop(oldest, None)
+            self._entries[entry_key] = (fingerprint, value)
+
+    def _entry_lock(self, scope: str, key: str) -> threading.Lock:
+        with self._lock:
+            return self._entry_locks.setdefault((scope, key), threading.Lock())
 
     def run(
         self,
@@ -127,18 +143,34 @@ class IdempotencyStore:
         """Execute ``operation`` under the idempotency policy.
 
         ``operation`` is a zero-arg callable so it is never invoked on a replay.
+
+        The lookup, the operation and the remember run under one lock held for
+        the whole (scope, key). Taking the lock only inside ``lookup`` and
+        ``remember`` would leave a check-then-act window, and these handlers run
+        concurrently in the threadpool that serves sync routes -- two
+        simultaneous submits of the same ``approve`` would both miss the lookup
+        and both execute, approving twice and writing two audit events. That is
+        precisely what this store exists to prevent, so the window must not
+        exist.
+
+        The lock is per-entry, not global: two different keys must not serialise
+        behind each other, and ``operation`` may be slow.
+
+        A failing ``operation`` propagates without being remembered, so a 4xx/5xx
+        is never replayed as though it had succeeded.
         """
         if not key:
             return IdempotencyOutcome(value=operation(), replayed=False)
 
         fingerprint = request_fingerprint(payload)
-        existing = self.lookup(key=key, scope=scope, fingerprint=fingerprint)
-        if existing is not None:
-            return IdempotencyOutcome(value=existing, replayed=True)
+        with self._entry_lock(scope, key):
+            existing = self.lookup(key=key, scope=scope, fingerprint=fingerprint)
+            if existing is not _MISSING:
+                return IdempotencyOutcome(value=existing, replayed=True)
 
-        result = operation()
-        self.remember(key=key, scope=scope, fingerprint=fingerprint, value=result)
-        return IdempotencyOutcome(value=result, replayed=False)
+            result = operation()
+            self.remember(key=key, scope=scope, fingerprint=fingerprint, value=result)
+            return IdempotencyOutcome(value=result, replayed=False)
 
 
 def apply_replay_marker(value: Any, *, replayed: bool) -> Any:
