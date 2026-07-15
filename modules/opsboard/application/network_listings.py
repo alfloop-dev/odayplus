@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -145,6 +145,20 @@ def _require_acknowledged_risk(
             f"risk acknowledgement is required to {action_label}"
         )
     return summary
+
+
+def _require_governed_write_context(
+    *,
+    idempotency_key: str | None,
+    correlation_id: str | None,
+    action_label: str,
+) -> str:
+    key = (idempotency_key or "").strip()
+    if not key:
+        raise NetworkListingPolicyError(f"idempotency key is required to {action_label}")
+    if not (correlation_id or "").strip():
+        raise NetworkListingPolicyError(f"correlation id is required to {action_label}")
+    return key
 
 
 def _now() -> str:
@@ -697,6 +711,12 @@ class NetworkListingService:
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
 
+        governed_key = _require_governed_write_context(
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            action_label="merge listing",
+        )
+
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("merge reason is required")
@@ -707,8 +727,8 @@ class NetworkListingService:
             action_label="merge listing",
         )
 
-        cache_key = ("merge", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
+        cache_key = ("merge", governed_key)
+        if cache_key in self._idempotency_cache:
             return _copy(self._idempotency_cache[cache_key])
 
         source = self._listing(source_listing_id)
@@ -779,8 +799,7 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=target["heatZoneId"]),
         }
-        if idempotency_key:
-            self._save_idempotency("merge", idempotency_key, result)
+        self._save_idempotency("merge", governed_key, result)
         return result
 
     def archive_listing(
@@ -868,6 +887,7 @@ class NetworkListingService:
             retrieve,
             validate_url,
         )
+        from modules.external_data.security import redact_sensitive_snapshot
 
         url = url.strip()
         validate_url(url)
@@ -925,6 +945,10 @@ class NetworkListingService:
             intake["stage"] = "RETRIEVING"
             retrieval = retrieve(canon_url, policy=policy)
             if retrieval.ok:
+                retrieval = replace(
+                    retrieval,
+                    raw=redact_sensitive_snapshot(retrieval.raw),
+                )
                 intake["stage"] = "PARSING"
                 intake["rawSnapshot"] = retrieval.raw
                 intake["snapshotId"] = retrieval.snapshot_id
@@ -1019,12 +1043,22 @@ class NetworkListingService:
         risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
+        idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
         allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
+
+        governed_key = _require_governed_write_context(
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            action_label="correct intake",
+        )
+        cache_key = ("correct_intake", governed_key)
+        if cache_key in self._idempotency_cache:
+            return _copy(self._idempotency_cache[cache_key])
 
         risk_summary_text = _require_acknowledged_risk(
             risk_summary=risk_summary,
@@ -1131,6 +1165,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+        self._save_idempotency("correct_intake", governed_key, intake)
         return _copy(intake)
 
     def decide_intake(
@@ -1143,12 +1178,22 @@ class NetworkListingService:
         risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
+        idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to decide intake")
+
+        governed_key = _require_governed_write_context(
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            action_label="decide intake",
+        )
+        cache_key = ("decide_intake", governed_key)
+        if cache_key in self._idempotency_cache:
+            return _copy(self._idempotency_cache[cache_key])
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -1317,6 +1362,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+        self._save_idempotency("decide_intake", governed_key, intake)
         return _copy(intake)
 
     def retry_intake(
@@ -1339,12 +1385,55 @@ class NetworkListingService:
             resolve_source_policy,
             retrieve,
         )
+        from modules.external_data.security import redact_sensitive_snapshot
 
         policy = resolve_source_policy(intake["originalUrl"])
+        if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:
+            intake["stage"] = "QUARANTINED"
+            intake["matchResult"] = {
+                "outcome": "QUARANTINED",
+                "outcomeLabel": "已隔離",
+                "confidence": 0.0,
+                "targetListingId": None,
+                "agreeingSignals": [],
+                "contradictingSignals": [],
+                "summary": f"依來源政策 {policy.policy} 予以隔離：{policy.policy_reason}",
+            }
+            retrieval = None
+        elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
+            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            retrieval = None
+        else:
+            intake["stage"] = "RETRIEVING"
+            retrieval = retrieve(intake["canonicalUrl"], policy=policy)
+
+        if retrieval is None:
+            audit_evt = {
+                "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+                "occurredAt": _now(),
+                "actorRoleId": actor_role_id,
+                "actorName": actor_name or "Expansion Manager",
+                "action": "intake.retry",
+                "targetId": intake_id,
+                "message": f"Retried URL retrieval for {intake['originalUrl']}.",
+                "correlationId": correlation_id,
+                "metadata": {
+                    "policy": policy.policy,
+                    "stage": intake["stage"],
+                    "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
+                }
+            }
+            intake["auditEvents"].append(audit_evt)
+            self._save_intake(intake)
+            return _copy(intake)
+
         intake["stage"] = "RETRIEVING"
-        retrieval = retrieve(intake["canonicalUrl"], policy=policy)
 
         if retrieval.ok:
+            retrieval = replace(
+                retrieval,
+                raw=redact_sensitive_snapshot(retrieval.raw),
+            )
             intake["stage"] = "PARSING"
             intake["rawSnapshot"] = retrieval.raw
             intake["snapshotId"] = retrieval.snapshot_id
@@ -1431,12 +1520,22 @@ class NetworkListingService:
         risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
+        idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
+
+        governed_key = _require_governed_write_context(
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            action_label="promote intake",
+        )
+        cache_key = ("promote_intake", governed_key)
+        if cache_key in self._idempotency_cache:
+            return _copy(self._idempotency_cache[cache_key])
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -1495,6 +1594,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+        self._save_idempotency("promote_intake", governed_key, result)
         return result
 
     def _get_match_listings(self) -> list[dict[str, Any]]:
