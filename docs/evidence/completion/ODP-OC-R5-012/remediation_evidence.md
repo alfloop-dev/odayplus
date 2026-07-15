@@ -23,7 +23,14 @@ We conducted an audit of the control-plane path that permitted PRs #297, #298, a
    - Reviewer handles in `.orchestrator/config.example.json` were placeholders (`"your-github-handle"`).
 
 ### PR #301 Incident Details
-On 2026-07-15T11:12:27Z, PR #301 was auto-merged prematurely due to a premature protection mutation where `policy.json` and `apply_branch_protection.py` still required one GitHub approving review plus code-owner review. This created an impossible self-review blocker on the GitHub platform because no separate approving review identity was operationally available. As a result, the local/canonical review mechanism was bypassed/blocked by the platform review requirements, leading to the auto-merge queue merging the PR once the basic branch protections were satisfied but before the canonical `task-review-gate` status check was fully verified.
+On 2026-07-15T11:12:27Z, PR #301 (delivering task ODP-OC-R5-011) was merged under the following sequence of events:
+1. Codex approved ODP-OC-R5-011 at 11:03:28Z.
+2. The canonical `task-review-gate` status check was SUCCESS.
+3. All three required CI checks (orchestrator, product, and product-e2e-gate) were SUCCESS.
+4. Antigravity3 enabled auto-merge at 11:07:13Z, contrary to instruction.
+5. The merge occurred automatically at 11:12:27Z while Codex was in the process of restoring the branch-protection mutations.
+
+This sequence confirms that PR #301 was reviewed and canonical verification was fully successful prior to the merge. However, enabling auto-merge contrary to instruction allowed the PR to merge automatically, which bypassed the final handoff controls and demonstrated the need for tighter pre-merge control plane gates.
 
 ---
 
