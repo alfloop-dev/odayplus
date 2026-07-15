@@ -7,6 +7,7 @@
 - Kept fixture replay as the product default while defining a governed live-retrieval gate with injected resolver/fetcher doubles for DNS, redirect, timeout, response-size, and content-type enforcement.
 - Updated assisted intake retry so non-retrievable policies (`POLICY_UNKNOWN`, `SOURCE_BLOCKED`, `ASSISTED_ENTRY_ONLY`, `AUTH_REQUIRED`) never call retrieval.
 - Enforced idempotency key and correlation id on identity-affecting correction, intake decision, promotion, and listing merge writes; idempotent replay returns the cached result without appending audit evidence.
+- Threaded `Idempotency-Key` through the typed web client for `correctIntake`, `decideIntake`, and `promoteIntake`; the assisted-intake UI now mints one stable key per logical correction, assisted-entry correction, or decision and reuses it across retry attempts.
 - Redacted contact, personal, credential, and token material before raw snapshots are stored in intake state.
 
 ## Acceptance Mapping
@@ -20,6 +21,7 @@
 - Stored raw snapshots redact sensitive contact/personal/token fields recursively.
 - Site reviewer/read-only role can read listing state but receives 403 for submit, correct, merge, quarantine decision, and promote.
 - High-impact writes require reason/risk disclosure where applicable, idempotency, correlation, and append-only audit evidence.
+- Product-level Playwright coverage intercepts browser `correct` and `decide` writes, simulates a lost response, and proves the retry carries the same non-empty `Idempotency-Key`.
 
 ## Notes
 
