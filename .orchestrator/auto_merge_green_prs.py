@@ -59,12 +59,11 @@ def open_task_prs() -> list[dict]:
         "--json", "number,headRefName,baseRefName,isDraft,mergeable",
     )
     if rc != 0:
-        print(f"[{_now()}] ERROR listing PRs: {err}", flush=True)
-        return []
+        raise RuntimeError(f"GitHub CLI pr list command failed with code {rc}: {err}")
     try:
         prs = json.loads(out or "[]")
-    except ValueError:
-        return []
+    except ValueError as exc:
+        raise ValueError(f"Failed to parse JSON response from GitHub CLI: {exc}") from exc
     return [
         p for p in prs
         if ALLOWED_HEAD.match(str(p.get("headRefName", "")))
@@ -78,7 +77,12 @@ def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
     ap.add_argument("--max", type=int, default=5, help="max merges per run")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
-    prs = open_task_prs()
+    try:
+        prs = open_task_prs()
+    except Exception as exc:
+        print(f"[{_now()}] ERROR listing or parsing open task PRs: {exc}", flush=True)
+        return 1
+
     if not prs:
         print(f"[{_now()}] no eligible open task PRs", flush=True)
         return 0
@@ -137,7 +141,10 @@ def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
             continue
 
         if p.get("isDraft"):
-            _gh("pr", "ready", str(n), "--repo", REPO)
+            rc_ready, out_ready, err_ready = _gh("pr", "ready", str(n), "--repo", REPO)
+            if rc_ready != 0:
+                print(f"[{_now()}] mark #{n} {head} ready FAILED with code {rc_ready}: {err_ready or out_ready}. Stopping before merge.", flush=True)
+                continue
             print(f"[{_now()}] marked #{n} {head} ready (was draft, gates green)", flush=True)
 
         rc, out, err = _gh("pr", "merge", str(n), "--merge", "--repo", REPO)

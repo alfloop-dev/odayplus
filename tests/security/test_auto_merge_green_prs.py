@@ -237,3 +237,70 @@ def test_auto_merge_green_prs_exception_handled(temp_env, monkeypatch) -> None:
     assert len(ready_calls) == 0
     merge_calls = [c for c in mock_gh_calls if "merge" in c and "list" not in c]
     assert len(merge_calls) == 0
+
+
+def test_auto_merge_green_prs_draft_ready_failure(temp_env, monkeypatch) -> None:
+    mock_gh_calls = []
+
+    def mock_gh(*args, **kwargs):
+        mock_gh_calls.append(args)
+        if args[0] == "pr" and args[1] == "list":
+            return (
+                0,
+                json.dumps([
+                    {
+                        "number": 83,
+                        "headRefName": "task/ODP-OC-R5-012",
+                        "baseRefName": "dev",
+                        "isDraft": True,
+                        "mergeable": "MERGEABLE",
+                    }
+                ]),
+                "",
+            )
+        if args[0] == "pr" and args[1] == "ready":
+            return (1, "", "Simulated ready command error")
+        return (0, "", "")
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", mock_gh)
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    def mock_eligible(*args, **kwargs):
+        return True, []
+
+    exit_code = auto_merge_mod.main(argv=[], check_eligibility_func=mock_eligible)
+    assert exit_code == 0
+
+    # pr ready WAS called
+    ready_calls = [c for c in mock_gh_calls if "ready" in c]
+    assert len(ready_calls) == 1
+
+    # pr merge was NOT called
+    merge_calls = [c for c in mock_gh_calls if "merge" in c and "list" not in c]
+    assert len(merge_calls) == 0
+
+
+def test_auto_merge_green_prs_list_failure(temp_env, monkeypatch) -> None:
+    def mock_gh(*args, **kwargs):
+        if args[0] == "pr" and args[1] == "list":
+            return (2, "", "API list failed")
+        return (0, "", "")
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", mock_gh)
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    exit_code = auto_merge_mod.main(argv=[])
+    assert exit_code != 0
+
+
+def test_auto_merge_green_prs_list_json_invalid(temp_env, monkeypatch) -> None:
+    def mock_gh(*args, **kwargs):
+        if args[0] == "pr" and args[1] == "list":
+            return (0, "invalid-json-output", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", mock_gh)
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    exit_code = auto_merge_mod.main(argv=[])
+    assert exit_code != 0
