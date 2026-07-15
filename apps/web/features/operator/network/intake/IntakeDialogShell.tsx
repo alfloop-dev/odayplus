@@ -34,7 +34,11 @@ export function IntakeDialogShell({
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    focusables(panel)[0]?.focus();
+    // Prefer the dialog's declared entry control. Falling back to the first
+    // focusable would land on the close button (it leads in DOM order), which
+    // is a poor place to start a form.
+    const preferred = panel?.querySelector<HTMLElement>("[data-autofocus]");
+    (preferred ?? focusables(panel)[0])?.focus();
 
     return () => {
       // Returning focus to the invoker keeps keyboard context after close.

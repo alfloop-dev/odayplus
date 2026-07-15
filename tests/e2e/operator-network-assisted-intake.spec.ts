@@ -12,6 +12,17 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * fixtures on the synthetic.example source, which is the only source with
  * APPROVED_RETRIEVAL. They are fixture *inputs* to the real pipeline, not
  * pre-baked outputs, and are never presented as live provider evidence.
+ *
+ * Run this file on its own (as the task's verification command does):
+ *   npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts
+ *
+ * playwright.config.ts sets fullyParallel, so separate spec FILES run
+ * concurrently against one shared FastAPI process. Several operator specs
+ * (this one, operator-network-listings, e2e-operator-console) each POST
+ * .../network-listings/reset, which wipes that singleton's state mid-test for
+ * whichever file is running. That is a pre-existing property of the harness,
+ * not of this suite; when running a broader selection locally, give this file
+ * its own API port (ODP_API_PORT / ODP_API_BASE_URL) to keep state isolated.
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";

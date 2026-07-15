@@ -86,6 +86,7 @@ export function AddListingFromUrlDialog({
           </label>
           <input
             className={`${styles.input} ${styles.mono}`}
+            data-autofocus
             data-testid="intake-url-input"
             id="intake-url"
             onChange={(event) => setUrl(event.target.value)}

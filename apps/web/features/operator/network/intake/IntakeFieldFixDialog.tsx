@@ -79,6 +79,7 @@ export function IntakeFieldFixDialog({
           </label>
           <input
             className={styles.input}
+            data-autofocus
             data-testid="intake-fix-value"
             id="intake-fix-value"
             onChange={(event) => setValue(event.target.value)}

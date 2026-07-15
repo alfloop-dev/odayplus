@@ -99,6 +99,7 @@ export function IntakeDecisionDialog({
           </label>
           <textarea
             className={styles.textarea}
+            data-autofocus
             data-testid="intake-decide-reason"
             id="intake-decide-reason"
             onChange={(event) => setReason(event.target.value)}
