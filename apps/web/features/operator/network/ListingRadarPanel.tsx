@@ -32,6 +32,7 @@ export function ListingRadarPanel({
   selectedHeatZoneId,
   selectedZoneLabel,
   sources,
+  onIntakeSuccess,
 }: {
   busyListingId?: string | null;
   listings: NetworkListingDetail[];
@@ -42,7 +43,53 @@ export function ListingRadarPanel({
   selectedHeatZoneId?: string;
   selectedZoneLabel?: string;
   sources: ListingSource[];
+  onIntakeSuccess?: () => void;
 }) {
+  const [intakeUrl, setIntakeUrl] = useState("");
+  const [isIntakeBusy, setIsIntakeBusy] = useState(false);
+  const [intakeMessage, setIntakeMessage] = useState("");
+
+  const NETWORK_OPERATOR_HEADERS = {
+    "X-Operator-Role": "expansion-manager",
+    "X-Roles": "expansion_user",
+    "X-Subject-Id": "operator-expansion-manager",
+    "X-Tenant-Id": "tenant-a",
+  };
+
+  async function handleSubmitIntake() {
+    setIsIntakeBusy(true);
+    setIntakeMessage("");
+    try {
+      const response = await fetch("/api/v1/operator/network-listings/intake/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          url: intakeUrl,
+          heatZoneId: selectedHeatZoneId || "HZ-01",
+          actorRoleId: "expansionManager",
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        setIntakeMessage(`錯誤: ${response.status} ${errorText}`);
+      } else {
+        const data = await response.json();
+        setIntakeMessage(`成功: ${data.id} - ${data.stage} (${data.matchResult?.outcome || ""})`);
+        setIntakeUrl("");
+        if (onIntakeSuccess) {
+          onIntakeSuccess();
+        }
+      }
+    } catch (err: any) {
+      setIntakeMessage(`失敗: ${err.message || err}`);
+    } finally {
+      setIsIntakeBusy(false);
+    }
+  }
+
   const [filterMode, setFilterMode] = useState<"selected" | "all">("selected");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedListingId, setSelectedListingId] = useState("L-2024");
@@ -123,6 +170,59 @@ export function ListingRadarPanel({
           >
             顯示全部物件
           </button>
+
+          <div style={{ marginTop: "24px", borderTop: "1px solid var(--border-color)", paddingTop: "16px" }}>
+            <h4 style={{ fontSize: "14px", marginBottom: "8px", fontWeight: "bold" }}>手動送件 (Assisted Intake)</h4>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <input
+                type="text"
+                placeholder="輸入 URL (e.g. 591, synthetic)"
+                value={intakeUrl}
+                onChange={(e) => setIntakeUrl(e.target.value)}
+                style={{
+                  padding: "8px",
+                  borderRadius: "4px",
+                  border: "1px solid var(--border-color)",
+                  fontSize: "12px",
+                  background: "rgba(255, 255, 255, 0.05)",
+                  color: "inherit",
+                  width: "100%",
+                }}
+                data-testid="intake-url-input"
+              />
+              <button
+                type="button"
+                onClick={handleSubmitIntake}
+                disabled={isIntakeBusy || !intakeUrl.trim()}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: "4px",
+                  background: "var(--color-primary, #0070f3)",
+                  color: "white",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  border: "none",
+                  fontWeight: "600",
+                }}
+                data-testid="intake-submit-button"
+              >
+                {isIntakeBusy ? "提交中..." : "送出"}
+              </button>
+              {intakeMessage && (
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--text-muted, #888)",
+                    marginTop: "4px",
+                    wordBreak: "break-all",
+                  }}
+                  data-testid="intake-status-message"
+                >
+                  {intakeMessage}
+                </div>
+              )}
+            </div>
+          </div>
         </aside>
 
         <section className={styles.radarInbox}>

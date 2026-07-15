@@ -115,6 +115,7 @@ type NetworkListingsSnapshot = {
   selectedHeatZoneId?: string;
   selectedLens?: NetworkFindAreasLens;
   correlationId?: string;
+  assistedIntakes?: any[];
 };
 
 type NetworkRebalanceSnapshot = {
@@ -832,6 +833,7 @@ export function NetworkFindAreasWorkspace({
             selectedHeatZoneId={effectiveSelectedId}
             selectedZoneLabel={selectedZoneLabel}
             sources={listingSourcesEffective}
+            onIntakeSuccess={reloadNetworkSnapshot}
           />
         ) : activeTab === 2 ? (
           <CandidatePanel

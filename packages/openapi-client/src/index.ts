@@ -621,7 +621,174 @@ export class OdpApiClient {
       correlationId: options.correlationId,
     });
   }
+
+  // --- Network Listing Radar & Assisted Intake API methods ---
+
+  getNetworkListings(
+    options: { selectedHeatZoneId?: string; lens?: string; correlationId?: string } = {},
+  ): Promise<any> {
+    const query: Record<string, string> = {};
+    if (options.selectedHeatZoneId) query.selectedHeatZoneId = options.selectedHeatZoneId;
+    if (options.lens) query.lens = options.lens;
+    return this.request("/api/v1/operator/network-listings", {
+      query,
+      correlationId: options.correlationId,
+    });
+  }
+
+  resetNetworkListings(
+    options: { correlationId?: string } = {},
+  ): Promise<any> {
+    return this.request("/api/v1/operator/network-listings/reset", {
+      method: "POST",
+      correlationId: options.correlationId,
+    });
+  }
+
+  convertListing(
+    listingId: string,
+    payload: NetworkListingActorPayload,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/convert`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  mergeListing(
+    listingId: string,
+    payload: NetworkListingMergePayload,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/merge`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  archiveListing(
+    listingId: string,
+    payload: NetworkListingActorPayload,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/listings/${listingId}/archive`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  submitIntake(
+    payload: IntakeSubmitPayload,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<any> {
+    return this.request("/api/v1/operator/network-listings/intake/submit", {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  listIntakes(
+    options: { selectedHeatZoneId?: string } = {},
+  ): Promise<any[]> {
+    const query: Record<string, string> = {};
+    if (options.selectedHeatZoneId) query.selectedHeatZoneId = options.selectedHeatZoneId;
+    return this.request("/api/v1/operator/network-listings/intake", {
+      query,
+    });
+  }
+
+  getIntake(intakeId: string): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}`);
+  }
+
+  correctIntake(
+    intakeId: string,
+    payload: IntakeCorrectPayload,
+    options: { correlationId?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+    });
+  }
+
+  decideIntake(
+    intakeId: string,
+    payload: IntakeDecidePayload,
+    options: { correlationId?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+    });
+  }
+
+  retryIntake(
+    intakeId: string,
+    payload: NetworkListingActorPayload,
+    options: { correlationId?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+    });
+  }
+
+  promoteIntake(
+    intakeId: string,
+    payload: NetworkListingActorPayload,
+    options: { correlationId?: string } = {},
+  ): Promise<any> {
+    return this.request(`/api/v1/operator/network-listings/intake/${intakeId}/promote`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+    });
+  }
 }
+
+export type NetworkListingActorPayload = {
+  actorRoleId?: string;
+  actorName?: string | null;
+  reason?: string | null;
+};
+
+export type NetworkListingMergePayload = NetworkListingActorPayload & {
+  targetListingId: string;
+};
+
+export type IntakeSubmitPayload = {
+  url: string;
+  heatZoneId?: string | null;
+  actorRoleId?: string;
+  actorName?: string | null;
+};
+
+export type IntakeCorrectPayload = {
+  fields: Record<string, any>;
+  reason?: string | null;
+  actorRoleId?: string;
+  actorName?: string | null;
+};
+
+export type IntakeDecidePayload = {
+  action: string;
+  reason?: string | null;
+  actorRoleId?: string;
+  actorName?: string | null;
+};
 
 /**
  * Build a client from explicit options or the environment. Returns `null`
