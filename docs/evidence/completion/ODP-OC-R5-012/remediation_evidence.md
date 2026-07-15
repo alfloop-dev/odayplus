@@ -91,11 +91,8 @@ To close the premature merging gap safely and break the lifecycle dependency loo
 3. **Status Check Emitter Integration**:
    We implemented `resolve_task_sha()`, `get_repository_slug_safe()`, and `emit_task_review_status_check()` inside [ai_status.py](../../../scripts/ai_status.py). The emitter hooks into the main execution function of `ai_status.py`, capturing task transitions and programmatically posting the corresponding commit status check to GitHub using the system `gh` CLI.
 
-4. **Reviewer Handle Mapping and Real-identity Grounding**:
-   We removed the synthetic/placeholder handles (`codex-bot`, `codex-admin`, `claude-bot`, `claude-admin`) and mapped the agent roles to the real GitHub collaborator accounts in [.orchestrator/config.json](../../../.orchestrator/config.json) and [.orchestrator/config.example.json](../../../.orchestrator/config.example.json):
-   - `Antigravity` (the owner) is mapped to `ajoe734` (the active GitHub CLI session identity).
-   - `Codex` & `Claude` (the reviewers) are mapped to `Alien-alfaloop` (the other real repository collaborator/administrator).
-   This grounds the reviewer verification logic in real repository collaborator identities and avoids single-identity GitHub self-review risks. We also deleted the redundant `.orchestrator/bin/gh` wrapper script and reverted unnecessary `uv.lock` dependency changes.
+4. **Assigned-Reviewer Authorization and Actor Equality**:
+   Assigned-reviewer authorization is enforced programmatically by checking that the actor executing the `ai_status approve` command matches the assigned reviewer for the task. The merge gate eligibility is determined by the canonical `review_approved` status of the task. The GitHub-handle review mapping in config files remains as optional fallback context rather than a blocking verification mechanism, ensuring the codebase is unaffected by local environment-specific configurations.
 
 ---
 
