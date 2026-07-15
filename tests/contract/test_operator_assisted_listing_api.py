@@ -17,6 +17,14 @@ HEADERS = {
 }
 
 
+def _write_headers(key: str) -> dict[str, str]:
+    return {
+        **HEADERS,
+        "X-Correlation-Id": f"corr-{key}",
+        "Idempotency-Key": f"idem-{key}",
+    }
+
+
 def test_first_submission_contract_test() -> None:
     app = create_app()
     client = TestClient(app)
@@ -130,7 +138,7 @@ def test_changed_price_revision_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("changed-price-revise"),
     )
     assert decide_resp.status_code == 200
     assert decide_resp.json()["stage"] == "READY"
@@ -165,9 +173,11 @@ def test_ambiguous_entity_match_review_test() -> None:
         json={
             "fields": {"address": "新北市板橋區府中路 99 號 1F"},
             "reason": " ",
+            "riskSummary": "修改地址會改變比對結果，可能指向不同物件。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("ambiguous-bad-correct"),
     )
     assert bad_correct.status_code == 422
 
@@ -181,7 +191,7 @@ def test_ambiguous_entity_match_review_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("ambiguous-good-correct"),
     )
     assert correct_resp.status_code == 200
     corrected_data = correct_resp.json()
@@ -260,7 +270,7 @@ def test_timeout_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("timeout-manual-correct"),
     )
     assert correct_resp.status_code == 200
 
@@ -331,7 +341,7 @@ def test_promote_intake_contract_test() -> None:
     bad_promote = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={"actorRoleId": "expansionManager", "reason": ""},
-        headers=HEADERS,
+        headers=_write_headers("bad-promote-no-reason"),
     )
     assert bad_promote.status_code == 422
 
@@ -344,7 +354,7 @@ def test_promote_intake_contract_test() -> None:
             "riskSummary": "轉換為候選店會建立 SiteScore 待審紀錄。",
             "riskAcknowledged": True,
         },
-        headers=HEADERS,
+        headers=_write_headers("good-promote"),
     )
     assert promote_resp.status_code == 200
     res_data = promote_resp.json()
@@ -390,7 +400,7 @@ def test_high_impact_write_rejects_missing_risk_summary(path, body) -> None:
     resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/{path}",
         json={**body, "riskAcknowledged": True, "actorRoleId": "expansionManager"},
-        headers=HEADERS,
+        headers=_write_headers(f"missing-risk-{path}"),
     )
     assert resp.status_code == 422
     assert "risk summary is required" in resp.json()["detail"]
@@ -418,7 +428,7 @@ def test_high_impact_write_rejects_unacknowledged_risk(path, body) -> None:
             "riskAcknowledged": False,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers(f"unack-risk-{path}"),
     )
     assert resp.status_code == 422
     assert "risk acknowledgement is required" in resp.json()["detail"]
@@ -431,7 +441,7 @@ def test_merge_rejects_missing_risk_disclosure() -> None:
     resp = client.post(
         "/api/v1/operator/network-listings/listings/L-2029/merge",
         json={"targetListingId": "L-2025", "reason": "重複來源", "actorRoleId": "expansionManager"},
-        headers=HEADERS,
+        headers=_write_headers("merge-missing-risk"),
     )
     assert resp.status_code == 422
     assert "risk summary is required" in resp.json()["detail"]
@@ -451,7 +461,7 @@ def test_correct_persists_caller_risk_summary_in_audit() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("correct-risk-audit"),
     )
     assert resp.status_code == 200
 
@@ -476,7 +486,7 @@ def test_decide_persists_caller_risk_summary_alongside_server_effect() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("decide-risk-audit"),
     )
     assert resp.status_code == 200
 
@@ -502,7 +512,7 @@ def test_promote_persists_caller_risk_summary_in_audit() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("promote-risk-audit"),
     )
     assert resp.status_code == 200
 
