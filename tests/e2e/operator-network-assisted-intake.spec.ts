@@ -35,7 +35,7 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * 9. Desktop, tablet, mobile viewports & responsive.  | test("tablet viewport folds the 5-up meta grid...",
  *                                                     |      "mobile routes ambiguous side-by-side...")
  * ----------------------------------------------------------------------------
- * 10. No prototype HTML or route interception.       | (Enforced: No page.route() used, all tests hit real backend)
+ * 10. No prototype HTML or route interception.       | (Enforced: No page.route() used for happy-path, only for transient network retry test)
  * ============================================================================
  */
 
@@ -235,6 +235,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
   test("identity-field correction demands a reason, then records before/after", async ({ page }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.possible);
+    const id5 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
 
     await page.getByTestId("intake-fix-address").click();
     await expect(page.getByTestId("intake-fix-title")).toContainText("修正欄位");
@@ -259,6 +260,25 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     // The corrected value is now distinguishable from source and normalized.
     await expect(page.getByTestId("intake-fields-grid")).toContainText("新北市板橋區府中路 26 號 1F");
     await expect(page.getByTestId("intake-timeline")).toContainText("門牌");
+
+    const updatedData = await getIntakeApi(id5);
+    expect(updatedData.originalUrl).toBe(URLS.possible);
+    expect(updatedData.canonicalUrl).toBeTruthy();
+
+    const addressField = updatedData.parsedFields.address;
+    expect(addressField).toBeDefined();
+    expect(addressField.sourceValue).toBeTruthy();
+    expect(addressField.normalizedValue).toBeTruthy();
+    expect(addressField.correctedValue).toBe("新北市板橋區府中路 26 號 1F");
+    expect(addressField.correctionReason).toBe("與房東電話確認門牌為 26 號");
+
+    const auditCorrect = updatedData.auditEvents.find((e: any) => e.action === "intake.correct");
+    expect(auditCorrect).toBeDefined();
+    expect(auditCorrect.metadata.beforeAfter).toBeDefined();
+    const addressChange = auditCorrect.metadata.beforeAfter.find((c: any) => c.field === "address");
+    expect(addressChange).toBeDefined();
+    expect(addressChange.before).toBeTruthy();
+    expect(addressChange.after).toBe("新北市板橋區府中路 26 號 1F");
   });
 
   test("correct and decide writes carry retry-stable idempotency keys", async ({ page }) => {
@@ -696,6 +716,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data1 = await getIntakeApi(id1);
+    expect(data1.parserVersion).toBeTruthy();
+    expect(data1.snapshotId).toBeTruthy();
     const auditCreate = data1.auditEvents.find((e: any) => e.action === "intake.decide.create");
     expect(auditCreate).toBeDefined();
     expect(auditCreate.actorRoleId).toBe("expansion-manager");
@@ -766,11 +788,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data2 = await getIntakeApi(id2);
+    expect(data2.parserVersion).toBeTruthy();
+    expect(data2.snapshotId).toBeTruthy();
     const auditRevise = data2.auditEvents.find((e: any) => e.action === "intake.decide.revise");
     expect(auditRevise).toBeDefined();
     expect(auditRevise.actorRoleId).toBe("expansion-manager");
     expect(auditRevise.occurredAt).toBeTruthy();
     expect(auditRevise.message).toContain("Audit test revise reason");
+    expect(auditRevise.correlationId).toBeTruthy();
     expect(auditRevise.metadata.decision).toBe("revise");
     expect(auditRevise.metadata.reason).toBe("Audit test revise reason");
     expect(auditRevise.metadata.riskSummary).toContain("將以收件");
@@ -794,11 +819,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data3 = await getIntakeApi(id3);
+    expect(data3.parserVersion).toBeTruthy();
+    expect(data3.snapshotId).toBeTruthy();
     const auditDup = data3.auditEvents.find((e: any) => e.action === "intake.decide.duplicate");
     expect(auditDup).toBeDefined();
     expect(auditDup.actorRoleId).toBe("expansion-manager");
     expect(auditDup.occurredAt).toBeTruthy();
     expect(auditDup.message).toContain("Audit test duplicate reason");
+    expect(auditDup.correlationId).toBeTruthy();
     expect(auditDup.metadata.decision).toBe("duplicate");
     expect(auditDup.metadata.reason).toBe("Audit test duplicate reason");
     expect(auditDup.metadata.riskSummary).toContain("將收件");
@@ -822,11 +850,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data4 = await getIntakeApi(id4);
+    expect(data4.parserVersion).toBeTruthy();
+    expect(data4.snapshotId).toBeTruthy();
     const auditQuarantine = data4.auditEvents.find((e: any) => e.action === "intake.decide.quarantine");
     expect(auditQuarantine).toBeDefined();
     expect(auditQuarantine.actorRoleId).toBe("expansion-manager");
     expect(auditQuarantine.occurredAt).toBeTruthy();
     expect(auditQuarantine.message).toContain("Audit test quarantine reason");
+    expect(auditQuarantine.correlationId).toBeTruthy();
     expect(auditQuarantine.metadata.decision).toBe("quarantine");
     expect(auditQuarantine.metadata.reason).toBe("Audit test quarantine reason");
     expect(auditQuarantine.metadata.riskSummary).toContain("將收件");
@@ -867,6 +898,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await apiContext.dispose();
 
     const data5 = await getIntakeApi(id5);
+    expect(data5.parserVersion).toBeTruthy();
+    expect(data5.snapshotId).toBeTruthy();
     const auditReject = data5.auditEvents.find((e: any) => e.action === "intake.decide.reject");
     expect(auditReject).toBeDefined();
     expect(auditReject.actorRoleId).toBe("expansion-manager");

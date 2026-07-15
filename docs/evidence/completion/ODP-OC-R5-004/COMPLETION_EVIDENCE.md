@@ -26,7 +26,7 @@ This task delivers and verifies the full end-to-end correctness of the R5 assist
 | **7. Audit envelope checks** (actor, timestamps, reason, before-after, snapshot parser version, correlation ID) | `verify audit envelope for CREATE and PROMOTE decisions`, `verify audit envelope for REVISE decision`, `verify audit envelope for DUPLICATE decision`, `verify audit envelope for QUARANTINE decision`, `verify audit envelope for REJECT decision` |
 | **8. Retryable failure code, correlation, input prep** | `retryable failure shows code, correlation and next action, and retry preserves input` |
 | **9. Desktop, tablet, mobile viewports & responsive** | `tablet viewport folds the 5-up meta grid correctly`, `mobile routes ambiguous side-by-side compare to a desktop-required state` |
-| **10. No prototype HTML or route interception** | (Enforced: No `page.route()` used for product-completion proof; only mock routes are used for testing downstream resilience, all other assertions hit real backend API) |
+| **10. No prototype HTML or route interception** | (Enforced: No `page.route()` used for standard happy-path ingestion or status transitions; route interception is strictly limited to simulating transient 503 network errors in the idempotency retry test to verify client-side retry stability and form persistence) |
 
 ---
 
