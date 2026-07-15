@@ -15,7 +15,7 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
+  id-token: write
 
 jobs:
   e2e-operational-evidence:
@@ -26,72 +26,75 @@ jobs:
       - name: Run E2E deployment health, backup, restore, and rollback proof
         run: python3 scripts/e2e/verify_deployment_health_backup_rollback.py
 
-  build-and-publish:
+  deploy:
     needs: e2e-operational-evidence
     runs-on: ubuntu-latest
     environment:
       name: dev
       url: ${{ vars.ODP_DEV_DEPLOY_URL }}
-    strategy:
-      matrix:
-        include:
-          - name: api
-            dockerfile: infra/docker/api.Dockerfile
-          - name: web
-            dockerfile: infra/docker/web.Dockerfile
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
-          tags: |
-            type=raw,value=dev
-            type=sha,format=long
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push ${{ matrix.name }} image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-  deploy:
-    needs: build-and-publish
-    runs-on: ubuntu-latest
-    environment:
-      name: dev
-      url: ${{ vars.ODP_DEV_DEPLOY_URL }}
-    steps:
-      # Images are published to ghcr.io/<owner>/odayplus-{api,web}:dev.
-      # When a dev host exists, wire the rollout here: pull the :dev images and
-      # `docker compose up -d`. Until ODP_DEV_HOST is configured the publish above
-      # is the real, verifiable artifact step and this just reports next steps.
-      - name: Roll out to dev host
-        if: ${{ vars.ODP_DEV_HOST != '' }}
+      - name: Validate GCP Deployment Variables
         run: |
-          echo "Deploy target: ${{ vars.ODP_DEV_HOST }}"
-          echo "Pull ghcr.io/${{ github.repository }}-{api,web}:dev and restart the stack."
-          echo "Add ODP_DEV_HOST + SSH secrets to enable the actual rollout."
+          echo "Checking deployment configuration..."
+          MISSING_CONFIG=0
+          if [ -z "${{ vars.GCP_PROJECT_ID }}" ]; then
+            echo "Error: vars.GCP_PROJECT_ID is not configured." >&2
+            MISSING_CONFIG=1
+          fi
+          if [ -z "${{ vars.GCP_REGION }}" ]; then
+            echo "Error: vars.GCP_REGION is not configured." >&2
+            MISSING_CONFIG=1
+          fi
+          if [ -z "${{ vars.GCP_AR_REPO }}" ]; then
+            echo "Error: vars.GCP_AR_REPO is not configured." >&2
+            MISSING_CONFIG=1
+          fi
 
-      - name: No rollout target configured
-        if: ${{ vars.ODP_DEV_HOST == '' }}
+          has_wif=false
+          if [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ] && [ -n "${{ vars.GCP_SERVICE_ACCOUNT }}" ]; then
+            has_wif=true
+          fi
+
+          has_sa=false
+          if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
+            has_sa=true
+          fi
+
+          if [ "$has_wif" = "false" ] && [ "$has_sa" = "false" ]; then
+            echo "Error: GCP authentication is not configured. Configure either vars.GCP_WORKLOAD_IDENTITY_PROVIDER and vars.GCP_SERVICE_ACCOUNT (for WIF), or secrets.GCP_SA_KEY (for Service Account JSON Key)." >&2
+            MISSING_CONFIG=1
+          fi
+
+          if [ "$MISSING_CONFIG" -ne 0 ]; then
+            echo "Failed configuration validation. Aborting workflow (fail-closed)." >&2
+            exit 1
+          fi
+          echo "All required configurations are present."
+
+      - name: Authenticate to Google Cloud (WIF)
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud (SA Key)
+        if: ${{ secrets.GCP_SA_KEY != '' && (vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || vars.GCP_SERVICE_ACCOUNT == '') }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build, Push, and Deploy to Cloud Run
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+          IMAGE_TAG: dev-${{ github.sha }}
         run: |
-          echo "Images published to GHCR (tags: dev, sha-<commit>)."
-          echo "No ODP_DEV_HOST set -> no remote rollout. Run locally with: docker compose up --build"
+          chmod +x scripts/deploy_cloud_run_waji.sh
+          ./scripts/deploy_cloud_run_waji.sh
