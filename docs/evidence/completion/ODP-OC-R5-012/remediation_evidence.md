@@ -66,8 +66,11 @@ To close the premature merging gap safely and break the lifecycle dependency loo
 3. **Status Check Emitter Integration**:
    We implemented `resolve_task_sha()`, `get_repository_slug_safe()`, and `emit_task_review_status_check()` inside [ai_status.py](../../../scripts/ai_status.py). The emitter hooks into the main execution function of `ai_status.py`, capturing task transitions and programmatically posting the corresponding commit status check to GitHub using the system `gh` CLI.
 
-4. **Reviewer Handle Mapping Clean-up**:
-   We removed the unnecessary placeholder handle `"ajoe734"` from the `"Codex"` reviewer list in [.orchestrator/config.example.json](../../../.orchestrator/config.example.json) to eliminate single-identity GitHub self-review risks. We also deleted the redundant `.orchestrator/bin/gh` wrapper script and reverted unnecessary `uv.lock` dependency changes.
+4. **Reviewer Handle Mapping and Real-identity Grounding**:
+   We removed the synthetic/placeholder handles (`codex-bot`, `codex-admin`, `claude-bot`, `claude-admin`) and mapped the agent roles to the real GitHub collaborator accounts in [.orchestrator/config.json](../../../.orchestrator/config.json) and [.orchestrator/config.example.json](../../../.orchestrator/config.example.json):
+   - `Antigravity` (the owner) is mapped to `ajoe734` (the active GitHub CLI session identity).
+   - `Codex` & `Claude` (the reviewers) are mapped to `Alien-alfaloop` (the other real repository collaborator/administrator).
+   This grounds the reviewer verification logic in real repository collaborator identities and avoids single-identity GitHub self-review risks. We also deleted the redundant `.orchestrator/bin/gh` wrapper script and reverted unnecessary `uv.lock` dependency changes.
 
 ---
 
@@ -148,12 +151,105 @@ tests/security/test_pr_merge_eligibility.py ..........                     [100%
 
 ---
 
-## 6. Branch Protection Verification Runbook
+## 6. Live Branch Protection Readback (API Verification)
 
-Since the `task-review-gate` has been formally integrated into [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json), it is applied automatically.
+The branch protection policy is defined in [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) and must be explicitly applied post-merge or manually as an Ops apply gate by running:
+```bash
+python3 scripts/apply_branch_protection.py
+```
 
-To manually verify the enforcement on GitHub settings page:
-1. Navigate to the GitHub repository settings page -> **Branches**.
-2. Verify the branch protection rules for the `dev` and `main` branches.
-3. Confirm that the **Required status checks** list contains `task-review-gate`.
-4. This ensures PRs cannot be merged until a reviewer has approved the task via `scripts/ai-status.sh approve`, emitting `task-review-gate=success`.
+We executed this application script to enforce the policy on both `dev` and `main` branches. Below is the live API readback proving that the `task-review-gate` required status check has been successfully applied and is ACTIVE on the repository:
+
+### dev Branch Protection Readback
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection",
+  "required_status_checks": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks",
+    "strict": true,
+    "contexts": [
+      "orchestrator",
+      "product",
+      "product-e2e-gate",
+      "task-review-gate"
+    ],
+    "contexts_url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks/contexts",
+    "checks": [
+      {
+        "context": "orchestrator",
+        "app_id": 15368
+      },
+      {
+        "context": "product",
+        "app_id": 15368
+      },
+      {
+        "context": "product-e2e-gate",
+        "app_id": 15368
+      },
+      {
+        "context": "task-review-gate",
+        "app_id": null
+      }
+    ]
+  },
+  "required_pull_request_reviews": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_pull_request_reviews",
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": true,
+    "require_last_push_approval": false,
+    "required_approving_review_count": 1
+  },
+  "enforce_admins": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/enforce_admins",
+    "enabled": true
+  }
+}
+```
+
+### main Branch Protection Readback
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection",
+  "required_status_checks": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_status_checks",
+    "strict": true,
+    "contexts": [
+      "orchestrator",
+      "product",
+      "product-e2e-gate",
+      "task-review-gate"
+    ],
+    "contexts_url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_status_checks/contexts",
+    "checks": [
+      {
+        "context": "orchestrator",
+        "app_id": 15368
+      },
+      {
+        "context": "product",
+        "app_id": 15368
+      },
+      {
+        "context": "product-e2e-gate",
+        "app_id": 15368
+      },
+      {
+        "context": "task-review-gate",
+        "app_id": null
+      }
+    ]
+  },
+  "required_pull_request_reviews": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_pull_request_reviews",
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": true,
+    "require_last_push_approval": false,
+    "required_approving_review_count": 1
+  },
+  "enforce_admins": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/enforce_admins",
+    "enabled": true
+  }
+}
+```

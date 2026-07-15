@@ -361,4 +361,3 @@ def test_status_context_success(temp_env: dict[str, Path]) -> None:
 
     assert eligible is True
     assert len(errors) == 0
-
