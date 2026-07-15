@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS durable_jobs (
     correlation_id  TEXT NOT NULL,
     idempotency_key TEXT,
     payload_json    TEXT NOT NULL DEFAULT '{}',
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    leased_until    TEXT,
+    max_retries     INTEGER NOT NULL DEFAULT 3
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_jobs_idempotency
     ON durable_jobs(idempotency_key)

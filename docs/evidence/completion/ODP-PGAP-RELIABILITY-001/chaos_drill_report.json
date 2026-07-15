@@ -1,31 +1,31 @@
 {
-  "timestamp": 1784120699.3156347,
+  "timestamp": 1784128667.3755271,
   "events": [
     {
       "state": "outage",
       "calls_attempted": 3,
-      "duration_seconds": 4.7110021114349365e-05,
+      "duration_seconds": 0.004880770109593868,
       "outcome": "quarantined",
-      "error": "Quarantined"
+      "error": "Quarantined: max retries exceeded"
     },
     {
       "state": "quota_exceeded",
       "calls_attempted": 3,
-      "duration_seconds": 2.553989179432392e-05,
+      "duration_seconds": 0.0032646700274199247,
       "outcome": "quarantined",
-      "error": "Quarantined"
+      "error": "Quarantined: max retries exceeded"
     },
     {
       "state": "malformed",
       "calls_attempted": 3,
-      "duration_seconds": 5.3239986300468445e-05,
+      "duration_seconds": 0.003410079050809145,
       "outcome": "quarantined",
-      "error": "Quarantined"
+      "error": "Quarantined: max retries exceeded"
     },
     {
       "state": "healthy",
       "calls_attempted": 1,
-      "duration_seconds": 7.560010999441147e-06,
+      "duration_seconds": 2.8709182515740395e-05,
       "outcome": "success",
       "error": ""
     }

@@ -11,7 +11,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tests.reliability.test_concurrency_recovery import MockExternalProvider
+from modules.external_data.providers import (
+    PrimaryGeocodeProvider,
+    GeocodeQuarantineError,
+)
+from modules.external_data.geo.pipeline import NormalizedAddress
+from tests.reliability.test_concurrency_recovery import MockGeocodeClient
 
 EVIDENCE_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-RELIABILITY-001"
 
@@ -19,50 +24,39 @@ EVIDENCE_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-RELIABILITY-001"
 def main() -> int:
     print("Starting Chaos Simulation Drill...")
 
-    # 1. Instantiate provider and metrics
-    provider = MockExternalProvider()
+    # 1. Instantiate provider and mock client
+    client = MockGeocodeClient()
+    # Mode fixture to skip real authentication check
+    provider = PrimaryGeocodeProvider(client=client, mode="fixture", retry_budget=2)
 
-    # We will simulate multiple outage, timeout, and quota states,
-    # and print execution traces.
     states = ["outage", "quota_exceeded", "malformed", "healthy"]
     report_events = []
 
     for state in states:
-        provider.state = state
-        provider.call_count = 0
+        client.state = state
+        client.call_count = 0
         t0 = time.perf_counter()
 
         passed = False
         error_msg = ""
 
         try:
-            # Re-implement the recovery/retry logic inline for tracing
-            retries = 0
-            max_retries = 2
-            while True:
-                try:
-                    res = provider.query()
-                    if "status" not in res:
-                        raise ValueError("Malformed response")
-                    passed = True
-                    break
-                except Exception as e:
-                    retries += 1
-                    if retries > max_retries:
-                        raise RuntimeError("Quarantined") from e
+            res = provider.lookup(NormalizedAddress(normalized_address="123 Main St", raw_address="123 Main St"))
+            if res is not None and res.latitude == 37.7749:
+                passed = True
         except Exception as e:
             error_msg = str(e)
             passed = False
 
         duration = time.perf_counter() - t0
         print(
-            f"- State: {state:<15} | Calls: {provider.call_count} | Duration: {duration:.4f}s | Result: {'PASSED' if passed else 'QUARANTINED'} ({error_msg})"
+            f"- State: {state:<15} | Calls: {client.call_count} | Duration: {duration:.4f}s | Result: {'PASSED' if passed else 'QUARANTINED'} ({error_msg})"
         )
 
         report_events.append(
             {
                 "state": state,
-                "calls_attempted": provider.call_count,
+                "calls_attempted": client.call_count,
                 "duration_seconds": duration,
                 "outcome": "success" if passed else "quarantined",
                 "error": error_msg,
