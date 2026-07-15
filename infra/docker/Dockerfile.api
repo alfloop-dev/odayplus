@@ -11,9 +11,11 @@ COPY apps ./apps
 COPY modules ./modules
 COPY shared ./shared
 COPY packages ./packages
+COPY models ./models
+COPY solver ./solver
 COPY infra/db ./infra/db
 
-RUN pip install --no-cache-dir fastapi uvicorn sqlalchemy alembic psycopg[binary]
+RUN pip install --no-cache-dir fastapi uvicorn pydantic numpy scikit-learn statsmodels ortools h3 duckdb sqlalchemy alembic psycopg[binary] httpx pyyaml
 
 EXPOSE 8080
 
