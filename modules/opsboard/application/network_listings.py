@@ -17,8 +17,89 @@ from __future__ import annotations
 
 import copy
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class IntakeIdempotencyRecord:
+    """A replayable write response keyed by ``(action, key)``."""
+
+    action: str
+    key: str
+    response: dict[str, Any]
+
+
+class AssistedIntakeRepository(Protocol):
+    """Public persistence contract for assisted listing intake.
+
+    The service depends on this contract only, so a durable implementation can
+    be substituted without the application layer reaching into a generic
+    document store or any other backing detail.
+    """
+
+    def list_intakes(self) -> list[dict[str, Any]]: ...
+
+    def save_intake(self, intake: dict[str, Any]) -> None: ...
+
+    def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]: ...
+
+    def save_idempotency_record(self, record: IntakeIdempotencyRecord) -> None: ...
+
+    def get_listing_metadata(self, listing_id: str) -> dict[str, Any]: ...
+
+    def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None: ...
+
+    def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]: ...
+
+    def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None: ...
+
+    def clear(self) -> None: ...
+
+
+@dataclass
+class InMemoryAssistedIntakeRepository:
+    """Process-local implementation of :class:`AssistedIntakeRepository`.
+
+    Used when the service runs without a durable backend; state is lost on
+    restart, which is exactly what the durable implementation exists to fix.
+    """
+
+    intakes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    idempotency: dict[tuple[str, str], IntakeIdempotencyRecord] = field(default_factory=dict)
+    listing_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    candidate_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def list_intakes(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.intakes.values()]
+
+    def save_intake(self, intake: dict[str, Any]) -> None:
+        self.intakes[intake["id"]] = copy.deepcopy(intake)
+
+    def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
+        return list(self.idempotency.values())
+
+    def save_idempotency_record(self, record: IntakeIdempotencyRecord) -> None:
+        self.idempotency[(record.action, record.key)] = record
+
+    def get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
+        return copy.deepcopy(self.listing_metadata.get(listing_id) or {})
+
+    def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
+        self.listing_metadata[listing_id] = copy.deepcopy(metadata)
+
+    def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
+        return copy.deepcopy(self.candidate_metadata.get(candidate_id) or {})
+
+    def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
+        self.candidate_metadata[candidate_id] = copy.deepcopy(metadata)
+
+    def clear(self) -> None:
+        self.intakes.clear()
+        self.idempotency.clear()
+        self.listing_metadata.clear()
+        self.candidate_metadata.clear()
 
 
 class NetworkListingNotFound(RuntimeError):
@@ -204,9 +285,15 @@ def _seed_state() -> dict[str, Any]:
 class NetworkListingService:
     """Application service for R4 Listing Radar intake actions."""
 
-    def __init__(self, listing_repository: Any | None = None, document_store: Any | None = None) -> None:
+    def __init__(
+        self,
+        listing_repository: Any | None = None,
+        intake_repository: AssistedIntakeRepository | None = None,
+    ) -> None:
         self._listing_repository = listing_repository
-        self._document_store = document_store
+        self._intakes: AssistedIntakeRepository = (
+            intake_repository if intake_repository is not None else InMemoryAssistedIntakeRepository()
+        )
         self._state = _seed_state()
         self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._load_intakes()
@@ -239,26 +326,16 @@ class NetworkListingService:
                     self._listing_repository.save_candidate(cand_obj)
 
     def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
-        if self._document_store is not None:
-            meta = self._document_store.get("operator.listing_metadata", listing_id)
-            if meta:
-                return meta
-        return {}
+        return self._intakes.get_listing_metadata(listing_id)
 
     def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
-        if self._document_store is not None:
-            self._document_store.put("operator.listing_metadata", listing_id, metadata)
+        self._intakes.save_listing_metadata(listing_id, metadata)
 
     def _get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
-        if self._document_store is not None:
-            meta = self._document_store.get("operator.candidate_metadata", candidate_id)
-            if meta:
-                return meta
-        return {}
+        return self._intakes.get_candidate_metadata(candidate_id)
 
     def _save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
-        if self._document_store is not None:
-            self._document_store.put("operator.candidate_metadata", candidate_id, metadata)
+        self._intakes.save_candidate_metadata(candidate_id, metadata)
 
     def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
         res = {
@@ -400,35 +477,19 @@ class NetworkListingService:
                 self._save_candidate_metadata(candidate_id, meta)
 
     def _load_intakes(self) -> None:
-        if self._document_store is not None:
-            intakes = self._document_store.list_all("operator.assisted_intakes")
-            self._state["assistedIntakes"] = intakes
-        else:
-            self._state.setdefault("assistedIntakes", [])
+        self._state["assistedIntakes"] = self._intakes.list_intakes()
 
     def _load_idempotency_cache(self) -> None:
-        self._idempotency_cache = {}
-        if self._document_store is not None:
-            items = self._document_store.list_all("operator.idempotency_cache")
-            for item in items:
-                action = item.get("action")
-                key = item.get("key")
-                response = item.get("response")
-                if action is not None and key is not None:
-                    self._idempotency_cache[(action, key)] = response
+        self._idempotency_cache = {
+            (record.action, record.key): record.response
+            for record in self._intakes.list_idempotency_records()
+        }
 
     def _save_idempotency(self, action: str, key: str, response: dict[str, Any]) -> None:
         self._idempotency_cache[(action, key)] = _copy(response)
-        if self._document_store is not None:
-            self._document_store.put(
-                "operator.idempotency_cache",
-                f"{action}:{key}",
-                {
-                    "action": action,
-                    "key": key,
-                    "response": response,
-                }
-            )
+        self._intakes.save_idempotency_record(
+            IntakeIdempotencyRecord(action=action, key=key, response=_copy(response))
+        )
 
     def _save_intake(self, intake: dict[str, Any]) -> None:
         self._state.setdefault("assistedIntakes", [])
@@ -441,33 +502,16 @@ class NetworkListingService:
         if not found:
             self._state["assistedIntakes"].append(intake)
 
-        if self._document_store is not None:
-            self._document_store.put("operator.assisted_intakes", intake["id"], intake)
+        self._intakes.save_intake(intake)
 
     def reset(self) -> dict[str, Any]:
         self._state = _seed_state()
         self._idempotency_cache = {}
-        if self._document_store is not None:
-            # Clean up intakes from database
-            self._document_store.delete_collection("operator.assisted_intakes")
-            self._document_store.delete_collection("operator.idempotency_cache")
-            self._document_store.delete_collection("operator.listing_metadata")
-            self._document_store.delete_collection("operator.candidate_metadata")
-            self._document_store.delete_collection("listing.listings")
-            self._document_store.delete_collection("listing.addresses")
-            self._document_store.delete_collection("listing.candidates")
-            self._document_store.delete_collection("listing.dedup_keys")
-            self._state["assistedIntakes"] = []
-        else:
-            self._state["assistedIntakes"] = []
+        self._intakes.clear()
+        self._state["assistedIntakes"] = []
 
         if self._listing_repository is not None:
-            if hasattr(self._listing_repository, "listings"):
-                self._listing_repository.listings.clear()
-                self._listing_repository.addresses.clear()
-                self._listing_repository.candidates.clear()
-                self._listing_repository.source_keys.clear()
-                self._listing_repository.property_keys.clear()
+            self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
                 lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
                 self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)

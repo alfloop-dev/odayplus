@@ -100,13 +100,13 @@ def create_operator_router(
     audit_log:
         Optional shared InMemoryAuditLog for the authz engine.
     document_store:
-        Accepted for app-level composition compatibility; the R4 operator
-        routes do not read from the document store.
+        Optional durable document store. When present it backs the assisted
+        listing intake repository, so intakes and their idempotent write
+        replays survive a restart; when absent the intake state is in-memory.
     state_service:
         Optional pre-built OperatorStateService; injected by tests to pass
         a pre-seeded service with deterministic state.
     """
-    _ = document_store
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
         build_engine,
@@ -146,6 +146,9 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
     from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
@@ -162,7 +165,14 @@ def create_operator_router(
     # Network listing intake — read/write paths for R4 Listing Radar.
     router.include_router(
         create_network_listings_sub_router(
-            NetworkListingService(listing_repository=listing_repository, document_store=document_store),
+            NetworkListingService(
+                listing_repository=listing_repository,
+                intake_repository=(
+                    DurableAssistedIntakeRepository(document_store)
+                    if document_store is not None
+                    else None
+                ),
+            ),
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),
