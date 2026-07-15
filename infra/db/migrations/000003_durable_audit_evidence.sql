@@ -40,7 +40,15 @@ CREATE TABLE IF NOT EXISTS durable_evidence_bundles (
     period_end          TEXT NOT NULL,
     correlation_id      TEXT NOT NULL,
     bundle_json         TEXT NOT NULL,
-    created_at          TEXT NOT NULL
+    created_at          TEXT NOT NULL,
+    sequence            INTEGER,
+    previous_hash       TEXT,
+    record_hash         TEXT,
+    signature_key_id    TEXT,
+    signature_version   TEXT,
+    signature_alg       TEXT,
+    worm_sink_id        TEXT,
+    governance_log_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_durable_evidence_program
     ON durable_evidence_bundles(program_id);
@@ -51,3 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_durable_evidence_checksum
 -- Retention sweeps scan by expiry; index retain_until so purge stays cheap.
 CREATE INDEX IF NOT EXISTS idx_durable_evidence_retention
     ON durable_evidence_bundles(retain_until);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_evidence_sequence
+    ON durable_evidence_bundles(sequence)
+    WHERE sequence IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_durable_evidence_record_hash
+    ON durable_evidence_bundles(record_hash);

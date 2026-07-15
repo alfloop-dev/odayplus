@@ -16,6 +16,7 @@ public interfaces.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,6 +31,10 @@ from modules.opsboard.audit import (
 )
 from shared.audit import AuditEvent
 from shared.audit.persistence import (
+    EvidenceGovernanceError,
+    EvidenceImmutabilityError,
+    EvidenceIntegrityError,
+    GovernedEvidenceOperation,
     RETENTION_REGULATORY,
     RETENTION_STANDARD,
     InMemoryEvidenceBundleStore,
@@ -37,7 +42,8 @@ from shared.audit.persistence import (
 )
 from shared.infrastructure.persistence import build_persistence
 from shared.infrastructure.persistence.factory import _durable_bundle
-from tests.integration._authz import AUDIT_HEADERS
+from shared.auth import Role
+from tests.integration._authz import AUDIT_HEADERS, auth_headers
 
 NOW = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -67,7 +73,11 @@ def _ready_card(audit_event_id: str) -> DecisionCard:
         controls=("approval_recorded", "observation_window_matured"),
         data_snapshot_id="canonical-store-snapshot-20260628",
         artifact_hash="sha256:effect-report-001",
-        metrics={"incremental_gross_margin": 48_000.0, "evidence_level": "L3"},
+        metrics={
+            "incremental_gross_margin": 48_000.0,
+            "evidence_level": "L3",
+            "reviewer_email": "alice@example.com",
+        },
     )
 
 
@@ -84,6 +94,11 @@ def _request(*, sensitive: bool = True, classification: str = "restricted") -> E
         build_version="test-build",
         data_classification=classification,
         sensitive=sensitive,
+        purpose_scope="subsidy-review:q2",
+        expires_at=NOW + timedelta(hours=4),
+        authorized_by="legal-approver",
+        authorization_id="authz-sub-2026-q2",
+        masking_profile="masked",
     )
 
 
@@ -181,10 +196,16 @@ def test_export_persists_retained_record_with_metadata() -> None:
     # retention
     assert record.retention_class == RETENTION_REGULATORY
     assert record.retain_until == NOW + timedelta(days=record_retention_days())
+    assert record.record_hash is not None
+    assert record.previous_hash == "0" * 64
+    assert record.signature_key_id
     # full bundle preserved + audit linkage
     assert record.bundle["bundle_checksum"] == bundle.bundle_checksum
     assert record.audit_event_id == bundle.audit_event_id
     assert bundle.to_dict()["retention"]["retention_class"] == RETENTION_REGULATORY
+    assert bundle.to_dict()["export_governance"]["authorization_id"] == "authz-sub-2026-q2"
+    assert bundle.decision_cards[0].metrics["reviewer_email"] == "a****@example.com"
+    assert set(bundle.audit_events[0]) >= {"event_id", "integrity"}
 
 
 def record_retention_days() -> int:
@@ -230,9 +251,14 @@ def test_durable_evidence_store_survives_restart(db_path) -> None:
         assert record.bundle_checksum == checksum
         assert record.retention_class == RETENTION_REGULATORY
         assert record.bundle["program_id"] == "subsidy-program-2026-q2"
+        assert reopened.audit_log.verify_chain().ok is True
+        assert reopened.evidence_store.verify_integrity().ok is True
         # listing by program also resolves after restart
         listed = reopened.evidence_store.list_for_program("subsidy-program-2026-q2")
         assert [r.export_id for r in listed] == [export_id]
+        assert listed[0].requested_by == "reviewer-a"
+        assert listed[0].correlation_id == "corr-evidence-persist-1"
+        assert listed[0].retain_until == NOW + timedelta(days=record_retention_days())
     finally:
         reopened.engine.close()
 
@@ -264,26 +290,116 @@ def test_purge_expired_respects_legal_hold(db_path) -> None:
         )
         standard_record = store.get(standard_bundle.export_id)
         assert standard_record.retention_class == RETENTION_STANDARD
+        with pytest.raises(EvidenceImmutabilityError):
+            store.save(standard_record)
+        with pytest.raises(EvidenceImmutabilityError):
+            store.delete(standard_bundle.export_id)
 
         # As-of well beyond every retention window: standard record is expired.
         as_of = NOW + timedelta(days=4000)
         assert standard_bundle.export_id in [
             r.export_id for r in store.list_expired(as_of)
         ]
+        with pytest.raises(EvidenceGovernanceError):
+            store.purge_expired(as_of)
+        with pytest.raises(EvidenceGovernanceError):
+            store.apply_legal_hold(
+                standard_bundle.export_id,
+                context=GovernedEvidenceOperation(
+                    actor="reviewer-b",
+                    role="legal",
+                    reason="self-hold attempt",
+                    correlation_id="corr-standard-1",
+                ),
+            )
 
         # Put it on legal hold -> excluded from expiry + purge.
-        held = store.save(_with_legal_hold(standard_record))
+        held = store.apply_legal_hold(
+            standard_bundle.export_id,
+            context=GovernedEvidenceOperation(
+                actor="legal-a",
+                role="legal",
+                reason="litigation hold",
+                correlation_id="corr-standard-1",
+            ),
+        )
         assert held.is_expired(as_of) is False
-        assert store.purge_expired(as_of) == []
+        assert held.governance_log[0]["operation"] == "legal_hold"
+        assert store.purge_expired(
+            as_of,
+            context=GovernedEvidenceOperation(
+                actor="records-a",
+                role="retention_manager",
+                reason="scheduled retention sweep",
+                correlation_id="corr-retention-sweep",
+            ),
+        ) == []
         assert store.get(standard_bundle.export_id) is not None
     finally:
         bundle_persistence.engine.close()
 
 
-def _with_legal_hold(record):
-    from dataclasses import replace
+def test_durable_evidence_store_rejects_bundle_tamper(db_path) -> None:
+    bundle_persistence = _durable_bundle(db_path)
+    try:
+        service = AuditEvidenceExportService(
+            audit_log=bundle_persistence.audit_log,
+            evidence_store=bundle_persistence.evidence_store,
+        )
+        event = service.audit_log.record(
+            AuditEvent(
+                event_type="intervention.effect_evaluated.v1",
+                actor="analyst-a",
+                action="evaluate",
+                resource="intervention/intv-001",
+                outcome="completed",
+                correlation_id="corr-evidence-persist-1",
+                occurred_at=NOW,
+            )
+        )
+        bundle = service.export(
+            _request(),
+            decision_cards=(_ready_card(event.event_id),),
+            generated_at=NOW,
+        )
+        record = bundle_persistence.evidence_store.get(bundle.export_id)
+        tampered = dict(record.bundle)
+        tampered["program_id"] = "tampered-program"
+        bundle_persistence.engine.execute(
+            "UPDATE durable_evidence_bundles SET bundle_json = ? WHERE export_id = ?",
+            (json.dumps(tampered), bundle.export_id),
+        )
 
-    return replace(record, legal_hold=True)
+        with pytest.raises(EvidenceIntegrityError):
+            bundle_persistence.evidence_store.get(bundle.export_id)
+    finally:
+        bundle_persistence.engine.close()
+
+
+def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
+    bundle_persistence = _durable_bundle(db_path)
+    try:
+        event = bundle_persistence.audit_log.record(
+            AuditEvent(
+                event_type="intervention.effect_evaluated.v1",
+                actor="analyst-a",
+                action="evaluate",
+                resource="intervention/intv-001",
+                outcome="completed",
+                correlation_id="corr-audit-tamper-1",
+                occurred_at=NOW,
+                metadata={"evidence_level": "L3"},
+            )
+        )
+        assert bundle_persistence.audit_log.verify_chain().ok is True
+        bundle_persistence.engine.execute(
+            "UPDATE durable_audit_events SET metadata_json = ? WHERE event_id = ?",
+            (json.dumps({"evidence_level": "L0"}), event.event_id),
+        )
+
+        assert bundle_persistence.audit_log.verify_chain().ok is False
+    finally:
+        bundle_persistence.engine.close()
 
 
 # -- API round-trips the persisted bundle -------------------------------------
@@ -308,7 +424,10 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
 
         response = client.post(
             "/audit/evidence/export",
-            headers={"X-Correlation-ID": "corr-api-evidence-1"},
+            headers={
+                **auth_headers(Role.AUDITOR, subject="auditor-a"),
+                "X-Correlation-ID": "corr-api-evidence-1",
+            },
             json={
                 "program_id": "subsidy-program-2026-q2",
                 "purpose": "model release subsidy audit",
@@ -321,6 +440,11 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
                 "build_version": "test-build",
                 "data_classification": "restricted",
                 "sensitive": True,
+                "purpose_scope": "model-release-subsidy-review",
+                "expires_at": (NOW + timedelta(days=60)).isoformat(),
+                "authorized_by": "legal-approver",
+                "authorization_id": "authz-model-release-q2",
+                "masking_profile": "masked",
                 "decision_cards": [_ready_card(event.event_id).to_dict()],
             },
         )
@@ -328,9 +452,14 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         payload = response.json()
         export_id = payload["export_id"]
         assert payload["retention"]["retention_class"] == RETENTION_REGULATORY
+        assert payload["identity_boundary_subject"] == "auditor-a"
+        assert payload["export_governance"]["identity_boundary"] == "http-principal:auditor-a"
+        assert payload["audit_chain"]["end"]
 
         # Retrieve the persisted bundle through the read endpoint.
-        fetched = client.get(f"/audit/evidence/exports/{export_id}")
+        fetched = client.get(
+            f"/audit/evidence/exports/{export_id}", headers=AUDIT_HEADERS
+        )
         assert fetched.status_code == 200
         fetched_payload = fetched.json()
         assert fetched_payload["bundle_checksum"] == payload["bundle_checksum"]
@@ -340,14 +469,18 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
 
         # Listing by program returns the summary.
         listed = client.get(
-            "/audit/evidence/exports", params={"program_id": "subsidy-program-2026-q2"}
+            "/audit/evidence/exports",
+            headers=AUDIT_HEADERS,
+            params={"program_id": "subsidy-program-2026-q2"},
         )
         assert listed.status_code == 200
         exports = listed.json()["exports"]
         assert [item["export_id"] for item in exports] == [export_id]
         assert exports[0]["bundle_checksum"] == payload["bundle_checksum"]
 
-        unknown = client.get("/audit/evidence/exports/audit-export-missing")
+        unknown = client.get(
+            "/audit/evidence/exports/audit-export-missing", headers=AUDIT_HEADERS
+        )
         assert unknown.status_code == 404
     finally:
         bundle_persistence.engine.close()

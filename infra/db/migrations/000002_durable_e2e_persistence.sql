@@ -27,10 +27,20 @@ CREATE TABLE IF NOT EXISTS durable_audit_events (
     correlation_id TEXT NOT NULL,
     job_id         TEXT,
     metadata_json  TEXT NOT NULL DEFAULT '{}',
-    occurred_at    TEXT NOT NULL
+    occurred_at    TEXT NOT NULL,
+    sequence       INTEGER,
+    previous_hash  TEXT,
+    event_hash     TEXT,
+    signature_key_id TEXT,
+    signature_version TEXT,
+    signature_alg  TEXT,
+    worm_sink_id   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_durable_audit_correlation
     ON durable_audit_events(correlation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_audit_sequence
+    ON durable_audit_events(sequence)
+    WHERE sequence IS NOT NULL;
 
 -- ---------------------------------------------------------
 -- durable_jobs

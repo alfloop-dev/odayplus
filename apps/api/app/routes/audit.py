@@ -31,6 +31,12 @@ else:
         data_classification: str = "internal"
         sensitive: bool = False
         decision_cards: list[dict[str, Any]] = Field(min_length=1)
+        purpose_scope: str | None = None
+        expires_at: str | None = None
+        authorized_by: str | None = None
+        authorization_id: str | None = None
+        masking_profile: str = "masked"
+        identity_boundary: str | None = None
 
     def create_audit_router(
         *,
@@ -48,9 +54,19 @@ else:
             audit_log=active_audit_log, evidence_store=evidence_store
         )
 
-        @router.post("/evidence/export", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("audit", Action.EXPORT, engine=authz_engine))])
-        def export_evidence(body: EvidenceExportPayload, request: Request) -> dict[str, Any]:
+        @router.post("/evidence/export", status_code=status.HTTP_201_CREATED)
+        def export_evidence(
+            body: EvidenceExportPayload,
+            request: Request,
+            principal=Depends(
+                require_permission("audit", Action.EXPORT, engine=authz_engine)
+            ),
+        ) -> dict[str, Any]:
             try:
+                identity_boundary = (
+                    body.identity_boundary
+                    or f"http-principal:{principal.subject_id}"
+                )
                 export_request = EvidenceExportRequest(
                     program_id=body.program_id,
                     purpose=body.purpose,
@@ -63,6 +79,14 @@ else:
                     build_version=body.build_version,
                     data_classification=body.data_classification,
                     sensitive=body.sensitive,
+                    purpose_scope=body.purpose_scope,
+                    expires_at=(
+                        _parse_time(body.expires_at) if body.expires_at else None
+                    ),
+                    authorized_by=body.authorized_by,
+                    authorization_id=body.authorization_id,
+                    masking_profile=body.masking_profile,
+                    identity_boundary=identity_boundary,
                 )
                 bundle = export_service.export(
                     export_request,
@@ -76,6 +100,7 @@ else:
                 ) from exc
             payload = bundle.to_dict()
             payload["correlation_id"] = request.state.correlation_id
+            payload["identity_boundary_subject"] = principal.subject_id
             return payload
 
         @router.get("/evidence/exports", dependencies=[Depends(require_permission("audit", Action.VIEW, engine=authz_engine))])

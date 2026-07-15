@@ -7,12 +7,22 @@ audit event for authorization decisions (ODP-SD-09 §11/§7, ODP-AC-AUTH-005).
 """
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
+from shared.audit.integrity import (
+    AuditChainVerification,
+    AuditImmutabilityError,
+    AuditIntegrityError,
+)
 
 from .persistence import (
     EvidenceBundleStore,
+    EvidenceGovernanceError,
+    EvidenceImmutabilityError,
+    EvidenceIntegrityError,
     EvidenceRetentionPolicy,
+    GovernedEvidenceOperation,
     InMemoryEvidenceBundleStore,
     RetainedEvidence,
+    verify_retained_evidence_chain,
     resolve_retention_policy,
 )
 from .policy import (
@@ -31,11 +41,18 @@ from .policy import (
 
 __all__ = [
     "ALWAYS_AUDITED_ACTIONS",
+    "AuditChainVerification",
     "AuditEvent",
+    "AuditImmutabilityError",
+    "AuditIntegrityError",
     "AuditOutcome",
     "AuditRecorder",
     "EvidenceBundleStore",
+    "EvidenceGovernanceError",
+    "EvidenceImmutabilityError",
+    "EvidenceIntegrityError",
     "EvidenceRetentionPolicy",
+    "GovernedEvidenceOperation",
     "HIGH_RISK_ACTIONS",
     "InMemoryAuditLog",
     "InMemoryEvidenceBundleStore",
@@ -48,4 +65,5 @@ __all__ = [
     "mask_text",
     "requires_audit",
     "resolve_retention_policy",
+    "verify_retained_evidence_chain",
 ]

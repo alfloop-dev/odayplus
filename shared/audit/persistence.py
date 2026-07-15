@@ -21,9 +21,21 @@ retention window.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
+
+from shared.audit.integrity import (
+    CHAIN_GENESIS_HASH,
+    DEFAULT_AUDIT_INTEGRITY_KEY_ID,
+    DEFAULT_AUDIT_SIGNATURE_ALG,
+    DEFAULT_AUDIT_SIGNATURE_VERSION,
+    DEFAULT_AUDIT_WORM_SINK_ID,
+    AuditChainVerification,
+    AuditIntegrityIssue,
+    canonical_json,
+    sha256_hex,
+)
 
 # --- retention policy --------------------------------------------------------
 
@@ -41,6 +53,22 @@ _RETENTION_DAYS: dict[str, int] = {
 
 _REGULATORY_CLASSIFICATIONS = frozenset({"restricted", "secret", "top_secret"})
 _AUDIT_CLASSIFICATIONS = frozenset({"confidential"})
+LEGAL_HOLD_ROLES = frozenset({"legal", "compliance_officer", "records_manager"})
+RETENTION_PURGE_ROLES = frozenset(
+    {"records_manager", "retention_manager", "compliance_officer"}
+)
+
+
+class EvidenceIntegrityError(ValueError):
+    """Raised when retained evidence fails checksum/hash-chain verification."""
+
+
+class EvidenceGovernanceError(PermissionError):
+    """Raised when a retention/legal-hold operation violates SoD policy."""
+
+
+class EvidenceImmutabilityError(RuntimeError):
+    """Raised when product code attempts to overwrite/delete WORM evidence."""
 
 
 @dataclass(frozen=True)
@@ -79,6 +107,26 @@ def resolve_retention_policy(
     )
 
 
+@dataclass(frozen=True)
+class GovernedEvidenceOperation:
+    """Actor context for retention purge and legal-hold operations."""
+
+    actor: str
+    role: str
+    reason: str
+    correlation_id: str
+    requested_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "actor": self.actor,
+            "role": self.role,
+            "reason": self.reason,
+            "correlation_id": self.correlation_id,
+            "requested_at": self.requested_at.isoformat(),
+        }
+
+
 # --- persisted record --------------------------------------------------------
 
 
@@ -108,6 +156,14 @@ class RetainedEvidence:
     correlation_id: str
     bundle: dict[str, Any] = field(default_factory=dict)
     legal_hold: bool = False
+    sequence: int | None = None
+    previous_hash: str | None = None
+    record_hash: str | None = None
+    signature_key_id: str = DEFAULT_AUDIT_INTEGRITY_KEY_ID
+    signature_version: str = DEFAULT_AUDIT_SIGNATURE_VERSION
+    signature_alg: str = DEFAULT_AUDIT_SIGNATURE_ALG
+    worm_sink_id: str = DEFAULT_AUDIT_WORM_SINK_ID
+    governance_log: tuple[dict[str, Any], ...] = ()
 
     def is_expired(self, as_of: datetime) -> bool:
         """A record is purgeable only when past retention and not on hold."""
@@ -134,6 +190,16 @@ class RetainedEvidence:
             "period_start": self.period_start.isoformat(),
             "period_end": self.period_end.isoformat(),
             "correlation_id": self.correlation_id,
+            "integrity": {
+                "sequence": self.sequence,
+                "previous_hash": self.previous_hash,
+                "record_hash": self.record_hash,
+                "signature_key_id": self.signature_key_id,
+                "signature_version": self.signature_version,
+                "signature_alg": self.signature_alg,
+                "worm_sink_id": self.worm_sink_id,
+            },
+            "governance_log": list(self.governance_log),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -159,7 +225,17 @@ class EvidenceBundleStore(Protocol):
 
     def list_expired(self, as_of: datetime) -> list[RetainedEvidence]: ...
 
-    def purge_expired(self, as_of: datetime) -> list[str]: ...
+    def purge_expired(
+        self, as_of: datetime, *, context: GovernedEvidenceOperation | None = None
+    ) -> list[str]: ...
+
+    def apply_legal_hold(
+        self, export_id: str, *, context: GovernedEvidenceOperation
+    ) -> RetainedEvidence: ...
+
+    def delete(self, export_id: str) -> None: ...
+
+    def verify_integrity(self) -> AuditChainVerification: ...
 
 
 class InMemoryEvidenceBundleStore:
@@ -173,26 +249,216 @@ class InMemoryEvidenceBundleStore:
         self._records: dict[str, RetainedEvidence] = {}
 
     def save(self, record: RetainedEvidence) -> RetainedEvidence:
-        self._records[record.export_id] = record
-        return record
+        if record.export_id in self._records:
+            raise EvidenceImmutabilityError(
+                f"retained evidence is append-only; overwrite denied for {record.export_id}"
+            )
+        previous_hash = (
+            list(self._records.values())[-1].record_hash
+            if self._records
+            else CHAIN_GENESIS_HASH
+        )
+        stamped = attach_retained_evidence_integrity(
+            record,
+            sequence=len(self._records) + 1,
+            previous_hash=previous_hash or CHAIN_GENESIS_HASH,
+        )
+        self._records[stamped.export_id] = stamped
+        return stamped
 
     def get(self, export_id: str) -> RetainedEvidence | None:
-        return self._records.get(export_id)
+        record = self._records.get(export_id)
+        if record is not None:
+            verify_retained_evidence(record)
+        return record
 
     def list_for_program(self, program_id: str) -> list[RetainedEvidence]:
-        return [r for r in self._records.values() if r.program_id == program_id]
+        return [r for r in self.list_all() if r.program_id == program_id]
 
     def list_all(self) -> list[RetainedEvidence]:
-        return list(self._records.values())
+        records = list(self._records.values())
+        verify_retained_evidence_chain(records).raise_for_tamper()
+        return records
 
     def list_expired(self, as_of: datetime) -> list[RetainedEvidence]:
-        return [r for r in self._records.values() if r.is_expired(as_of)]
+        return [r for r in self.list_all() if r.is_expired(as_of)]
 
-    def purge_expired(self, as_of: datetime) -> list[str]:
+    def purge_expired(
+        self, as_of: datetime, *, context: GovernedEvidenceOperation | None = None
+    ) -> list[str]:
+        require_retention_purge_authority(context)
         expired = [r.export_id for r in self.list_expired(as_of)]
         for export_id in expired:
             del self._records[export_id]
         return expired
+
+    def apply_legal_hold(
+        self, export_id: str, *, context: GovernedEvidenceOperation
+    ) -> RetainedEvidence:
+        record = self.get(export_id)
+        if record is None:
+            raise KeyError(export_id)
+        require_legal_hold_authority(context, record)
+        updated = replace(
+            record,
+            legal_hold=True,
+            governance_log=(
+                *record.governance_log,
+                {"operation": "legal_hold", **context.to_dict()},
+            ),
+        )
+        self._records[export_id] = updated
+        return updated
+
+    def delete(self, export_id: str) -> None:
+        raise EvidenceImmutabilityError(
+            f"retained evidence is append-only; delete denied for {export_id}"
+        )
+
+    def verify_integrity(self) -> AuditChainVerification:
+        return verify_retained_evidence_chain(self._records.values())
+
+
+def retained_evidence_integrity_payload(
+    record: RetainedEvidence,
+    *,
+    sequence: int,
+    previous_hash: str,
+) -> dict[str, Any]:
+    """Canonical payload covered by a retained-evidence record hash.
+
+    ``legal_hold`` and ``governance_log`` are governed retention sidecars and
+    are intentionally excluded so a legal hold can be applied without mutating
+    the immutable bundle content hash chain.
+    """
+
+    return {
+        "export_id": record.export_id,
+        "program_id": record.program_id,
+        "purpose": record.purpose,
+        "requested_by": record.requested_by,
+        "audit_event_id": record.audit_event_id,
+        "bundle_checksum": record.bundle_checksum,
+        "data_classification": record.data_classification,
+        "sensitive": record.sensitive,
+        "export_scope": record.export_scope,
+        "retention_class": record.retention_class,
+        "retain_until": record.retain_until.isoformat(),
+        "generated_at": record.generated_at.isoformat(),
+        "period_start": record.period_start.isoformat(),
+        "period_end": record.period_end.isoformat(),
+        "correlation_id": record.correlation_id,
+        "bundle": record.bundle,
+        "sequence": sequence,
+        "previous_hash": previous_hash,
+        "signature_key_id": record.signature_key_id,
+        "signature_version": record.signature_version,
+        "signature_alg": record.signature_alg,
+        "worm_sink_id": record.worm_sink_id,
+    }
+
+
+def attach_retained_evidence_integrity(
+    record: RetainedEvidence,
+    *,
+    sequence: int,
+    previous_hash: str,
+) -> RetainedEvidence:
+    record_hash = sha256_hex(
+        retained_evidence_integrity_payload(
+            record, sequence=sequence, previous_hash=previous_hash
+        )
+    )
+    return replace(
+        record,
+        sequence=sequence,
+        previous_hash=previous_hash,
+        record_hash=record_hash,
+    )
+
+
+def verify_retained_evidence(record: RetainedEvidence) -> None:
+    if (
+        record.sequence is None
+        or record.previous_hash is None
+        or record.record_hash is None
+    ):
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} is missing integrity metadata"
+        )
+    expected = sha256_hex(
+        retained_evidence_integrity_payload(
+            record,
+            sequence=record.sequence,
+            previous_hash=record.previous_hash,
+        )
+    )
+    if expected != record.record_hash:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} hash mismatch"
+        )
+    if record.bundle.get("bundle_checksum") != record.bundle_checksum:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} bundle checksum mismatch"
+        )
+    canonical = canonical_json(record.bundle)
+    if not canonical:
+        raise EvidenceIntegrityError(f"retained evidence {record.export_id} is empty")
+
+
+def verify_retained_evidence_chain(
+    records: Iterable[RetainedEvidence],
+) -> AuditChainVerification:
+    issues: list[AuditIntegrityIssue] = []
+    previous_hash = CHAIN_GENESIS_HASH
+    previous_sequence = 0
+    for index, record in enumerate(records):
+        if record.sequence is None:
+            issues.append(AuditIntegrityIssue(index, record.export_id, "missing sequence"))
+            continue
+        if record.sequence <= previous_sequence:
+            issues.append(
+                AuditIntegrityIssue(index, record.export_id, "sequence is not monotonic")
+            )
+        if record.previous_hash != previous_hash:
+            issues.append(
+                AuditIntegrityIssue(
+                    index, record.export_id, "previous hash does not match"
+                )
+            )
+        try:
+            verify_retained_evidence(record)
+        except EvidenceIntegrityError as exc:
+            issues.append(AuditIntegrityIssue(index, record.export_id, str(exc)))
+        previous_hash = record.record_hash or previous_hash
+        previous_sequence = record.sequence
+    return AuditChainVerification(ok=not issues, issues=tuple(issues))
+
+
+def require_legal_hold_authority(
+    context: GovernedEvidenceOperation | None, record: RetainedEvidence
+) -> None:
+    if context is None:
+        raise EvidenceGovernanceError("legal hold requires governed operation context")
+    if context.role not in LEGAL_HOLD_ROLES:
+        raise EvidenceGovernanceError("role is not authorized to apply legal hold")
+    if context.actor == record.requested_by:
+        raise EvidenceGovernanceError(
+            "separation of duties: exporter cannot apply legal hold"
+        )
+    if not context.reason.strip():
+        raise EvidenceGovernanceError("legal hold requires reason")
+
+
+def require_retention_purge_authority(
+    context: GovernedEvidenceOperation | None,
+) -> None:
+    if context is None:
+        raise EvidenceGovernanceError("retention purge requires governed operation context")
+    if context.role not in RETENTION_PURGE_ROLES:
+        raise EvidenceGovernanceError("role is not authorized to purge retained evidence")
+    if not context.reason.strip():
+        raise EvidenceGovernanceError("retention purge requires reason")
 
 
 __all__ = [
@@ -200,8 +466,19 @@ __all__ = [
     "RETENTION_REGULATORY",
     "RETENTION_STANDARD",
     "EvidenceBundleStore",
+    "EvidenceGovernanceError",
+    "EvidenceImmutabilityError",
+    "EvidenceIntegrityError",
     "EvidenceRetentionPolicy",
+    "GovernedEvidenceOperation",
     "InMemoryEvidenceBundleStore",
+    "LEGAL_HOLD_ROLES",
     "RetainedEvidence",
+    "RETENTION_PURGE_ROLES",
+    "attach_retained_evidence_integrity",
+    "require_legal_hold_authority",
+    "require_retention_purge_authority",
     "resolve_retention_policy",
+    "verify_retained_evidence",
+    "verify_retained_evidence_chain",
 ]

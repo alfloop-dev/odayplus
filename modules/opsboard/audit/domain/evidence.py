@@ -42,6 +42,12 @@ class EvidenceExportRequest:
     build_version: str = "local"
     data_classification: str = "internal"
     sensitive: bool = False
+    purpose_scope: str | None = None
+    expires_at: datetime | None = None
+    authorized_by: str | None = None
+    authorization_id: str | None = None
+    masking_profile: str = "masked"
+    identity_boundary: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +62,12 @@ class EvidenceExportRequest:
             "build_version": self.build_version,
             "data_classification": self.data_classification,
             "sensitive": self.sensitive,
+            "purpose_scope": self.purpose_scope,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "authorized_by": self.authorized_by,
+            "authorization_id": self.authorization_id,
+            "masking_profile": self.masking_profile,
+            "identity_boundary": self.identity_boundary,
         }
 
 
@@ -181,6 +193,18 @@ class AuditEvidenceBundle:
     audit_event_id: str
     retention_class: str | None = None
     retain_until: datetime | None = None
+    data_classification: str = "internal"
+    sensitive: bool = False
+    export_scope: str = ""
+    purpose_scope: str | None = None
+    expires_at: datetime | None = None
+    authorized_by: str | None = None
+    authorization_id: str | None = None
+    masking_profile: str = "masked"
+    identity_boundary: str | None = None
+    download_evidence_id: str | None = None
+    audit_chain_start: str | None = None
+    audit_chain_end: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -203,6 +227,23 @@ class AuditEvidenceBundle:
                 "retain_until": (
                     self.retain_until.isoformat() if self.retain_until else None
                 ),
+            },
+            "export_governance": {
+                "data_classification": self.data_classification,
+                "sensitive": self.sensitive,
+                "export_scope": self.export_scope,
+                "purpose_scope": self.purpose_scope,
+                "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+                "authorized_by": self.authorized_by,
+                "authorization_id": self.authorization_id,
+                "masking_profile": self.masking_profile,
+                "identity_boundary": self.identity_boundary,
+                "download_evidence_id": self.download_evidence_id,
+            },
+            "audit_chain": {
+                "start": self.audit_chain_start,
+                "end": self.audit_chain_end,
+                "event_count": len(self.audit_events),
             },
         }
 
