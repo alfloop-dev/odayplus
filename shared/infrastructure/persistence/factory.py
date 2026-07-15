@@ -86,10 +86,10 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
     from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
+    from modules.notifications import InMemoryNotificationRepository
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
-    from modules.notifications import InMemoryNotificationRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
     from shared.infrastructure.persistence.repositories import (
@@ -140,13 +140,13 @@ def _memory_bundle() -> PersistenceBundle:
 
 def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
-    from modules.notifications import DurableNotificationRepository
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
