@@ -347,16 +347,15 @@
     ],
     "reviewers": {
       "Claude": [
-        "Alien-alfaloop"
+        "your-github-handle"
       ],
       "Antigravity": [
-        "ajoe734"
+        "your-github-handle"
       ],
       "Codex": [
-        "Alien-alfaloop"
+        "your-github-handle"
       ]
     },
-
     "templates": {
       "ops_issue": ".orchestrator/templates/github_ops_issue.md",
       "review_pr": ".orchestrator/templates/github_review_pr.md"
