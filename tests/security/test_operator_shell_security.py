@@ -200,3 +200,68 @@ def test_server_derives_role_and_ignores_a_spoofed_header() -> None:
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert _security_denials(audit_log)[-1].metadata["policy_id"] == "operator.role_scope"
+
+
+def test_cross_actor_idempotency_replay_is_blocked() -> None:
+    """Ensure idempotency replay is scoped by actor and does not bypass authorization."""
+    client = _client()
+
+    # 1. Task Assignment (operator write)
+    # ops-lead assigns task: succeeds
+    task_id = "ISS-1024"
+    resp1 = client.post(
+        f"/api/v1/operator/shell/tasks/{task_id}/assignment",
+        headers={**OPS_HEADERS, "Idempotency-Key": "cross-actor-task"},
+        json={"assigneeId": "operator-cs-lead"},
+    )
+    assert resp1.status_code == status.HTTP_200_OK
+
+    # field-lead (not admin, lacks permission) repeats same endpoint/key: 403 Forbidden instead of 200
+    field_lead_headers = {
+        "X-Subject-Id": "operator-field-lead",
+        "X-Roles": "operations_manager,regional_supervisor",
+        "X-Tenant-Id": "tenant-a",
+        "X-Operator-Role": "field-lead",
+    }
+    resp2 = client.post(
+        f"/api/v1/operator/shell/tasks/{task_id}/assignment",
+        headers={**field_lead_headers, "Idempotency-Key": "cross-actor-task"},
+        json={"assigneeId": "operator-cs-lead"},
+    )
+    assert resp2.status_code == status.HTTP_403_FORBIDDEN
+
+    # 2. Admin Role Workspace Override (admin write)
+    # ops-lead overrides role workspaces: succeeds
+    resp3 = client.put(
+        "/api/v1/operator/shell/admin/roles/cs-lead/workspaces",
+        headers={**OPS_HEADERS, "Idempotency-Key": "cross-actor-admin"},
+        json={"allowedWorkspaces": ["today"]},
+    )
+    assert resp3.status_code == status.HTTP_200_OK
+
+    # auditor (lacks admin permission) repeats same endpoint/key: 403 Forbidden instead of 200
+    resp4 = client.put(
+        "/api/v1/operator/shell/admin/roles/cs-lead/workspaces",
+        headers={**AUDITOR_HEADERS, "Idempotency-Key": "cross-actor-admin"},
+        json={"allowedWorkspaces": ["today"]},
+    )
+    assert resp4.status_code == status.HTTP_403_FORBIDDEN
+
+    # 3. Franchisee acknowledgement (franchisee write)
+    # franchisee-001 acknowledges notification: succeeds
+    notification_id = "NTF-SLA-1024"
+    resp5 = client.post(
+        "/api/v1/operator/shell/franchisee/acknowledgement",
+        headers={**FRANCHISEE_HEADERS, "Idempotency-Key": "cross-actor-franchisee"},
+        json={"notificationId": notification_id},
+    )
+    assert resp5.status_code == status.HTTP_200_OK
+
+    # operator (lacks franchisee portal write permission) repeats same endpoint/key: 403 Forbidden
+    resp6 = client.post(
+        "/api/v1/operator/shell/franchisee/acknowledgement",
+        headers={**OPS_HEADERS, "Idempotency-Key": "cross-actor-franchisee"},
+        json={"notificationId": notification_id},
+    )
+    assert resp6.status_code == status.HTTP_403_FORBIDDEN
+

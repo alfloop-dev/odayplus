@@ -75,6 +75,8 @@ class ShellIdempotencyRecord:
     action: str
     key: str
     response: dict[str, Any]
+    actor_role_id: str | None = None
+    actor_subject_id: str | None = None
 
 
 class ShellRepository(Protocol):
@@ -112,14 +114,22 @@ class InMemoryShellRepository:
     def list_idempotency_records(self) -> list[ShellIdempotencyRecord]:
         return [
             ShellIdempotencyRecord(
-                action=record.action, key=record.key, response=deepcopy(record.response)
+                action=record.action,
+                key=record.key,
+                response=deepcopy(record.response),
+                actor_role_id=record.actor_role_id,
+                actor_subject_id=record.actor_subject_id,
             )
             for record in self._idempotency.values()
         ]
 
     def save_idempotency_record(self, record: ShellIdempotencyRecord) -> None:
         self._idempotency[(record.action, record.key)] = ShellIdempotencyRecord(
-            action=record.action, key=record.key, response=deepcopy(record.response)
+            action=record.action,
+            key=record.key,
+            response=deepcopy(record.response),
+            actor_role_id=record.actor_role_id,
+            actor_subject_id=record.actor_subject_id,
         )
 
     def clear(self) -> None:
@@ -318,7 +328,7 @@ class ShellService:
         self._repo: ShellRepository = (
             repository if repository is not None else InMemoryShellRepository()
         )
-        self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._idempotency_cache: dict[tuple[str, str], ShellIdempotencyRecord] = {}
         self._audit_feed: list[dict[str, Any]] = []
         self._load_idempotency_cache()
 
@@ -328,27 +338,50 @@ class ShellService:
 
     def _load_idempotency_cache(self) -> None:
         self._idempotency_cache = {
-            (record.action, record.key): record.response
+            (record.action, record.key): record
             for record in self._repo.list_idempotency_records()
         }
 
-    def _replay(self, action: str, key: str | None) -> dict[str, Any] | None:
+    def _replay(
+        self,
+        action: str,
+        key: str | None,
+        *,
+        role_id: str | None = None,
+        subject_id: str | None = None,
+    ) -> dict[str, Any] | None:
         if not key:
             return None
-        cached = self._idempotency_cache.get((action, key))
-        if cached is None:
+        record = self._idempotency_cache.get((action, key))
+        if record is None:
             return None
-        replayed = _copy(cached)
+        # Check if actor matches:
+        if record.actor_role_id != role_id or record.actor_subject_id != subject_id:
+            return None
+        replayed = _copy(record.response)
         replayed["idempotentReplay"] = True
         return replayed
 
-    def _remember(self, action: str, key: str | None, response: dict[str, Any]) -> None:
+    def _remember(
+        self,
+        action: str,
+        key: str | None,
+        response: dict[str, Any],
+        *,
+        role_id: str | None = None,
+        subject_id: str | None = None,
+    ) -> None:
         if not key:
             return
-        self._idempotency_cache[(action, key)] = _copy(response)
-        self._repo.save_idempotency_record(
-            ShellIdempotencyRecord(action=action, key=key, response=_copy(response))
+        record = ShellIdempotencyRecord(
+            action=action,
+            key=key,
+            response=_copy(response),
+            actor_role_id=role_id,
+            actor_subject_id=subject_id,
         )
+        self._idempotency_cache[(action, key)] = record
+        self._repo.save_idempotency_record(record)
 
     def _records_by_id(self, collection: str, id_field: str) -> dict[str, dict[str, Any]]:
         return {
@@ -677,7 +710,7 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Durably assign a task. Governed, audited, idempotent."""
-        replay = self._replay("assign_task", idempotency_key)
+        replay = self._replay("assign_task", idempotency_key, role_id=role_id, subject_id=subject_id)
         if replay is not None:
             return replay
 
@@ -731,7 +764,7 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("assign_task", idempotency_key, response)
+        self._remember("assign_task", idempotency_key, response, role_id=role_id, subject_id=subject_id)
         return response
 
     # ------------------------------------------------------------------
@@ -826,7 +859,7 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Durably acknowledge one notification for the acting user."""
-        replay = self._replay("acknowledge_notification", idempotency_key)
+        replay = self._replay("acknowledge_notification", idempotency_key, role_id=role_id, subject_id=subject_id)
         if replay is not None:
             return replay
 
@@ -874,7 +907,7 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("acknowledge_notification", idempotency_key, response)
+        self._remember("acknowledge_notification", idempotency_key, response, role_id=role_id, subject_id=subject_id)
         return response
 
     def get_notification_preferences(
@@ -907,7 +940,7 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Durably persist the acting user's notification preferences."""
-        replay = self._replay("update_notification_preferences", idempotency_key)
+        replay = self._replay("update_notification_preferences", idempotency_key, role_id=role_id, subject_id=subject_id)
         if replay is not None:
             return replay
 
@@ -956,7 +989,7 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("update_notification_preferences", idempotency_key, response)
+        self._remember("update_notification_preferences", idempotency_key, response, role_id=role_id, subject_id=subject_id)
         return response
 
     # ------------------------------------------------------------------
@@ -1103,7 +1136,7 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Durably override a role's workspace grants. High-risk, always audited."""
-        replay = self._replay("update_role_workspaces", idempotency_key)
+        replay = self._replay("update_role_workspaces", idempotency_key, role_id=role_id, subject_id=subject_id)
         if replay is not None:
             return replay
 
@@ -1158,7 +1191,7 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("update_role_workspaces", idempotency_key, response)
+        self._remember("update_role_workspaces", idempotency_key, response, role_id=role_id, subject_id=subject_id)
         return response
 
     # ------------------------------------------------------------------
@@ -1212,7 +1245,7 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Durably persist workspace settings. Governed and audited."""
-        replay = self._replay("update_settings", idempotency_key)
+        replay = self._replay("update_settings", idempotency_key, role_id=role_id, subject_id=subject_id)
         if replay is not None:
             return replay
 
@@ -1264,7 +1297,7 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("update_settings", idempotency_key, response)
+        self._remember("update_settings", idempotency_key, response, role_id=role_id, subject_id=subject_id)
         return response
 
     # ------------------------------------------------------------------
@@ -1349,11 +1382,15 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Record a franchisee's acknowledgement of a notification."""
-        replay = self._replay("franchisee_acknowledge", idempotency_key)
+        subject = subject_id or "franchisee-unknown"
+        replay = self._replay(
+            "franchisee_acknowledge",
+            idempotency_key,
+            role_id="franchisee",
+            subject_id=subject,
+        )
         if replay is not None:
             return replay
-
-        subject = subject_id or "franchisee-unknown"
         view = self.get_franchisee_view(subject_id=subject, store_id=store_id)
         known = {str(item["notificationId"]) for item in view["notifications"]}
         if notification_id not in known:
@@ -1391,7 +1428,13 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("franchisee_acknowledge", idempotency_key, response)
+        self._remember(
+            "franchisee_acknowledge",
+            idempotency_key,
+            response,
+            role_id="franchisee",
+            subject_id=subject,
+        )
         return response
 
     def franchisee_report(
@@ -1405,7 +1448,13 @@ class ShellService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Record a franchisee field report."""
-        replay = self._replay("franchisee_report", idempotency_key)
+        subject = subject_id or "franchisee-unknown"
+        replay = self._replay(
+            "franchisee_report",
+            idempotency_key,
+            role_id="franchisee",
+            subject_id=subject,
+        )
         if replay is not None:
             return replay
 
@@ -1417,7 +1466,6 @@ class ShellService:
         if not body:
             raise ShellPolicyError("回報內容不可為空白。")
 
-        subject = subject_id or "franchisee-unknown"
         report_id = f"FR-{uuid4().hex[:8].upper()}"
         record = {
             "reportId": report_id,
@@ -1453,7 +1501,13 @@ class ShellService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
-        self._remember("franchisee_report", idempotency_key, response)
+        self._remember(
+            "franchisee_report",
+            idempotency_key,
+            response,
+            role_id="franchisee",
+            subject_id=subject,
+        )
         return response
 
     # ------------------------------------------------------------------
