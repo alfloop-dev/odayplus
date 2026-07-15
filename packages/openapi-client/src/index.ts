@@ -214,6 +214,278 @@ export type ModelReleaseSummary = {
 // Operator Console R4 DTOs (ODP-OC-R4-001)
 // ---------------------------------------------------------------------------
 
+// --- Product shell types (ODP-PGAP-SHELL-001) ---
+
+/** Where a shell payload came from and who it was built for. */
+export type ShellMeta = {
+  generatedAt: string;
+  correlationId?: string | null;
+  source: string;
+  role?: { id: string; label: string };
+  allowedWorkspaces?: string[];
+  isAdmin?: boolean;
+  [key: string]: unknown;
+};
+
+export type ShellSeverity = "critical" | "warning" | "info";
+export type ShellSlaState = "breached" | "at-risk" | "on-track" | "none";
+
+export type ShellEntryPoint = {
+  key: string;
+  label: string;
+  href: string;
+  workspace: string;
+  description: string;
+};
+
+export type ShellTask = {
+  taskId: string;
+  id: string;
+  title: string;
+  status: string;
+  owner?: string;
+  meta?: string;
+  time?: string;
+  tone?: string;
+  workspace?: string;
+  severity: ShellSeverity;
+  slaState: ShellSlaState;
+  slaDueAt: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  assignedAt: string | null;
+  assignedToMe: boolean;
+  deepLink: { workspace: string; entityId: string; tab: string };
+  sourceHref: string;
+};
+
+export type ShellNotification = {
+  notificationId: string;
+  title: string;
+  detail: string;
+  severity: ShellSeverity;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  sourceHref: string;
+};
+
+export type ShellFreshnessRow = {
+  source: string;
+  label: string;
+  generatedAt: string;
+  records: number;
+  state: string;
+};
+
+export type ShellHomeResponse = {
+  meta: ShellMeta;
+  status: {
+    headline: string;
+    openTasks: number;
+    slaBreached: number;
+    slaAtRisk: number;
+    pendingApprovals: number;
+    unacknowledgedNotifications: number;
+    tone: string;
+  };
+  tasks: ShellTask[];
+  approvals: Array<{ id: string; title: string; status: string; meta?: string; tone?: string }>;
+  decisions: Array<{ id: string; title: string; status: string; meta?: string; tone?: string }>;
+  freshness: ShellFreshnessRow[];
+  entryPoints: ShellEntryPoint[];
+  notifications: ShellNotification[];
+  kpis: Array<{ label: string; value: string; delta?: string; meta?: string; tone?: string }>;
+};
+
+export type ShellTaskFilters = {
+  sla?: string;
+  assignee?: string;
+  status?: string;
+  taskId?: string;
+};
+
+export type ShellAction = {
+  key: string;
+  label: string;
+  allowed: boolean;
+  reason: string | null;
+};
+
+export type ShellTasksResponse = {
+  meta: ShellMeta;
+  items: ShellTask[];
+  count: number;
+  total: number;
+  facets: {
+    sla: Record<string, number>;
+    status: Record<string, number>;
+    assignee: Record<string, number>;
+  };
+  actions: ShellAction[];
+  assignableRoles: Array<{ id: string; label: string }>;
+};
+
+export type ShellTaskAssignRequest = {
+  assigneeId: string;
+  assigneeName?: string;
+  slaDueAt?: string | null;
+};
+
+/** Every shell write echoes its audit event and whether it was a replay. */
+export type ShellWriteResponse = {
+  auditEvent: {
+    id: string;
+    auditEventId: string;
+    occurredAt: string;
+    actorRoleId: string;
+    action: string;
+    message: string;
+    metadata: Record<string, unknown>;
+  };
+  correlationId?: string | null;
+  idempotentReplay: boolean;
+  [key: string]: unknown;
+};
+
+export type ShellTaskAssignResponse = ShellWriteResponse & {
+  assignment: {
+    taskId: string;
+    assigneeId: string;
+    assigneeName: string;
+    slaDueAt: string | null;
+    updatedAt: string;
+    updatedBy: string;
+  };
+};
+
+export type ShellPreferences = {
+  channels: Record<string, boolean>;
+  severityFloor: string;
+  digest: string;
+};
+
+export type ShellPreferencesResponse = {
+  roleId: string;
+  preferences: ShellPreferences;
+  isDefault: boolean;
+  severityLevels: string[];
+};
+
+export type ShellPreferencesWriteResponse = ShellWriteResponse & {
+  roleId: string;
+  preferences: ShellPreferences;
+};
+
+export type ShellNotificationsResponse = {
+  meta: ShellMeta;
+  items: ShellNotification[];
+  count: number;
+  unacknowledged: number;
+  facets: { severity: Record<string, number> };
+  preferences: ShellPreferences;
+};
+
+export type ShellSearchResult = {
+  id: string;
+  entityId: string;
+  label: string;
+  description: string;
+  workspace: string;
+  kind: "entity" | "workspace";
+  href: string;
+};
+
+export type ShellSearchCommand = {
+  id: string;
+  label: string;
+  description: string;
+  href: string;
+  kind: "command";
+};
+
+export type ShellSearchResponse = {
+  meta: ShellMeta;
+  items: ShellSearchResult[];
+  count: number;
+  total: number;
+  commands: ShellSearchCommand[];
+};
+
+export type ShellAdminRoleRow = {
+  roleId: string;
+  label: string;
+  subtitle: string;
+  allowedWorkspaces: string[];
+  overridden: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export type ShellAdminResponse = {
+  meta: ShellMeta;
+  roles: ShellAdminRoleRow[];
+  workspaces: Array<{ id: string; label: string }>;
+  auditFeed: Array<{
+    id: string;
+    occurredAt: string;
+    actorRoleId: string;
+    action: string;
+    message: string;
+  }>;
+};
+
+export type ShellSettingsResponse = {
+  meta: ShellMeta;
+  scope: string;
+  values: Record<string, string>;
+  isDefault: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  options: Record<string, string[]>;
+};
+
+export type ShellSettingsWriteResponse = ShellWriteResponse & {
+  scope: string;
+  values: Record<string, string>;
+};
+
+/** The franchisee projection — deliberately narrower than the operator task. */
+export type ShellFranchiseeTask = {
+  id: string;
+  title: string;
+  status: string;
+  time?: string;
+};
+
+export type ShellFranchiseeReport = {
+  reportId: string;
+  category: string;
+  message: string;
+  status: string;
+  createdAt: string;
+  storeId: string;
+};
+
+export type ShellFranchiseeResponse = {
+  meta: ShellMeta;
+  store: { id: string; label: string };
+  tasks: ShellFranchiseeTask[];
+  notifications: Array<{
+    notificationId: string;
+    title: string;
+    detail: string;
+    severity: ShellSeverity;
+    acknowledged: boolean;
+  }>;
+  reports: ShellFranchiseeReport[];
+  reportCategories: string[];
+};
+
+export type ShellFranchiseeReportResponse = ShellWriteResponse & {
+  report: ShellFranchiseeReport;
+};
+
 /** Work-queue item shape returned by GET /operator/issues. */
 export type OperatorWorkQueueItem = {
   id: string;
@@ -688,6 +960,173 @@ export class OdpApiClient {
       method: "POST",
       correlationId: options.correlationId,
     });
+  }
+
+  // --- Product shell API methods (ODP-PGAP-SHELL-001) ---
+
+  /** Aggregated first screen: status, tasks, approvals, decisions, freshness. */
+  getShellHome(): Promise<ShellHomeResponse> {
+    return this.request<ShellHomeResponse>("/api/v1/operator/shell/home");
+  }
+
+  /** Task Center list. Filters are server-applied; facets describe the unfiltered set. */
+  getShellTasks(filters: ShellTaskFilters = {}): Promise<ShellTasksResponse> {
+    return this.request<ShellTasksResponse>("/api/v1/operator/shell/tasks", {
+      query: {
+        sla: filters.sla,
+        assignee: filters.assignee,
+        status: filters.status,
+        taskId: filters.taskId,
+      },
+    });
+  }
+
+  /**
+   * Assign a task. `idempotencyKey` must be minted once per logical assignment
+   * and retained across retries, or a retry will be applied twice.
+   */
+  assignShellTask(
+    taskId: string,
+    body: ShellTaskAssignRequest,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellTaskAssignResponse> {
+    return this.request<ShellTaskAssignResponse>(
+      `/api/v1/operator/shell/tasks/${encodeURIComponent(taskId)}/assignment`,
+      {
+        method: "POST",
+        body,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
+  }
+
+  /** Durable notification inbox for the acting role. */
+  getShellNotifications(
+    filters: { severity?: string; acknowledged?: boolean } = {},
+  ): Promise<ShellNotificationsResponse> {
+    return this.request<ShellNotificationsResponse>("/api/v1/operator/shell/notifications", {
+      query: {
+        severity: filters.severity,
+        acknowledged:
+          filters.acknowledged === undefined ? undefined : String(filters.acknowledged),
+      },
+    });
+  }
+
+  /** Acknowledge one notification for the acting role. */
+  acknowledgeShellNotification(
+    notificationId: string,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellWriteResponse> {
+    return this.request<ShellWriteResponse>(
+      `/api/v1/operator/shell/notifications/${encodeURIComponent(notificationId)}/acknowledgement`,
+      {
+        method: "POST",
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
+  }
+
+  getShellNotificationPreferences(): Promise<ShellPreferencesResponse> {
+    return this.request<ShellPreferencesResponse>(
+      "/api/v1/operator/shell/notifications/preferences",
+    );
+  }
+
+  updateShellNotificationPreferences(
+    body: ShellPreferences,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellPreferencesWriteResponse> {
+    return this.request<ShellPreferencesWriteResponse>(
+      "/api/v1/operator/shell/notifications/preferences",
+      {
+        method: "PUT",
+        body,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
+  }
+
+  /** Authorized cross-domain search + keyboard commands. */
+  searchShell(query: string, options: { limit?: number } = {}): Promise<ShellSearchResponse> {
+    return this.request<ShellSearchResponse>("/api/v1/operator/shell/search", {
+      query: { q: query, limit: options.limit ? String(options.limit) : undefined },
+    });
+  }
+
+  /** Role/workspace administration view. 403 for non-admin roles. */
+  getShellAdmin(): Promise<ShellAdminResponse> {
+    return this.request<ShellAdminResponse>("/api/v1/operator/shell/admin");
+  }
+
+  /** High-risk governed write: override a role's workspace grants. */
+  updateShellRoleWorkspaces(
+    roleId: string,
+    body: { allowedWorkspaces: string[] },
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellWriteResponse> {
+    return this.request<ShellWriteResponse>(
+      `/api/v1/operator/shell/admin/roles/${encodeURIComponent(roleId)}/workspaces`,
+      {
+        method: "PUT",
+        body,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
+  }
+
+  getShellSettings(): Promise<ShellSettingsResponse> {
+    return this.request<ShellSettingsResponse>("/api/v1/operator/shell/settings");
+  }
+
+  updateShellSettings(
+    values: Record<string, string>,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellSettingsWriteResponse> {
+    return this.request<ShellSettingsWriteResponse>("/api/v1/operator/shell/settings", {
+      method: "PUT",
+      body: { values },
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  /** Franchisee-scoped view. A separate resource from the operator console. */
+  getShellFranchisee(storeId?: string): Promise<ShellFranchiseeResponse> {
+    return this.request<ShellFranchiseeResponse>("/api/v1/operator/shell/franchisee", {
+      query: { storeId },
+    });
+  }
+
+  acknowledgeShellFranchiseeNotification(
+    body: { notificationId: string; storeId?: string },
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellWriteResponse> {
+    return this.request<ShellWriteResponse>("/api/v1/operator/shell/franchisee/acknowledgement", {
+      method: "POST",
+      body,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  submitShellFranchiseeReport(
+    body: { category: string; message: string; storeId?: string },
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<ShellFranchiseeReportResponse> {
+    return this.request<ShellFranchiseeReportResponse>(
+      "/api/v1/operator/shell/franchisee/reports",
+      {
+        method: "POST",
+        body,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+      },
+    );
   }
 
   // --- Network Listing Radar & Assisted Intake API methods ---
