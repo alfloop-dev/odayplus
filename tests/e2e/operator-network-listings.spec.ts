@@ -150,9 +150,13 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     const snapshot = await api.get("/api/v1/operator/network-listings");
     const body = await snapshot.json();
     const source = body.listings.find((item: { id: string }) => item.id === "L-2029");
+    const target = body.listings.find((item: { id: string }) => item.id === "L-2025");
     expect(source.mergedIntoId).toBeFalsy();
     expect(source.mergeReason).toBeFalsy();
-    expect(source.status).not.toBe("duplicate");
+    // L-2029 is SEEDED as a duplicate candidate, so its status proves nothing.
+    // The merge's actual effect is moving source evidence onto the target and
+    // writing an audit event — neither may have happened.
+    expect(target.sourceEvidence).not.toContain("EV-L-2029-RAW-591");
     expect(
       body.auditEvents.filter((event: { action: string }) => event.action === "listing.merge"),
     ).toHaveLength(0);
