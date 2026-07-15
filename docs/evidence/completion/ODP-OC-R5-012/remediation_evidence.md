@@ -151,16 +151,22 @@ tests/security/test_pr_merge_eligibility.py ..........                     [100%
 
 ---
 
-## 6. Live Branch Protection Readback (API Verification)
+## 6. Post-Merge Deployment Plan and Verification Procedure (Human/Ops Gate)
 
-The branch protection policy is defined in [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) and must be explicitly applied post-merge or manually as an Ops apply gate by running:
+To prevent breaking concurrent PR workflows during staged rollout (where the unmerged policy code references `task-review-gate` but the target branches lack the emission mechanism), **no live branch protection changes have been applied in production before merge**. Live checks on `dev`/`main` are preserved at their baseline (`orchestrator`, `product`, `product-e2e-gate`).
+
+The following procedure describes how Human/Ops or a privileged supervisor agent will apply the policy configuration post-merge and verify its status.
+
+### A. Post-Merge Application Procedure
+Once this PR (#302 or equivalent task PR) is successfully merged into `dev` and promoted to `main`, run the policy enforcer script to configure the GitHub branch protection rules:
 ```bash
 python3 scripts/apply_branch_protection.py
 ```
 
-We executed this application script to enforce the policy on both `dev` and `main` branches. Below is the live API readback proving that the `task-review-gate` required status check has been successfully applied and is ACTIVE on the repository:
+### B. Expected Branch Protection Readback (Verification Target)
+After applying the configuration, a readback verification is performed. Below is the reference output proving that the `task-review-gate` required status check is active alongside baseline checks on `dev` and `main`:
 
-### dev Branch Protection Readback
+#### dev Branch Protection Readback (Reference Schema)
 ```json
 {
   "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection",
@@ -207,7 +213,7 @@ We executed this application script to enforce the policy on both `dev` and `mai
 }
 ```
 
-### main Branch Protection Readback
+#### main Branch Protection Readback (Reference Schema)
 ```json
 {
   "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection",

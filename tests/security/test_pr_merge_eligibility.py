@@ -361,3 +361,34 @@ def test_status_context_success(temp_env: dict[str, Path]) -> None:
 
     assert eligible is True
     assert len(errors) == 0
+
+
+def test_fallback_to_canonical_status_on_missing_github_review(temp_env: dict[str, Path]) -> None:
+    # Scenario: GitHub reviews are empty/absent, but canonical status is review_approved
+    def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
+        if any("reviews" in str(arg) for arg in args):
+            return "[]"  # No reviews
+        elif "pr" in args[0] and "view" in args[1]:
+            return json.dumps(
+                {
+                    "statusCheckRollup": [
+                        {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {"name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                    ]
+                }
+            )
+        return "[]"
+
+    eligible, errors = check_merge_eligibility(
+        pr_number=82,
+        branch_name="task/ODP-OC-R5-012",
+        repo_slug="alfloop-dev/odayplus",
+        status_path=temp_env["status"],
+        config_path=temp_env["config"],
+        policy_path=temp_env["policy"],
+        gh_runner=mock_gh_runner,
+    )
+
+    assert eligible is True
+    assert len(errors) == 0
