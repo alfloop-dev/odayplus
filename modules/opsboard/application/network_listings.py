@@ -210,6 +210,7 @@ class NetworkListingService:
         self._state = _seed_state()
         self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._load_intakes()
+        self._load_idempotency_cache()
 
     def _load_intakes(self) -> None:
         if self._document_store is not None:
@@ -217,6 +218,30 @@ class NetworkListingService:
             self._state["assistedIntakes"] = intakes
         else:
             self._state.setdefault("assistedIntakes", [])
+
+    def _load_idempotency_cache(self) -> None:
+        self._idempotency_cache = {}
+        if self._document_store is not None:
+            items = self._document_store.list_all("operator.idempotency_cache")
+            for item in items:
+                action = item.get("action")
+                key = item.get("key")
+                response = item.get("response")
+                if action is not None and key is not None:
+                    self._idempotency_cache[(action, key)] = response
+
+    def _save_idempotency(self, action: str, key: str, response: dict[str, Any]) -> None:
+        self._idempotency_cache[(action, key)] = _copy(response)
+        if self._document_store is not None:
+            self._document_store.put(
+                "operator.idempotency_cache",
+                f"{action}:{key}",
+                {
+                    "action": action,
+                    "key": key,
+                    "response": response,
+                }
+            )
 
     def _save_intake(self, intake: dict[str, Any]) -> None:
         self._state.setdefault("assistedIntakes", [])
@@ -237,10 +262,8 @@ class NetworkListingService:
         self._idempotency_cache = {}
         if self._document_store is not None:
             # Clean up intakes from database
-            self._document_store._engine.execute(
-                "DELETE FROM durable_documents WHERE collection = ?",
-                ("operator.assisted_intakes",)
-            )
+            self._document_store.delete_collection("operator.assisted_intakes")
+            self._document_store.delete_collection("operator.idempotency_cache")
             self._state["assistedIntakes"] = []
         else:
             self._state["assistedIntakes"] = []
@@ -287,6 +310,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to convert listing")
+
         cache_key = ("convert", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
             return _copy(self._idempotency_cache[cache_key])
@@ -354,7 +382,7 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("convert", idempotency_key, result)
         return result
 
     def merge_listing(
@@ -368,6 +396,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
+
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("merge reason is required")
@@ -380,6 +413,9 @@ class NetworkListingService:
         target = self._listing(target_listing_id)
         if source_listing_id == target_listing_id:
             raise NetworkListingConflict("source and target listing must be different")
+
+        source_before_status = source.get("status")
+        target_before_evidence = list(target.get("sourceEvidence", []))
 
         source_evidence = list(source.get("sourceEvidence", []))
         target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + source_evidence)
@@ -404,6 +440,15 @@ class NetworkListingService:
                 "sourceListingId": source_listing_id,
                 "sourceEvidenceRetained": len(source_evidence),
                 "targetEvidenceCount": len(target["sourceEvidence"]),
+                "before": {
+                    "sourceStatus": source_before_status,
+                    "targetEvidenceCount": len(target_before_evidence),
+                },
+                "after": {
+                    "sourceStatus": "duplicate",
+                    "targetEvidenceCount": len(target["sourceEvidence"]),
+                },
+                "riskSummary": f"Merge source {source_listing_id} into target {target_listing_id}.",
             },
         )
         result = {
@@ -415,7 +460,7 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=target["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("merge", idempotency_key, result)
         return result
 
     def archive_listing(
@@ -428,6 +473,11 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
+
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("archive reason is required")
@@ -437,6 +487,8 @@ class NetworkListingService:
             return _copy(self._idempotency_cache[cache_key])
 
         listing = self._listing(listing_id)
+        before_status = listing.get("status")
+
         listing["status"] = "archived"
         listing["archivedReason"] = reason
         listing["archivedAt"] = listing.get("archivedAt") or _now()
@@ -450,6 +502,13 @@ class NetworkListingService:
                 "reason": reason,
                 "hardRuleFailures": list(listing.get("hardRuleFailures", [])),
                 "sourceEvidenceCount": len(listing.get("sourceEvidence", [])),
+                "before": {
+                    "status": before_status,
+                },
+                "after": {
+                    "status": "archived",
+                },
+                "riskSummary": f"Archive listing {listing_id}. Reason: {reason}",
             },
         )
         result = {
@@ -459,7 +518,7 @@ class NetworkListingService:
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._save_idempotency("archive", idempotency_key, result)
         return result
 
     def submit_intake(
@@ -494,8 +553,12 @@ class NetworkListingService:
 
         self._state.setdefault("assistedIntakes", [])
         for intake in self._state["assistedIntakes"]:
-            if intake.get("canonicalUrl") == canon_url and intake.get("stage") not in {"READY", "FAILED"}:
-                raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
+            if intake.get("canonicalUrl") == canon_url:
+                if intake.get("stage") in {"NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"}:
+                    # Exact duplicate before retrieval (terminal state idempotency)
+                    return _copy(intake)
+                else:
+                    raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
 
         policy = resolve_source_policy(url)
         intake_id = f"IN-{3001 + len(self._state['assistedIntakes'])}"
@@ -508,6 +571,7 @@ class NetworkListingService:
             "owner": actor_name or "林曉青",
             "heatZoneId": heat_zone_id,
             "stage": "SUBMITTED",
+            "sourceId": policy.source_id,
             "policy": policy.policy,
             "policyLabel": policy.policy_label,
             "policyReason": policy.policy_reason,
@@ -604,7 +668,7 @@ class NetworkListingService:
         self._save_intake(intake)
 
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(intake)
+            self._save_idempotency("submit_intake", idempotency_key, intake)
         return _copy(intake)
 
     def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
@@ -631,6 +695,11 @@ class NetworkListingService:
         actor_name: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
+
         intake = self._listing_intake(intake_id)
 
         from modules.external_data.application.assisted_intake import (
@@ -649,6 +718,7 @@ class NetworkListingService:
             raise NetworkListingPolicyError("reason is required for modifying identity-affecting fields")
 
         corrections_made = []
+        before_after_changes = []
         for key, val in fields.items():
             if key not in intake["parsedFields"]:
                 intake["parsedFields"][key] = {
@@ -667,6 +737,11 @@ class NetworkListingService:
             intake["parsedFields"][key]["correctionReason"] = reason
             after_val = val
             corrections_made.append(f"'{key}' corrected from '{before_val}' to '{after_val}'")
+            before_after_changes.append({
+                "field": key,
+                "before": before_val,
+                "after": val,
+            })
 
         effective_vals = effective_fields(intake["parsedFields"])
 
@@ -691,7 +766,7 @@ class NetworkListingService:
             match_res = match_listing(
                 values=effective_vals,
                 canonical_url=intake["canonicalUrl"],
-                source_id=intake["policy"],
+                source_id=intake.get("sourceId", intake["policy"]),
                 fingerprint=fingerprint,
                 listings=self._get_match_listings(),
             )
@@ -717,6 +792,8 @@ class NetworkListingService:
                 "reason": reason,
                 "stage": intake["stage"],
                 "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
+                "beforeAfter": before_after_changes,
+                "riskSummary": f"Manual correction of fields: {', '.join(fields.keys())}.",
             }
         }
         intake["auditEvents"].append(audit_evt)
@@ -733,6 +810,15 @@ class NetworkListingService:
         actor_name: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to decide intake")
+
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            raise NetworkListingPolicyError("decision reason is required")
+
         intake = self._listing_intake(intake_id)
         action = action.strip().lower()
 
@@ -742,11 +828,15 @@ class NetworkListingService:
         from modules.external_data.application.assisted_intake import effective_fields
         effective_vals = effective_fields(intake["parsedFields"])
 
+        before_stage = intake["stage"]
+        before_after = {"stage": {"before": before_stage}}
+        risk_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
+
         if action == "create":
             new_id = f"L-{2031 + len(self._state['listings'])}"
             new_listing = {
                 "id": new_id,
-                "sourceId": intake["policy"],
+                "sourceId": intake.get("sourceId", intake["policy"]),
                 "sourceListingId": effective_vals.get("providerListingId", ""),
                 "heatZoneId": intake["heatZoneId"] or "HZ-01",
                 "address": effective_vals.get("address", ""),
@@ -780,12 +870,20 @@ class NetworkListingService:
                 intake["matchResult"]["outcome"] = "NEW"
                 intake["matchResult"]["outcomeLabel"] = "新物件"
                 intake["matchResult"]["summary"] = f"已手動建立為新物件 {new_id}。"
+
+            before_after["stage"]["after"] = "READY"
+            before_after["listings_count"] = {"before": len(self._state["listings"]) - 1, "after": len(self._state["listings"])}
+            risk_summary = f"Created new listing {new_id} from intake {intake_id}."
             
         elif action == "revise":
             target_id = intake["matchResult"].get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
             target = self._listing(target_id)
+            before_rent = target["rentPerMonth"]
+            before_area = target["areaPing"]
+            before_floor = target["floor"]
+
             target["rentPerMonth"] = effective_vals.get("rent", target["rentPerMonth"])
             target["areaPing"] = effective_vals.get("areaPing", target["areaPing"])
             target["floor"] = effective_vals.get("floor", target["floor"])
@@ -794,14 +892,26 @@ class NetworkListingService:
             intake["stage"] = "READY"
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
+            before_after["stage"]["after"] = "READY"
+            before_after["target_rent"] = {"before": before_rent, "after": target["rentPerMonth"]}
+            before_after["target_area"] = {"before": before_area, "after": target["areaPing"]}
+            before_after["target_floor"] = {"before": before_floor, "after": target["floor"]}
+            risk_summary = f"Revised listing {target_id} from intake {intake_id}."
+
         elif action == "duplicate":
             target_id = intake["matchResult"].get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for duplicate merge")
             target = self._listing(target_id)
+            before_evidence_count = len(target.get("sourceEvidence", []))
+
             target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-DUPLICATE"])
             intake["stage"] = "READY"
             intake["matchResult"]["summary"] = f"已手動標記為重複並合併至 {target_id}。"
+
+            before_after["stage"]["after"] = "READY"
+            before_after["target_evidence_count"] = {"before": before_evidence_count, "after": len(target["sourceEvidence"])}
+            risk_summary = f"Merged duplicate intake {intake_id} into listing {target_id}."
 
         elif action == "quarantine":
             intake["stage"] = "QUARANTINED"
@@ -813,11 +923,14 @@ class NetworkListingService:
                     "targetListingId": None,
                     "agreeingSignals": [],
                     "contradictingSignals": [],
-                    "summary": f"已手動送交隔離。原因：{reason}"
+                    "summary": f"已手動送交隔離。原因：{reason_text}"
                 }
             else:
                 intake["matchResult"]["outcome"] = "QUARANTINED"
-                intake["matchResult"]["summary"] = f"已手動送交隔離。原因：{reason}"
+                intake["matchResult"]["summary"] = f"已手動送交隔離。原因：{reason_text}"
+
+            before_after["stage"]["after"] = "QUARANTINED"
+            risk_summary = f"Quarantined intake {intake_id}."
 
         elif action == "reject":
             intake["stage"] = "FAILED"
@@ -829,10 +942,13 @@ class NetworkListingService:
                     "targetListingId": None,
                     "agreeingSignals": [],
                     "contradictingSignals": [],
-                    "summary": f"已拒絕此送件。原因：{reason}"
+                    "summary": f"已拒絕此送件。原因：{reason_text}"
                 }
             else:
-                intake["matchResult"]["summary"] = f"已拒絕此送件。原因：{reason}"
+                intake["matchResult"]["summary"] = f"已拒絕此送件。原因：{reason_text}"
+
+            before_after["stage"]["after"] = "FAILED"
+            risk_summary = f"Rejected intake {intake_id}."
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -841,13 +957,15 @@ class NetworkListingService:
             "actorName": actor_name or "Expansion Manager",
             "action": f"intake.decide.{action}",
             "targetId": intake_id,
-            "message": f"Intake decision '{action}' recorded. Reason: {reason}",
+            "message": f"Intake decision '{action}' recorded. Reason: {reason_text}",
             "correlationId": correlation_id,
             "metadata": {
                 "decision": action,
-                "reason": reason,
+                "reason": reason_text,
                 "stage": intake["stage"],
                 "targetListingId": intake["matchResult"].get("targetListingId"),
+                "beforeAfter": before_after,
+                "riskSummary": risk_summary,
             }
         }
         intake["auditEvents"].append(audit_evt)
@@ -959,14 +1077,28 @@ class NetworkListingService:
         self,
         *,
         intake_id: str,
+        reason: str | None = None,
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        # Server-side role check
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        if actor_role_id not in allowed_roles:
+            raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
+
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            raise NetworkListingPolicyError("promotion reason is required")
+
         intake = self._listing_intake(intake_id)
         target_listing_id = intake["matchResult"].get("targetListingId")
         if not target_listing_id:
             raise NetworkListingConflict("intake must be resolved to a listing before promotion")
+
+        listing = self._listing(target_listing_id)
+        before_listing_status = listing.get("status")
+        before_candidate_count = len(self._state["candidates"])
 
         result = self.convert_listing(
             listing_id=target_listing_id,
@@ -983,11 +1115,21 @@ class NetworkListingService:
             "actorName": actor_name or "Expansion Manager",
             "action": "intake.promote",
             "targetId": intake_id,
-            "message": f"Promoted target listing {target_listing_id} to candidate.",
+            "message": f"Promoted target listing {target_listing_id} to candidate. Reason: {reason_text}",
             "correlationId": correlation_id,
             "metadata": {
                 "targetListingId": target_listing_id,
                 "candidateId": result["candidate"]["id"],
+                "reason": reason_text,
+                "before": {
+                    "listingStatus": before_listing_status,
+                    "candidateCount": before_candidate_count,
+                },
+                "after": {
+                    "listingStatus": result["listing"]["status"],
+                    "candidateCount": len(self._state["candidates"]),
+                },
+                "riskSummary": f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}.",
             }
         }
         intake["auditEvents"].append(audit_evt)
@@ -1003,12 +1145,27 @@ class NetworkListingService:
                 source_id = "SRC-SYNTHETIC"
                 if source_listing_id.startswith("s591-"):
                     source_listing_id = source_listing_id.replace("s591-", "synthetic-")
+
+            fp = lst.get("contentFingerprint")
+            if not fp:
+                from modules.external_data.application.assisted_intake import content_fingerprint
+                fields_for_fp = {
+                    "address": lst.get("address", ""),
+                    "floor": lst.get("floor", ""),
+                    "areaPing": lst.get("areaPing"),
+                    "rent": lst.get("rentPerMonth"),
+                    "listingType": lst.get("listingType", "店面"),
+                    "listingStatus": lst.get("listingStatus", "active"),
+                }
+                fp = content_fingerprint(fields_for_fp)
+                lst["contentFingerprint"] = fp
+
             res.append({
                 "id": lst["id"],
                 "sourceId": source_id,
                 "sourceListingId": source_listing_id,
                 "canonicalUrl": lst.get("sourceUrl", ""),
-                "contentFingerprint": lst.get("contentFingerprint") or "",
+                "contentFingerprint": fp,
                 "address": lst.get("address", ""),
                 "floor": lst.get("floor", ""),
                 "areaPing": lst.get("areaPing"),

@@ -301,6 +301,7 @@ def create_network_listings_sub_router(
         try:
             return service.promote_intake(
                 intake_id=intake_id,
+                reason=body.reason,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 correlation_id=x_correlation_id,
