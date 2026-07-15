@@ -1,0 +1,98 @@
+[
+  {
+    "source": "archive-package-6",
+    "surface": "Store Ops 門市營運",
+    "viewport": "desktop",
+    "file": "archive-store-ops-desktop.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Store Ops 門市營運",
+    "viewport": "desktop",
+    "file": "app-store-ops-desktop.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Growth 營收成長",
+    "viewport": "desktop",
+    "file": "archive-growth-desktop.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Growth 營收成長",
+    "viewport": "desktop",
+    "file": "app-growth-desktop.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Network SiteScore Lab",
+    "viewport": "desktop",
+    "file": "archive-network-sitescore-desktop.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Network SiteScore Lab",
+    "viewport": "desktop",
+    "file": "app-network-sitescore-desktop.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Govern 治理稽核",
+    "viewport": "desktop",
+    "file": "archive-govern-desktop.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Govern 治理稽核",
+    "viewport": "desktop",
+    "file": "app-govern-desktop.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Store Ops 門市營運",
+    "viewport": "constrained",
+    "file": "archive-store-ops-constrained.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Store Ops 門市營運",
+    "viewport": "constrained",
+    "file": "app-store-ops-constrained.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Growth 營收成長",
+    "viewport": "constrained",
+    "file": "archive-growth-constrained.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Growth 營收成長",
+    "viewport": "constrained",
+    "file": "app-growth-constrained.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Network SiteScore Lab",
+    "viewport": "constrained",
+    "file": "archive-network-sitescore-constrained.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Network SiteScore Lab",
+    "viewport": "constrained",
+    "file": "app-network-sitescore-constrained.png"
+  },
+  {
+    "source": "archive-package-6",
+    "surface": "Govern 治理稽核",
+    "viewport": "constrained",
+    "file": "archive-govern-constrained.png"
+  },
+  {
+    "source": "local-app",
+    "surface": "Govern 治理稽核",
+    "viewport": "constrained",
+    "file": "app-govern-constrained.png"
+  }
+]

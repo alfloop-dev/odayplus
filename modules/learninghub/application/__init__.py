@@ -1,5 +1,12 @@
 """Learning Hub application services."""
 
+from modules.learninghub.application.monitor import (
+    GuardrailBreach,
+    MonitorStatus,
+    RecommendedAction,
+    ReleaseMonitorAssessment,
+    evaluate_guardrails,
+)
 from modules.learninghub.application.release import (
     LearningHubError,
     LearningHubService,
@@ -15,13 +22,18 @@ from modules.learninghub.domain import (
 )
 
 __all__ = [
+    "GuardrailBreach",
     "InferenceComparison",
     "InferenceComparisonMode",
     "LearningHubError",
     "LearningHubService",
     "ModelReleaseDecision",
+    "MonitorStatus",
     "MonitoringEvaluation",
     "MonitoringSignalType",
+    "RecommendedAction",
+    "ReleaseMonitorAssessment",
     "ReleaseType",
     "RetrainingRequest",
+    "evaluate_guardrails",
 ]
