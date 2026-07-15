@@ -24,6 +24,15 @@ const NavLink: LinkComponent = ({ href, children, ...rest }) => (
 
 export function OpsBoardFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "/";
+
+  if (pathname === "/operator" || pathname.startsWith("/operator/")) {
+    return (
+      <ShellProvider initialRole="ops_manager">
+        {children}
+      </ShellProvider>
+    );
+  }
+
   return (
     <ShellProvider initialRole="ops_manager">
       <AppShell
