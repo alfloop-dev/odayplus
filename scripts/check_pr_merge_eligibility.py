@@ -228,7 +228,7 @@ def check_merge_eligibility(
         rollup = pr_view.get("statusCheckRollup") or []
         checks_map = {}
         for c in rollup:
-            name = c.get("name")
+            name = c.get("name") or c.get("context")
             if name:
                 checks_map[name] = c
 
@@ -239,9 +239,17 @@ def check_merge_eligibility(
             c_data = checks_map[check_name]
             status = c_data.get("status")
             conclusion = c_data.get("conclusion")
-            if status != "COMPLETED" or conclusion != "SUCCESS":
+            state = c_data.get("state")
+
+            is_success = False
+            if status == "COMPLETED" and conclusion == "SUCCESS":
+                is_success = True
+            elif state == "SUCCESS":
+                is_success = True
+
+            if not is_success:
                 errors.append(
-                    f"Required status check '{check_name}' is not successful (status: {status}, conclusion: {conclusion})"
+                    f"Required status check '{check_name}' is not successful (status: {status}, conclusion: {conclusion}, state: {state})"
                 )
 
     if errors:

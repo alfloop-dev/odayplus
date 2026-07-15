@@ -4247,9 +4247,15 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         if result.returncode == 0:
             print(f"Successfully emitted status check '{context}'={state} to GitHub API.", file=sys.stdout)
         else:
-            print(f"Failed to emit status check: {result.stderr.strip()}", file=sys.stderr)
+            err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
+            print(err_msg, file=sys.stderr)
+            raise RuntimeError(err_msg)
     except Exception as exc:
-        print(f"Error during status emission: {exc}", file=sys.stderr)
+        err_msg = f"Error during status emission: {exc}"
+        print(err_msg, file=sys.stderr)
+        if not isinstance(exc, RuntimeError):
+            raise RuntimeError(err_msg) from exc
+        raise
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:

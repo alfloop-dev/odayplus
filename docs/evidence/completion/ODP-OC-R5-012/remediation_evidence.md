@@ -14,7 +14,7 @@ We conducted an audit of the control-plane path that permitted PRs #297, #298, a
    ```
    This instructed GitHub to auto-merge the PR immediately upon satisfaction of default/basic branch protection rules.
 2. **Lack of Integration Gates**:
-   - The repository lacked a pre-merge check to verify the canonical task status in [ai-status.json](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/ai-status.json).
+   - The repository lacked a pre-merge check to verify the canonical task status in [ai-status.json](../../../ai-status.json).
    - The repository lacked branch protection rules requiring explicit approvals from the **assigned reviewer** (e.g. `Codex`), allowing general reviews (or lack thereof) to satisfy the merge condition.
    - The merge eligibility script `scripts/check_pr_merge_eligibility.py` was inert because it was never wired as a required check in the GitHub Actions workflows.
 3. **Bypass & Path Resolution Flaws**:
@@ -29,27 +29,28 @@ We conducted an audit of the control-plane path that permitted PRs #297, #298, a
 To close the premature merging gap safely and break the lifecycle dependency loop:
 
 1. **Keep Ordinary Product Checks in Branch Protection**:
-   Ordinary product checks (`orchestrator`, `product`, `product-e2e-gate`) are kept in the required branch protection policy defined in [.github/branch-protection/policy.json](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/.github/branch-protection/policy.json).
+   Ordinary product checks (`orchestrator`, `product`, `product-e2e-gate`) are kept in the required branch protection policy defined in [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json).
 2. **Dedicated Task Review Status Gate (`task-review-gate`)**:
-   Instead of running a PR workflow check that requires local `ai-status.json` context, the local status manager ([ai_status.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/scripts/ai_status.py)) acts as the external gate status emitter:
+   Instead of running a PR workflow check that requires local `ai-status.json` context, the local status manager ([ai_status.py](../../../scripts/ai_status.py)) acts as the external gate status emitter:
    - When a task is approved (`scripts/ai-status.sh approve`), it emits `task-review-gate=success` to the head commit of the PR.
    - When a task is reopened or rejected (`scripts/ai-status.sh reopen`), it emits `task-review-gate=failure` to revoke eligibility.
    - When a task is in progress or review, it emits `task-review-gate=pending`.
-3. **No Branch Protection Blockers During Transition**:
-   The new `task-review-gate` status check is **not** added to the required status checks list in branch protection until this PR is merged to `dev`. This prevents blocking unrelated PRs during the transition phase.
+3. **Mandatory Task Review Status Gate Enforced**:
+   The new `task-review-gate` status check is added to the required status checks list in branch protection ([.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json)). This ensures that product PRs cannot be merged without explicit review approval.
 
 ---
 
 ## 3. Policy & Implementation Details
 
 1. **Policy Configuration**:
-   We updated [.github/branch-protection/policy.json](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/.github/branch-protection/policy.json) to keep only the ordinary product status checks:
+   We updated [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) to enforce the following required status checks including the new `task-review-gate`:
    ```json
    {
      "required_status_checks": [
        "orchestrator",
        "product",
-       "product-e2e-gate"
+       "product-e2e-gate",
+       "task-review-gate"
      ],
      "enforce_admins": true,
      "required_approving_review_count": 1,
@@ -60,13 +61,13 @@ To close the premature merging gap safely and break the lifecycle dependency loo
    ```
 
 2. **CI Workflow Clean-up**:
-   We removed the `check-merge-eligibility` job from [.github/workflows/ci.yml](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/.github/workflows/ci.yml) to eliminate the dependency cycle and avoid CI failures caused by untracked config/status files on the runners.
+   We removed the `check-merge-eligibility` job from [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) to eliminate the dependency cycle and avoid CI failures caused by untracked config/status files on the runners.
 
 3. **Status Check Emitter Integration**:
-   We implemented `resolve_task_sha()`, `get_repository_slug_safe()`, and `emit_task_review_status_check()` inside [ai_status.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/scripts/ai_status.py). The emitter hooks into the main execution function of `ai_status.py`, capturing task transitions and programmatically posting the corresponding commit status check to GitHub using the system `gh` CLI.
+   We implemented `resolve_task_sha()`, `get_repository_slug_safe()`, and `emit_task_review_status_check()` inside [ai_status.py](../../../scripts/ai_status.py). The emitter hooks into the main execution function of `ai_status.py`, capturing task transitions and programmatically posting the corresponding commit status check to GitHub using the system `gh` CLI.
 
 4. **Reviewer Handle Mapping Clean-up**:
-   We removed the unnecessary placeholder handle `"ajoe734"` from the `"Codex"` reviewer list in [.orchestrator/config.example.json](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/.orchestrator/config.example.json) to eliminate single-identity GitHub self-review risks. We also deleted the redundant `.orchestrator/bin/gh` wrapper script and reverted unnecessary `uv.lock` dependency changes.
+   We removed the unnecessary placeholder handle `"ajoe734"` from the `"Codex"` reviewer list in [.orchestrator/config.example.json](../../../.orchestrator/config.example.json) to eliminate single-identity GitHub self-review risks. We also deleted the redundant `.orchestrator/bin/gh` wrapper script and reverted unnecessary `uv.lock` dependency changes.
 
 ---
 
@@ -116,7 +117,7 @@ Response snippet:
 
 ## 5. Test Coverage & Execution
 
-We added unit tests covering status check emission to [test_ai_status.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/scripts/test_ai_status.py):
+We added unit tests covering status check emission to [test_ai_status.py](../../../scripts/test_ai_status.py):
 
 - `test_get_repository_slug_safe_env` & `test_get_repository_slug_safe_config`: verify correct resolution of the repository slug.
 - `test_resolve_task_sha_gh_pr_view` & `test_resolve_task_sha_git_rev_parse`: verify resolution of commit hashes via PR metadata and local git branches.
@@ -134,25 +135,25 @@ scripts/test_ai_status.py ......................................................
 ============================= 63 passed in 2.27s ===============================
 ```
 
-We also verified the merge eligibility policy simulation suite in [test_pr_merge_eligibility.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-012/tests/security/test_pr_merge_eligibility.py):
+We also verified the merge eligibility policy simulation suite in [test_pr_merge_eligibility.py](../../../tests/security/test_pr_merge_eligibility.py):
 ```text
 $ pytest tests/security/test_pr_merge_eligibility.py
 ============================= test session starts ==============================
-collected 9 items
+collected 10 items
 
-tests/security/test_pr_merge_eligibility.py .........                     [100%]
+tests/security/test_pr_merge_eligibility.py ..........                     [100%]
 
-============================== 9 passed in 0.04s ===============================
+============================== 10 passed in 0.07s ==============================
 ```
 
 ---
 
-## 6. Post-Merge Human/Ops Enforcer Setup Runbook
+## 6. Branch Protection Verification Runbook
 
-After this implementation has been merged into `dev`:
+Since the `task-review-gate` has been formally integrated into [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json), it is applied automatically.
 
+To manually verify the enforcement on GitHub settings page:
 1. Navigate to the GitHub repository settings page -> **Branches**.
-2. Edit the branch protection rules for the `dev` and `main` branches.
-3. In the list of **Required status checks**, add:
-   - `task-review-gate`
-4. This will enforce that PRs cannot be merged until a reviewer has approved the task via `scripts/ai-status.sh approve`, emitting `task-review-gate=success`.
+2. Verify the branch protection rules for the `dev` and `main` branches.
+3. Confirm that the **Required status checks** list contains `task-review-gate`.
+4. This ensures PRs cannot be merged until a reviewer has approved the task via `scripts/ai-status.sh approve`, emitting `task-review-gate=success`.

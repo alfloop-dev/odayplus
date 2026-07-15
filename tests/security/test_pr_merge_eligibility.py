@@ -324,3 +324,41 @@ def test_dev_branch_skip_success(temp_env: dict[str, Path]) -> None:
     assert eligible is True
     assert len(errors) == 0
 
+
+def test_status_context_success(temp_env: dict[str, Path]) -> None:
+    # Scenario: status checks are represented as StatusContext (using 'context' and 'state')
+    def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
+        if any("reviews" in str(arg) for arg in args):
+            return json.dumps(
+                [
+                    {
+                        "user": {"login": "codex-bot"},
+                        "state": "APPROVED",
+                    }
+                ]
+            )
+        elif "pr" in args[0] and "view" in args[1]:
+            return json.dumps(
+                {
+                    "statusCheckRollup": [
+                        {"context": "orchestrator", "state": "SUCCESS"},
+                        {"context": "product", "state": "SUCCESS"},
+                        {"context": "product-e2e-gate", "state": "SUCCESS"},
+                    ]
+                }
+            )
+        return "[]"
+
+    eligible, errors = check_merge_eligibility(
+        pr_number=82,
+        branch_name="task/ODP-OC-R5-012",
+        repo_slug="alfloop-dev/odayplus",
+        status_path=temp_env["status"],
+        config_path=temp_env["config"],
+        policy_path=temp_env["policy"],
+        gh_runner=mock_gh_runner,
+    )
+
+    assert eligible is True
+    assert len(errors) == 0
+

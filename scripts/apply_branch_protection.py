@@ -10,8 +10,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def get_gh_executable() -> str:
+    import shutil
+    gh_path = shutil.which("gh")
+    if gh_path:
+        if ".orchestrator/bin/gh" in gh_path:
+            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
+                if os.path.exists(p):
+                    return p
+        return gh_path
+    return "gh"
+
+
 def run_gh_cli(args: list[str], input_data: str | None = None) -> tuple[int, str, str]:
-    cmd = ["gh"] + args
+    cmd = [get_gh_executable()] + args
     result = subprocess.run(cmd, input=input_data, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
 
@@ -46,7 +58,7 @@ def main() -> int:
 
     repo = os.environ.get("GITHUB_REPOSITORY", "alfloop-dev/odayplus")
     branches = ["dev", "main"]
-    
+
     print(f"Target repository: {repo}")
     print("Policy configuration to enforce:")
     print(json.dumps(payload, indent=2))
@@ -58,7 +70,7 @@ def main() -> int:
             ["api", "-X", "PUT", f"repos/{repo}/branches/{branch}/protection", "--input", "-"],
             input_data=json.dumps(payload)
         )
-        
+
         if ret == 0:
             print(f"Successfully applied branch protection to {branch}!")
         else:
