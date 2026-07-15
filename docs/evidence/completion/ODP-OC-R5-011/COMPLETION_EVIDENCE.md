@@ -618,3 +618,43 @@ tests the requirement, not the fix. The round-4 lesson in §10.1 applied.
 | `git diff --check` | clean |
 
 Not self-finalized. Handing back to Codex for independent re-review.
+
+## 12. Review round 6 — backdrop click and E2E robustness checks
+
+### 12.1 P1 — in-flight merge backdrop overlay click and Escape check
+
+**Finding:** The E2E test for in-flight merge must perform a real pointer/mouse mousedown or click on the backdrop overlay at a coordinate outside the dialog panel while the first merge request is held; assert the dialog remains visible and no write/result is hidden or advanced. Retain disabled close/cancel, Escape, retry, and identical idempotency-key assertions.
+
+**Fix:**
+- Added backdrop overlay click using coordinates `{ x: 10, y: 10 }` to click outside the centered dialog panel in the E2E test `an in-flight merge cannot be dismissed and retries reuse one idempotency key` (in [operator-network-listings.spec.ts](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-oc-r5-011/tests/e2e/operator-network-listings.spec.ts#L298-L300)).
+- Retained the existing disabled close/cancel, Escape, retry, and identical idempotency-key assertions in the same test block.
+- Asserted the dialog remains visible (`toBeVisible()`) after both the `Escape` key press and the backdrop overlay `click`.
+
+**Exact Assertions and Observed Results:**
+1. **Button disabling assertions**:
+   - `await expect(page.getByTestId("listing-merge-submit")).toBeDisabled();` -> **Observed:** Submit button is disabled (busy state `true`).
+   - `await expect(page.getByTestId("listing-merge-cancel")).toBeDisabled();` -> **Observed:** Cancel button is disabled.
+   - `await expect(page.getByTestId("listing-merge-close")).toBeDisabled();` -> **Observed:** Close button is disabled.
+2. **Escape key dismissal prevention assertion**:
+   - `await page.keyboard.press("Escape");`
+   - `await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();` -> **Observed:** Escape key press is intercepted; the dialog remains visible and is not dismissed.
+3. **Backdrop overlay click dismissal prevention assertion**:
+   - `await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });`
+   - `await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();` -> **Observed:** Click on the backdrop overlay outside the dialog panel is processed while `busy` is true; the dialog remains visible.
+4. **Idempotency key consistency assertion**:
+   - `expect(sentKeys).toHaveLength(2);` and `expect(sentKeys[0]).toBe(sentKeys[1]);` -> **Observed:** The two consecutive merge attempts (first failing with 503, second retrying) carry the exact same idempotency key.
+
+All assertions passed successfully.
+
+### 12.2 Round-6 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check` | **All checks passed** |
+| `npm run typecheck --workspace=@oday-plus/web` | **pass** |
+| `npm run build --workspace=@oday-plus/web` | **pass** |
+| `uv run pytest tests/contract tests/integration` | **486 passed** |
+| `npx playwright test tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts` | **22 passed** (fresh ports, reuse disabled) |
+| `git diff --check` | **clean** |
+
+Not self-finalized. Handing back to Codex for independent re-review.

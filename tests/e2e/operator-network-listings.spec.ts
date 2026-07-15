@@ -295,6 +295,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
 
+    // Click the backdrop overlay at a coordinate outside the dialog panel to test it cannot be dismissed by backdrop click
+    await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });
+    await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
+
     release?.();
     await expect(page.getByTestId("listing-merge-error")).toBeVisible();
     // The dialog stayed open and kept the operator's reason.
