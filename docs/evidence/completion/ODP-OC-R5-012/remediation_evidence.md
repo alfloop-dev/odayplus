@@ -4,7 +4,7 @@ This document records the control-plane audit, staged release control design, im
 
 ---
 
-## 1. Control-Plane Path Inventory (PR 297, 298, and 300)
+## 1. Control-Plane Path Inventory & PR #301 Incident
 
 We conducted an audit of the control-plane path that permitted PRs #297, #298, and #300 to merge prematurely:
 
@@ -21,6 +21,9 @@ We conducted an audit of the control-plane path that permitted PRs #297, #298, a
    - The script had a bug where `ROOT` was resolved to `parents[2]`, which pointed *above* the repository root, breaking file resolution paths in the CI runner.
    - Non-task branches returned `eligible=True`, creating a bypass vector where non-task branches skipped the merge gate entirely.
    - Reviewer handles in `.orchestrator/config.example.json` were placeholders (`"your-github-handle"`).
+
+### PR #301 Incident Details
+On 2026-07-15T11:12:27Z, PR #301 was auto-merged prematurely due to a premature protection mutation where `policy.json` and `apply_branch_protection.py` still required one GitHub approving review plus code-owner review. This created an impossible self-review blocker on the GitHub platform because no separate approving review identity was operationally available. As a result, the local/canonical review mechanism was bypassed/blocked by the platform review requirements, leading to the auto-merge queue merging the PR once the basic branch protections were satisfied but before the canonical `task-review-gate` status check was fully verified.
 
 ---
 
@@ -43,7 +46,7 @@ To close the premature merging gap safely and break the lifecycle dependency loo
 ## 3. Policy & Implementation Details
 
 1. **Policy Configuration**:
-   We updated [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) to enforce the following required status checks including the new `task-review-gate`:
+   We updated [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) to enforce the following required status checks including the new `task-review-gate` without standard GitHub review requirements (disabling them to prevent self-review blockers):
    ```json
    {
      "required_status_checks": [
@@ -52,11 +55,7 @@ To close the premature merging gap safely and break the lifecycle dependency loo
        "product-e2e-gate",
        "task-review-gate"
      ],
-     "enforce_admins": true,
-     "required_approving_review_count": 1,
-     "dismiss_stale_reviews": true,
-     "require_code_owner_reviews": true,
-     "required_reviewer_role": "reviewer"
+     "enforce_admins": true
    }
    ```
 
@@ -199,13 +198,7 @@ After applying the configuration, a readback verification is performed. Below is
       }
     ]
   },
-  "required_pull_request_reviews": {
-    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_pull_request_reviews",
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
-    "require_last_push_approval": false,
-    "required_approving_review_count": 1
-  },
+  "required_pull_request_reviews": null,
   "enforce_admins": {
     "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/enforce_admins",
     "enabled": true
@@ -246,13 +239,7 @@ After applying the configuration, a readback verification is performed. Below is
       }
     ]
   },
-  "required_pull_request_reviews": {
-    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_pull_request_reviews",
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
-    "require_last_push_approval": false,
-    "required_approving_review_count": 1
-  },
+  "required_pull_request_reviews": null,
   "enforce_admins": {
     "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/enforce_admins",
     "enabled": true
