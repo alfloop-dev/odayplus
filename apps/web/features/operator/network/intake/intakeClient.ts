@@ -2,12 +2,16 @@
 
 // Assisted listing intake API binding (ODP-OC-R5-011).
 //
-// Owned layer  : the ONLY call path the intake UI uses. Every request goes
-//                through the typed @oday-plus/openapi-client — no raw fetch,
-//                no hardcoded auth headers. Identity comes from the console's
-//                active role via operatorSecurityHeaders().
-// Not changing : the backend routes, or the other network panels' legacy
-//                fetch wiring (they are out of this task's scope).
+// Owned layer  : the intake surface's error vocabulary, and the ONLY call path
+//                the intake UI uses. Every request goes through the typed
+//                @oday-plus/openapi-client — no raw fetch, no hardcoded auth
+//                headers. Transport (client construction, correlation IDs, the
+//                status→error mapping) is shared with the other network
+//                surfaces; see ../operatorNetworkClient.
+// Not changing : the backend routes, or the network panels that still use raw
+//                fetch for read-only snapshots. Listing Radar's merge — the one
+//                high-impact write among them — is typed too, via
+//                ../listingsClient.
 // Composes with: AssistedIntakeQueuePanel + the four intake dialogs.
 
 import {
