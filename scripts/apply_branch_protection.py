@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_gh_cli(args: list[str], input_data: str | None = None) -> tuple[int, str, str]:
-    cmd = [str(ROOT / ".orchestrator/bin/gh")] + args
+    cmd = ["gh"] + args
     result = subprocess.run(cmd, input=input_data, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
 

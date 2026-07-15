@@ -34,9 +34,7 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 
 def run_gh_cli(args: list[str], repo: str | None = None) -> str:
-    wrapper_path = ROOT / ".orchestrator/bin/gh"
-    gh_cmd = str(wrapper_path) if wrapper_path.exists() else "gh"
-    cmd = [gh_cmd] + args
+    cmd = ["gh"] + args
     if repo:
         cmd += ["--repo", repo]
     try:
@@ -52,7 +50,7 @@ def run_gh_cli(args: list[str], repo: str | None = None) -> str:
             f"GitHub CLI command failed: {' '.join(cmd)}\nStdout: {exc.stdout}\nStderr: {exc.stderr}"
         ) from exc
     except FileNotFoundError as exc:
-        raise RuntimeError(f"GitHub CLI ('{gh_cmd}') is not installed or not in PATH") from exc
+        raise RuntimeError("GitHub CLI ('gh') is not installed or not in PATH") from exc
 
 
 def extract_task_id(branch_name: str) -> str | None:
