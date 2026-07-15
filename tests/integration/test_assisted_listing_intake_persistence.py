@@ -94,7 +94,13 @@ def test_duplicate_and_revision_contract_test() -> None:
     # First, let's decide revision (action="revise")
     decide_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{data['id']}/decide",
-        json={"action": "revise", "reason": "降價更新", "actorRoleId": "expansionManager"},
+        json={
+            "action": "revise",
+            "reason": "降價更新",
+            "riskSummary": "將以送件版本覆寫既有物件 L-2024 的租金。",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
         headers=HEADERS,
     )
     assert decide_resp.status_code == 200
@@ -130,6 +136,8 @@ def test_ambiguous_entity_match_review_test() -> None:
         json={
             "fields": {"address": "新北市板橋區府中路 99 號 1F"},
             "reason": "勘誤地址以避開衝突",
+            "riskSummary": "修改地址會改變比對結果。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,
@@ -207,6 +215,8 @@ def test_timeout_contract_test() -> None:
         json={
             "fields": {"rent": 48000, "address": "新莊興德路店面"},
             "reason": "手動補錄超時物件",
+            "riskSummary": "手動補錄的欄位不具來源證據。",
+            "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
         headers=HEADERS,

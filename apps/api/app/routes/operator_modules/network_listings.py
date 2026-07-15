@@ -34,7 +34,19 @@ class NetworkListingActorPayload(BaseModel):
     reason: str | None = None
 
 
-class NetworkListingMergePayload(NetworkListingActorPayload):
+class RiskDisclosurePayload(NetworkListingActorPayload):
+    """Actor payload for a high-impact write that must disclose its risk.
+
+    ``riskSummary`` is the text the caller actually showed the operator, and
+    ``riskAcknowledged`` records that they accepted it. Both are caller-owned
+    on purpose: the server cannot attest to a disclosure it wrote itself.
+    """
+
+    riskSummary: str | None = None
+    riskAcknowledged: bool = False
+
+
+class NetworkListingMergePayload(RiskDisclosurePayload):
     targetListingId: str
 
 
@@ -46,20 +58,16 @@ class IntakeSubmitPayload(BaseModel):
     actorName: str | None = None
 
 
-class IntakeCorrectPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class IntakeCorrectPayload(RiskDisclosurePayload):
     fields: dict[str, Any]
-    reason: str | None = None
-    actorRoleId: str = "expansionManager"
-    actorName: str | None = None
 
 
-class IntakeDecidePayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class IntakeDecidePayload(RiskDisclosurePayload):
     action: str
-    reason: str | None = None
-    actorRoleId: str = "expansionManager"
-    actorName: str | None = None
+
+
+class IntakePromotePayload(RiskDisclosurePayload):
+    """Promotion carries no extra fields beyond the risk disclosure."""
 
 
 def create_network_listings_sub_router(
@@ -130,6 +138,8 @@ def create_network_listings_sub_router(
                 source_listing_id=listing_id,
                 target_listing_id=body.targetListingId,
                 reason=body.reason or "",
+                risk_summary=body.riskSummary,
+                risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 idempotency_key=idempotency_key,
@@ -230,6 +240,8 @@ def create_network_listings_sub_router(
                 intake_id=intake_id,
                 fields=body.fields,
                 reason=body.reason,
+                risk_summary=body.riskSummary,
+                risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 correlation_id=x_correlation_id,
@@ -255,6 +267,8 @@ def create_network_listings_sub_router(
                 intake_id=intake_id,
                 action=body.action,
                 reason=body.reason,
+                risk_summary=body.riskSummary,
+                risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 correlation_id=x_correlation_id,
@@ -295,13 +309,15 @@ def create_network_listings_sub_router(
     )
     def promote_intake(
         intake_id: str,
-        body: NetworkListingActorPayload,
+        body: IntakePromotePayload,
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
             return service.promote_intake(
                 intake_id=intake_id,
                 reason=body.reason,
+                risk_summary=body.riskSummary,
+                risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 correlation_id=x_correlation_id,

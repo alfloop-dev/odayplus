@@ -44,7 +44,11 @@ export function IntakeDetailDialog({
   canDecide: boolean;
   canRetry: boolean;
   error: IntakeApiError | null;
-  onAssistedEntrySave: (fields: Record<string, string>) => void;
+  onAssistedEntrySave: (input: {
+    fields: Record<string, string>;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) => void;
   onClose: () => void;
   onDecide: (kind: IntakeDecisionKind) => void;
   onOpenFix: (fieldKey: string) => void;
@@ -466,19 +470,35 @@ function AssistedEntryForm({
 }: {
   busy: boolean;
   canEdit: boolean;
-  onSave: (fields: Record<string, string>) => void;
+  onSave: (input: {
+    fields: Record<string, string>;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) => void;
 }) {
   const [address, setAddress] = useState("");
   const [rent, setRent] = useState("");
   const [areaPing, setAreaPing] = useState("");
   const [floor, setFloor] = useState("");
   const [listingType, setListingType] = useState("");
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  // Assisted entry is hand-keyed from a source this system is not approved to
+  // fetch, so the values carry no retrieved evidence — that is the risk being
+  // disclosed, and it is why the operator must acknowledge it.
+  const riskSummary =
+    `人工補錄地址／租金／坪數等欄位，內容由操作者依來源頁自行輸入，` +
+    `不具本系統擷取的來源證據，且將作為後續比對與網絡評估的依據。前後值會寫入 Audit。`;
 
   function handleSave() {
     if (busy) return;
     if (!address.trim() || !rent.trim() || !areaPing.trim()) {
       setLocalError("人工補錄需至少填寫地址、租金、坪數。");
+      return;
+    }
+    if (!riskAcknowledged) {
+      setLocalError("請先確認你已了解人工補錄的風險。");
       return;
     }
     setLocalError(null);
@@ -489,7 +509,7 @@ function AssistedEntryForm({
     };
     if (floor.trim()) fields.floor = floor.trim();
     if (listingType.trim()) fields.listingType = listingType.trim();
-    onSave(fields);
+    onSave({ fields, riskSummary, riskAcknowledged });
   }
 
   return (
@@ -571,6 +591,24 @@ function AssistedEntryForm({
               value={listingType}
             />
           </div>
+        </div>
+
+        <div className={styles.sectionBox}>
+          <div className={styles.sectionHead}>風險摘要 RISK SUMMARY</div>
+          <div className={styles.riskSummaryText} data-testid="intake-assisted-risk-summary">
+            {riskSummary}
+          </div>
+          <label className={styles.checkboxRow} htmlFor="assisted-risk-ack">
+            <input
+              checked={riskAcknowledged}
+              data-testid="assisted-risk-ack"
+              disabled={!canEdit}
+              id="assisted-risk-ack"
+              onChange={(event) => setRiskAcknowledged(event.target.checked)}
+              type="checkbox"
+            />
+            <span>我已閱讀並了解上述風險，確認補錄內容正確（將連同此摘要寫入 Audit）</span>
+          </label>
         </div>
 
         {localError ? (

@@ -97,6 +97,8 @@ def test_merge_l2029_into_l2025_retains_source_evidence() -> None:
             "actorName": "王若寧",
             "targetListingId": "L-2025",
             "reason": "Same address and broker evidence verified.",
+            "riskSummary": "Merging marks L-2029 a duplicate of L-2025 and moves its source evidence.",
+            "riskAcknowledged": True,
         },
     )
 

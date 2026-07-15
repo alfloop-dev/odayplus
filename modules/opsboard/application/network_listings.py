@@ -114,6 +114,25 @@ class NetworkListingPolicyError(RuntimeError):
     """Raised when a mutation violates the network intake policy."""
 
 
+def _require_acknowledged_risk(
+    *, risk_summary: str | None, risk_acknowledged: bool, action_label: str
+) -> str:
+    """Validate the caller-supplied risk disclosure for a high-impact write.
+
+    The summary must come from the caller and be acknowledged there: a
+    server-invented summary would record consent to text the operator never
+    saw, which is exactly what the audit trail is supposed to evidence.
+    """
+    summary = (risk_summary or "").strip()
+    if not summary:
+        raise NetworkListingPolicyError(f"risk summary is required to {action_label}")
+    if not risk_acknowledged:
+        raise NetworkListingPolicyError(
+            f"risk acknowledgement is required to {action_label}"
+        )
+    return summary
+
+
 def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -643,6 +662,8 @@ class NetworkListingService:
         source_listing_id: str,
         target_listing_id: str,
         reason: str,
+        risk_summary: str | None = None,
+        risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
         idempotency_key: str | None,
@@ -656,6 +677,12 @@ class NetworkListingService:
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("merge reason is required")
+
+        risk_summary_text = _require_acknowledged_risk(
+            risk_summary=risk_summary,
+            risk_acknowledged=risk_acknowledged,
+            action_label="merge listing",
+        )
 
         cache_key = ("merge", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
@@ -702,7 +729,11 @@ class NetworkListingService:
                     "sourceStatus": "duplicate",
                     "targetEvidenceCount": len(target["sourceEvidence"]),
                 },
-                "riskSummary": f"Merge source {source_listing_id} into target {target_listing_id}.",
+                "riskSummary": risk_summary_text,
+                "riskAcknowledged": True,
+                "effectSummary": (
+                    f"Merge source {source_listing_id} into target {target_listing_id}."
+                ),
             },
         )
         result = {
@@ -764,7 +795,7 @@ class NetworkListingService:
                 "after": {
                     "status": "archived",
                 },
-                "riskSummary": f"Archive listing {listing_id}. Reason: {reason}",
+                "effectSummary": f"Archive listing {listing_id}. Reason: {reason}",
             },
         )
         result = {
@@ -947,6 +978,8 @@ class NetworkListingService:
         intake_id: str,
         fields: dict[str, Any],
         reason: str | None,
+        risk_summary: str | None = None,
+        risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
@@ -955,6 +988,12 @@ class NetworkListingService:
         allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
+
+        risk_summary_text = _require_acknowledged_risk(
+            risk_summary=risk_summary,
+            risk_acknowledged=risk_acknowledged,
+            action_label="correct intake",
+        )
 
         intake = self._listing_intake(intake_id)
 
@@ -1049,7 +1088,8 @@ class NetworkListingService:
                 "stage": intake["stage"],
                 "matchOutcome": intake["matchResult"]["outcome"] if intake["matchResult"] else None,
                 "beforeAfter": before_after_changes,
-                "riskSummary": f"Manual correction of fields: {', '.join(fields.keys())}.",
+                "riskSummary": risk_summary_text,
+                "riskAcknowledged": True,
             }
         }
         intake["auditEvents"].append(audit_evt)
@@ -1062,6 +1102,8 @@ class NetworkListingService:
         intake_id: str,
         action: str,
         reason: str | None,
+        risk_summary: str | None = None,
+        risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
@@ -1075,6 +1117,12 @@ class NetworkListingService:
         if not reason_text:
             raise NetworkListingPolicyError("decision reason is required")
 
+        risk_summary_text = _require_acknowledged_risk(
+            risk_summary=risk_summary,
+            risk_acknowledged=risk_acknowledged,
+            action_label="decide intake",
+        )
+
         intake = self._listing_intake(intake_id)
         action = action.strip().lower()
 
@@ -1086,7 +1134,7 @@ class NetworkListingService:
 
         before_stage = intake["stage"]
         before_after = {"stage": {"before": before_stage}}
-        risk_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
+        effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
             new_id = f"L-{2031 + len(self._state['listings'])}"
@@ -1130,7 +1178,7 @@ class NetworkListingService:
 
             before_after["stage"]["after"] = "READY"
             before_after["listings_count"] = {"before": len(self._state["listings"]) - 1, "after": len(self._state["listings"])}
-            risk_summary = f"Created new listing {new_id} from intake {intake_id}."
+            effect_summary = f"Created new listing {new_id} from intake {intake_id}."
             
         elif action == "revise":
             target_id = intake["matchResult"].get("targetListingId")
@@ -1154,7 +1202,7 @@ class NetworkListingService:
             before_after["target_rent"] = {"before": before_rent, "after": target["rentPerMonth"]}
             before_after["target_area"] = {"before": before_area, "after": target["areaPing"]}
             before_after["target_floor"] = {"before": before_floor, "after": target["floor"]}
-            risk_summary = f"Revised listing {target_id} from intake {intake_id}."
+            effect_summary = f"Revised listing {target_id} from intake {intake_id}."
 
         elif action == "duplicate":
             target_id = intake["matchResult"].get("targetListingId")
@@ -1171,7 +1219,7 @@ class NetworkListingService:
 
             before_after["stage"]["after"] = "READY"
             before_after["target_evidence_count"] = {"before": before_evidence_count, "after": len(target["sourceEvidence"])}
-            risk_summary = f"Merged duplicate intake {intake_id} into listing {target_id}."
+            effect_summary = f"Merged duplicate intake {intake_id} into listing {target_id}."
 
         elif action == "quarantine":
             intake["stage"] = "QUARANTINED"
@@ -1190,7 +1238,7 @@ class NetworkListingService:
                 intake["matchResult"]["summary"] = f"已手動送交隔離。原因：{reason_text}"
 
             before_after["stage"]["after"] = "QUARANTINED"
-            risk_summary = f"Quarantined intake {intake_id}."
+            effect_summary = f"Quarantined intake {intake_id}."
 
         elif action == "reject":
             intake["stage"] = "FAILED"
@@ -1208,7 +1256,7 @@ class NetworkListingService:
                 intake["matchResult"]["summary"] = f"已拒絕此送件。原因：{reason_text}"
 
             before_after["stage"]["after"] = "FAILED"
-            risk_summary = f"Rejected intake {intake_id}."
+            effect_summary = f"Rejected intake {intake_id}."
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -1225,7 +1273,9 @@ class NetworkListingService:
                 "stage": intake["stage"],
                 "targetListingId": intake["matchResult"].get("targetListingId"),
                 "beforeAfter": before_after,
-                "riskSummary": risk_summary,
+                "riskSummary": risk_summary_text,
+                "riskAcknowledged": True,
+                "effectSummary": effect_summary,
             }
         }
         intake["auditEvents"].append(audit_evt)
@@ -1338,6 +1388,8 @@ class NetworkListingService:
         *,
         intake_id: str,
         reason: str | None = None,
+        risk_summary: str | None = None,
+        risk_acknowledged: bool = False,
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
@@ -1350,6 +1402,12 @@ class NetworkListingService:
         reason_text = (reason or "").strip()
         if not reason_text:
             raise NetworkListingPolicyError("promotion reason is required")
+
+        risk_summary_text = _require_acknowledged_risk(
+            risk_summary=risk_summary,
+            risk_acknowledged=risk_acknowledged,
+            action_label="promote intake",
+        )
 
         intake = self._listing_intake(intake_id)
         target_listing_id = intake["matchResult"].get("targetListingId")
@@ -1389,7 +1447,11 @@ class NetworkListingService:
                     "listingStatus": result["listing"]["status"],
                     "candidateCount": len(self._state["candidates"]),
                 },
-                "riskSummary": f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}.",
+                "riskSummary": risk_summary_text,
+                "riskAcknowledged": True,
+                "effectSummary": (
+                    f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}."
+                ),
             }
         }
         intake["auditEvents"].append(audit_evt)
