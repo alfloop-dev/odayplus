@@ -720,7 +720,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "x-roles": "expansion_user",
         "x-operator-role": "expansion-manager",
         "x-tenant-id": "tenant-a",
-        "X-Correlation-Id": "promote-corr-id-12345"
+        "X-Correlation-Id": "promote-corr-id-12345",
+        "Idempotency-Key": "promote-key-12345"
       },
     });
     const promoteRes = await apiContext.post(`/api/v1/operator/network-listings/intake/${id1}/promote`, {
@@ -848,7 +849,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "x-roles": "expansion_user",
         "x-operator-role": "expansion-manager",
         "x-tenant-id": "tenant-a",
-        "X-Correlation-Id": "reject-corr-id-12345"
+        "X-Correlation-Id": "reject-corr-id-12345",
+        "Idempotency-Key": "reject-key-12345"
       },
     });
     const rejectRes = await apiContext.post(`/api/v1/operator/network-listings/intake/${id5}/decide`, {
