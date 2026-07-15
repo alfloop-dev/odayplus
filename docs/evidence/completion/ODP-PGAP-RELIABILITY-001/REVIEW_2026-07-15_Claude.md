@@ -6,9 +6,172 @@
 | Round | Date | Commit | Verdict |
 | --- | --- | --- | --- |
 | 1 | 2026-07-15 | `b6aeec9d` | changes requested |
-| 2 | 2026-07-15 | `91fadc29` | **changes requested** |
+| 2 | 2026-07-15 | `91fadc29` | changes requested |
+| 3 | 2026-07-15 | `35a3c736` | **not approved — escalated to human** |
 
 ---
+
+# Round 3 — commit `35a3c736`
+
+## Summary
+
+**All four round-2 blockers are genuinely fixed.** I re-ran every repro from round 2 and each
+one is now clean. The owner did what round 2 asked, and the two regressions that made round 2
+a rejection are gone. No new regressions: the **full suite of 533 tests passes**.
+
+I am nonetheless **not approving**, for a reason that is not the owner's to fix and that I
+flagged in both round 1 and round 2: **AC1 and AC6 are still not met, and the document that
+would define AC1 does not exist.** Approving would assert that "production scale concurrency
+and recovery" is proven, when browser, batch, and solver were never measured and the DR drill
+is a local `shutil.copy`. That is a scope decision a human must make — see *Escalation*.
+
+This is an escalation, **not another round of owner rework**. There is no code change I am
+asking the owner to make beyond two ~5-minute evidence-hygiene fixes (R3-1, R3-2).
+
+## Round-2 findings: verified status
+
+| ID | Finding | Status |
+| --- | --- | --- |
+| R2-1 | Geocoder broke 6 tests green on `dev` | **Fixed — verified** |
+| R2-2 | Editing applied migration `000002` bricks existing DBs | **Fixed — verified** |
+| R2-3 | CI lint red; `git diff --check` dirty | **Fixed — verified** |
+| R2-4 | `complete()` has no fencing | **Addressed — verified, with a caveat (R3-3)** |
+
+### Verification re-run by reviewer
+
+| Command | Round 2 | Round 3 |
+| --- | --- | --- |
+| `ruff check tests/performance tests/reliability shared/infrastructure apps/worker` | pass | pass |
+| `uv run ruff check .orchestrator scripts` (CI job) | **FAIL — 2 errors** | **pass** |
+| `git diff --check origin/dev...HEAD` | **FAIL — 22 hits** | **pass (clean)** |
+| `pytest tests/e2e/test_external_source_product_e2e.py tests/integration/test_live_geocode_provider_adapter.py` | **FAIL — 6 failed** | **pass — 25 passed** (matches `dev`) |
+| `pytest tests/` (full suite) | not run | **pass — 533 passed** |
+| `python3 scripts/e2e/check_product_release_gate.py` | pass | pass |
+
+**R2-2 repro, re-run.** Built a DB with the `origin/dev`-era schema, then booted it on this
+branch. Round 2 died with `no column named attempts`. Now:
+
+```
+dev-era cols:     ['job_id','job_type','status','correlation_id','idempotency_key','payload_json','created_at']
+after bootstrap:  [... , 'attempts', 'leased_until', 'max_retries']
+ENQUEUE OK / LEASE OK (attempts 1)
+```
+
+`000002` is untouched, `000004_job_lease_columns.sql` is additive and registered in
+`_SCHEMA_FILES`, and repeated bootstraps are idempotent (3× → stable at 10 columns).
+
+**R2-4 repro, re-run.** The stale-worker double-completion is now rejected *when a token is
+passed*:
+
+```
+A leased (0.01s lease) -> attempts 1;  B leased same job -> attempts 2
+stale A complete(job_id, lease_token=A.leased_until) -> False   # fenced, was: accepted
+```
+
+## Findings
+
+### R3-1 (owner, minor) — the committed soak evidence is stale and advertises a stricter budget than the code enforces
+
+`docs/evidence/completion/.../load_soak_performance_report.json` does not correspond to the
+code on this branch. It records `"concurrency_levels": [10, 20, 50]` and
+`"budget_p95_seconds_target": 3.0`; the current test declares `[10, 50, 100]` and `6.0`. It is
+a leftover from the round-1 commit.
+
+For a task whose entire purpose is runtime evidence, a committed evidence artifact that no
+longer matches the code that produces it is the specific failure mode this task exists to
+prevent. Regenerate it from the current test.
+
+### R3-2 (owner, minor) — the p95 budget was relaxed 3.0s → 6.0s in the same commit that raised concurrency
+
+`91fadc29` changed `concurrency_levels` `[10, 20, 50]` → `[10, 50, 100]` and, in the same
+commit, `p95 <= 3.0` → `p95 <= 6.0`. Raising the budget when you double the load is defensible
+engineering, but **both numbers are self-selected and neither is declared anywhere**, so
+nothing distinguishes "we re-based the budget on higher load" from "we moved the line to fit
+the result". The committed `load_test_run_report.json` shows `p95 4.379s, "passed": true` —
+a run that passes 6.0 and would have failed the 3.0 budget this task shipped in round 1.
+
+This is not an accusation; it is unfalsifiable either way, which is the problem. It resolves
+the moment a target is declared (see *Escalation*). Until then, state the rationale for 6.0 in
+the test.
+
+### R3-3 (non-blocking) — fencing is opt-in, and the task's only caller doesn't use it
+
+`complete(job_id, lease_token=None)` skips the fence when the token is omitted, so the exact
+round-2 duplicate outcome is still reachable through the default path:
+
+```
+stale A complete(A.job_id)  ->  True  -> status: succeeded   # unfenced default
+```
+
+The one non-test caller of the lease API in the repo — `scripts/load/run_load.py:61`, authored
+by this task — calls `bundle.job_queue.complete(job_id)` **without a token**. So the fencing
+AC2 needs is implemented and tested, but nothing that runs actually uses it.
+
+Making the token required would be the real fix. Not blocking, because AC2's proof exists and
+the caller is a load script, not a product path.
+
+### R3-4 (non-blocking) — `executescript` was replaced with a hand-rolled SQL splitter
+
+`engine.py` now splits DDL by stripping `line.split("--")[0]` and grouping on lines ending in
+`;`, then swallows any `OperationalError` containing `already exists` / `duplicate column name`.
+This is applied to **every** migration, not just the new one. It works on today's files (533
+tests pass), but it will silently corrupt any future SQL containing `--` or `;` inside a string
+literal, and the broad `except` can mask a genuine migration failure as a no-op. SQLite's
+`ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS`, so a guard is needed — but prefer checking
+`PRAGMA table_info` before altering over catching a substring of an error message.
+
+### Carried, unchanged from round 2 (non-blocking)
+
+- **R2-5 (AC5)**: the alert predicate is still authored in the test; no production evaluator.
+  `metrics.py` p95 is still `sorted[int(len*0.95)]` (returns max for n ≤ 20; nearest-rank wants
+  `ceil(0.95*n)-1`), and `snapshot()` still sorts the unbounded bucket list on every call.
+- **`external_connector_failure_count` is still unobservable in production.** `default_registry()`
+  still builds a fresh registry per call; nothing wires a shared one into the geocoder. AC3's
+  quarantine signal reaches no real metrics surface.
+- Soak is still 2.0s. Not a soak.
+- Claimed artifacts `apps/worker/` and `docs/runbooks/` still have **zero changes**. Relatedly,
+  no production worker consumes the lease API at all.
+
+## Escalation — needs a human decision, open since round 1
+
+Two acceptance criteria cannot be honestly closed by the owner or signed off by me:
+
+**AC1** — *"measure API browser worker batch solver queue and database behavior at declared
+concurrency and volumes."* Only API, queue, and DB are measured; browser, batch, and solver are
+absent. And **no declared concurrency or volume exists anywhere in the repo** — both
+`source_docs` named in the brief are still absent from the worktree, `origin/dev`, and all
+history:
+
+- `docs/evidence/PRODUCT_PLATFORM_GAP_AUDIT_2026-07-13.md`
+- `docs/design/PRODUCT_PLATFORM_P1_FLEET_EXECUTION_TASKS_2026-07-15.md`
+
+`[10, 50, 100]`, 150 requests, and p95 ≤ 6.0s remain self-selected. R3-2 is a direct symptom.
+
+**AC6** — *"production-like backup restore and DR drills record measured RPO and RTO."* The
+drill is a local `shutil.copy` reporting RPO 0.0006 min against a 60 min target and RTO 0.00001
+min against 240 min — beating targets by ~7 orders of magnitude, and not executing the procedure
+in the existing `docs/runbooks/` files. The honest-failure path for corrupt backups is real and
+is an improvement; the measurement is not production-like.
+
+**The decision a human needs to make** — one of:
+
+1. **Publish the source document** (or ratify explicit concurrency/volume/latency targets and a
+   DR scope), and let the owner close AC1/AC6 against it; or
+2. **Explicitly ratify a reduced scope** — AC1 closed on API+queue+DB only, AC6 closed on a
+   local-copy drill — and record that browser/batch/solver load and a production-like DR drill
+   are deferred to a named follow-up task; or
+3. **Split the task**: land the queue/geocoder/migration work (which is good and verified) and
+   move AC1's missing surfaces and AC6 to a successor.
+
+I have no basis to choose among these, and the owner cannot close AC1 honestly by guessing.
+
+## Recommended path
+
+1. **Owner**: R3-1 (regenerate stale evidence) and R3-2 (state the 6.0 rationale). Small.
+2. **Human**: pick one of the three options above. This has been open for three rounds and is
+   now the only thing between this task and a verdict.
+3. On a scope ratification (option 2 or 3), I will approve — the engineering on the delivered
+   surface is sound and independently verified.
 
 # Round 2 — commit `91fadc29`
 
