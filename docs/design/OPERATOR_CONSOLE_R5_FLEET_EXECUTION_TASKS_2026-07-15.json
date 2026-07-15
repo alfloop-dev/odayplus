@@ -102,12 +102,65 @@
       ]
     },
     {
+      "id": "ODP-OC-R5-004",
+      "title": "Build assisted-listing functional product E2E acceptance",
+      "priority": "P0",
+      "owner": "Antigravity5",
+      "reviewer": "Codex2",
+      "depends_on": ["ODP-OC-R5-001"],
+      "owned_paths": [
+        "tests/e2e/operator-network-assisted-intake.spec.ts",
+        "tests/fixtures/operator/assisted-listing/",
+        "docs/evidence/completion/ODP-OC-R5-004/"
+      ],
+      "acceptance": [
+        "Browser tests exercise all five R5 screen labels against real product routes and API responses to verify package 7 features.",
+        "SUBMITTED CHECKING_IDENTITY CHECKING_SOURCE_POLICY AWAITING_ASSISTED_ENTRY RETRIEVING PARSING MATCHING NEEDS_REVIEW READY QUARANTINED and FAILED are covered without fabricated progress.",
+        "NEW EXACT_DUPLICATE REVISION POSSIBLE_MATCH and QUARANTINED each have deterministic fixtures and assertions.",
+        "APPROVED_RETRIEVAL ASSISTED_ENTRY_ONLY AUTH_REQUIRED SOURCE_BLOCKED and POLICY_UNKNOWN each prove the correct fetch or no-fetch behavior.",
+        "Original and canonical URL exact-duplicate-before-fetch parsed-normalized-corrected values correction reasons and changed-field summaries are verified.",
+        "Submission processing decisions and corrections survive page reload and a fresh browser context through durable API storage.",
+        "Create revise duplicate quarantine reject and promote decisions assert actor role timestamps reason before-after IDs snapshot parser version and correlation ID.",
+        "Retryable failure retains user corrections and every error exposes summary next action code correlation ID and occurred time.",
+        "Desktop tablet and mobile assertions cover the allowed responsive workflow; ambiguous comparison explicitly requires desktop where specified.",
+        "No test uses prototype HTML session-only state or route interception as product-completion proof."
+      ]
+    },
+    {
+      "id": "ODP-OC-R5-005",
+      "title": "Enforce assisted-listing retrieval security and governance",
+      "priority": "P0",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "depends_on": ["ODP-OC-R5-001"],
+      "owned_paths": [
+        "modules/external_data/",
+        "apps/api/app/routes/operator_modules/",
+        "tests/security/test_assisted_listing_intake_security.py",
+        "tests/contract/test_operator_assisted_listing_api.py",
+        "docs/evidence/completion/ODP-OC-R5-005/"
+      ],
+      "acceptance": [
+        "Only configured http or https retrieval methods may run; unsupported schemes fail closed to protect package 7 processing.",
+        "Loopback private link-local multicast reserved IPv6-local and cloud metadata targets are rejected before connection.",
+        "DNS resolution and every redirect hop are revalidated so redirect and DNS-rebinding paths cannot reach blocked networks.",
+        "POLICY_UNKNOWN SOURCE_BLOCKED ASSISTED_ENTRY_ONLY and AUTH_REQUIRED never fetch the submitted page.",
+        "The product never accepts raw provider credentials cookies bearer tokens or private API endpoints from this UI.",
+        "Retrieval enforces timeout redirect count response-size and content-type limits and produces retryable versus terminal error codes.",
+        "Stored snapshots and logs redact contact personal credential and token data according to source policy.",
+        "Read-only reviewers cannot submit correct merge split promote or quarantine actions; write checks remain server-side.",
+        "Identity-affecting corrections merge split and promotion require reason risk summary idempotency correlation and append-only audit evidence.",
+        "Security tests use controlled local doubles and prove no outbound request occurs for every blocked case.",
+        "No committed secrets raw sensitive provider data or production session material appear in fixtures evidence logs or telemetry."
+      ]
+    },
+    {
       "id": "ODP-OC-R5-002",
       "title": "Make R5 37-label product visual and accessibility gates mandatory",
       "priority": "P0",
       "owner": "Antigravity4",
       "reviewer": "Claude",
-      "depends_on": ["ODP-OC-R5-001"],
+      "depends_on": ["ODP-OC-R5-004", "ODP-OC-R5-005"],
       "absorbs": ["ODP-OC-R4-011"],
       "owned_paths": [
         "tests/e2e/",
@@ -152,7 +205,8 @@
   "waves": [
     {"wave": 0, "tasks": ["ODP-OC-R5-000"]},
     {"wave": 1, "tasks": ["ODP-OC-R5-001"]},
-    {"wave": 2, "tasks": ["ODP-OC-R5-002"]},
-    {"wave": 3, "tasks": ["ODP-OC-R5-003"]}
+    {"wave": 2, "tasks": ["ODP-OC-R5-004", "ODP-OC-R5-005"]},
+    {"wave": 3, "tasks": ["ODP-OC-R5-002"]},
+    {"wave": 4, "tasks": ["ODP-OC-R5-003"]}
   ]
 }

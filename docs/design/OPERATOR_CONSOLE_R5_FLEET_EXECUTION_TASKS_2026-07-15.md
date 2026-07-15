@@ -42,6 +42,8 @@ review or a package 6 hash is not R5 acceptance evidence.
 |---|---|---|
 | `ODP-OC-R5-000` | design-source-delivery | Publish R5 archive, manifest, diff, task pack, and Fleet source references |
 | `ODP-OC-R5-001` | network-assisted-intake | API-backed durable URL intake, parsing review, matching, decisions, and audit UI |
+| `ODP-OC-R5-004` | product-functional-e2e | Real API-backed browser flow verification of all 11 stages, 5 match outcomes, 5 policy states, reload persistence, corrections, audit, error, and responsive behavior |
+| `ODP-OC-R5-005` | security-governance | Enforce fail-closed assisted-listing retrieval controls for SSRF, redirects, DNS, private-networks, metadata, credential privacy, RBAC, and audit |
 | `ODP-OC-R5-002` | validation | Mandatory 37-label product E2E, visual, a11y, policy, persistence, and regression gate |
 | `ODP-OC-R5-003` | release | Staging proof, rollback, and dev-to-main cutover for R5 |
 
@@ -62,14 +64,38 @@ No search-result crawler, scheduled discovery, private browser API, credential
 collection UI, automatic ambiguous merge, or automatic Candidate promotion is
 allowed.
 
+## R5-004 Functional E2E Requirements
+
+Verify the entire URL-assisted listing intake lifecycle derived from package 7 / R5 requirements via real API-backed browser flows. Tests must cover:
+
+1. **11 Ingestion Stages**: Verify the progression and rendering of the following stages: `SUBMITTED`, `CHECKING_IDENTITY`, `CHECKING_SOURCE_POLICY`, `AWAITING_ASSISTED_ENTRY`, `RETRIEVING`, `PARSING`, `MATCHING`, `NEEDS_REVIEW`, `READY`, `QUARANTINED`, and `FAILED`.
+2. **5 Match Outcomes**: Assert UI and backend transitions for `NEW`, `EXACT_DUPLICATE`, `REVISION`, `POSSIBLE_MATCH`, and `QUARANTINED` states with deterministic fixtures.
+3. **5 Source Policy States**: Prove that access controls resolve to `APPROVED_RETRIEVAL`, `ASSISTED_ENTRY_ONLY`, `AUTH_REQUIRED`, `SOURCE_BLOCKED`, or `POLICY_UNKNOWN`, ensuring proper fetch or fallback behaviors.
+4. **Persistence & Corrections**: Ensure submitted decisions, manual corrections, and correction reasons survive page reloads and browser context restarts.
+5. **Audit Trails**: Verify that every human action (create, revise, duplicate, quarantine, promote, etc.) records actor role, timestamps, snapshot IDs, parser versions, and correlation IDs.
+6. **Error & Responsive Proof**: Validate responsive layouts across desktop, tablet, and mobile, enforcing that ambiguous side-by-side comparison routes to desktop-required warnings.
+
+## R5-005 Retrieval Security Requirements
+
+Verify the security sandbox and governance rules surrounding page retrieval derived from package 7 / R5 requirements:
+
+1. **SSRF & Redirect Controls**: Block Server-Side Request Forgery by ensuring loopback, private networks, multicast, and link-local targets are rejected before connection.
+2. **DNS Re-validation**: Re-evaluate DNS resolution at every redirect hop to prevent DNS-rebinding attacks from bypassing access controls.
+3. **Private-Network Access**: Enforce blocking of all local/internal IP ranges (RFC 1918, IPv6 local).
+4. **Metadata Protection**: Prevent access to cloud provider instance metadata endpoints (e.g., `169.254.169.254`).
+5. **Credential Privacy**: Never accept, transmit, or persist raw external provider credentials, cookies, tokens, or private API endpoints via the intake UI.
+6. **RBAC Rules**: Ensure only authorized roles (Expansion managers/Data stewards) can modify matching states, make merge decisions, or promote to Candidate Sites.
+7. **Fail-Closed Retrieval**: Enforce default-deny (fail-closed) behavior for any `POLICY_UNKNOWN` or policy-failed retrieval request without retrieving target content.
+
 ## Wave Plan
 
 | Wave | Tasks | Rule |
 |---|---|---|
 | 0 | `R5-000` | Archive and source pointer must be durable before implementation review |
 | 1 | `R5-001` | Compose existing Operator Network and ODP-EXT-002 contracts |
-| 2 | `R5-002` | Runs after R5-001 and absorbs unresolved R4-011 gate defects |
-| 3 | `R5-003` | Runs only after the R5 gate is green |
+| 2 | `R5-004`, `R5-005` | Enforce functional E2E and security gates before final visual verification |
+| 3 | `R5-002` | Runs after functional/security verification and absorbs unresolved R4-011 gate defects |
+| 4 | `R5-003` | Runs only after the R5 gate is green |
 
 ## Release Stop Conditions
 
