@@ -31,19 +31,24 @@ from modules.opsboard.audit import (
 )
 from shared.audit import AuditEvent
 from shared.audit.persistence import (
+    RETENTION_REGULATORY,
+    RETENTION_STANDARD,
     EvidenceGovernanceError,
     EvidenceImmutabilityError,
     EvidenceIntegrityError,
     GovernedEvidenceOperation,
-    RETENTION_REGULATORY,
-    RETENTION_STANDARD,
     InMemoryEvidenceBundleStore,
     resolve_retention_policy,
 )
+from shared.auth import Role
 from shared.infrastructure.persistence import build_persistence
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.auth import Role
-from tests.integration._authz import AUDIT_HEADERS, auth_headers
+from tests.integration._authz import (
+    AUDIT_HEADERS,
+    AUDIT_LEGAL_HEADERS,
+    AUDIT_RECORDS_HEADERS,
+    auth_headers,
+)
 
 NOW = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -81,14 +86,20 @@ def _ready_card(audit_event_id: str) -> DecisionCard:
     )
 
 
-def _request(*, sensitive: bool = True, classification: str = "restricted") -> EvidenceExportRequest:
+def _request(
+    *,
+    sensitive: bool = True,
+    classification: str = "restricted",
+    correlation_id: str = "corr-evidence-persist-1",
+    requested_by: str = "reviewer-a",
+) -> EvidenceExportRequest:
     return EvidenceExportRequest(
         program_id="subsidy-program-2026-q2",
         purpose="quarterly subsidy review",
-        requested_by="reviewer-a",
+        requested_by=requested_by,
         from_time=NOW - timedelta(days=1),
         to_time=NOW + timedelta(days=1),
-        correlation_ids=("corr-evidence-persist-1",),
+        correlation_ids=(correlation_id,),
         export_scope="tenant=t1;region=north;program=subsidy-program-2026-q2",
         environment="ci",
         build_version="test-build",
@@ -339,6 +350,119 @@ def test_purge_expired_respects_legal_hold(db_path) -> None:
         bundle_persistence.engine.close()
 
 
+def test_api_governance_blocks_spoofing_and_purges_only_non_held(db_path) -> None:
+    old = NOW - timedelta(days=500)
+    bundle_persistence = _durable_bundle(db_path)
+    try:
+        store = bundle_persistence.evidence_store
+        service = AuditEvidenceExportService(
+            audit_log=bundle_persistence.audit_log, evidence_store=store
+        )
+        for suffix in ("held", "purge"):
+            event = service.audit_log.record(
+                AuditEvent(
+                    event_type="intervention.effect_evaluated.v1",
+                    actor=f"analyst-{suffix}",
+                    action="evaluate",
+                    resource=f"intervention/intv-{suffix}",
+                    outcome="completed",
+                    correlation_id=f"corr-standard-{suffix}",
+                    occurred_at=old,
+                )
+            )
+            service.export(
+                EvidenceExportRequest(
+                    program_id=f"program-{suffix}",
+                    purpose=f"standard export {suffix}",
+                    requested_by="auditor-a",
+                    from_time=old - timedelta(days=1),
+                    to_time=old + timedelta(days=1),
+                    correlation_ids=(f"corr-standard-{suffix}",),
+                    export_scope="tenant=t1",
+                    data_classification="internal",
+                    sensitive=False,
+                ),
+                decision_cards=(_ready_card(event.event_id),),
+                generated_at=old,
+            )
+        held_id = store.list_for_program("program-held")[0].export_id
+        purge_id = store.list_for_program("program-purge")[0].export_id
+
+        app = create_app(persistence=bundle_persistence)
+        client = TestClient(app, headers=AUDIT_HEADERS)
+
+        spoofed = client.post(
+            f"/audit/evidence/exports/{held_id}/legal-hold",
+            headers={
+                **AUDIT_HEADERS,
+                "X-Correlation-ID": "corr-spoofed-legal-hold",
+            },
+            json={
+                "role": "legal",
+                "reason": "spoofed body role must not grant legal authority",
+            },
+        )
+        assert spoofed.status_code == 403
+
+        self_hold = client.post(
+            f"/audit/evidence/exports/{held_id}/legal-hold",
+            headers={
+                **auth_headers(Role.FINANCE_LEGAL, subject="auditor-a"),
+                "X-Correlation-ID": "corr-self-hold",
+            },
+            json={
+                "role": "legal",
+                "reason": "exporter cannot hold own export",
+            },
+        )
+        assert self_hold.status_code == 422
+        assert "exporter cannot apply legal hold" in self_hold.json()["detail"]
+
+        held = client.post(
+            f"/audit/evidence/exports/{held_id}/legal-hold",
+            headers={
+                **AUDIT_LEGAL_HEADERS,
+                "X-Correlation-ID": "corr-legal-hold",
+            },
+            json={
+                "role": "legal",
+                "reason": "litigation hold",
+                "correlation_id": "corr-legal-hold",
+            },
+        )
+        assert held.status_code == 200
+        assert held.json()["legal_hold"] is True
+        assert held.json()["governance_log"][0]["actor"] == "legal-a"
+
+        expired = client.get(
+            "/audit/evidence/retention/expired",
+            headers=AUDIT_HEADERS,
+            params={"as_of": NOW.isoformat()},
+        )
+        assert expired.status_code == 200
+        assert [item["export_id"] for item in expired.json()["exports"]] == [purge_id]
+
+        purged = client.post(
+            "/audit/evidence/retention/purge",
+            headers={
+                **AUDIT_RECORDS_HEADERS,
+                "X-Correlation-ID": "corr-retention-purge",
+            },
+            json={
+                "role": "records_manager",
+                "reason": "scheduled retention sweep",
+                "correlation_id": "corr-retention-purge",
+                "as_of": NOW.isoformat(),
+            },
+        )
+        assert purged.status_code == 200
+        assert purged.json()["purged_export_ids"] == [purge_id]
+        assert store.get(held_id) is not None
+        assert store.get(purge_id) is None
+    finally:
+        bundle_persistence.engine.close()
+
+
 def test_durable_evidence_store_rejects_bundle_tamper(db_path) -> None:
     bundle_persistence = _durable_bundle(db_path)
     try:
@@ -400,6 +524,88 @@ def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
         assert bundle_persistence.audit_log.verify_chain().ok is False
     finally:
         bundle_persistence.engine.close()
+
+
+def test_restore_replay_preserves_audit_and_retention_metadata(db_path, tmp_path) -> None:
+    source = _durable_bundle(db_path)
+    try:
+        service = AuditEvidenceExportService(
+            audit_log=source.audit_log,
+            evidence_store=source.evidence_store,
+        )
+        event_ids: list[str] = []
+        for index in range(2):
+            event = service.audit_log.record(
+                AuditEvent(
+                    event_type="intervention.effect_evaluated.v1",
+                    actor=f"analyst-{index}",
+                    action="evaluate",
+                    resource=f"intervention/intv-{index}",
+                    outcome="completed",
+                    correlation_id=f"corr-replay-{index}",
+                    occurred_at=NOW + timedelta(minutes=index),
+                    metadata={"evidence_level": "L3", "ordinal": index},
+                )
+            )
+            event_ids.append(event.event_id)
+            service.export(
+                _request(
+                    correlation_id=f"corr-replay-{index}",
+                    requested_by=f"reviewer-{index}",
+                    sensitive=index == 0,
+                    classification="restricted" if index == 0 else "internal",
+                ),
+                decision_cards=(_ready_card(event.event_id),),
+                generated_at=NOW + timedelta(minutes=index),
+            )
+        first_export_id = source.evidence_store.list_for_program(
+            "subsidy-program-2026-q2"
+        )[0].export_id
+        source.evidence_store.apply_legal_hold(
+            first_export_id,
+            context=GovernedEvidenceOperation(
+                actor="legal-a",
+                role="legal",
+                reason="restore replay hold",
+                correlation_id="corr-replay-hold",
+            ),
+        )
+        audit_snapshot = source.audit_log.list_events()
+        evidence_snapshot = source.evidence_store.list_all()
+    finally:
+        source.engine.close()
+
+    target = _durable_bundle(tmp_path / "replayed.sqlite3")
+    try:
+        replayed_events = target.audit_log.replay(audit_snapshot)
+        replayed_records = target.evidence_store.replay(evidence_snapshot)
+
+        assert [event.event_id for event in replayed_events] == [
+            event.event_id for event in audit_snapshot
+        ]
+        assert [event.event_hash for event in replayed_events] == [
+            event.event_hash for event in audit_snapshot
+        ]
+        assert [event.actor for event in replayed_events if event.event_id in event_ids] == [
+            "analyst-0",
+            "analyst-1",
+        ]
+        assert [event.correlation_id for event in replayed_events if event.event_id in event_ids] == [
+            "corr-replay-0",
+            "corr-replay-1",
+        ]
+        assert [record.record_hash for record in replayed_records] == [
+            record.record_hash for record in evidence_snapshot
+        ]
+        assert [record.retention_class for record in replayed_records] == [
+            record.retention_class for record in evidence_snapshot
+        ]
+        assert replayed_records[0].legal_hold is True
+        assert replayed_records[0].governance_log[0]["operation"] == "legal_hold"
+        assert target.audit_log.verify_chain().ok is True
+        assert target.evidence_store.verify_integrity().ok is True
+    finally:
+        target.engine.close()
 
 
 # -- API round-trips the persisted bundle -------------------------------------

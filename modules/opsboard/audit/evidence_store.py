@@ -17,13 +17,18 @@ method-for-method, so the two are interchangeable behind the
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from collections.abc import Iterable
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 from modules.opsboard.audit.domain.evidence import (
     AuditEvidenceBundle,
     EvidenceExportRequest,
+)
+from shared.audit.integrity import (
+    CHAIN_GENESIS_HASH,
+    AuditChainVerification,
 )
 from shared.audit.persistence import (
     EvidenceGovernanceError,
@@ -37,10 +42,6 @@ from shared.audit.persistence import (
     resolve_retention_policy,
     verify_retained_evidence,
     verify_retained_evidence_chain,
-)
-from shared.audit.integrity import (
-    CHAIN_GENESIS_HASH,
-    AuditChainVerification,
 )
 from shared.infrastructure.persistence.engine import SqliteEngine
 
@@ -244,6 +245,12 @@ class DurableEvidenceBundleStore:
     def verify_integrity(self) -> AuditChainVerification:
         return verify_retained_evidence_chain(self.list_all())
 
+    def replay(self, records: Iterable[RetainedEvidence]) -> list[RetainedEvidence]:
+        replayed: list[RetainedEvidence] = []
+        for record in sorted(records, key=_retained_evidence_replay_key):
+            replayed.append(self.save(record))
+        return replayed
+
     def _ensure_integrity_columns(self) -> None:
         existing = {
             str(row["name"])
@@ -298,6 +305,14 @@ class DurableEvidenceBundleStore:
 
 def _row_values(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _retained_evidence_replay_key(record: RetainedEvidence) -> tuple[int, str, str]:
+    return (
+        record.sequence if record.sequence is not None else 2**63 - 1,
+        record.generated_at.isoformat(),
+        record.export_id,
+    )
 
 
 __all__ = ["DurableEvidenceBundleStore", "retained_evidence_from_bundle"]

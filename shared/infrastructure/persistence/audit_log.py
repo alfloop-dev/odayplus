@@ -10,6 +10,7 @@ persist audit/correlation metadata").
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -92,19 +93,22 @@ class DurableAuditLog:
         return event
 
     def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
+        events = self._read_events()
+        verify_audit_chain(events).raise_for_tamper()
         if correlation_id is None:
-            rows = self._engine.query(
-                "SELECT * FROM durable_audit_events ORDER BY seq"
-            )
-        else:
-            rows = self._engine.query(
-                "SELECT * FROM durable_audit_events WHERE correlation_id = ? ORDER BY seq",
-                (correlation_id,),
-            )
-        return [self._row_to_event(row) for row in rows]
+            return events
+        return [event for event in events if event.correlation_id == correlation_id]
 
     def verify_chain(self) -> AuditChainVerification:
-        return verify_audit_chain(self.list_events())
+        return verify_audit_chain(self._read_events())
+
+    def replay(self, events: Iterable[AuditEvent]) -> list[AuditEvent]:
+        """Append restored events while preserving the original chain order."""
+
+        replayed: list[AuditEvent] = []
+        for event in sorted(events, key=_audit_event_replay_key):
+            replayed.append(self.record(event))
+        return replayed
 
     def delete_event(self, event_id: str) -> None:
         raise AuditImmutabilityError(
@@ -126,6 +130,10 @@ class DurableAuditLog:
                 self._engine.execute(
                     f"ALTER TABLE durable_audit_events ADD COLUMN {column} {column_type}"
                 )
+
+    def _read_events(self) -> list[AuditEvent]:
+        rows = self._engine.query("SELECT * FROM durable_audit_events ORDER BY seq")
+        return [self._row_to_event(row) for row in rows]
 
     @staticmethod
     def _row_to_event(row) -> AuditEvent:
@@ -157,6 +165,14 @@ class DurableAuditLog:
 
 def _row_values(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _audit_event_replay_key(event: AuditEvent) -> tuple[int, str, str]:
+    return (
+        event.sequence if event.sequence is not None else 2**63 - 1,
+        event.occurred_at.isoformat(),
+        event.event_id,
+    )
 
 
 __all__ = ["DurableAuditLog"]

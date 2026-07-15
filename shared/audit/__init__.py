@@ -22,8 +22,8 @@ from .persistence import (
     GovernedEvidenceOperation,
     InMemoryEvidenceBundleStore,
     RetainedEvidence,
-    verify_retained_evidence_chain,
     resolve_retention_policy,
+    verify_retained_evidence_chain,
 )
 from .policy import (
     ALWAYS_AUDITED_ACTIONS,

@@ -21,6 +21,7 @@ retention window.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
@@ -237,6 +238,8 @@ class EvidenceBundleStore(Protocol):
 
     def verify_integrity(self) -> AuditChainVerification: ...
 
+    def replay(self, records: Iterable[RetainedEvidence]) -> list[RetainedEvidence]: ...
+
 
 class InMemoryEvidenceBundleStore:
     """Dict-backed default store (``memory`` mode, unit tests).
@@ -317,6 +320,12 @@ class InMemoryEvidenceBundleStore:
 
     def verify_integrity(self) -> AuditChainVerification:
         return verify_retained_evidence_chain(self._records.values())
+
+    def replay(self, records: Iterable[RetainedEvidence]) -> list[RetainedEvidence]:
+        replayed: list[RetainedEvidence] = []
+        for record in sorted(records, key=_retained_evidence_replay_key):
+            replayed.append(self.save(record))
+        return replayed
 
 
 def retained_evidence_integrity_payload(
@@ -433,6 +442,14 @@ def verify_retained_evidence_chain(
         previous_hash = record.record_hash or previous_hash
         previous_sequence = record.sequence
     return AuditChainVerification(ok=not issues, issues=tuple(issues))
+
+
+def _retained_evidence_replay_key(record: RetainedEvidence) -> tuple[int, str, str]:
+    return (
+        record.sequence if record.sequence is not None else 2**63 - 1,
+        record.generated_at.isoformat(),
+        record.export_id,
+    )
 
 
 def require_legal_hold_authority(

@@ -35,3 +35,9 @@ variable "cloud_sql_disk_gb" {
   description = "Cloud SQL disk size in GB."
   default     = 50
 }
+
+variable "audit_retention_period_seconds" {
+  type        = number
+  description = "WORM retention period for audit evidence objects."
+  default     = 220924800 # 2557 days, approximately seven years.
+}

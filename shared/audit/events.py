@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -89,6 +90,19 @@ class InMemoryAuditLog:
     def verify_chain(self) -> AuditChainVerification:
         return verify_audit_chain(self._events)
 
+    def replay(self, events: Iterable[AuditEvent]) -> list[AuditEvent]:
+        """Append restored events in their original chain order.
+
+        Replaying into an empty sink preserves the original sequence numbers,
+        hashes, actor, correlation id, and WORM metadata because the integrity
+        payload is deterministic for a given ordered event stream.
+        """
+
+        replayed: list[AuditEvent] = []
+        for event in sorted(events, key=_audit_event_replay_key):
+            replayed.append(self.record(event))
+        return replayed
+
     def delete_event(self, event_id: str) -> None:
         raise AuditImmutabilityError(
             f"audit sink is append-only; delete denied for {event_id}"
@@ -98,3 +112,11 @@ class InMemoryAuditLog:
         raise AuditImmutabilityError(
             f"audit sink is append-only; update denied for {event_id}"
         )
+
+
+def _audit_event_replay_key(event: AuditEvent) -> tuple[int, str, str]:
+    return (
+        event.sequence if event.sequence is not None else 2**63 - 1,
+        event.occurred_at.isoformat(),
+        event.event_id,
+    )

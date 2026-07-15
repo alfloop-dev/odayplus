@@ -128,6 +128,16 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("avm", Action.VIEW, Action.CREATE, Action.APPROVE)
         | _grant("dealroom", Action.VIEW)
         | _grant("avm", Action.EXPORT)
+        | _grant("audit", Action.VIEW, Action.UPDATE)
+    ),
+    Role.COMPLIANCE_OFFICER: frozenset(
+        _grant("audit", Action.VIEW, Action.UPDATE, Action.DELETE, Action.EXPORT)
+    ),
+    Role.RECORDS_MANAGER: frozenset(
+        _grant("audit", Action.VIEW, Action.DELETE)
+    ),
+    Role.RETENTION_MANAGER: frozenset(
+        _grant("audit", Action.VIEW, Action.DELETE)
     ),
     Role.EXECUTIVE: frozenset(
         _grant("operator_console", Action.VIEW)

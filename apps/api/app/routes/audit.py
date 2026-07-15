@@ -8,8 +8,9 @@ from typing import Any
 from modules.opsboard.audit import AuditEvidenceExportError, AuditEvidenceExportService
 from modules.opsboard.audit.application.evidence_export import decision_card_from_mapping
 from modules.opsboard.audit.domain.evidence import EvidenceExportRequest
-from shared.audit import InMemoryAuditLog
-from shared.audit.persistence import EvidenceBundleStore
+from shared.audit import EvidenceGovernanceError, InMemoryAuditLog
+from shared.audit.persistence import EvidenceBundleStore, GovernedEvidenceOperation
+from shared.auth import Role
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -38,6 +39,21 @@ else:
         masking_profile: str = "masked"
         identity_boundary: str | None = None
 
+    class EvidenceGovernancePayload(BaseModel):
+        role: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+        correlation_id: str | None = None
+
+    class EvidenceRetentionPurgePayload(EvidenceGovernancePayload):
+        as_of: str
+
+    _GOVERNANCE_ROLES_BY_PLATFORM_ROLE: dict[Role, frozenset[str]] = {
+        Role.FINANCE_LEGAL: frozenset({"legal"}),
+        Role.COMPLIANCE_OFFICER: frozenset({"compliance_officer"}),
+        Role.RECORDS_MANAGER: frozenset({"records_manager"}),
+        Role.RETENTION_MANAGER: frozenset({"retention_manager"}),
+    }
+
     def create_audit_router(
         *,
         audit_log: InMemoryAuditLog | None = None,
@@ -50,6 +66,18 @@ else:
         router = APIRouter(prefix="/audit", tags=["audit"])
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
+        export_guard = Depends(
+            require_permission("audit", Action.EXPORT, engine=authz_engine)
+        )
+        view_guard = Depends(
+            require_permission("audit", Action.VIEW, engine=authz_engine)
+        )
+        update_guard = Depends(
+            require_permission("audit", Action.UPDATE, engine=authz_engine)
+        )
+        delete_guard = Depends(
+            require_permission("audit", Action.DELETE, engine=authz_engine)
+        )
         export_service = service or AuditEvidenceExportService(
             audit_log=active_audit_log, evidence_store=evidence_store
         )
@@ -58,9 +86,7 @@ else:
         def export_evidence(
             body: EvidenceExportPayload,
             request: Request,
-            principal=Depends(
-                require_permission("audit", Action.EXPORT, engine=authz_engine)
-            ),
+            principal=export_guard,
         ) -> dict[str, Any]:
             try:
                 identity_boundary = (
@@ -103,7 +129,7 @@ else:
             payload["identity_boundary_subject"] = principal.subject_id
             return payload
 
-        @router.get("/evidence/exports", dependencies=[Depends(require_permission("audit", Action.VIEW, engine=authz_engine))])
+        @router.get("/evidence/exports", dependencies=[view_guard])
         def list_retained_evidence(program_id: str | None = None) -> dict[str, Any]:
             if evidence_store is None:
                 return {"exports": []}
@@ -114,7 +140,7 @@ else:
             )
             return {"exports": [record.summary() for record in records]}
 
-        @router.get("/evidence/exports/{export_id}", dependencies=[Depends(require_permission("audit", Action.VIEW, engine=authz_engine))])
+        @router.get("/evidence/exports/{export_id}", dependencies=[view_guard])
         def get_retained_evidence(export_id: str) -> dict[str, Any]:
             record = None if evidence_store is None else evidence_store.get(export_id)
             if record is None:
@@ -124,7 +150,94 @@ else:
                 )
             return record.to_dict()
 
+        @router.post("/evidence/exports/{export_id}/legal-hold")
+        def apply_legal_hold(
+            export_id: str,
+            body: EvidenceGovernancePayload,
+            request: Request,
+            principal=update_guard,
+        ) -> dict[str, Any]:
+            if evidence_store is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="retained evidence store not configured",
+                )
+            _assert_governance_role(principal.roles, body.role)
+            try:
+                record = evidence_store.apply_legal_hold(
+                    export_id,
+                    context=GovernedEvidenceOperation(
+                        actor=principal.subject_id,
+                        role=body.role,
+                        reason=body.reason,
+                        correlation_id=body.correlation_id
+                        or request.state.correlation_id,
+                    ),
+                )
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="retained evidence bundle not found",
+                ) from exc
+            except EvidenceGovernanceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            return record.summary()
+
+        @router.post("/evidence/retention/purge")
+        def purge_retained_evidence(
+            body: EvidenceRetentionPurgePayload,
+            request: Request,
+            principal=delete_guard,
+        ) -> dict[str, Any]:
+            if evidence_store is None:
+                return {"purged_export_ids": []}
+            _assert_governance_role(principal.roles, body.role)
+            try:
+                purged = evidence_store.purge_expired(
+                    _parse_time(body.as_of),
+                    context=GovernedEvidenceOperation(
+                        actor=principal.subject_id,
+                        role=body.role,
+                        reason=body.reason,
+                        correlation_id=body.correlation_id
+                        or request.state.correlation_id,
+                    ),
+                )
+            except EvidenceGovernanceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            return {"purged_export_ids": purged}
+
+        @router.get(
+            "/evidence/retention/expired",
+            dependencies=[view_guard],
+        )
+        def list_expired_retained_evidence(as_of: str) -> dict[str, Any]:
+            if evidence_store is None:
+                return {"exports": []}
+            records = evidence_store.list_expired(_parse_time(as_of))
+            return {"exports": [record.summary() for record in records]}
+
         return router
+
+    def _assert_governance_role(roles: frozenset[Role], requested_role: str) -> None:
+        allowed = frozenset(
+            governance_role
+            for role in roles
+            for governance_role in _GOVERNANCE_ROLES_BY_PLATFORM_ROLE.get(
+                role, frozenset()
+            )
+        )
+        if requested_role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="platform role does not permit requested evidence governance role",
+            )
 
     def _parse_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))

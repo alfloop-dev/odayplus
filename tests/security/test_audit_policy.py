@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from shared.audit import AuditImmutabilityError
+from shared.audit.events import AuditEvent, InMemoryAuditLog
 from shared.audit.policy import (
     AuditOutcome,
     build_security_event,
@@ -13,8 +15,6 @@ from shared.audit.policy import (
     mask_text,
     requires_audit,
 )
-from shared.audit import AuditImmutabilityError
-from shared.audit.events import AuditEvent, InMemoryAuditLog
 from shared.auth import (
     AccessRequest,
     Action,
