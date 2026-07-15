@@ -33,7 +33,12 @@ from modules.forecastops.domain.forecasting import (
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
-from modules.learninghub.domain import DatasetSnapshot
+from modules.learninghub.domain import (
+    DatasetSnapshot,
+    InferenceComparison,
+    MonitoringEvaluation,
+    RetrainingRequest,
+)
 from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
 from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
 from modules.netplan.domain import (
@@ -505,6 +510,9 @@ class DurableLearningHubRepository:
     _VALIDATIONS = "learninghub.validation_runs"
     _ALIASES = "learninghub.aliases"
     _RELEASES = "learninghub.release_decisions"
+    _MONITORING = "learninghub.monitoring_evaluations"
+    _RETRAINING = "learninghub.retraining_requests"
+    _COMPARISONS = "learninghub.inference_comparisons"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -622,6 +630,67 @@ class DurableLearningHubRepository:
 
     def list_release_decisions(self) -> list[object]:
         return self._store.list_all(self._RELEASES)
+
+    # -- monitoring and retraining ---------------------------------------
+
+    def save_monitoring_evaluation(
+        self, evaluation: MonitoringEvaluation
+    ) -> MonitoringEvaluation:
+        self._store.put(
+            self._MONITORING,
+            evaluation.evaluation_id,
+            evaluation,
+            group_key=evaluation.model_name,
+        )
+        return evaluation
+
+    def get_monitoring_evaluation(self, evaluation_id: str) -> MonitoringEvaluation | None:
+        return self._store.get(self._MONITORING, evaluation_id)
+
+    def list_monitoring_evaluations(
+        self, model_name: str | None = None
+    ) -> list[MonitoringEvaluation]:
+        if model_name is None:
+            return self._store.list_all(self._MONITORING)
+        return self._store.list_by_group(self._MONITORING, model_name)
+
+    def save_retraining_request(self, request: RetrainingRequest) -> RetrainingRequest:
+        self._store.put(
+            self._RETRAINING,
+            request.request_id,
+            request,
+            group_key=request.model_name,
+        )
+        return request
+
+    def get_retraining_request(self, request_id: str) -> RetrainingRequest | None:
+        return self._store.get(self._RETRAINING, request_id)
+
+    def list_retraining_requests(self, model_name: str | None = None) -> list[RetrainingRequest]:
+        if model_name is None:
+            return self._store.list_all(self._RETRAINING)
+        return self._store.list_by_group(self._RETRAINING, model_name)
+
+    # -- inference comparisons -------------------------------------------
+
+    def save_inference_comparison(self, comparison: InferenceComparison) -> InferenceComparison:
+        self._store.put(
+            self._COMPARISONS,
+            comparison.comparison_id,
+            comparison,
+            group_key=comparison.model_name,
+        )
+        return comparison
+
+    def get_inference_comparison(self, comparison_id: str) -> InferenceComparison | None:
+        return self._store.get(self._COMPARISONS, comparison_id)
+
+    def list_inference_comparisons(
+        self, model_name: str | None = None
+    ) -> list[InferenceComparison]:
+        if model_name is None:
+            return self._store.list_all(self._COMPARISONS)
+        return self._store.list_by_group(self._COMPARISONS, model_name)
 
 
 class DurableNetPlanRepository:

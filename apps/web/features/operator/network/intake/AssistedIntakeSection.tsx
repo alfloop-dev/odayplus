@@ -15,6 +15,7 @@ import {
   intakeApi,
   missingClientError,
   newIdempotencyKey,
+  newIntakeActionIdempotencyKey,
   type IntakeApiError,
 } from "./intakeClient";
 import { NO_ACCESS_NOTE, READ_ONLY_NOTE, canPerform, canView, isReadOnly } from "./intakePermissions";
@@ -58,6 +59,9 @@ export function AssistedIntakeSection({
   const permitted = canView(activeRoleId);
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
+  const correctionKeyRef = useRef<string | null>(null);
+  const assistedEntryKeyRef = useRef<string | null>(null);
+  const decisionKeyRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     // A role without listing:VIEW would get a guaranteed 403. That is a
@@ -105,11 +109,21 @@ export function AssistedIntakeSection({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    correctionKeyRef.current = null;
+    assistedEntryKeyRef.current = null;
+    decisionKeyRef.current = null;
+  }, [selectedId]);
+
   const selected = records.find((record) => record.id === selectedId) ?? null;
 
   function closeDialog() {
     setDialog(null);
     setActionError(null);
+    submitKeyRef.current = null;
+    correctionKeyRef.current = null;
+    assistedEntryKeyRef.current = null;
+    decisionKeyRef.current = null;
     if (window.location.hash.startsWith("#intake/")) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
@@ -182,20 +196,29 @@ export function AssistedIntakeSection({
     if (!client || !selected || !fixFieldKey || busy) return;
     setBusy(true);
     setActionError(null);
-    const result = await intakeApi.correct(client, selected.id, {
-      fields: { [fixFieldKey as IntakeCorrectableField]: value as IntakeFieldValue },
-      reason: reason || null,
-      riskSummary,
-      riskAcknowledged,
-      actorRoleId: activeRoleId,
-      actorName: role.label,
-    });
+    if (!correctionKeyRef.current) {
+      correctionKeyRef.current = newIntakeActionIdempotencyKey(selected.id, "correct", fixFieldKey);
+    }
+    const result = await intakeApi.correct(
+      client,
+      selected.id,
+      {
+        fields: { [fixFieldKey as IntakeCorrectableField]: value as IntakeFieldValue },
+        reason: reason || null,
+        riskSummary,
+        riskAcknowledged,
+        actorRoleId: activeRoleId,
+        actorName: role.label,
+      },
+      { idempotencyKey: correctionKeyRef.current },
+    );
     setBusy(false);
 
     if (!result.ok) {
       setActionError(result.error);
       return;
     }
+    correctionKeyRef.current = null;
     applyRecord(result.value);
     setDialog("detail");
     setFixFieldKey(null);
@@ -214,20 +237,29 @@ export function AssistedIntakeSection({
     if (!client || !selected || busy) return;
     setBusy(true);
     setActionError(null);
-    const result = await intakeApi.correct(client, selected.id, {
-      fields: fields as Partial<Record<IntakeCorrectableField, IntakeFieldValue>>,
-      reason: "人工補錄：此來源未經核准擷取，依來源頁內容補錄必要欄位",
-      riskSummary,
-      riskAcknowledged,
-      actorRoleId: activeRoleId,
-      actorName: role.label,
-    });
+    if (!assistedEntryKeyRef.current) {
+      assistedEntryKeyRef.current = newIntakeActionIdempotencyKey(selected.id, "assisted-entry");
+    }
+    const result = await intakeApi.correct(
+      client,
+      selected.id,
+      {
+        fields: fields as Partial<Record<IntakeCorrectableField, IntakeFieldValue>>,
+        reason: "人工補錄：此來源未經核准擷取，依來源頁內容補錄必要欄位",
+        riskSummary,
+        riskAcknowledged,
+        actorRoleId: activeRoleId,
+        actorName: role.label,
+      },
+      { idempotencyKey: assistedEntryKeyRef.current },
+    );
     setBusy(false);
 
     if (!result.ok) {
       setActionError(result.error);
       return;
     }
+    assistedEntryKeyRef.current = null;
     applyRecord(result.value);
     setToast("補錄完成 — 已進入比對");
     void refresh();
@@ -245,14 +277,22 @@ export function AssistedIntakeSection({
     if (!client || !selected || !decisionKind || busy) return;
     setBusy(true);
     setActionError(null);
-    const result = await intakeApi.decide(client, selected.id, {
-      action: DECISION_API_ACTION[decisionKind],
-      reason,
-      riskSummary,
-      riskAcknowledged,
-      actorRoleId: activeRoleId,
-      actorName: role.label,
-    });
+    if (!decisionKeyRef.current) {
+      decisionKeyRef.current = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
+    }
+    const result = await intakeApi.decide(
+      client,
+      selected.id,
+      {
+        action: DECISION_API_ACTION[decisionKind],
+        reason,
+        riskSummary,
+        riskAcknowledged,
+        actorRoleId: activeRoleId,
+        actorName: role.label,
+      },
+      { idempotencyKey: decisionKeyRef.current },
+    );
     setBusy(false);
 
     if (!result.ok) {
@@ -260,6 +300,7 @@ export function AssistedIntakeSection({
       setActionError(result.error);
       return;
     }
+    decisionKeyRef.current = null;
     applyRecord(result.value);
     setDialog("detail");
     setDecisionKind(null);
@@ -356,11 +397,17 @@ export function AssistedIntakeSection({
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
           onDecide={(kind) => {
+            decisionKeyRef.current = selected
+              ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
+              : null;
             setDecisionKind(kind);
             setActionError(null);
             setDialog("decide");
           }}
           onOpenFix={(fieldKey) => {
+            correctionKeyRef.current = selected
+              ? newIntakeActionIdempotencyKey(selected.id, "correct", fieldKey)
+              : null;
             setFixFieldKey(fieldKey);
             setActionError(null);
             setDialog("fix");
@@ -378,6 +425,7 @@ export function AssistedIntakeSection({
           onClose={() => {
             setDialog("detail");
             setActionError(null);
+            correctionKeyRef.current = null;
           }}
           onSubmit={handleFix}
         />
@@ -391,6 +439,7 @@ export function AssistedIntakeSection({
           onClose={() => {
             setDialog("detail");
             setActionError(null);
+            decisionKeyRef.current = null;
           }}
           onSubmit={handleDecide}
           record={selected}
