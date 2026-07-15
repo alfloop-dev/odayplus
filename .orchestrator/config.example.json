@@ -347,13 +347,16 @@
     ],
     "reviewers": {
       "Claude": [
-        "your-github-handle"
+        "claude-bot",
+        "claude-admin"
       ],
       "Antigravity": [
-        "your-github-handle"
+        "antigravity-bot"
       ],
       "Codex": [
-        "your-github-handle"
+        "codex-bot",
+        "codex-admin",
+        "ajoe734"
       ]
     },
     "templates": {

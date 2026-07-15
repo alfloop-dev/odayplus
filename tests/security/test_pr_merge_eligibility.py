@@ -77,7 +77,7 @@ def temp_env(tmp_path: Path) -> dict[str, Path]:
 def test_positive_merge_eligible(temp_env: dict[str, Path]) -> None:
     # Scenario: reviewer approval is present and all required CI checks are green (COMPLETED/SUCCESS)
     def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
-        if "reviews" in args[1]:
+        if any("reviews" in str(arg) for arg in args):
             # Mock reviews response
             return json.dumps(
                 [
@@ -117,7 +117,7 @@ def test_positive_merge_eligible(temp_env: dict[str, Path]) -> None:
 def test_negative_review_rejected_ci_green(temp_env: dict[str, Path]) -> None:
     # Scenario: all checks green, but review is rejected (CHANGES_REQUESTED or DISMISSED)
     def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
-        if "reviews" in args[1]:
+        if any("reviews" in str(arg) for arg in args):
             return json.dumps(
                 [
                     {
@@ -155,7 +155,7 @@ def test_negative_review_rejected_ci_green(temp_env: dict[str, Path]) -> None:
 def test_negative_review_approved_one_failed_check(temp_env: dict[str, Path]) -> None:
     # Scenario: review approved, but product-e2e-gate failed
     def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
-        if "reviews" in args[1]:
+        if any("reviews" in str(arg) for arg in args):
             return json.dumps(
                 [
                     {
@@ -193,7 +193,7 @@ def test_negative_review_approved_one_failed_check(temp_env: dict[str, Path]) ->
 def test_negative_review_approved_one_pending_check(temp_env: dict[str, Path]) -> None:
     # Scenario: review approved, but product is pending (IN_PROGRESS)
     def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
-        if "reviews" in args[1]:
+        if any("reviews" in str(arg) for arg in args):
             return json.dumps(
                 [
                     {
@@ -286,3 +286,42 @@ def test_fail_closed_non_review_approved_status(temp_env: dict[str, Path]) -> No
 
     assert eligible is False
     assert any("must be 'review_approved'" in err for err in errors)
+
+
+def test_non_task_branch_fail_closed(temp_env: dict[str, Path]) -> None:
+    # Scenario: branch is not task-scoped (e.g. feature/something) and not 'dev'
+    def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
+        return "[]"
+
+    eligible, errors = check_merge_eligibility(
+        pr_number=82,
+        branch_name="feature/something-new",
+        repo_slug="alfloop-dev/odayplus",
+        status_path=temp_env["status"],
+        config_path=temp_env["config"],
+        policy_path=temp_env["policy"],
+        gh_runner=mock_gh_runner,
+    )
+
+    assert eligible is False
+    assert any("not task-scoped and is not 'dev'" in err for err in errors)
+
+
+def test_dev_branch_skip_success(temp_env: dict[str, Path]) -> None:
+    # Scenario: branch is 'dev' (promotion PR head), should bypass task checks
+    def mock_gh_runner(args: list[str], repo: str | None = None) -> str:
+        return "[]"
+
+    eligible, errors = check_merge_eligibility(
+        pr_number=82,
+        branch_name="dev",
+        repo_slug="alfloop-dev/odayplus",
+        status_path=temp_env["status"],
+        config_path=temp_env["config"],
+        policy_path=temp_env["policy"],
+        gh_runner=mock_gh_runner,
+    )
+
+    assert eligible is True
+    assert len(errors) == 0
+

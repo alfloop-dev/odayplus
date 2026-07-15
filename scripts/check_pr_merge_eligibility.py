@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -34,7 +34,9 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 
 def run_gh_cli(args: list[str], repo: str | None = None) -> str:
-    cmd = ["gh"] + args
+    wrapper_path = ROOT / ".orchestrator/bin/gh"
+    gh_cmd = str(wrapper_path) if wrapper_path.exists() else "gh"
+    cmd = [gh_cmd] + args
     if repo:
         cmd += ["--repo", repo]
     try:
@@ -50,7 +52,7 @@ def run_gh_cli(args: list[str], repo: str | None = None) -> str:
             f"GitHub CLI command failed: {' '.join(cmd)}\nStdout: {exc.stdout}\nStderr: {exc.stderr}"
         ) from exc
     except FileNotFoundError as exc:
-        raise RuntimeError("GitHub CLI ('gh') is not installed or not in PATH") from exc
+        raise RuntimeError(f"GitHub CLI ('{gh_cmd}') is not installed or not in PATH") from exc
 
 
 def extract_task_id(branch_name: str) -> str | None:
@@ -90,9 +92,11 @@ def check_merge_eligibility(
     # 1. Resolve task ID from branch
     task_id = extract_task_id(branch_name)
     if not task_id:
-        # Not a task-scoped branch, skips task gates but log it
-        print(f"Branch '{branch_name}' is not task-scoped. Skipping task-specific gates.")
-        return True, []
+        if branch_name == "dev":
+            print(f"Branch '{branch_name}' is the integration branch. Skipping task-specific gates.")
+            return True, []
+        errors.append(f"Branch '{branch_name}' is not task-scoped and is not 'dev'. Product PRs must be task-scoped to enforce merge gates.")
+        return False, errors
 
     print(f"Checking merge eligibility for task PR #{pr_number} (task: {task_id}, branch: {branch_name})")
 
@@ -155,7 +159,7 @@ def check_merge_eligibility(
 
     # 6. Fetch and check PR reviews
     try:
-        reviews_raw = gh_runner(["api", f"repos/{repo_slug}/pulls/{pr_number}/reviews", "--per-page", "100"])
+        reviews_raw = gh_runner(["api", "-X", "GET", f"repos/{repo_slug}/pulls/{pr_number}/reviews", "-F", "per_page=100"])
         reviews = json.loads(reviews_raw)
     except Exception as exc:
         errors.append(f"Failed to fetch PR reviews from GitHub: {exc}")
@@ -240,12 +244,12 @@ def main() -> int:
     parser.add_argument("--pr", type=int, help="PR number")
     parser.add_argument("--branch", type=str, help="PR head branch name")
     parser.add_argument("--repo", type=str, help="Repository slug (owner/repo)")
-    parser.add_argument("--status-file", type=str, default="ai-status.json", help="Path to ai-status.json")
+    parser.add_argument("--status-file", type=str, default=str(ROOT / "ai-status.json"), help="Path to ai-status.json")
     parser.add_argument(
-        "--config-file", type=str, default=".orchestrator/config.json", help="Path to orchestrator config.json"
+        "--config-file", type=str, default=str(ROOT / ".orchestrator/config.json"), help="Path to orchestrator config.json"
     )
     parser.add_argument(
-        "--policy-file", type=str, default=".github/branch-protection/policy.json", help="Path to policy.json"
+        "--policy-file", type=str, default=str(ROOT / ".github/branch-protection/policy.json"), help="Path to policy.json"
     )
     args = parser.parse_args()
 

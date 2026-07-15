@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
+gh_bin=""
+shopt -s nullglob
+candidates=("$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh)
+shopt -u nullglob
+
+if [[ ${#candidates[@]} -gt 0 ]]; then
+  gh_bin="${candidates[${#candidates[@]}-1]}"
+fi
+
 if [[ -z "${gh_bin}" ]]; then
-  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
-  exit 1
+  # Exclude paths containing '.orchestrator/bin' to avoid calling ourselves recursively
+  CLEAN_PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '\.orchestrator/bin' | tr '\n' ':' | sed 's/:$//')"
+  gh_bin="$(PATH="$CLEAN_PATH" command -v gh || true)"
+  if [[ -z "${gh_bin}" ]]; then
+    echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools or in PATH." >&2
+    exit 1
+  fi
 fi
 
 exec "${gh_bin}" "$@"

@@ -91,3 +91,13 @@ jobs:
 
       - name: Run product E2E release gate
         run: make product-release-gate
+
+  check-merge-eligibility:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run merge eligibility check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/check_pr_merge_eligibility.py
