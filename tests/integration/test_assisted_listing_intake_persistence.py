@@ -1,25 +1,18 @@
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.opsboard.application.network_listings import (
     IntakeIdempotencyRecord,
-    NetworkListingConflict,
-    NetworkListingNotFound,
-    NetworkListingPolicyError,
-    NetworkListingService,
 )
-from shared.infrastructure.persistence import build_persistence
+from shared.auth import Role
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.infrastructure.persistence.operator_network_listings import (
     DurableAssistedIntakeRepository,
 )
-from shared.auth import Role
 from tests.integration._authz import auth_headers
 
 HEADERS = {
@@ -109,7 +102,7 @@ def test_duplicate_and_revision_contract_test() -> None:
     # Now check if target listing rent is updated in snapshot
     snap_resp = client.get("/api/v1/operator/network-listings", headers=HEADERS)
     listings = snap_resp.json()["listings"]
-    l2024 = next(l for l in listings if l["id"] == "L-2024")
+    l2024 = next(item for item in listings if item["id"] == "L-2024")
     assert l2024["rentPerMonth"] == 55000
 
 

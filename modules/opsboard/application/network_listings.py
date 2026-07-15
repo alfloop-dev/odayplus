@@ -1,16 +1,30 @@
-"""Network listing intake service for Operator Console R4.
+"""Network listing intake service for Operator Console R4/R5.
 
-Owns the task-scoped Listing Radar state used by
-``/api/v1/operator/network-listings``:
+Owns the Listing Radar state used by ``/api/v1/operator/network-listings``:
 
 - R4 HeatZone/listing/candidate identifiers.
 - Listing to candidate conversion.
 - Duplicate merge while retaining source evidence.
 - Hard-rule archive with reason.
+- R5 human-assisted URL intake (submit/correct/decide/retry/promote).
 
-The service is deliberately in-memory for the Operator Console product slice.
-It is deterministic, idempotent for write replays, and narrow enough to compose
-with later SiteScore/Review tasks without owning those layers.
+Persistence is injected, not assumed. The service composes with two optional
+repositories and never reaches into their internals:
+
+- ``listing_repository`` for Listing Radar rows.
+- ``intake_repository`` (:class:`AssistedIntakeRepository`) for assisted intake
+  records and their idempotency cache.
+
+When a repository is omitted the service falls back to a process-local
+implementation (:class:`InMemoryAssistedIntakeRepository`), which keeps tests
+and fixture-only runs self-contained. In the composed application both are
+durable — see ``shared.infrastructure.persistence.operator_network_listings``
+and the wiring in ``apps/api/app/routes/operator.py`` — so intake records and
+replayed writes survive a restart.
+
+Writes are deterministic and idempotent: a replayed ``(action, key)`` returns
+the original response from the repository-backed idempotency cache rather than
+applying the effect twice.
 """
 
 from __future__ import annotations
@@ -382,8 +396,8 @@ class NetworkListingService:
         return res
 
     def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
-        from shared.domain.models import Listing, AddressLocation
         from modules.listing.domain.models import ListingDedupKey
+        from shared.domain.models import AddressLocation, Listing
         lst = Listing(
             listing_id=d["id"],
             source_listing_id=d["sourceListingId"],
@@ -437,8 +451,8 @@ class NetworkListingService:
         return res
 
     def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
-        from shared.domain.models import CandidateSite
         from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
+        from shared.domain.models import CandidateSite
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
 
@@ -823,15 +837,15 @@ class NetworkListingService:
             return _copy(self._idempotency_cache[cache_key])
 
         from modules.external_data.application.assisted_intake import (
-            validate_url,
+            PARSER_VERSION,
+            content_fingerprint,
+            effective_fields,
+            match_listing,
             normalize_url,
+            parse_snapshot,
             resolve_source_policy,
             retrieve,
-            parse_snapshot,
-            match_listing,
-            effective_fields,
-            content_fingerprint,
-            PARSER_VERSION,
+            validate_url,
         )
 
         url = url.strip()
@@ -898,7 +912,9 @@ class NetworkListingService:
 
                 effective_vals = effective_fields(intake["parsedFields"])
 
-                from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
+                from modules.external_data.application.assisted_intake import (
+                    ASSISTED_ENTRY_REQUIRED_FIELDS,
+                )
                 has_all_required = True
                 for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
                     val = effective_vals.get(rf)
@@ -999,8 +1015,8 @@ class NetworkListingService:
 
         from modules.external_data.application.assisted_intake import (
             IDENTITY_FIELDS,
-            effective_fields,
             content_fingerprint,
+            effective_fields,
             match_listing,
         )
 
@@ -1295,12 +1311,12 @@ class NetworkListingService:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
 
         from modules.external_data.application.assisted_intake import (
+            content_fingerprint,
+            effective_fields,
+            match_listing,
+            parse_snapshot,
             resolve_source_policy,
             retrieve,
-            parse_snapshot,
-            match_listing,
-            effective_fields,
-            content_fingerprint,
         )
 
         policy = resolve_source_policy(intake["originalUrl"])
@@ -1327,7 +1343,9 @@ class NetworkListingService:
 
             effective_vals = effective_fields(intake["parsedFields"])
 
-            from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
+            from modules.external_data.application.assisted_intake import (
+                ASSISTED_ENTRY_REQUIRED_FIELDS,
+            )
             has_all_required = True
             for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
                 val = effective_vals.get(rf)
