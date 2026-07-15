@@ -2,17 +2,19 @@
 
 // Assisted listing intake API binding (ODP-OC-R5-011).
 //
-// Owned layer  : the ONLY call path the intake UI uses. Every request goes
-//                through the typed @oday-plus/openapi-client — no raw fetch,
-//                no hardcoded auth headers. Identity comes from the console's
-//                active role via operatorSecurityHeaders().
-// Not changing : the backend routes, or the other network panels' legacy
-//                fetch wiring (they are out of this task's scope).
+// Owned layer  : the intake surface's error vocabulary, and the ONLY call path
+//                the intake UI uses. Every request goes through the typed
+//                @oday-plus/openapi-client — no raw fetch, no hardcoded auth
+//                headers. Transport (client construction, correlation IDs, the
+//                status→error mapping) is shared with the other network
+//                surfaces; see ../operatorNetworkClient.
+// Not changing : the backend routes, or the network panels that still use raw
+//                fetch for read-only snapshots. Listing Radar's merge — the one
+//                high-impact write among them — is typed too, via
+//                ../listingsClient.
 // Composes with: AssistedIntakeQueuePanel + the four intake dialogs.
 
 import {
-  OdpApiError,
-  createOdpApiClient,
   type AssistedIntake,
   type ConvertListingResponse,
   type IntakeCorrectPayload,
@@ -20,110 +22,63 @@ import {
   type IntakeSubmitPayload,
   type OdpApiClient,
 } from "@oday-plus/openapi-client";
-import { operatorSecurityHeaders } from "../../operatorSecurityHeaders";
+import {
+  buildOperatorNetworkClient,
+  guardCall,
+  newCorrelationId,
+  randomToken,
+  toOperatorApiError,
+  type OperatorApiError,
+  type OperatorApiResult,
+  type StatusErrorSpec,
+} from "../operatorNetworkClient";
 
-/**
- * Structured, renderable failure. `detail` is the server's own operator-facing
- * copy (zh-TW policy/permission text); we never overwrite it with an invented
- * message, and `correlationId` + `code` are surfaced so an operator can quote
- * them in a governance ticket (design §7 error requirements).
- */
-export type IntakeApiError = {
-  status: number;
-  code: string;
-  summary: string;
-  nextAction: string;
-  correlationId: string | null;
-  occurredAt: string;
-  retryable: boolean;
-};
+/** The shared network error contract, named for this surface's callers. */
+export type IntakeApiError = OperatorApiError;
 
 const ROLE_DENIED = "此角色無權執行本操作。請改由具備權限的角色（展店主管／選址審核／資料管理員）操作。";
 
-/**
- * The intake UI runs in the browser, where the backend is reached same-origin
- * through the Next rewrite of `/api/v1/:path*` (apps/web/next.config.mjs) —
- * the client's paths already carry that prefix. An explicit
- * NEXT_PUBLIC_ODP_API_BASE_URL still wins when the API is served from another
- * origin. Note `createOdpApiClient` treats an empty baseUrl as "unconfigured"
- * and returns null, so same-origin must be passed as the concrete origin.
- */
-export function buildIntakeClient(roleId?: string | null): OdpApiClient | null {
-  const configured = process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
-  const baseUrl =
-    configured || (typeof window !== "undefined" ? window.location.origin : undefined);
-  if (!baseUrl) return null;
+/** Transport is shared with the other network surfaces; see operatorNetworkClient. */
+export const buildIntakeClient = buildOperatorNetworkClient;
 
-  return createOdpApiClient({
-    baseUrl,
-    defaultHeaders: operatorSecurityHeaders(roleId),
-  });
-}
+/** Intake-specific next actions layered on the shared status→error mapping. */
+const INTAKE_ERRORS: Record<number, StatusErrorSpec> = {
+  400: {
+    code: "ODP-INTAKE-URL-INVALID",
+    next: "請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）後重新送出。",
+    retryable: false,
+  },
+  403: {
+    code: "ODP-INTAKE-FORBIDDEN",
+    next: "請切換為具備權限的角色，或請展店主管代為決策。",
+    retryable: false,
+  },
+  404: {
+    code: "ODP-INTAKE-NOT-FOUND",
+    next: "此收件紀錄已不存在，請回到收件佇列重新整理。",
+    retryable: false,
+  },
+  409: {
+    code: "ODP-INTAKE-CONFLICT",
+    next: "此 URL 已在處理中，請開啟既有收件紀錄，不需重複送件。",
+    retryable: false,
+  },
+  422: {
+    code: "ODP-INTAKE-POLICY",
+    next: "請依提示補齊必填的原因或欄位後再送出。",
+    retryable: false,
+  },
+};
 
-/**
- * Map a thrown error onto the design's error contract: summary, next action,
- * error code, correlation ID and occurred time (design §7). Status drives the
- * next-action copy because the server's `detail` explains *what* was refused
- * but not *what the operator should do about it*.
- */
 export function toIntakeApiError(error: unknown): IntakeApiError {
-  const occurredAt = new Date().toISOString();
-
-  if (error instanceof OdpApiError) {
-    const detail = error.detail;
-    const byStatus: Record<number, { code: string; next: string; retryable: boolean }> = {
-      400: {
-        code: "ODP-INTAKE-URL-INVALID",
-        next: "請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）後重新送出。",
-        retryable: false,
-      },
-      403: {
-        code: "ODP-INTAKE-FORBIDDEN",
-        next: "請切換為具備權限的角色，或請展店主管代為決策。",
-        retryable: false,
-      },
-      404: {
-        code: "ODP-INTAKE-NOT-FOUND",
-        next: "此收件紀錄已不存在，請回到收件佇列重新整理。",
-        retryable: false,
-      },
-      409: {
-        code: "ODP-INTAKE-CONFLICT",
-        next: "此 URL 已在處理中，請開啟既有收件紀錄，不需重複送件。",
-        retryable: false,
-      },
-      422: {
-        code: "ODP-INTAKE-POLICY",
-        next: "請依提示補齊必填的原因或欄位後再送出。",
-        retryable: false,
-      },
-    };
-    const mapped = byStatus[error.status];
-    return {
-      status: error.status,
-      code: mapped?.code ?? `ODP-INTAKE-HTTP-${error.status}`,
-      summary: detail ?? (error.status === 403 ? ROLE_DENIED : error.message),
-      nextAction: mapped?.next ?? "請稍後重試；若持續發生，請附上 correlation ID 通報平台維運。",
-      correlationId: error.correlationId ?? null,
-      occurredAt,
-      // 5xx is transient from the operator's point of view; 4xx is not.
-      retryable: mapped ? mapped.retryable : error.status >= 500,
-    };
-  }
-
-  // AbortError (client timeout) and network failures never reach the server.
-  const isAbort = error instanceof Error && error.name === "AbortError";
-  return {
-    status: 0,
-    code: isAbort ? "ODP-INTAKE-TIMEOUT" : "ODP-INTAKE-NETWORK",
-    summary: isAbort
-      ? "連線逾時 — 後端未在時限內回應，本次操作未寫入。"
-      : "無法連線至後端服務，本次操作未寫入。",
-    nextAction: "請確認網路連線後重試；你輸入的內容已保留。",
-    correlationId: null,
-    occurredAt,
-    retryable: true,
-  };
+  return toOperatorApiError(error, {
+    byStatus: INTAKE_ERRORS,
+    fallbackPrefix: "ODP-INTAKE",
+    roleDenied: ROLE_DENIED,
+    timeoutSummary: "連線逾時 — 後端未在時限內回應，本次操作未寫入。",
+    networkSummary: "無法連線至後端服務，本次操作未寫入。",
+    transportNextAction: "請確認網路連線後重試；你輸入的內容已保留。",
+  });
 }
 
 export function missingClientError(): IntakeApiError {
@@ -138,14 +93,10 @@ export function missingClientError(): IntakeApiError {
   };
 }
 
-export type IntakeResult<T> = { ok: true; value: T } | { ok: false; error: IntakeApiError };
+export type IntakeResult<T> = OperatorApiResult<T>;
 
-async function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
-  try {
-    return { ok: true, value: await run() };
-  } catch (error) {
-    return { ok: false, error: toIntakeApiError(error) };
-  }
+function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
+  return guardCall(run, toIntakeApiError);
 }
 
 /**
@@ -234,19 +185,11 @@ export const intakeApi = {
   },
 };
 
-export function newCorrelationId(): string {
-  return `corr-${randomToken()}`;
-}
+export { newCorrelationId };
 
 /** Stable per-attempt key so a retry of the *same* submission dedups server-side. */
 export function newIdempotencyKey(url: string): string {
   return `intake-${canonicalKeyPart(url)}-${randomToken()}`;
-}
-
-function randomToken(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2);
 }
 
 function canonicalKeyPart(url: string): string {

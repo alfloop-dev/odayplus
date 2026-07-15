@@ -146,12 +146,12 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
     from modules.opsboard.application.network_listings import NetworkListingService
-    from shared.infrastructure.persistence.operator_network_listings import (
-        DurableAssistedIntakeRepository,
-    )
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
     from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
 
     operator_view_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine

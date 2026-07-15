@@ -369,3 +369,167 @@ removed. The remaining pre-existing failures (`e2e-exp`, `e2e-learning-audit`,
 `e2e-intervention-price-ad`, `e2e-map-a11y`, `e2e-network-find-areas-api-binding`
 ×2, `operator-shell-today`, `opsboard-shell`, `product-e2e-env`) are outside this
 task's scope and are reported here rather than left implied.
+
+## 9. Review round 3 — how each finding was addressed
+
+Codex rejected round 2 with three findings. PR #298 merged into `dev` at
+09:06:16Z (immediately before that rejection), so `origin/dev` already contains
+rounds 1–2; this round is a **new** PR on top of it.
+
+### 9.1 P0 — product CI red with Ruff errors (`aa76672b`)
+
+Confirmed and fixed. The reviewer counted 27; the repo's exact product lint
+command found **19** in the two named test files, plus **8 more elsewhere on the
+branch** that the file-scoped check would have missed:
+
+```bash
+$ uv run ruff check tests modules apps shared models solver pipelines infra   # ci.yml:66
+All checks passed!
+$ uv run ruff check .orchestrator scripts                                     # ci.yml:36
+All checks passed!
+```
+
+All 8 non-test errors were branch-introduced (`network_listings.py` does not
+exist on `dev` at all), so none were pre-existing drift.
+
+**Import-cycle care:** every `I001` fix reordered a *function-local* import block
+in place; none were hoisted to module scope. This matters because
+`modules/external_data` is imported lazily precisely to avoid an import cycle —
+the autofix diff was read line by line rather than trusted.
+
+### 9.2 P0 — merge bypassed the typed client (`6f1af83a`)
+
+The §7.5 `window.confirm` stopgap is gone. Merge now satisfies the high-impact
+write contract end to end:
+
+| Requirement | Where |
+|---|---|
+| Real product confirmation surface | `network/ListingMergeDialog.tsx` (`Dialog 合併重複物件`), built on the same pattern as its sibling `ReviewDecisionDialog` |
+| Collects the operator's reason | required, ≥10 chars, **no default or pre-fill** |
+| Renders + explicitly acknowledges the exact `riskSummary` | rendered text **is** the submitted string — not rebuilt at submit time, so audit stores what was actually read |
+| Typed OpenAPI client method | `listingsApi.merge` → `client.mergeListing` (the typed method already existed and was simply unused) |
+| Structured errors / correlation / idempotency | `ODP-LISTING-MERGE-*` codes, correlation ID, per-attempt idempotency key; the dialog keeps the operator's reason and shows code + correlation ID on failure |
+| Audit assertions | contract + E2E, below |
+
+**Two defects found while doing this**, both fixed:
+
+1. **The merge audit event never recorded the operator's reason.** It reached the
+   listing (`mergeReason`) but not the audit metadata, though `archive` already
+   recorded its reason. Without this, "reason reaches audit" was untestable.
+2. **Merge was offered to roles that cannot perform it.** The old raw fetch
+   hardcoded `expansion-manager` headers, i.e. it spoofed an identity the console
+   user might not hold. The write now travels as the **active console role**, and
+   `network/listingPermissions.ts` gates the affordance to `expansion-manager` —
+   the only role clearing *both* the `listing:UPDATE` HTTP guard and the
+   service's actor allowlist. (`site-reviewer` passes the allowlist but lacks
+   `listing:UPDATE`, so it would 403 — the intersection is narrower than either
+   gate alone.)
+
+Transport was extracted to `network/operatorNetworkClient.ts` so intake and
+listings share one typed call path; `intakeClient.ts` keeps its public names and
+its own error copy, so the intake surfaces are unchanged (15 intake E2E tests
+still pass).
+
+New E2E, exactly as requested:
+
+| Test | Proves |
+|---|---|
+| `merge writes nothing when cancelled, unacknowledged, or missing a reason` | all three negative paths leave **no evidence moved and zero `listing.merge` audit events** |
+| `L-2029 merge retains evidence and L-2030 archives with reason` | the user-entered reason and acknowledged risk summary reach the audit event **verbatim**, with a correlation ID |
+| `a role without listing:UPDATE is not offered the merge action` | ⚠️ **This claim was wrong when written — see §10.1.** It covered only the row-level button; the detail pane still offered merge to unauthorized roles. Corrected in round 4. |
+
+**A test that failed for the right reason:** the first no-write assertion checked
+`status !== "duplicate"`, but L-2029 ships **seeded** as a duplicate — the
+assertion tested the fixture, not the product. It now asserts the merge's real
+effects (evidence moved, audit written). Fixed in `ee1c1fad`, not papered over.
+
+### 9.3 P1 — stale module docstring (`aa76672b`)
+
+`network_listings.py` said the service "is deliberately in-memory". It now
+describes the actual composition: both repositories are injected, the in-memory
+implementation is the fallback for tests/fixture runs, and the composed app is
+durable — naming the wiring (`operator_network_listings`, `operator.py`) so the
+claim is checkable.
+
+### 9.4 Round-3 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check tests modules apps shared models solver pipelines infra` | **All checks passed** |
+| `uv run ruff check .orchestrator scripts` | **All checks passed** |
+| `npm run typecheck --workspace=@oday-plus/web` | **pass** |
+| `npm run build --workspace=@oday-plus/web` | **pass** |
+| `uv run pytest tests` (full suite) | **779 passed** |
+| fresh-port `operator-network-listings` + `operator-network-assisted-intake` | **19 passed** |
+| `git diff --check origin/dev...HEAD` | clean |
+
+E2E command (fresh ports, reuse disabled — per §7.6):
+
+```bash
+ODP_API_PORT=8143 OPSBOARD_PORT=3143 ODP_API_BASE_URL=http://127.0.0.1:8143 \
+ODP_PLAYWRIGHT_REUSE_EXISTING=0 npx playwright test \
+  tests/e2e/operator-network-listings.spec.ts \
+  tests/e2e/operator-network-assisted-intake.spec.ts
+```
+
+### 9.5 One failure in the 3-spec run is NOT mine — verified, not asserted
+
+The requested 3-spec run includes `e2e-operator-console.spec.ts`, whose
+`ODP-OC-FE-05 Governance Workspace` test fails. It is **pre-existing dev drift**:
+
+- The governance sources and that spec are **byte-identical** to `origin/dev`
+  (`git diff origin/dev...HEAD` over those paths is empty).
+- Rather than rest on that, it was **reproduced on a clean `origin/dev`
+  worktree** (fresh install, fresh build, fresh ports): the same test fails
+  there with no changes from this branch present.
+
+This branch's 13 changed files are confined to the listings/intake slice and
+touch no governance code.
+
+## 10. Review round 4 — four real defects in the round-3 merge work
+
+Codex rejected PR #299 with four findings. **All four were real**, and each is
+now fixed with a test that fails without the fix. PR #299 was closed unmerged,
+so this round continues on a follow-up PR.
+
+### 10.1 A round-3 evidence claim was wrong, and is corrected here
+
+§9.2 claimed unauthorized roles "are not offered merge". That was **false for the
+second entry point**. The Listing Radar detail pane's primary action is also a
+merge button: round 3 gated its *handler* but still rendered the label
+「合併重複（保留目標物件）」 to a role without `listing:UPDATE`, so the console
+advertised the action and then silently did nothing on click.
+
+Gating a handler is not gating an affordance. The E2E only covered the row-level
+button, so it passed while the claim was untrue — the test matched the fix rather
+than the requirement.
+
+### 10.2 The four findings
+
+| # | Finding | Fix | Test that now covers it |
+|---|---|---|---|
+| 1 (P0) | Detail-pane merge offered to unauthorized roles; handler no-ops | Label shows the permission state, button disabled, `MERGE_DENIED_NOTE` explains why | `a role without listing:UPDATE is offered no merge entry point at all` — asserts **both** entry points, and that clicking the detail action opens no dialog |
+| 2 (P1) | `ListingMergeDialog` was a raw `role="dialog"`: `data-autofocus` inert, no initial focus, Escape, focus trap, or focus restoration | Contract extracted from `IntakeDialogShell` into `useModalDialogBehavior` and used by both; each dialog keeps its own markup/visual family | `the merge dialog is keyboard operable and restores focus` |
+| 3 (P1) | Close/cancel enabled while `mergeBusy` — a high-impact write could be hidden mid-flight | Dismissal blocked while submitting via button, Escape **and** backdrop; the hook takes a `dismissible` flag | `an in-flight merge cannot be dismissed…` |
+| 4 (P1) | Idempotency key minted inside every submit call, so a retry after a lost response looked like a new operation — defeating the guarantee the comment claimed | Key minted once per initiated merge (`newMergeIdempotencyKey`), carried on the request, reused across retries until success/cancel/new request | `…retries reuse one idempotency key` — holds a 503 open, asserts the in-flight lock, retries, asserts both attempts sent the **same** key |
+
+On finding 4, the correlation ID stays **per attempt** by design: one logical
+operation identity (the idempotency key), distinct traceable requests (the
+correlation IDs). That distinction is now stated in the code rather than implied.
+
+The `IntakeDialogShell` refactor is behaviour-preserving: the intake dialogs'
+15 E2E tests, including their keyboard test, still pass unchanged.
+
+### 10.3 Round-4 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check tests modules apps shared models solver pipelines infra` | All checks passed |
+| `uv run ruff check .orchestrator scripts` | All checks passed |
+| `npm run typecheck --workspace=@oday-plus/web` | pass |
+| `npm run build --workspace=@oday-plus/web` | pass |
+| `uv run pytest tests` | **779 passed** |
+| fresh-port `operator-network-listings` + `operator-network-assisted-intake` | **21 passed** |
+| `git diff --check origin/dev...HEAD` | clean |
+
+The governance failure of §9.5 is unchanged and still not from this branch.

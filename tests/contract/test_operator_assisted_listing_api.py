@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
-    NetworkListingNotFound,
-    NetworkListingPolicyError,
     NetworkListingService,
 )
-from shared.infrastructure.persistence.factory import _durable_bundle
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -143,7 +138,7 @@ def test_changed_price_revision_contract_test() -> None:
     # Verify that target listing rent is updated in listings snapshot
     snap_resp = client.get("/api/v1/operator/network-listings", headers=HEADERS)
     listings = snap_resp.json()["listings"]
-    l2024 = next(l for l in listings if l["id"] == "L-2024")
+    l2024 = next(item for item in listings if item["id"] == "L-2024")
     assert l2024["rentPerMonth"] == 55000
 
 
@@ -283,7 +278,7 @@ def test_timeout_contract_test() -> None:
 def test_fixture_compatible_replay() -> None:
     # Verify that the entire retrieval corpus remains queryable and matches exact schemas
     from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
-    for url, result in RETRIEVAL_CORPUS.items():
+    for result in RETRIEVAL_CORPUS.values():
         assert result.snapshot_id is not None
         if result.ok:
             assert isinstance(result.raw, dict)
