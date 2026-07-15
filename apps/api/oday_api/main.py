@@ -52,7 +52,7 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
 
 
 try:
-    from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+    from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - dependency added by backend task
     app: Any = None
@@ -138,7 +138,14 @@ else:
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
-        @api.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
+        # Jobs and audit-event reads are product operations, so they are
+        # versioned like every domain router rather than declared inline on the
+        # app (ODP-PGAP-API-001). The health/version probes above stay
+        # unversioned on purpose: they are wired into deploy manifests and load
+        # balancers that must not be asked to learn a version prefix.
+        platform_router = APIRouter()
+
+        @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
             request: Request,
@@ -175,14 +182,14 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        @api.get("/jobs/{job_id}", tags=["jobs"])
+        @platform_router.get("/jobs/{job_id}", tags=["jobs"])
         def get_job(job_id: str) -> dict[str, Any]:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
             return job.to_dict()
 
-        @api.get("/audit/events", tags=["audit"])
+        @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(correlation_id: str | None = None) -> dict[str, Any]:
             return {
                 "events": [
@@ -190,6 +197,8 @@ else:
                     for event in audit_log.list_events(correlation_id=correlation_id)
                 ]
             }
+
+        mount_versioned(api, platform_router)
 
         from apps.api.app.routes.adlift import create_adlift_router
         from apps.api.app.routes.audit import create_audit_router

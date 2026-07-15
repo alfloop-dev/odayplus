@@ -1,16 +1,57 @@
 /**
  * @oday-plus/openapi-client
  *
- * Hand-maintained typed client for the ODay Plus FastAPI backend
- * (apps/api/oday_api). It has no runtime dependencies beyond the platform
- * `fetch`, so it runs inside Next.js server components, client components,
- * the Playwright test runner, or plain Node.
+ * Typed client for the ODay Plus FastAPI backend (apps/api/oday_api). It has no
+ * runtime dependencies beyond the platform `fetch`, so it runs inside Next.js
+ * server components, client components, the Playwright test runner, or plain
+ * Node.
  *
  * Client-component use (ODP-OC-R5-011): pass identity through
  * `defaultHeaders` and a same-origin `baseUrl` so the request goes through
  * the web app's /api/v1 rewrite. Never embed a credential here — the console
  * derives its headers from the active operator role.
+ *
+ * Type provenance (ODP-PGAP-API-001)
+ * ----------------------------------
+ * `./generated/types` is generated from `openapi.json`, which is exported from
+ * the live app. It is re-exported wholesale below and is the source of truth
+ * for request DTOs, the error envelope, and the versioned path map. Never edit
+ * it; run `scripts/openapi/generate_client.py`.
+ *
+ * Two categories of type are still hand-written here:
+ *
+ * 1. **Narrowings.** A few request DTOs are declared more strictly than the
+ *    server's schema admits, because a Pydantic field default renders as
+ *    `optional` even where the server rejects the request at runtime without
+ *    it — `riskAcknowledged` is the sharp case. These shadow their generated
+ *    namesakes and are pinned by the `AssertAssignable` checks below, so a
+ *    server-side shape change breaks the build rather than the caller.
+ *
+ * 2. **Response DTOs.** Every route is annotated `-> dict[str, Any]`, so the
+ *    artifact describes all 156 success responses as `additionalProperties:
+ *    true` — there is no response shape to generate from. Those types remain
+ *    hand-written and are quarantined in `./handwritten`, re-exported here for
+ *    compatibility. Declaring `response_model=` per route is the fix and is
+ *    tracked as a follow-up; it cannot be applied mechanically, because
+ *    `response_model` filters the response to the declared fields and an
+ *    incomplete model would silently drop data the console renders.
  */
+
+// Generated first: local declarations below intentionally shadow their
+// generated namesakes (ES module semantics), which is how the narrowings win.
+export * from "./generated/types";
+
+import type {
+  IntakeCorrectPayload as GeneratedIntakeCorrectPayload,
+  IntakeDecidePayload as GeneratedIntakeDecidePayload,
+  IntakePromotePayload as GeneratedIntakePromotePayload,
+  IntakeSubmitPayload as GeneratedIntakeSubmitPayload,
+  NetworkListingActorPayload as GeneratedNetworkListingActorPayload,
+  NetworkListingMergePayload as GeneratedNetworkListingMergePayload,
+  ErrorEnvelope,
+} from "./generated/types";
+
+export type { ErrorEnvelope };
 
 export type HealthResponse = {
   status: string;
@@ -355,7 +396,14 @@ export type ApiValidationIssue = {
 };
 
 export type ApiErrorBody = {
-  detail?: string | ApiValidationIssue[];
+  /**
+   * Legacy detail, exactly as the route produced it. Retained indefinitely:
+   * some routes return an object whose fields callers branch on (the
+   * rebalance `state` retry flag, the scoring gate's `missing` list).
+   */
+  detail?: string | ApiValidationIssue[] | Record<string, unknown>;
+  /** The structured envelope (ODP-PGAP-API-001). Present on every error. */
+  error?: ErrorEnvelope;
 };
 
 export class OdpApiError extends Error {
@@ -370,6 +418,16 @@ export class OdpApiError extends Error {
    * denials), so the UI must render this rather than invent its own message.
    */
   readonly detail?: string;
+  /**
+   * The structured envelope. Prefer this over `detail` in new code: `code` is
+   * stable and branchable, whereas `detail` is prose that changes with copy
+   * edits and cannot be safely matched on.
+   */
+  readonly envelope?: ErrorEnvelope;
+  /** Stable machine-readable code, e.g. "forbidden", "idempotency_conflict". */
+  readonly code?: string;
+  /** What the server says the caller should do next; safe to surface as-is. */
+  readonly nextAction?: string;
 
   constructor(
     message: string,
@@ -384,18 +442,35 @@ export class OdpApiError extends Error {
     this.name = "OdpApiError";
     this.status = options.status;
     this.url = options.url;
-    this.correlationId = options.correlationId;
     this.body = options.body;
-    this.detail = flattenApiDetail(options.body?.detail);
+    this.envelope = options.body?.error;
+    this.code = this.envelope?.code;
+    this.nextAction = this.envelope?.next_action;
+    // Envelope first, then the header, then the caller's own id: the envelope
+    // is the value the server recorded against the audit event.
+    this.correlationId = this.envelope?.correlation_id ?? options.correlationId ?? undefined;
+    // The envelope's message is already the flattened text, so prefer it and
+    // fall back to flattening `detail` for any endpoint not yet behind the
+    // handlers (and for older servers during a rollout).
+    this.detail = this.envelope?.message ?? flattenApiDetail(options.body?.detail);
   }
 }
 
-/** Reduce FastAPI's `string | ValidationIssue[]` detail to displayable text. */
+/**
+ * Reduce a legacy `detail` to displayable text.
+ *
+ * Prefer `OdpApiError.envelope.message`; this remains for the fallback path.
+ * An object `detail` yields its `message` field when it has one — the routes
+ * that send objects put the operator-facing copy there.
+ */
 export function flattenApiDetail(
-  detail: string | ApiValidationIssue[] | undefined,
+  detail: string | ApiValidationIssue[] | Record<string, unknown> | undefined,
 ): string | undefined {
   if (typeof detail === "string") return detail || undefined;
-  if (!Array.isArray(detail)) return undefined;
+  if (!Array.isArray(detail)) {
+    const message = detail?.["message"];
+    return typeof message === "string" && message ? message : undefined;
+  }
   const parts = detail
     .map((issue) => {
       const field = (issue.loc ?? [])
@@ -1193,6 +1268,34 @@ export type IntakeDecidePayload = RiskDisclosure & {
 };
 
 export type IntakePromotePayload = NetworkListingActorPayload & RiskDisclosure;
+
+/**
+ * Pin every hand-written narrowing to its generated counterpart.
+ *
+ * Each narrowing above is deliberately stricter than the server's schema (a
+ * required `riskAcknowledged` where Pydantic's default renders it optional; a
+ * `IntakeDecideAction` union where the schema says `string`). Strictness is
+ * only safe while the narrowing remains *assignable* to the generated type: if
+ * the server renames or retypes a field, the narrowing silently stops
+ * describing the real request and callers keep compiling against a fiction.
+ *
+ * `AssertAssignable` makes that a build failure instead. These are type-level
+ * only and emit no runtime code.
+ */
+type AssertAssignable<Narrow extends Wide, Wide> = Narrow;
+
+type _PinIntakeSubmit = AssertAssignable<IntakeSubmitPayload, GeneratedIntakeSubmitPayload>;
+type _PinIntakeCorrect = AssertAssignable<IntakeCorrectPayload, GeneratedIntakeCorrectPayload>;
+type _PinIntakeDecide = AssertAssignable<IntakeDecidePayload, GeneratedIntakeDecidePayload>;
+type _PinIntakePromote = AssertAssignable<IntakePromotePayload, GeneratedIntakePromotePayload>;
+type _PinListingActor = AssertAssignable<
+  NetworkListingActorPayload,
+  GeneratedNetworkListingActorPayload
+>;
+type _PinListingMerge = AssertAssignable<
+  NetworkListingMergePayload,
+  GeneratedNetworkListingMergePayload
+>;
 
 /**
  * Build a client from explicit options or the environment. Returns `null`
