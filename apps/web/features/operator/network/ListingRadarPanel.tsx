@@ -65,11 +65,19 @@ export function ListingRadarPanel({
     visibleRows[0] ??
     rows[0];
   const selectedListing = selectedRow ? listingById.get(selectedRow.id) : undefined;
+  // `mergedIntoId` is the durable terminal marker: a merged source keeps
+  // isDuplicate/status "duplicate", so only this field distinguishes "can still
+  // be merged" from "already merged". A second click would mint a fresh
+  // idempotency key, which the server now refuses with 409.
+  const detailMergedIntoId = selectedListing?.mergedIntoId;
   // The detail pane's primary action doubles as the merge entry point, so it
-  // needs the SAME gate as the row-level button — otherwise an unauthorized
+  // needs the SAME gates as the row-level button — otherwise an unauthorized
   // role is still offered a merge whose handler silently does nothing.
+  // Terminal state outranks permission: an already-merged listing is not a
+  // merge the role is missing, so the denial note must not claim it is.
   const detailMergeDenied = Boolean(
     selectedRow?.isDuplicate &&
+      !detailMergedIntoId &&
       selectedRow.status !== "archived" &&
       selectedRow.status !== "candidate" &&
       !canMergeListing(activeRoleId),
@@ -172,9 +180,14 @@ export function ListingRadarPanel({
                   row.status !== "archived";
                 // Merge needs listing:UPDATE plus the service's actor allowlist;
                 // hiding it for roles that cannot clear both keeps the console
-                // from offering a button that is guaranteed to 403/422.
+                // from offering a button that is guaranteed to 403/422. Once
+                // `mergedIntoId` is set the merge is terminal, so the entry
+                // point must retire rather than mint a second request.
                 const canMerge =
-                  row.id === "L-2029" && Boolean(mergeTarget) && canMergeListing(activeRoleId);
+                  row.id === "L-2029" &&
+                  Boolean(mergeTarget) &&
+                  !listing?.mergedIntoId &&
+                  canMergeListing(activeRoleId);
                 const canArchive =
                   row.id === "L-2030" &&
                   row.status !== "archived" &&
@@ -294,10 +307,13 @@ export function ListingRadarPanel({
                 className={styles.detailPrimaryButton}
                 data-testid="listing-detail-primary"
                 disabled={
-                  !selectedRow || selectedRow.status === "archived" || detailMergeDenied
+                  !selectedRow ||
+                  selectedRow.status === "archived" ||
+                  Boolean(detailMergedIntoId) ||
+                  detailMergeDenied
                 }
                 onClick={() => {
-                  if (!selectedRow || detailMergeDenied) return;
+                  if (!selectedRow || detailMergedIntoId || detailMergeDenied) return;
                   const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
                   if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
                     onConvert?.(selectedRow.id);
@@ -309,7 +325,7 @@ export function ListingRadarPanel({
                 }}
                 type="button"
               >
-                {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId))}
+                {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
               </button>
               {detailMergeDenied ? (
                 <p className={styles.muted} data-testid="listing-detail-merge-denied">
@@ -371,10 +387,14 @@ function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
  * `canMerge` must be threaded in: offering "合併重複（保留目標物件）" to a role
  * that cannot merge advertises an action the server would refuse, and the
  * handler would silently no-op. The permission state is shown instead.
+ *
+ * `mergedIntoId` outranks both: a merged source stays isDuplicate, so without
+ * it this still labels a completed merge as an available one.
  */
-function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean) {
+function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean, mergedIntoId?: string) {
   if (row.status === "candidate") return `前往候選點 ${row.candidateId ?? ""}`;
   if (row.status === "archived") return "已封存";
+  if (mergedIntoId) return `已合併至 ${mergedIntoId}`;
   if (row.isDuplicate) return canMerge ? "合併重複（保留目標物件）" : "無合併權限";
   if (row.hardRuleFailures.length) return "封存（硬規則未過）";
   return "轉為候選點";

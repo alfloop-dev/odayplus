@@ -163,6 +163,49 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await api.dispose();
   });
 
+  test("a merged listing retires both merge entry points", async ({ page }) => {
+    // A merged source keeps isDuplicate and status "duplicate", so nothing but
+    // mergedIntoId distinguishes it from a merge-eligible row. Leaving either
+    // entry point live lets a second click mint a new idempotency key, which
+    // bypasses the replay cache — the server now refuses it, and the console
+    // must not offer it in the first place.
+    await openRadarAsExpansionManager(page);
+
+    await page.getByTestId("merge-L-2029").click();
+    await page.getByTestId("listing-merge-reason").fill(OPERATOR_REASON);
+    await page.getByTestId("listing-merge-risk-ack").click();
+    await page.getByTestId("listing-merge-submit").click();
+    await expect(page.getByTestId("listing-merge-dialog")).toBeHidden();
+    await expect(page.getByTestId("listing-row-L-2029")).toContainText("merged into L-2025");
+
+    // Entry point 1: the row action is gone.
+    await expect(page.getByTestId("merge-L-2029")).toHaveCount(0);
+
+    // Entry point 2: the detail primary reads as terminal, not as an offer.
+    await page.getByTestId("listing-row-L-2029").click();
+    const detailPrimary = page.getByTestId("listing-detail-primary");
+    await expect(detailPrimary).toContainText("已合併至 L-2025");
+    await expect(detailPrimary).not.toContainText("合併重複");
+    await expect(detailPrimary).toBeDisabled();
+    // Terminal is not a permission problem, so the denial note must not appear.
+    await expect(page.getByTestId("listing-detail-merge-denied")).toHaveCount(0);
+
+    // Forcing the click past the disabled state still writes nothing.
+    await detailPrimary.click({ force: true });
+    await expect(page.getByTestId("listing-merge-dialog")).toHaveCount(0);
+
+    // Exactly one merge landed, and it kept the first reason.
+    const api = await apiContext();
+    const body = await (await api.get("/api/v1/operator/network-listings")).json();
+    const mergeEvents = body.auditEvents.filter(
+      (event: { action: string }) => event.action === "listing.merge",
+    );
+    expect(mergeEvents).toHaveLength(1);
+    const source = body.listings.find((item: { id: string }) => item.id === "L-2029");
+    expect(source.mergeReason).toBe(OPERATOR_REASON);
+    await api.dispose();
+  });
+
   test("a role without listing:UPDATE is offered no merge entry point at all", async ({ page }) => {
     // ops-lead maps to operations_manager, which holds no listing grant, so the
     // console must not offer a merge that the server would refuse — from EITHER
@@ -251,6 +294,14 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await expect(page.getByTestId("listing-merge-close")).toBeDisabled();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
+
+    // Click the backdrop overlay at a coordinate outside the dialog panel to test it cannot be dismissed by backdrop click
+    await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });
+    await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
+
+    // Verify no optimistic UI updates occurred and only the single in-flight request was sent
+    await expect(page.getByTestId("listing-row-L-2029")).not.toContainText("merged into");
+    expect(sentKeys).toHaveLength(1);
 
     release?.();
     await expect(page.getByTestId("listing-merge-error")).toBeVisible();

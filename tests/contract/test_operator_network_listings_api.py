@@ -119,6 +119,64 @@ def test_merge_l2029_into_l2025_retains_source_evidence() -> None:
     assert body["auditEvent"]["correlationId"] == "corr-r4-005-merge"
 
 
+def _merge_l2029(client: TestClient, *, idempotency_key: str, reason: str):
+    return client.post(
+        "/api/v1/operator/network-listings/listings/L-2029/merge",
+        headers={**NETWORK_HEADERS, "idempotency-key": idempotency_key},
+        json={
+            "actorRoleId": "expansionManager",
+            "actorName": "王若寧",
+            "targetListingId": "L-2025",
+            "reason": reason,
+            "riskSummary": "Merging marks L-2029 a duplicate of L-2025.",
+            "riskAcknowledged": True,
+        },
+    )
+
+
+def test_merge_is_terminal_and_rejects_a_second_request_for_the_same_source() -> None:
+    """A merged source is terminal: a NEW request must not merge it again.
+
+    Regression test for the round-5 finding — a second click minted a fresh
+    idempotency key, so the write bypassed the replay cache, appended a second
+    listing.merge audit event, and overwrote the first merge's reason.
+    """
+    client = TestClient(create_app())
+
+    first = _merge_l2029(client, idempotency_key="idem-merge-1", reason="FIRST reason")
+    assert first.status_code == 200, first.text
+
+    second = _merge_l2029(client, idempotency_key="idem-merge-2", reason="SECOND reason")
+    assert second.status_code == 409, second.text
+    assert "already merged into L-2025" in second.json()["detail"]
+
+    snapshot = client.get("/api/v1/operator/network-listings", headers=NETWORK_HEADERS).json()
+    merge_events = [event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"]
+    assert len(merge_events) == 1
+    assert merge_events[0]["metadata"]["reason"] == "FIRST reason"
+
+    source = next(item for item in snapshot["listings"] if item["id"] == "L-2029")
+    assert source["mergedIntoId"] == "L-2025"
+    # The rejected request left the first merge's reason intact.
+    assert source["mergeReason"] == "FIRST reason"
+
+
+def test_merge_replay_of_the_same_idempotency_key_still_returns_the_cached_result() -> None:
+    """Terminal-state rejection must not break idempotent retry of one request."""
+    client = TestClient(create_app())
+
+    first = _merge_l2029(client, idempotency_key="idem-merge-replay", reason="Verified duplicate.")
+    assert first.status_code == 200, first.text
+
+    replay = _merge_l2029(client, idempotency_key="idem-merge-replay", reason="Verified duplicate.")
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["source"] == first.json()["source"]
+
+    snapshot = client.get("/api/v1/operator/network-listings", headers=NETWORK_HEADERS).json()
+    merge_events = [event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"]
+    assert len(merge_events) == 1
+
+
 def test_archive_l2030_requires_reason_and_retains_hard_rule_evidence() -> None:
     client = TestClient(create_app())
 

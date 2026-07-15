@@ -484,6 +484,15 @@ class NetworkListingService:
                 "sourceEvidence": listing.get("sourceEvidence"),
                 "fitScore": listing.get("fitScore"),
                 "firstSeenAt": listing.get("firstSeenAt"),
+                # The domain Listing carries only `status`, which cannot tell an
+                # already-merged duplicate from a merge-eligible one. Without
+                # these, a restart drops the terminal marker and merge_listing
+                # would accept a second request for the same source.
+                "duplicateOfId": listing.get("duplicateOfId"),
+                "mergedIntoId": listing.get("mergedIntoId"),
+                "mergedAt": listing.get("mergedAt"),
+                "mergeReason": listing.get("mergeReason"),
+                "mergedSourceListingIds": listing.get("mergedSourceListingIds"),
             }
             self._save_listing_metadata(listing_id, meta)
 
@@ -706,6 +715,15 @@ class NetworkListingService:
         target = self._listing(target_listing_id)
         if source_listing_id == target_listing_id:
             raise NetworkListingConflict("source and target listing must be different")
+        # Merge is terminal for the source. Replaying the SAME idempotency key is
+        # served from the cache above; reaching here with an already-merged source
+        # means a genuinely new request, which would append a second listing.merge
+        # audit event and overwrite the first merge's reason.
+        merged_into = source.get("mergedIntoId")
+        if merged_into:
+            raise NetworkListingConflict(
+                f"{source_listing_id} is already merged into {merged_into} and cannot be merged again"
+            )
 
         source_before_status = source.get("status")
         target_before_evidence = list(target.get("sourceEvidence", []))

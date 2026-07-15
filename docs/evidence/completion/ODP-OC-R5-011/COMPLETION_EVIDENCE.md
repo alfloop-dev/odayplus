@@ -533,3 +533,132 @@ The `IntakeDialogShell` refactor is behaviour-preserving: the intake dialogs'
 | `git diff --check origin/dev...HEAD` | clean |
 
 The governance failure of §9.5 is unchanged and still not from this branch.
+
+## 11. Review round 5 — merge was not terminal
+
+Codex rejected PR #300 with one P1 finding. **It was real, and it was worse than
+reported**: the same defect also existed below the layer the finding described.
+
+### 11.1 The finding, reproduced before fixing
+
+After a successful merge, both merge entry points stayed live. `ListingRadarPanel`
+row `canMerge` checked only id/target/permission, and `detailPrimaryLabel` labelled
+any duplicate as mergeable; neither consulted `mergedIntoId`. A second click minted
+a **new** idempotency key, so it bypassed the replay cache, and `merge_listing`
+accepted it.
+
+Reproduced on this branch before any change (TestClient, matching Codex's proof):
+
+```
+first merge: 200
+second merge (different key): 200
+listing.merge audit events: 2
+source mergeReason: SECOND reason
+```
+
+The audit trail gained a phantom second merge and the first merge's reason — the
+operator's own words, on a high-impact write — was silently overwritten.
+
+### 11.2 A second, deeper hole the finding did not name
+
+Fixing only the in-memory check would have left the defect reachable. The durable
+listing metadata (`_sync_listing_to_repo`) persisted `heatZoneId`, hard rules,
+evidence, fitScore and firstSeenAt — **but not `mergedIntoId`**. The domain
+`Listing` carries only `status`, and a merged source and a merge-eligible
+duplicate are *both* `"duplicate"`, so status cannot carry terminality.
+
+Proven against the durable SQLite bundle, with the UI/service check already in
+place:
+
+```
+first merge: 200
+after restart -> status: duplicate | mergedIntoId: None
+second merge after restart: 200
+```
+
+The terminal marker did not survive a restart, so the double-merge came straight
+back. `duplicateOfId`, `mergedAt`, `mergeReason` and `mergedSourceListingIds` were
+lost the same way. All are now persisted; after the fix the restarted process
+returns `mergedIntoId: L-2025` and refuses the second merge with 409.
+
+### 11.3 The fix
+
+| Layer | Change |
+|---|---|
+| Service (`modules/opsboard/application/network_listings.py`) | `merge_listing` raises `NetworkListingConflict` (→ **409**) when `source.mergedIntoId` is set. Placed **after** the idempotency cache lookup, so replaying one request still returns its cached 200 — only a genuinely new request is refused. |
+| Durability (same file) | Merge fields added to the persisted listing metadata, so terminal state is restart-safe. |
+| UI (`ListingRadarPanel.tsx`) | Row `canMerge` requires `!listing?.mergedIntoId`. Detail primary reads 「已合併至 L-2025」, is disabled, and its handler returns early. Terminal outranks permission: `detailMergeDenied` now excludes merged listings, so the denial note never miscasts a completed merge as a missing grant. |
+
+Server-side rejection and UI retirement are both present deliberately: the UI
+stops offering the action, and the server refuses it regardless of caller.
+
+### 11.4 Tests that fail without the fix
+
+| Test | Asserts |
+|---|---|
+| `test_merge_is_terminal_and_rejects_a_second_request_for_the_same_source` (contract) | Second merge with a different key → **409**; exactly **one** `listing.merge` audit event; `mergeReason` still the first reason |
+| `test_merge_replay_of_the_same_idempotency_key_still_returns_the_cached_result` (contract) | The terminal check did not break idempotent retry: same key replays → 200, still one audit event |
+| `test_merge_terminal_state_survives_restart` (integration) | After a real process restart on durable SQLite: `mergedIntoId` present, second merge → 409, reason intact |
+| `a merged listing retires both merge entry points` (E2E) | Row button gone; detail primary reads 「已合併至 L-2025」 and is disabled; forced click opens no dialog; denial note absent; exactly one merge landed |
+
+The E2E was **verified to fail with the UI guard reverted** (`merge-L-2029`
+`toHaveCount(0)` → "unexpected value 1"), then to pass with it restored — it
+tests the requirement, not the fix. The round-4 lesson in §10.1 applied.
+
+### 11.5 Round-5 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check` (changed files) | All checks passed |
+| `npm run typecheck --workspace=@oday-plus/web` | pass |
+| `npm run build --workspace=@oday-plus/web` | pass |
+| `uv run pytest tests/contract tests/integration` | **486 passed** |
+| `npx playwright test tests/e2e/operator-network-listings.spec.ts` | **8 passed** |
+| `npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts` | **14 passed** |
+| `git diff --check` | clean |
+
+Not self-finalized. Handing back to Codex for independent re-review.
+
+## 12. Review round 6 — backdrop click and E2E robustness checks
+
+### 12.1 P1 — in-flight merge backdrop overlay click and Escape check
+
+**Finding:** The E2E test for in-flight merge must perform a real pointer/mouse mousedown or click on the backdrop overlay at a coordinate outside the dialog panel while the first merge request is held; assert the dialog remains visible and no write/result is hidden or advanced. Retain disabled close/cancel, Escape, retry, and identical idempotency-key assertions.
+
+**Fix:**
+- Added backdrop overlay click using coordinates `{ x: 10, y: 10 }` to click outside the centered dialog panel in the E2E test `an in-flight merge cannot be dismissed and retries reuse one idempotency key` (in `tests/e2e/operator-network-listings.spec.ts`).
+- Retained the existing disabled close/cancel, Escape, retry, and identical idempotency-key assertions in the same test block.
+- Asserted the dialog remains visible (`toBeVisible()`) after both the `Escape` key press and the backdrop overlay `click`.
+- Added assertion verifying that while the first route is still held and after the backdrop click, the listing row for L-2029 does not contain 'merged into' and only the single in-flight request was sent (`sentKeys` has length 1), proving no optimistic/result advance or duplicate write was hidden.
+
+**Exact Assertions and Observed Results:**
+1. **Button disabling assertions**:
+   - `await expect(page.getByTestId("listing-merge-submit")).toBeDisabled();` -> **Observed:** Submit button is disabled (busy state `true`).
+   - `await expect(page.getByTestId("listing-merge-cancel")).toBeDisabled();` -> **Observed:** Cancel button is disabled.
+   - `await expect(page.getByTestId("listing-merge-close")).toBeDisabled();` -> **Observed:** Close button is disabled.
+2. **Escape key dismissal prevention assertion**:
+   - `await page.keyboard.press("Escape");`
+   - `await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();` -> **Observed:** Escape key press is intercepted; the dialog remains visible and is not dismissed.
+3. **Backdrop overlay click dismissal prevention assertion**:
+   - `await page.getByTestId("listing-merge-dialog").click({ position: { x: 10, y: 10 } });`
+   - `await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();` -> **Observed:** Click on the backdrop overlay outside the dialog panel is processed while `busy` is true; the dialog remains visible.
+4. **Optimistic UI and single in-flight request assertions**:
+   - `await expect(page.getByTestId("listing-row-L-2029")).not.toContainText("merged into");` -> **Observed:** The listing row L-2029 does not prematurely display a merged status while in-flight.
+   - `expect(sentKeys).toHaveLength(1);` -> **Observed:** `sentKeys` contains exactly 1 entry, confirming no duplicate write occurred or was hidden while the request was in-flight.
+5. **Idempotency key consistency assertion**:
+   - `expect(sentKeys).toHaveLength(2);` (after release) and `expect(sentKeys[0]).toBe(sentKeys[1]);` -> **Observed:** The two consecutive merge attempts carry the exact same idempotency key.
+
+All assertions passed successfully.
+
+### 12.2 Round-6 verification (all run; output observed)
+
+| Command | Result |
+|---|---|
+| `uv run ruff check` | **All checks passed** |
+| `npm run typecheck --workspace=@oday-plus/web` | **pass** |
+| `npm run build --workspace=@oday-plus/web` | **pass** |
+| `uv run pytest tests/contract tests/integration` | **486 passed** |
+| `OPSBOARD_PORT=3379 ODP_API_PORT=8379 ODP_API_BASE_URL=http://127.0.0.1:8379 ODP_PLAYWRIGHT_REUSE_EXISTING=0 CI=1 uv run npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts` | **22 passed** (fresh ports, reuse disabled) |
+| `git diff --check` | **clean** |
+
+Not self-finalized. Handing back to Codex for independent re-review.

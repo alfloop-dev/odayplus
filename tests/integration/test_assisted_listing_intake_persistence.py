@@ -310,6 +310,61 @@ def test_durable_intake_repository_round_trips_through_public_contract(db_path) 
         reopened.engine.close()
 
 
+def _merge_l2029(client: TestClient, *, idempotency_key: str, reason: str):
+    return client.post(
+        "/api/v1/operator/network-listings/listings/L-2029/merge",
+        headers={**HEADERS, "x-operator-role": "expansion-manager", "Idempotency-Key": idempotency_key},
+        json={
+            "actorRoleId": "expansionManager",
+            "actorName": "王若寧",
+            "targetListingId": "L-2025",
+            "reason": reason,
+            "riskSummary": "Merging marks L-2029 a duplicate of L-2025.",
+            "riskAcknowledged": True,
+        },
+    )
+
+
+def test_merge_terminal_state_survives_restart(db_path) -> None:
+    """The merge terminal marker must be durable, not just in-process.
+
+    `status` alone cannot carry this: a merged source and a merge-eligible
+    duplicate are both "duplicate". Before `mergedIntoId` was persisted, a
+    restart dropped the marker and a second merge was accepted again.
+    """
+    bundle = _durable_bundle(db_path)
+    try:
+        client = TestClient(create_app(persistence=bundle))
+        first = _merge_l2029(client, idempotency_key="idem-merge-durable", reason="FIRST reason")
+        assert first.status_code == 200, first.text
+    finally:
+        bundle.engine.close()
+
+    # --- Simulated process restart ---
+    reopened = _durable_bundle(db_path)
+    try:
+        client2 = TestClient(create_app(persistence=reopened))
+
+        snapshot = client2.get("/api/v1/operator/network-listings", headers=HEADERS).json()
+        source = next(item for item in snapshot["listings"] if item["id"] == "L-2029")
+        assert source["mergedIntoId"] == "L-2025"
+        assert source["mergeReason"] == "FIRST reason"
+
+        second = _merge_l2029(client2, idempotency_key="idem-merge-durable-2", reason="SECOND reason")
+        assert second.status_code == 409, second.text
+        assert "already merged into L-2025" in second.json()["detail"]
+
+        # The rejected request wrote nothing. Audit events are in-process only,
+        # so their count says nothing across a restart; the durable merge reason
+        # is what proves the second request did not take effect.
+        after = client2.get("/api/v1/operator/network-listings", headers=HEADERS).json()
+        source_after = next(item for item in after["listings"] if item["id"] == "L-2029")
+        assert source_after["mergeReason"] == "FIRST reason"
+        assert source_after["mergedIntoId"] == "L-2025"
+    finally:
+        reopened.engine.close()
+
+
 def test_service_replays_idempotent_write_through_repository_after_restart(db_path) -> None:
     """A replayed write returns the cached response from durable state."""
     bundle = _durable_bundle(db_path)
