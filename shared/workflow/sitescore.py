@@ -173,28 +173,67 @@ class RealizedSite:
         }
 
 
-class CandidateSiteRealizationHook:
-    """Default hook: marks realized candidate sites and stores their forecast
-    baseline so downstream forecast realization (``sitescore_gap_ratio``) can be
-    computed against the approved SiteScore report."""
+class RealizedSiteStore(Protocol):
+    """Storage surface for realized candidate sites.
+
+    A durable implementation (SQLite document store) lets the realization hook
+    survive a process restart; the in-memory default keeps the previous
+    behaviour for unit tests and fast local boot.
+    """
+
+    def put(self, site: RealizedSite) -> None:
+        ...
+
+    def get(self, candidate_site_id: str) -> RealizedSite | None:
+        ...
+
+    def list_realized(self) -> list[RealizedSite]:
+        ...
+
+
+class InMemoryRealizedSiteStore:
+    """Default in-memory :class:`RealizedSiteStore` keyed by candidate site."""
 
     def __init__(self) -> None:
         self._realized: dict[str, RealizedSite] = {}
 
-    def __call__(self, event: SiteScoreRealizationEvent) -> None:
-        self._realized[event.candidate_site_id] = RealizedSite(
-            candidate_site_id=event.candidate_site_id,
-            decision_id=event.decision_id,
-            site_status=event.target_site_status,
-            baseline_trajectory=dict(event.baseline_trajectory),
-            realized_at=event.realized_at,
-        )
+    def put(self, site: RealizedSite) -> None:
+        self._realized[site.candidate_site_id] = site
 
     def get(self, candidate_site_id: str) -> RealizedSite | None:
         return self._realized.get(candidate_site_id)
 
     def list_realized(self) -> list[RealizedSite]:
         return list(self._realized.values())
+
+
+class CandidateSiteRealizationHook:
+    """Default hook: marks realized candidate sites and stores their forecast
+    baseline so downstream forecast realization (``sitescore_gap_ratio``) can be
+    computed against the approved SiteScore report.
+
+    The realized sites are held in a pluggable :class:`RealizedSiteStore`; inject
+    a durable store to make ``/sitescore/realized`` survive a restart."""
+
+    def __init__(self, store: RealizedSiteStore | None = None) -> None:
+        self._store: RealizedSiteStore = store or InMemoryRealizedSiteStore()
+
+    def __call__(self, event: SiteScoreRealizationEvent) -> None:
+        self._store.put(
+            RealizedSite(
+                candidate_site_id=event.candidate_site_id,
+                decision_id=event.decision_id,
+                site_status=event.target_site_status,
+                baseline_trajectory=dict(event.baseline_trajectory),
+                realized_at=event.realized_at,
+            )
+        )
+
+    def get(self, candidate_site_id: str) -> RealizedSite | None:
+        return self._store.get(candidate_site_id)
+
+    def list_realized(self) -> list[RealizedSite]:
+        return self._store.list_realized()
 
 
 @dataclass(frozen=True)
@@ -213,6 +252,52 @@ class SiteScoreDecisionOutcome:
         }
 
 
+class DecisionStore(Protocol):
+    """Storage surface for open decisions and their frozen source reports.
+
+    The report a decision was opened against is retained so an approval can be
+    realized against the exact inputs a human reviewed, even after a restart.
+    """
+
+    def save_decision(self, decision: SiteScoreDecision) -> None:
+        ...
+
+    def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
+        ...
+
+    def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
+        ...
+
+    def get_report(self, decision_id: str) -> SiteScoreReport | None:
+        ...
+
+    def list_decisions(self) -> list[SiteScoreDecision]:
+        ...
+
+
+class InMemoryDecisionStore:
+    """Default in-memory :class:`DecisionStore`."""
+
+    def __init__(self) -> None:
+        self._decisions: dict[str, SiteScoreDecision] = {}
+        self._reports: dict[str, SiteScoreReport] = {}
+
+    def save_decision(self, decision: SiteScoreDecision) -> None:
+        self._decisions[decision.decision_id] = decision
+
+    def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
+        self._reports[decision_id] = report
+
+    def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
+        return self._decisions.get(decision_id)
+
+    def get_report(self, decision_id: str) -> SiteScoreReport | None:
+        return self._reports.get(decision_id)
+
+    def list_decisions(self) -> list[SiteScoreDecision]:
+        return list(self._decisions.values())
+
+
 class SiteScoreDecisionWorkflow:
     """State machine for the SiteScore human-approval closed loop."""
 
@@ -222,12 +307,12 @@ class SiteScoreDecisionWorkflow:
         audit_log: InMemoryAuditLog | None = None,
         hooks: Iterable[RealizationHook] | None = None,
         policy_version: str = POLICY_VERSION,
+        store: DecisionStore | None = None,
     ) -> None:
         self.audit_log = audit_log or InMemoryAuditLog()
         self.hooks: list[RealizationHook] = list(hooks or ())
         self.policy_version = policy_version
-        self._decisions: dict[str, SiteScoreDecision] = {}
-        self._reports: dict[str, SiteScoreReport] = {}
+        self._store: DecisionStore = store or InMemoryDecisionStore()
 
     def register_hook(self, hook: RealizationHook) -> None:
         self.hooks.append(hook)
@@ -253,8 +338,8 @@ class SiteScoreDecisionWorkflow:
             created_by=created_by,
             created_at=now,
         )
-        self._decisions[decision.decision_id] = decision
-        self._reports[decision.decision_id] = report
+        self._store.save_report(decision.decision_id, report)
+        self._store.save_decision(decision)
         self._record_audit(
             decision,
             action="create",
@@ -343,10 +428,10 @@ class SiteScoreDecisionWorkflow:
         )
 
     def get(self, decision_id: str) -> SiteScoreDecision | None:
-        return self._decisions.get(decision_id)
+        return self._store.get_decision(decision_id)
 
     def list_decisions(self) -> list[SiteScoreDecision]:
-        return list(self._decisions.values())
+        return self._store.list_decisions()
 
     def _realize(
         self,
@@ -354,7 +439,11 @@ class SiteScoreDecisionWorkflow:
         *,
         actor: str,
     ) -> tuple[SiteScoreRealizationEvent, ...]:
-        report = self._reports[decision.decision_id]
+        report = self._store.get_report(decision.decision_id)
+        if report is None:
+            raise SiteScoreDecisionError(
+                f"no source report retained for decision {decision.decision_id}"
+            )
         event = SiteScoreRealizationEvent(
             decision_id=decision.decision_id,
             candidate_site_id=decision.candidate_site_id,
@@ -398,7 +487,7 @@ class SiteScoreDecisionWorkflow:
                 "history": (*decision.history, transition),
             }
         )
-        self._decisions[updated.decision_id] = updated
+        self._store.save_decision(updated)
         return updated
 
     def _record_audit(
@@ -434,7 +523,7 @@ class SiteScoreDecisionWorkflow:
         )
 
     def _require(self, decision_id: str) -> SiteScoreDecision:
-        decision = self._decisions.get(decision_id)
+        decision = self._store.get_decision(decision_id)
         if decision is None:
             raise SiteScoreDecisionError(f"unknown decision {decision_id}")
         return decision
@@ -451,10 +540,14 @@ __all__ = [
     "POLICY_VERSION",
     "CandidateSiteRealizationHook",
     "DecisionAction",
+    "DecisionStore",
     "DecisionStatus",
     "DecisionTransition",
+    "InMemoryDecisionStore",
+    "InMemoryRealizedSiteStore",
     "RealizationHook",
     "RealizedSite",
+    "RealizedSiteStore",
     "SiteScoreDecision",
     "SiteScoreDecisionError",
     "SiteScoreDecisionOutcome",
