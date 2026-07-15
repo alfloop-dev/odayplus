@@ -180,8 +180,7 @@ class SqliteDocumentStore:
 
     def count_in_group(self, collection: str, group_key: str) -> int:
         row = self._engine.query_one(
-            "SELECT COUNT(*) AS n FROM durable_documents "
-            "WHERE collection = ? AND group_key = ?",
+            "SELECT COUNT(*) AS n FROM durable_documents WHERE collection = ? AND group_key = ?",
             (collection, group_key),
         )
         return 0 if row is None else int(row["n"])

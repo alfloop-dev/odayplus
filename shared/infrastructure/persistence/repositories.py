@@ -178,9 +178,7 @@ class DurableAVMRepository:
                 self._REPORTS, report.report_id, report, group_key=report.case_id, seq=1
             )
         else:
-            self._store.replace_latest_in_group(
-                self._REPORTS, report, group_key=report.case_id
-            )
+            self._store.replace_latest_in_group(self._REPORTS, report, group_key=report.case_id)
         return report
 
     def latest_report(self, case_id: str) -> ValuationReport | None:
@@ -271,15 +269,11 @@ class DurableForecastOpsRepository:
     def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
         return self._store.list_by_group(self._PREDICTIONS, prediction_run_id)
 
-    def save_canonical_forecast(
-        self, forecast: CanonicalForecastOutput
-    ) -> CanonicalForecastOutput:
+    def save_canonical_forecast(self, forecast: CanonicalForecastOutput) -> CanonicalForecastOutput:
         self._store.put(self._CANONICAL_FORECASTS, forecast.forecast_output_id, forecast)
         return forecast
 
-    def get_canonical_forecast(
-        self, forecast_output_id: str
-    ) -> CanonicalForecastOutput | None:
+    def get_canonical_forecast(self, forecast_output_id: str) -> CanonicalForecastOutput | None:
         return self._store.get(self._CANONICAL_FORECASTS, forecast_output_id)
 
 
@@ -446,9 +440,7 @@ class DurableLabelRegistry:
         self._store = store
 
     def __call__(self, label: LabelRecord) -> None:
-        self._store.put(
-            self._C, label.intervention_id, label, group_key=label.store_id
-        )
+        self._store.put(self._C, label.intervention_id, label, group_key=label.store_id)
 
     def get(self, intervention_id: str) -> LabelRecord | None:
         return self._store.get(self._C, intervention_id)
@@ -528,9 +520,7 @@ class DurableLearningHubRepository:
     # -- validation runs --------------------------------------------------
 
     def save_validation_run(self, validation_run: ValidationRun) -> ValidationRun:
-        self._store.put(
-            self._VALIDATIONS, validation_run.validation_run_id, validation_run
-        )
+        self._store.put(self._VALIDATIONS, validation_run.validation_run_id, validation_run)
         return validation_run
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
@@ -544,9 +534,7 @@ class DurableLearningHubRepository:
     def _get_alias_pointer(self, model_name: str, alias: ModelAlias) -> str | None:
         return self._store.get(self._ALIASES, self._alias_doc_id(model_name, alias))
 
-    def _set_alias_pointer(
-        self, model_name: str, alias: ModelAlias, version: str | None
-    ) -> None:
+    def _set_alias_pointer(self, model_name: str, alias: ModelAlias, version: str | None) -> None:
         self._store.put(
             self._ALIASES,
             self._alias_doc_id(model_name, alias),
@@ -587,9 +575,7 @@ class DurableLearningHubRepository:
 
     # -- release decisions ------------------------------------------------
 
-    def save_release_decision(
-        self, decision: ReleaseDecisionRecord
-    ) -> ReleaseDecisionRecord:
+    def save_release_decision(self, decision: ReleaseDecisionRecord) -> ReleaseDecisionRecord:
         self._store.put(self._RELEASES, decision.release_id, decision)
         return decision
 
@@ -694,9 +680,7 @@ class DurableArtifactStore:
             uri=artifact_uri(digest),
             metadata=dict(metadata or {}),
         )
-        self._store.put(
-            self._RECORDS, record.artifact_id, record, group_key=model_name
-        )
+        self._store.put(self._RECORDS, record.artifact_id, record, group_key=model_name)
         return record
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
@@ -711,14 +695,8 @@ class DurableArtifactStore:
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
         return self._store.list_by_group(self._RECORDS, model_name)
 
-    def list_artifacts_for_version(
-        self, model_name: str, version: str
-    ) -> list[ArtifactRecord]:
-        return [
-            record
-            for record in self.list_artifacts(model_name)
-            if record.version == version
-        ]
+    def list_artifacts_for_version(self, model_name: str, version: str) -> list[ArtifactRecord]:
+        return [record for record in self.list_artifacts(model_name) if record.version == version]
 
     def verify(self, artifact_id: str) -> bool:
         record = self.get_artifact(artifact_id)

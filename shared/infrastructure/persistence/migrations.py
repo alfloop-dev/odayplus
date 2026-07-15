@@ -45,7 +45,9 @@ def _referenced_sql_filenames(migration_file: Path) -> set[str]:
     return names
 
 
-def _companion_sql_assets(migration_file: Path, migrations_root: Path) -> tuple[MigrationAsset, ...]:
+def _companion_sql_assets(
+    migration_file: Path, migrations_root: Path
+) -> tuple[MigrationAsset, ...]:
     referenced = _referenced_sql_filenames(migration_file)
     return tuple(
         _asset(path, "sql")

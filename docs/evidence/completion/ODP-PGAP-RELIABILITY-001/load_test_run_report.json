@@ -1,0 +1,13 @@
+{
+  "timestamp": 1784120727.8318086,
+  "concurrency": 20,
+  "volume": 100,
+  "success_count": 100,
+  "failure_count": 0,
+  "total_duration_seconds": 8.27651489712298,
+  "throughput_req_per_sec": 12.082380234071863,
+  "latency_p50_seconds": 1.620354755083099,
+  "latency_p95_seconds": 2.2286909869872034,
+  "latency_p99_seconds": 2.6302673551253974,
+  "passed": true
+}

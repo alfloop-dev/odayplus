@@ -46,9 +46,7 @@ class DurableAuditLog:
 
     def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
         if correlation_id is None:
-            rows = self._engine.query(
-                "SELECT * FROM durable_audit_events ORDER BY seq"
-            )
+            rows = self._engine.query("SELECT * FROM durable_audit_events ORDER BY seq")
         else:
             rows = self._engine.query(
                 "SELECT * FROM durable_audit_events WHERE correlation_id = ? ORDER BY seq",

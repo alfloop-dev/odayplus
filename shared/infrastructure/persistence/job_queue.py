@@ -54,9 +54,7 @@ class DurableJobQueue:
         return record, True
 
     def get(self, job_id: str) -> JobRecord | None:
-        row = self._engine.query_one(
-            "SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,)
-        )
+        row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
         return None if row is None else self._row_to_record(row)
 
     @staticmethod

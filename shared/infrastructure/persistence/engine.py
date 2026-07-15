@@ -17,9 +17,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-_MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
-)
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
 
 # Engine-neutral (SQLite-compatible) durable-persistence DDL, applied in order
 # at bootstrap. 000001 is the canonical PostgreSQL + PostGIS schema and is

@@ -134,7 +134,9 @@ def test_metric_catalog_covers_required_categories() -> None:
 
 def test_metric_operations_record_values() -> None:
     registry = default_registry()
-    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "202"})
+    registry.increment(
+        "api_request_count", labels={"service": "api", "route": "/jobs", "status": "202"}
+    )
     registry.observe("api_latency_ms", 12.5, labels={"service": "api", "route": "/jobs"})
     registry.set("data_freshness_hours", 3.0, labels={"source": "rent", "view": "v"})
     snapshot = registry.snapshot()
@@ -432,7 +434,9 @@ def test_dashboards_cover_five_audiences() -> None:
 
 def test_audit_dashboard_uses_audit_pipeline_metrics() -> None:
     dashboards = _load("dashboards.json")["dashboards"]
-    audit_dashboard = next(dashboard for dashboard in dashboards if dashboard["id"] == "audit-compliance")
+    audit_dashboard = next(
+        dashboard for dashboard in dashboards if dashboard["id"] == "audit-compliance"
+    )
     metrics = {panel["metric"] for panel in audit_dashboard["panels"]}
     assert {
         "audit_event_record_count",
