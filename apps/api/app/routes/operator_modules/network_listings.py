@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 
+from modules.external_data.security import contains_sensitive_submission_material
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingNotFound,
@@ -77,6 +78,20 @@ def create_network_listings_sub_router(
     require_write_permission_fn: Callable[..., Any],
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
+
+    def reject_sensitive_submission_material(body: IntakeSubmitPayload) -> None:
+        payload = body.model_dump()
+        payload.update(body.model_extra or {})
+        offenders = contains_sensitive_submission_material(payload)
+        if offenders:
+            fields = ", ".join(sorted(offenders))
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "assisted listing intake does not accept credentials, "
+                    f"cookies, bearer tokens, or private API endpoints: {fields}"
+                ),
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
@@ -190,6 +205,7 @@ def create_network_listings_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
+            reject_sensitive_submission_material(body)
             return service.submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
@@ -233,6 +249,7 @@ def create_network_listings_sub_router(
     def correct_intake(
         intake_id: str,
         body: IntakeCorrectPayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
@@ -244,6 +261,7 @@ def create_network_listings_sub_router(
                 risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
+                idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
         except NetworkListingNotFound as exc:
@@ -260,6 +278,7 @@ def create_network_listings_sub_router(
     def decide_intake(
         intake_id: str,
         body: IntakeDecidePayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
@@ -271,6 +290,7 @@ def create_network_listings_sub_router(
                 risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
+                idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
         except NetworkListingNotFound as exc:
@@ -310,6 +330,7 @@ def create_network_listings_sub_router(
     def promote_intake(
         intake_id: str,
         body: IntakePromotePayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
@@ -320,6 +341,7 @@ def create_network_listings_sub_router(
                 risk_acknowledged=body.riskAcknowledged,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
+                idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
         except NetworkListingNotFound as exc:

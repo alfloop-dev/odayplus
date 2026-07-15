@@ -122,7 +122,11 @@ def test_merge_l2029_into_l2025_retains_source_evidence() -> None:
 def _merge_l2029(client: TestClient, *, idempotency_key: str, reason: str):
     return client.post(
         "/api/v1/operator/network-listings/listings/L-2029/merge",
-        headers={**NETWORK_HEADERS, "idempotency-key": idempotency_key},
+        headers={
+            **NETWORK_HEADERS,
+            "idempotency-key": idempotency_key,
+            "x-correlation-id": f"corr-{idempotency_key}",
+        },
         json={
             "actorRoleId": "expansionManager",
             "actorName": "王若寧",
