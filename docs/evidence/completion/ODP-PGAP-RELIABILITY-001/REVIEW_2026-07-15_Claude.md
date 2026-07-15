@@ -164,9 +164,14 @@ lease timeout. Those are the behaviours AC2 actually names.
 - **R2-6 (AC6)**: the corrupt-backup honest-failure path is a real improvement. Measured RTO/RPO
   are still a local `shutil.copy` passing targets by ~7 orders of magnitude, and still don't
   execute the procedure in the existing `docs/runbooks/` files.
-- `test_provider_chaos_retry_and_quarantine` asserts on the process-global `default_registry()`
-  (`external_connector_failure_count == 1.0`), so it is order-dependent with any other test that
-  touches that counter. Use a fresh registry.
+- **The new `external_connector_failure_count` increment is unobservable in production.**
+  `PrimaryGeocodeProvider.__init__` does `self.metrics = metrics or default_registry()`, and
+  `default_registry()` (`shared/observability/metrics.py:243`) constructs a **fresh** registry on
+  every call rather than returning a singleton. Nothing wires a shared registry into the geocoder
+  (`provider_registry.py:202` only records the class as a string), so every provider instance
+  increments its own throwaway registry that is discarded with the instance. The counter is only
+  ever visible to `test_provider_chaos_retry_and_quarantine`, which injects its own registry. AC3's
+  quarantine signal therefore does not reach any real metrics surface.
 - Soak duration is 2.0s (was 1.0s). Still not a soak.
 - AC1 still covers API + queue + DB only; browser, batch, and solver remain absent.
 - Claimed artifacts `apps/worker/` and `docs/runbooks/` still have zero changes.
