@@ -441,7 +441,7 @@ class NetworkListingService:
         from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
-        
+
         cand_site = CandidateSite(
             candidate_site_id=d["id"],
             listing_id=d["listingId"],
@@ -462,7 +462,7 @@ class NetworkListingService:
             listing = self._listing(listing_id)
             lst_obj, addr_obj, key_obj = self._dict_to_listing(listing)
             self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
-            
+
             meta = {
                 "heatZoneId": listing.get("heatZoneId"),
                 "hardRuleFailures": listing.get("hardRuleFailures"),
@@ -483,7 +483,7 @@ class NetworkListingService:
             if candidate:
                 cand_obj = self._dict_to_candidate(candidate)
                 self._listing_repository.save_candidate(cand_obj)
-                
+
                 meta = {
                     "title": candidate.get("title"),
                     "score": candidate.get("score"),
@@ -1026,7 +1026,7 @@ class NetworkListingService:
                     "identity": key in IDENTITY_FIELDS,
                     "lowConfidence": False,
                 }
-            
+
             before_val = intake["parsedFields"][key].get("correctedValue") or intake["parsedFields"][key].get("normalizedValue")
             intake["parsedFields"][key]["correctedValue"] = val
             intake["parsedFields"][key]["correctionReason"] = reason
@@ -1179,7 +1179,7 @@ class NetworkListingService:
             before_after["stage"]["after"] = "READY"
             before_after["listings_count"] = {"before": len(self._state["listings"]) - 1, "after": len(self._state["listings"])}
             effect_summary = f"Created new listing {new_id} from intake {intake_id}."
-            
+
         elif action == "revise":
             target_id = intake["matchResult"].get("targetListingId")
             if not target_id:
@@ -1306,19 +1306,19 @@ class NetworkListingService:
         policy = resolve_source_policy(intake["originalUrl"])
         intake["stage"] = "RETRIEVING"
         retrieval = retrieve(intake["canonicalUrl"], policy=policy)
-        
+
         if retrieval.ok:
             intake["stage"] = "PARSING"
             intake["rawSnapshot"] = retrieval.raw
             intake["snapshotId"] = retrieval.snapshot_id
             intake["capturedAt"] = retrieval.captured_at
-            
+
             preserved_corrections = {
                 k: (v.get("correctedValue"), v.get("correctionReason"))
                 for k, v in intake["parsedFields"].items()
                 if v.get("correctedValue") is not None
             }
-            
+
             intake["parsedFields"] = parse_snapshot(retrieval)
             for k, (c_val, c_reason) in preserved_corrections.items():
                 if k in intake["parsedFields"]:
@@ -1346,7 +1346,7 @@ class NetworkListingService:
             if has_all_required:
                 intake["stage"] = "MATCHING"
                 fingerprint = content_fingerprint(effective_vals)
-                
+
                 match_res = match_listing(
                     values=effective_vals,
                     canonical_url=intake["canonicalUrl"],
@@ -1425,7 +1425,7 @@ class NetworkListingService:
             idempotency_key=f"promote-intake-{intake_id}",
             correlation_id=correlation_id,
         )
-        
+
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),

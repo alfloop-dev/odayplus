@@ -222,7 +222,7 @@ def test_timeout_contract_test() -> None:
         headers=HEADERS,
     )
     assert correct_resp.status_code == 200
-    
+
     # Retry - in tests retrieve will fail again since it's the timeout fixture,
     # but we verify it tries and user's corrections (rent: 48000) survive in parsedFields
     retry_resp = client.post(

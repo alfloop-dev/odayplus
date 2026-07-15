@@ -268,7 +268,7 @@ def test_timeout_contract_test() -> None:
         headers=HEADERS,
     )
     assert correct_resp.status_code == 200
-    
+
     # Retry - fails again due to timeout fixture, but checks that manual rent correction survives
     retry_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{data['id']}/retry",
