@@ -11,9 +11,15 @@
  *
  * `/` focuses the search box, matching the command palette's convention.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 export function SearchKeyboardNav({ count }: { count: number }) {
+  // Only true once the listener is actually attached. Rendered as a marker
+  // below so a test (or anything else) can wait for the shortcuts to be live
+  // rather than guess at hydration timing — a keypress before this point is
+  // silently dropped.
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
     if (count === 0) return undefined;
 
@@ -57,8 +63,12 @@ export function SearchKeyboardNav({ count }: { count: number }) {
     }
 
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    setReady(true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      setReady(false);
+    };
   }, [count]);
 
-  return null;
+  return ready ? <span data-testid="search-keyboard-ready" hidden /> : null;
 }

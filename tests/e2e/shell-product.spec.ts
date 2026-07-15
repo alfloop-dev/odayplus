@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { test, expect, type Browser, type Page } from "@playwright/test";
 
 /**
@@ -23,17 +25,28 @@ const OPS_ROLES =
   "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive";
 
 /**
- * A page acting as pm-audit. The principal keeps its full role set (so RBAC
- * still grants operator_console UPDATE) while X-Operator-Role narrows the
- * Operator Console identity — which is what per-role shell state is keyed on.
+ * A page acting as a brand-new operator user.
+ *
+ * Acknowledgement, preferences and settings are personal state keyed by
+ * subject, and playwright.config reuses a long-lived API server
+ * (reuseExistingServer). A fixed subject would therefore inherit the previous
+ * run's writes and the test would only pass on a cold backend — so each call
+ * mints a unique subject and starts from a genuinely clean personal state.
+ *
+ * The principal keeps its full role set so RBAC still grants operator_console
+ * UPDATE, while X-Operator-Role narrows the Operator Console identity that
+ * decides which rows are visible.
  */
-async function auditorPage(browser: Browser): Promise<Page> {
+async function freshOperatorPage(
+  browser: Browser,
+  operatorRole: "pm-audit" | "ops-lead" = "pm-audit",
+): Promise<Page> {
   const context = await browser.newContext({
     extraHTTPHeaders: {
-      "x-subject-id": "product-e2e-auditor",
+      "x-subject-id": `product-e2e-${operatorRole}-${randomUUID()}`,
       "x-roles": OPS_ROLES,
       "x-tenant-id": TENANT,
-      "x-operator-role": "pm-audit",
+      "x-operator-role": operatorRole,
     },
   });
   return context.newPage();
@@ -161,9 +174,10 @@ test("ODP-PGAP-SHELL-001 task deep link resolves a single task", async ({ page }
 test("ODP-PGAP-SHELL-001 notifications acknowledge durably with severity and source links", async ({
   browser,
 }) => {
-  // Inbox state is per-role, so this test acts as pm-audit: a parallel
-  // ops-lead test cannot acknowledge the row out from under it.
-  const page = await auditorPage(browser);
+  // Inbox state is personal, so this test acts as its own pm-audit user: no
+  // parallel test — and no previous run against the reused API server — can
+  // acknowledge the row out from under it.
+  const page = await freshOperatorPage(browser);
   await page.goto("/notifications");
   await expect(page.getByTestId("notifications-data-source")).toHaveAttribute("data-source", "api");
 
@@ -185,8 +199,9 @@ test("ODP-PGAP-SHELL-001 notifications acknowledge durably with severity and sou
 test("ODP-PGAP-SHELL-001 notification preferences persist as a server write", async ({
   browser,
 }) => {
-  // Preferences are per-role; pm-audit keeps this independent of ops-lead.
-  const page = await auditorPage(browser);
+  // Preferences are personal; a fresh subject keeps this independent of every
+  // other test and of previous runs against the reused API server.
+  const page = await freshOperatorPage(browser);
   await page.goto("/notifications");
 
   await page.getByTestId("preferences-severity-floor").selectOption("warning");
@@ -222,6 +237,9 @@ test("ODP-PGAP-SHELL-001 search returns authorized cross-domain results", async 
 test("ODP-PGAP-SHELL-001 search supports keyboard command navigation", async ({ page }) => {
   await page.goto("/search?q=");
   await expect(page.getByTestId("search-commands")).toBeVisible();
+  // The shortcuts are attached in an effect; a keypress before that is
+  // silently dropped, so wait for the listener rather than for hydration luck.
+  await expect(page.getByTestId("search-keyboard-ready")).toBeAttached();
 
   // ArrowDown from the query box enters the result list.
   await page.getByTestId("search-input").focus();
@@ -314,7 +332,10 @@ test("ODP-PGAP-SHELL-001 admin is forbidden for a non-admin role", async ({ brow
   await context.close();
 });
 
-test("ODP-PGAP-SHELL-001 settings persist as a governed server write", async ({ page }) => {
+test("ODP-PGAP-SHELL-001 settings persist as a governed server write", async ({ browser }) => {
+  // Settings are personal; a fresh user starts from the documented defaults so
+  // the change below is genuinely a change.
+  const page = await freshOperatorPage(browser);
   await page.goto("/settings");
   await expect(page.getByTestId("settings-data-source")).toHaveAttribute("data-source", "api");
 
@@ -325,6 +346,7 @@ test("ODP-PGAP-SHELL-001 settings persist as a governed server write", async ({ 
   await page.reload();
   await expect(page.getByTestId("settings-density")).toHaveValue("compact");
   await expect(page.getByTestId("settings-updated-by")).toBeVisible();
+  await page.context().close();
 });
 
 // ---------------------------------------------------------------------------

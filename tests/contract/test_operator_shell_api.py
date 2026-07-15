@@ -237,7 +237,12 @@ def test_notification_acknowledgement_is_durable_and_idempotent(client: TestClie
     assert after["items"][-1]["notificationId"] == notification_id
 
 
-def test_notification_acknowledgement_is_scoped_per_role(client: TestClient) -> None:
+def test_notification_acknowledgement_is_scoped_per_user(client: TestClient) -> None:
+    """An acknowledgement belongs to a person, not to their role.
+
+    If it were keyed by role, one ops-lead acknowledging a critical SLA alert
+    would silently clear it from every other ops-lead's inbox.
+    """
     inbox = client.get("/api/v1/operator/shell/notifications", headers=OPS_HEADERS).json()
     notification_id = inbox["items"][0]["notificationId"]
     client.post(
@@ -245,12 +250,22 @@ def test_notification_acknowledgement_is_scoped_per_role(client: TestClient) -> 
         headers=_write(OPS_HEADERS, "ack-scope"),
     )
 
-    # The auditor shares this notification but has not acknowledged it.
+    # A different role sharing the notification has not acknowledged it...
     auditor_inbox = client.get(
         "/api/v1/operator/shell/notifications", headers=AUDITOR_HEADERS
     ).json()
     same = [i for i in auditor_inbox["items"] if i["notificationId"] == notification_id]
     assert same and same[0]["acknowledged"] is False
+
+    # ...and neither has a colleague holding the *same* role.
+    colleague = {**OPS_HEADERS, "x-subject-id": "operator-ops-lead-colleague"}
+    colleague_inbox = client.get(
+        "/api/v1/operator/shell/notifications", headers=colleague
+    ).json()
+    mine = [i for i in colleague_inbox["items"] if i["notificationId"] == notification_id]
+    assert mine and mine[0]["acknowledged"] is False, (
+        "a colleague on the same role must not inherit someone else's acknowledgement"
+    )
 
 
 def test_notifications_filter_by_severity_and_ack_state(client: TestClient) -> None:
@@ -290,6 +305,13 @@ def test_notification_preferences_round_trip(client: TestClient) -> None:
     ).json()
     assert reread["isDefault"] is False
     assert reread["preferences"]["channels"]["email"] is False
+
+    # Preferences are personal: a colleague on the same role keeps the defaults.
+    colleague = {**OPS_HEADERS, "x-subject-id": "operator-ops-lead-colleague"}
+    theirs = client.get(
+        "/api/v1/operator/shell/notifications/preferences", headers=colleague
+    ).json()
+    assert theirs["isDefault"] is True
     # The inbox reports the live preferences alongside the rows.
     inbox = client.get("/api/v1/operator/shell/notifications", headers=OPS_HEADERS).json()
     assert inbox["preferences"]["severityFloor"] == "warning"
@@ -454,7 +476,9 @@ def test_settings_round_trip_and_validation(client: TestClient) -> None:
     assert rejected.status_code == 422
 
 
-def test_settings_are_scoped_per_role(client: TestClient) -> None:
+def test_settings_are_scoped_per_user(client: TestClient) -> None:
+    """Settings are personal: one operator's density choice must not rewrite a
+    colleague's, even on the same role."""
     client.put(
         "/api/v1/operator/shell/settings",
         headers=_write(OPS_HEADERS, "settings-scope"),
@@ -463,6 +487,11 @@ def test_settings_are_scoped_per_role(client: TestClient) -> None:
     auditor = client.get("/api/v1/operator/shell/settings", headers=AUDITOR_HEADERS).json()
     assert auditor["values"]["density"] == "comfortable"
     assert auditor["isDefault"] is True
+
+    colleague = {**OPS_HEADERS, "x-subject-id": "operator-ops-lead-colleague"}
+    same_role = client.get("/api/v1/operator/shell/settings", headers=colleague).json()
+    assert same_role["isDefault"] is True
+    assert same_role["values"]["density"] == "comfortable"
 
 
 # ----------------------------------------------------------------------

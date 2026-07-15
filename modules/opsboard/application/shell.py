@@ -4,7 +4,7 @@ Owns: the durable cross-module shell state that the product shell needs but no
 single domain module owns —
 
 - task centre assignment + SLA state
-- notification inbox state (severity, acknowledgement) and per-role preferences
+- notification inbox state (severity, acknowledgement) and delivery preferences
 - role/workspace administration grants
 - workspace settings
 - franchisee acknowledgement + field reports
@@ -178,8 +178,7 @@ TONE_SEVERITY: dict[str, str] = {
 #: additionally enforces RBAC (operator_console UPDATE) fail-closed.
 ADMIN_ROLE_IDS: frozenset[str] = frozenset({"ops-lead"})
 
-#: Default notification delivery preferences applied to a role that has never
-#: saved any.
+#: Default delivery preferences applied to a user who has never saved any.
 DEFAULT_PREFERENCES: dict[str, Any] = {
     "channels": {"inApp": True, "email": True, "push": False},
     "severityFloor": "info",
@@ -421,6 +420,21 @@ class ShellService:
 
     def _is_admin(self, role: dict[str, Any]) -> bool:
         return str(role["id"]) in ADMIN_ROLE_IDS
+
+    def _actor_key(self, *, subject_id: str | None, role: dict[str, Any]) -> str:
+        """Identify the *person* a piece of personal state belongs to.
+
+        Notification acknowledgement, delivery preferences and settings are
+        personal, not role-wide: if one ops-lead acknowledges a critical SLA
+        alert it must not vanish from another ops-lead's inbox, and one
+        operator's digest choice must not silently rewrite a colleague's.
+        Role stays the filter for *which* rows you can see; this decides whose
+        state is being read or written.
+
+        Falls back to the role id only when no subject is available (the legacy
+        header-trust path), which keeps behaviour defined rather than crashing.
+        """
+        return (subject_id or "").strip() or str(role["id"])
 
     # ------------------------------------------------------------------
     # Home
@@ -732,10 +746,11 @@ class ShellService:
     ) -> list[dict[str, Any]]:
         envelope = self._state.get_today(role_id=role["id"], subject_id=subject_id)
         states = self._records_by_id(NOTIFICATION_STATES, "stateId")
+        actor = self._actor_key(subject_id=subject_id, role=role)
         rows: list[dict[str, Any]] = []
         for item in envelope["notifications"]:
             notification_id = str(item.get("id") or item.get("title"))
-            state_id = f"{role['id']}:{notification_id}"
+            state_id = f"{actor}:{notification_id}"
             state = states.get(state_id, {})
             severity = TONE_SEVERITY.get(str(item.get("tone")), "info")
             rows.append(
@@ -793,7 +808,11 @@ class ShellService:
                     for level in SEVERITY_ORDER
                 }
             },
-            "preferences": self.get_notification_preferences(role_id=role["id"])["preferences"],
+            # subject_id must be threaded through: preferences are personal, so
+            # resolving them by role alone would show one operator another's.
+            "preferences": self.get_notification_preferences(
+                role_id=role["id"], subject_id=subject_id
+            )["preferences"],
         }
 
     def acknowledge_notification(
@@ -806,7 +825,7 @@ class ShellService:
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Durably acknowledge one notification for the acting role."""
+        """Durably acknowledge one notification for the acting user."""
         replay = self._replay("acknowledge_notification", idempotency_key)
         if replay is not None:
             return replay
@@ -819,10 +838,12 @@ class ShellService:
         if notification_id not in rows:
             raise ShellNotFound(f"notification {notification_id} not found")
 
-        state_id = f"{role['id']}:{notification_id}"
+        actor = self._actor_key(subject_id=subject_id, role=role)
+        state_id = f"{actor}:{notification_id}"
         record = {
             "stateId": state_id,
             "notificationId": notification_id,
+            "subjectId": actor,
             "roleId": str(role["id"]),
             "acknowledged": True,
             "acknowledgedAt": _now_iso(),
@@ -863,9 +884,10 @@ class ShellService:
         subject_id: str | None = None,
         system_roles: str | None = None,
     ) -> dict[str, Any]:
-        """Return the acting role's durable delivery preferences."""
+        """Return the acting user's durable delivery preferences."""
         role = self._role(role_id=role_id, subject_id=subject_id, system_roles=system_roles)
-        stored = self._records_by_id(NOTIFICATION_PREFERENCES, "roleId").get(str(role["id"]))
+        actor = self._actor_key(subject_id=subject_id, role=role)
+        stored = self._records_by_id(NOTIFICATION_PREFERENCES, "subjectId").get(actor)
         preferences = _copy(stored["preferences"]) if stored else _copy(DEFAULT_PREFERENCES)
         return {
             "roleId": str(role["id"]),
@@ -884,7 +906,7 @@ class ShellService:
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Durably persist the acting role's notification preferences."""
+        """Durably persist the acting user's notification preferences."""
         replay = self._replay("update_notification_preferences", idempotency_key)
         if replay is not None:
             return replay
@@ -902,14 +924,16 @@ class ShellService:
             "severityFloor": floor,
             "digest": str(preferences.get("digest", DEFAULT_PREFERENCES["digest"])),
         }
+        actor = self._actor_key(subject_id=subject_id, role=role)
         record = {
+            "subjectId": actor,
             "roleId": str(role["id"]),
             "preferences": resolved,
             "updatedAt": _now_iso(),
-            "updatedBy": subject_id or str(role["id"]),
+            "updatedBy": actor,
             "correlationId": correlation_id,
         }
-        self._repo.save_record(NOTIFICATION_PREFERENCES, str(role["id"]), record)
+        self._repo.save_record(NOTIFICATION_PREFERENCES, actor, record)
 
         audit = self._append_audit(
             category="shell.notification",
@@ -1151,7 +1175,8 @@ class ShellService:
     ) -> dict[str, Any]:
         """Return workspace settings for the acting role."""
         role = self._role(role_id=role_id, subject_id=subject_id, system_roles=system_roles)
-        stored = self._records_by_id(SETTINGS, "scope").get(str(role["id"]))
+        actor = self._actor_key(subject_id=subject_id, role=role)
+        stored = self._records_by_id(SETTINGS, "scope").get(actor)
         values = (
             _copy(stored["values"])
             if stored
@@ -1164,7 +1189,7 @@ class ShellService:
                 "role": {"id": role["id"], "label": role["label"]},
                 "source": "operator-shell-settings",
             },
-            "scope": str(role["id"]),
+            "scope": actor,
             "values": values,
             "isDefault": stored is None,
             "updatedAt": stored.get("updatedAt") if stored else None,
@@ -1208,14 +1233,15 @@ class ShellService:
 
         current = self.get_settings(role_id=role["id"], subject_id=subject_id)["values"]
         merged = {**current, **resolved}
+        actor = self._actor_key(subject_id=subject_id, role=role)
         record = {
-            "scope": str(role["id"]),
+            "scope": actor,
             "values": merged,
             "updatedAt": _now_iso(),
-            "updatedBy": subject_id or str(role["id"]),
+            "updatedBy": actor,
             "correlationId": correlation_id,
         }
-        self._repo.save_record(SETTINGS, str(role["id"]), record)
+        self._repo.save_record(SETTINGS, actor, record)
 
         audit = self._append_audit(
             category="shell.settings",
@@ -1232,7 +1258,7 @@ class ShellService:
             },
         )
         response = {
-            "scope": str(role["id"]),
+            "scope": actor,
             "values": merged,
             "auditEvent": audit,
             "correlationId": correlation_id,
