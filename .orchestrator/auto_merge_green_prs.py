@@ -18,7 +18,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add repo root to path to allow importing scripts
@@ -40,7 +40,17 @@ def _gh(*args: str, timeout: int = 60) -> tuple[int, str, str]:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def check_pr_merge_eligibility_gh_runner(args: list[str], repo: str | None = None) -> str:
+    cmd_args = list(args)
+    if repo and "--repo" not in cmd_args:
+        cmd_args += ["--repo", repo]
+    rc, out, err = _gh(*cmd_args)
+    if rc != 0:
+        raise RuntimeError(f"GitHub CLI command failed: {' '.join(cmd_args)}\nStderr: {err}")
+    return out
 
 
 def open_task_prs() -> list[dict]:
@@ -62,11 +72,11 @@ def open_task_prs() -> list[dict]:
     ]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--max", type=int, default=5, help="max merges per run")
-    args = ap.parse_args()
+    args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     prs = open_task_prs()
     if not prs:
@@ -76,6 +86,19 @@ def main() -> int:
     status_path = ROOT / "ai-status.json"
     config_path = ROOT / ".orchestrator/config.json"
     policy_path = ROOT / ".github/branch-protection/policy.json"
+
+    if check_eligibility_func is None:
+        def default_check_eligibility(n, head, REPO, status_path, config_path, policy_path):
+            return check_merge_eligibility(
+                pr_number=n,
+                branch_name=head,
+                repo_slug=REPO,
+                status_path=status_path,
+                config_path=config_path,
+                policy_path=policy_path,
+                gh_runner=check_pr_merge_eligibility_gh_runner,
+            )
+        check_eligibility_func = default_check_eligibility
 
     merged = 0
     for p in sorted(prs, key=lambda x: x["number"]):
@@ -89,13 +112,13 @@ def main() -> int:
 
         # Run the fail-closed merge eligibility check
         try:
-            eligible, errors = check_merge_eligibility(
-                pr_number=n,
-                branch_name=head,
-                repo_slug=REPO,
-                status_path=status_path,
-                config_path=config_path,
-                policy_path=policy_path,
+            eligible, errors = check_eligibility_func(
+                n,
+                head,
+                REPO,
+                status_path,
+                config_path,
+                policy_path,
             )
         except Exception as exc:
             eligible = False
