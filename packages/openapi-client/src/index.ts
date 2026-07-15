@@ -3,10 +3,13 @@
  *
  * Hand-maintained typed client for the ODay Plus FastAPI backend
  * (apps/api/oday_api). It has no runtime dependencies beyond the platform
- * `fetch`, so it can run inside Next.js server components, the Playwright
- * test runner, or plain Node. Browser bundles MUST NOT import it directly —
- * the web app calls it only from server components (see
- * apps/web/src/lib/api).
+ * `fetch`, so it runs inside Next.js server components, client components,
+ * the Playwright test runner, or plain Node.
+ *
+ * Client-component use (ODP-OC-R5-011): pass identity through
+ * `defaultHeaders` and a same-origin `baseUrl` so the request goes through
+ * the web app's /api/v1 rewrite. Never embed a credential here — the console
+ * derives its headers from the active operator role.
  */
 
 export type HealthResponse = {
@@ -429,7 +432,11 @@ export class OdpApiClient {
 
   constructor(options: OdpApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    // `fetch` must stay bound to its global. Storing a bare reference and
+    // calling it as a method (this.fetchImpl(...)) throws "Illegal invocation"
+    // in browsers, where the implementation requires a Window/WorkerGlobalScope
+    // receiver — the request never leaves the page.
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.defaultHeaders = options.defaultHeaders ?? {};
     if (typeof this.fetchImpl !== "function") {

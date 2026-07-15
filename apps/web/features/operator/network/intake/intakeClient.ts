@@ -40,13 +40,23 @@ export type IntakeApiError = {
 
 const ROLE_DENIED = "此角色無權執行本操作。請改由具備權限的角色（展店主管／選址審核／資料管理員）操作。";
 
+/**
+ * The intake UI runs in the browser, where the backend is reached same-origin
+ * through the Next rewrite of `/api/v1/:path*` (apps/web/next.config.mjs) —
+ * the client's paths already carry that prefix. An explicit
+ * NEXT_PUBLIC_ODP_API_BASE_URL still wins when the API is served from another
+ * origin. Note `createOdpApiClient` treats an empty baseUrl as "unconfigured"
+ * and returns null, so same-origin must be passed as the concrete origin.
+ */
 export function buildIntakeClient(roleId?: string | null): OdpApiClient | null {
+  const configured = process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
+  const baseUrl =
+    configured || (typeof window !== "undefined" ? window.location.origin : undefined);
+  if (!baseUrl) return null;
+
   return createOdpApiClient({
+    baseUrl,
     defaultHeaders: operatorSecurityHeaders(roleId),
-    env: {
-      ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
-      NEXT_PUBLIC_ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
-    },
   });
 }
 
@@ -138,6 +148,13 @@ async function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
   }
 }
 
+/**
+ * Every write carries a correlation ID. The server persists whatever arrives in
+ * X-Correlation-Id onto the intake record, and that value is what the detail
+ * dialog shows as source evidence and what an error surfaces for a governance
+ * ticket. Omitting it leaves the record's correlationId null, so it is
+ * generated here rather than left to the caller to remember.
+ */
 export const intakeApi = {
   list(client: OdpApiClient, heatZoneId?: string): Promise<IntakeResult<AssistedIntake[]>> {
     return guard(() => client.listIntakes({ selectedHeatZoneId: heatZoneId }));
@@ -157,7 +174,12 @@ export const intakeApi = {
     payload: IntakeSubmitPayload,
     options: { idempotencyKey: string; correlationId?: string },
   ): Promise<IntakeResult<AssistedIntake>> {
-    return guard(() => client.submitIntake(payload, options));
+    return guard(() =>
+      client.submitIntake(payload, {
+        idempotencyKey: options.idempotencyKey,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
   },
 
   correct(
@@ -165,7 +187,9 @@ export const intakeApi = {
     intakeId: string,
     payload: IntakeCorrectPayload,
   ): Promise<IntakeResult<AssistedIntake>> {
-    return guard(() => client.correctIntake(intakeId, payload));
+    return guard(() =>
+      client.correctIntake(intakeId, payload, { correlationId: newCorrelationId() }),
+    );
   },
 
   decide(
@@ -173,7 +197,9 @@ export const intakeApi = {
     intakeId: string,
     payload: IntakeDecidePayload,
   ): Promise<IntakeResult<AssistedIntake>> {
-    return guard(() => client.decideIntake(intakeId, payload));
+    return guard(() =>
+      client.decideIntake(intakeId, payload, { correlationId: newCorrelationId() }),
+    );
   },
 
   retry(
@@ -181,7 +207,9 @@ export const intakeApi = {
     intakeId: string,
     actorRoleId: string,
   ): Promise<IntakeResult<AssistedIntake>> {
-    return guard(() => client.retryIntake(intakeId, { actorRoleId }));
+    return guard(() =>
+      client.retryIntake(intakeId, { actorRoleId }, { correlationId: newCorrelationId() }),
+    );
   },
 
   promote(
@@ -190,17 +218,25 @@ export const intakeApi = {
     actorRoleId: string,
     reason: string,
   ): Promise<IntakeResult<ConvertListingResponse>> {
-    return guard(() => client.promoteIntake(intakeId, { actorRoleId, reason }));
+    return guard(() =>
+      client.promoteIntake(intakeId, { actorRoleId, reason }, { correlationId: newCorrelationId() }),
+    );
   },
 };
 
+export function newCorrelationId(): string {
+  return `corr-${randomToken()}`;
+}
+
 /** Stable per-attempt key so a retry of the *same* submission dedups server-side. */
 export function newIdempotencyKey(url: string): string {
-  const random =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2);
-  return `intake-${canonicalKeyPart(url)}-${random}`;
+  return `intake-${canonicalKeyPart(url)}-${randomToken()}`;
+}
+
+function randomToken(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
 }
 
 function canonicalKeyPart(url: string): string {
