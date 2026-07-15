@@ -11,7 +11,7 @@ import supervisor
 
 SOURCE_DOCS = [
     "docs_archive/00_source_zips/operator_console/LATEST.json",
-    "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/extracted/Oday Plus Operator Console.dc.html",
+    "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/extracted/Oday Plus Operator Console.dc.html",
 ]
 
 
@@ -27,8 +27,8 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             "depends_on": [],
             "artifacts": ["apps/web/example.tsx"],
             "source_docs": SOURCE_DOCS,
-            "acceptance": ["The implementation matches package 6."],
-            "verification": ["unzip -t package-6.zip"],
+            "acceptance": ["The implementation matches package 7 / R5."],
+            "verification": ["unzip -t package-7.zip"],
         }
 
     def test_canonical_task_brief_lists_source_docs(self) -> None:
@@ -48,9 +48,9 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             for source_doc in SOURCE_DOCS:
                 self.assertIn(f"- {source_doc}", text)
             self.assertIn("## Acceptance", text)
-            self.assertIn("- The implementation matches package 6.", text)
+            self.assertIn("- The implementation matches package 7 / R5.", text)
             self.assertIn("## Verification", text)
-            self.assertIn("- `unzip -t package-6.zip`", text)
+            self.assertIn("- `unzip -t package-7.zip`", text)
 
     def test_fallback_worker_brief_lists_source_docs(self) -> None:
         with mock.patch.object(supervisor, "load_status", return_value={"tasks": [self._task()]}):
@@ -59,8 +59,8 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
         self.assertIn("## Source Documents", text)
         for source_doc in SOURCE_DOCS:
             self.assertIn(f"- {source_doc}", text)
-        self.assertIn("- The implementation matches package 6.", text)
-        self.assertIn("- `unzip -t package-6.zip`", text)
+        self.assertIn("- The implementation matches package 7 / R5.", text)
+        self.assertIn("- `unzip -t package-7.zip`", text)
 
 
 if __name__ == "__main__":
