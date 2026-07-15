@@ -110,6 +110,10 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("forecastops", Action.VIEW, Action.CREATE, Action.EXECUTE)
         | _grant("intervention", Action.VIEW, Action.CREATE, Action.APPROVE)
         | _grant("audit", Action.VIEW)
+        # Read-only into the franchisee portal so operations can support a
+        # franchisee without a second account; no CREATE, so an operator
+        # cannot file an acknowledgement on a franchisee's behalf.
+        | _grant("franchisee_portal", Action.VIEW)
     ),
     Role.REGIONAL_SUPERVISOR: frozenset(
         _grant("operator_console", Action.VIEW)
@@ -140,6 +144,10 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("forecastops", Action.VIEW)
         | _grant("intervention", Action.VIEW)
         | _grant("audit", Action.VIEW)
+        # The franchisee portal is a separate resource from operator_console:
+        # a franchisee may read their own store's approved view and file
+        # acknowledgements/reports, but never gains operator-console access.
+        | _grant("franchisee_portal", Action.VIEW, Action.CREATE)
     ),
     Role.AUDITOR: frozenset(
         _grant("operator_console", Action.VIEW)

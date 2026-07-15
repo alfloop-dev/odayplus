@@ -111,6 +111,7 @@ def create_operator_router(
         OPERATOR_CONSOLE_RESOURCE,
         build_engine,
         require_operator_permission,
+        require_permission,
     )
     from shared.auth import Action
 
@@ -149,17 +150,45 @@ def create_operator_router(
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
     from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
+    from modules.opsboard.application.shell import ShellService
     from shared.infrastructure.persistence.operator_network_listings import (
         DurableAssistedIntakeRepository,
     )
+    from shared.infrastructure.persistence.operator_shell import DurableShellRepository
 
     operator_view_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
     )
+    operator_write_guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
+    )
 
-    # Shell — protected read envelope; role is derived by the server guard.
+    # Shell — protected read envelope plus the product-shell surface.
+    #
+    # The franchisee guards use require_permission (not the operator variant):
+    # Role.FRANCHISEE maps to no Operator Console role, so the operator factory
+    # would deny every franchisee at operator.role before RBAC ever ran.
     router.include_router(
-        create_shell_sub_router(svc, require_view_permission_fn=operator_view_guard)
+        create_shell_sub_router(
+            svc,
+            require_view_permission_fn=operator_view_guard,
+            require_write_permission_fn=operator_write_guard,
+            require_admin_permission_fn=operator_write_guard,
+            require_franchisee_view_fn=require_permission(
+                "franchisee_portal", Action.VIEW, engine=authz_engine
+            ),
+            require_franchisee_write_fn=require_permission(
+                "franchisee_portal", Action.CREATE, engine=authz_engine
+            ),
+            shell_service=ShellService(
+                svc,
+                repository=(
+                    DurableShellRepository(document_store)
+                    if document_store is not None
+                    else None
+                ),
+            ),
+        )
     )
 
     # Network listing intake — read/write paths for R4 Listing Radar.

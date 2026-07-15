@@ -5,7 +5,9 @@ seed).  The parent operator.py assembles them inside create_operator_router(),
 passing auth guards to every sub-router that owns a write endpoint.
 
 Composition contract:
-  - shell      → read-only; no permission guard required.
+  - shell      → view guard: require_operator_permission(operator_console, VIEW);
+                 write/admin guard: require_operator_permission(operator_console, UPDATE);
+                 franchisee guards: require_permission(franchisee_portal, VIEW/CREATE).
   - issues     → write guard: require_permission("intervention", CREATE).
   - approvals  → write guard: require_permission("intervention", APPROVE).
   - evidence   → write guard: require_permission("intervention", CREATE).
