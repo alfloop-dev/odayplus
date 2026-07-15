@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
@@ -13,16 +15,30 @@ from models.shared_ml import (
     LabelDefinition,
     LabelSet,
     LocalModelArtifactStore,
+    SegmentMetricThreshold,
 )
+from models.shared_ml.artifact_store import compute_content_digest
 from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelStage, ModelVersion
 from models.shared_ml.validation import (
     MetricThreshold,
     SegmentMetric,
     ValidationRun,
+    ValidationStatus,
     validate_model_candidate,
 )
-from modules.learninghub.domain import DatasetSnapshot, build_dataset_snapshot
+from modules.learninghub.domain import (
+    DatasetSnapshot,
+    InferenceComparison,
+    InferenceComparisonMode,
+    InferenceDelta,
+    InferencePrediction,
+    MonitoringBreach,
+    MonitoringEvaluation,
+    MonitoringSignalType,
+    RetrainingRequest,
+    build_dataset_snapshot,
+)
 from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
     LearningHubRepository,
@@ -60,6 +76,11 @@ class ModelReleaseDecision:
     approved_by: str = "model-review-board"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     audit_event_id: str | None = None
+    dataset_snapshot_id: str | None = None
+    feature_schema_version: str | None = None
+    label_version: str | None = None
+    model_card_checksum: str | None = None
+    model_artifact_uri: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +100,11 @@ class ModelReleaseDecision:
             "approved_by": self.approved_by,
             "created_at": self.created_at.isoformat(),
             "audit_event_id": self.audit_event_id,
+            "dataset_snapshot_id": self.dataset_snapshot_id,
+            "feature_schema_version": self.feature_schema_version,
+            "label_version": self.label_version,
+            "model_card_checksum": self.model_card_checksum,
+            "model_artifact_uri": self.model_artifact_uri,
         }
 
 
@@ -174,6 +200,7 @@ class LearningHubService:
         baseline_metrics: Mapping[str, float],
         thresholds: Sequence[MetricThreshold],
         segment_metrics: Sequence[SegmentMetric] = (),
+        segment_thresholds: Sequence[SegmentMetricThreshold] = (),
         calibration_summary: Mapping[str, Any] | None = None,
         min_training_records: int = 1,
     ) -> ValidationRun:
@@ -188,6 +215,7 @@ class LearningHubService:
             baseline_metrics=baseline_metrics,
             thresholds=thresholds,
             segment_metrics=segment_metrics,
+            segment_thresholds=segment_thresholds,
             calibration_summary=calibration_summary,
             min_training_records=min_training_records,
         )
@@ -271,6 +299,7 @@ class LearningHubService:
             target_version = self._require_model_version(model_name, target)
             current = self._require_model_version(model_name, version)
             self.repository.save_model_version(current.with_stage(ModelStage.ROLLED_BACK))
+            self.repository.save_model_version(target_version.with_stage(ModelStage.PRODUCTION))
             self.repository.set_alias(model_name, ModelAlias.PRODUCTION, target_version.version)
             self.repository.set_alias(model_name, ModelAlias.CHAMPION, target_version.version)
             self.repository.clear_alias(model_name, ModelAlias.PREVIOUS_PRODUCTION)
@@ -316,9 +345,209 @@ class LearningHubService:
             requested_by=requested_by,
             approved_by=approved_by,
             audit_event_id=audit_event.event_id,
+            dataset_snapshot_id=model_version.dataset_snapshot_id,
+            feature_schema_version=model_version.feature_schema_version,
+            label_version=model_version.label_version,
+            model_card_checksum=_model_card_checksum(model_card),
+            model_artifact_uri=model_version.artifact_uri,
         )
         self.repository.save_release_decision(decision)
         return decision
+
+    def evaluate_monitoring(
+        self,
+        *,
+        model_name: str,
+        dataset_snapshot_id: str,
+        signal_type: MonitoringSignalType,
+        observed_metrics: Mapping[str, float],
+        baseline_metrics: Mapping[str, float],
+        thresholds: Sequence[MetricThreshold],
+        requested_by: str = "system",
+        reason: str | None = None,
+    ) -> RetrainingRequest | None:
+        snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
+        if snapshot is None:
+            raise LearningHubError(f"unknown dataset snapshot {dataset_snapshot_id}")
+        production = self.repository.get_alias(model_name, ModelAlias.PRODUCTION)
+        if production is None:
+            production = self.repository.get_alias(model_name, ModelAlias.CHAMPION)
+        if production is None:
+            raise LearningHubError(f"no production model registered for {model_name}")
+
+        breaches: list[MonitoringBreach] = []
+        for threshold in thresholds:
+            if threshold.metric_name not in observed_metrics:
+                breaches.append(
+                    MonitoringBreach(
+                        metric_name=threshold.metric_name,
+                        observed_value=float("nan"),
+                        threshold_message=f"{threshold.metric_name} missing from monitoring input",
+                        severity=ValidationStatus.FAILED.value,
+                    )
+                )
+                continue
+            status, message = threshold.evaluate(float(observed_metrics[threshold.metric_name]))
+            if status is ValidationStatus.PASSED:
+                continue
+            breaches.append(
+                MonitoringBreach(
+                    metric_name=threshold.metric_name,
+                    observed_value=float(observed_metrics[threshold.metric_name]),
+                    threshold_message=message or threshold.metric_name,
+                    severity=status.value,
+                )
+            )
+
+        evaluation = MonitoringEvaluation(
+            evaluation_id=f"monitoring-{uuid4()}",
+            model_name=model_name,
+            model_version=production.version,
+            dataset_snapshot_id=dataset_snapshot_id,
+            signal_type=signal_type,
+            observed_metrics=dict(observed_metrics),
+            baseline_metrics=dict(baseline_metrics),
+            breaches=tuple(breaches),
+            requested_by=requested_by,
+        )
+        self.repository.save_monitoring_evaluation(evaluation)
+        if not evaluation.triggered:
+            return None
+
+        request = RetrainingRequest(
+            request_id=f"retrain-{uuid4()}",
+            model_name=model_name,
+            source_model_version=production.version,
+            trigger_evaluation_id=evaluation.evaluation_id,
+            trigger_type=signal_type,
+            reason=reason or f"{signal_type.value.lower()} monitoring threshold breached",
+            dataset_snapshot_id=dataset_snapshot_id,
+            observed_metrics=dict(observed_metrics),
+            baseline_metrics=dict(baseline_metrics),
+            requested_by=requested_by,
+            auto_promotion=False,
+        )
+        return self.repository.save_retraining_request(request)
+
+    def ingest_outcome_monitoring(
+        self,
+        *,
+        model_name: str,
+        dataset_snapshot_id: str,
+        observed_metrics: Mapping[str, float],
+        baseline_metrics: Mapping[str, float],
+        thresholds: Sequence[MetricThreshold],
+        requested_by: str = "system",
+        reason: str | None = None,
+    ) -> RetrainingRequest | None:
+        return self.evaluate_monitoring(
+            model_name=model_name,
+            dataset_snapshot_id=dataset_snapshot_id,
+            signal_type=MonitoringSignalType.OUTCOME,
+            observed_metrics=observed_metrics,
+            baseline_metrics=baseline_metrics,
+            thresholds=thresholds,
+            requested_by=requested_by,
+            reason=reason,
+        )
+
+    def compare_inference(
+        self,
+        *,
+        model_name: str,
+        challenger_version: str,
+        inputs: Sequence[Mapping[str, Any]],
+        predictor: Callable[[ModelVersion, Mapping[str, Any]], float],
+        mode: InferenceComparisonMode,
+        tolerance: float,
+        champion_version: str | None = None,
+        requested_by: str = "system",
+    ) -> InferenceComparison:
+        if not inputs:
+            raise LearningHubError("inference comparison requires at least one input")
+        champion = (
+            self._require_model_version(model_name, champion_version)
+            if champion_version
+            else self.repository.get_alias(model_name, ModelAlias.CHAMPION)
+        )
+        if champion is None:
+            champion = self.repository.get_alias(model_name, ModelAlias.PRODUCTION)
+        if champion is None:
+            raise LearningHubError(f"no champion model registered for {model_name}")
+        challenger = self._require_model_version(model_name, challenger_version)
+
+        champion_predictions: list[InferencePrediction] = []
+        challenger_predictions: list[InferencePrediction] = []
+        deltas: list[InferenceDelta] = []
+        for index, input_row in enumerate(inputs):
+            input_id = str(input_row.get("input_id") or input_row.get("entity_id") or index)
+            champion_value = float(predictor(champion, input_row))
+            challenger_value = float(predictor(challenger, input_row))
+            champion_predictions.append(
+                InferencePrediction(
+                    input_id=input_id,
+                    model_version=champion.version,
+                    value=champion_value,
+                )
+            )
+            challenger_predictions.append(
+                InferencePrediction(
+                    input_id=input_id,
+                    model_version=challenger.version,
+                    value=challenger_value,
+                )
+            )
+            deltas.append(
+                InferenceDelta(
+                    input_id=input_id,
+                    champion_value=champion_value,
+                    challenger_value=challenger_value,
+                )
+            )
+
+        comparison = InferenceComparison(
+            comparison_id=f"inference-comparison-{uuid4()}",
+            model_name=model_name,
+            champion_version=champion.version,
+            challenger_version=challenger.version,
+            mode=mode,
+            input_fingerprint=_fingerprint_inputs(inputs),
+            champion_predictions=tuple(champion_predictions),
+            challenger_predictions=tuple(challenger_predictions),
+            deltas=tuple(deltas),
+            tolerance=tolerance,
+            requested_by=requested_by,
+        )
+        return self.repository.save_inference_comparison(comparison)
+
+    def request_rollback_from_comparison(
+        self,
+        *,
+        comparison_id: str,
+        reason: str,
+        approval_id: str,
+        requested_by: str = "system",
+        approved_by: str = "model-review-board",
+    ) -> ModelReleaseDecision:
+        comparison = self.repository.get_inference_comparison(comparison_id)
+        if comparison is None:
+            raise LearningHubError(f"unknown inference comparison {comparison_id}")
+        if not comparison.rollback_recommended:
+            raise LearningHubError("comparison does not recommend rollback")
+        return self.request_release(
+            model_name=comparison.model_name,
+            version=comparison.challenger_version,
+            release_type=ReleaseType.ROLLBACK,
+            reason=reason,
+            approval_id=approval_id,
+            rollback_target=comparison.champion_version,
+            monitoring_window="immediate",
+            success_criteria=("production alias points to comparison champion",),
+            fail_criteria=("champion smoke prediction fails",),
+            requested_by=requested_by,
+            approved_by=approved_by,
+            correlation_id=comparison.comparison_id,
+        )
 
     def _assert_release_gate(
         self,
@@ -471,6 +700,18 @@ def _stage_for_release_type(release_type: ReleaseType) -> ModelStage:
     if release_type is ReleaseType.FULL:
         return ModelStage.PRODUCTION
     return ModelStage.ROLLED_BACK
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+
+
+def _model_card_checksum(model_card: ModelCard) -> str:
+    return compute_content_digest(_canonical_json_bytes(model_card.to_dict()))
+
+
+def _fingerprint_inputs(inputs: Sequence[Mapping[str, Any]]) -> str:
+    return f"sha256:{sha256(_canonical_json_bytes(list(inputs))).hexdigest()}"
 
 
 __all__ = ["LearningHubError", "LearningHubService", "ModelReleaseDecision", "ReleaseType"]

@@ -27,6 +27,7 @@ from models.shared_ml.registry import (
 from models.shared_ml.validation import (
     MetricThreshold,
     SegmentMetric,
+    SegmentMetricThreshold,
     ValidationRuleFailure,
     ValidationRun,
     ValidationStatus,
@@ -49,6 +50,7 @@ __all__ = [
     "ModelVersion",
     "RegisteredModel",
     "SegmentMetric",
+    "SegmentMetricThreshold",
     "ValidationRuleFailure",
     "ValidationRun",
     "ValidationStatus",

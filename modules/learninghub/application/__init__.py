@@ -6,5 +6,22 @@ from modules.learninghub.application.release import (
     ModelReleaseDecision,
     ReleaseType,
 )
+from modules.learninghub.domain import (
+    InferenceComparison,
+    InferenceComparisonMode,
+    MonitoringEvaluation,
+    MonitoringSignalType,
+    RetrainingRequest,
+)
 
-__all__ = ["LearningHubError", "LearningHubService", "ModelReleaseDecision", "ReleaseType"]
+__all__ = [
+    "InferenceComparison",
+    "InferenceComparisonMode",
+    "LearningHubError",
+    "LearningHubService",
+    "ModelReleaseDecision",
+    "MonitoringEvaluation",
+    "MonitoringSignalType",
+    "ReleaseType",
+    "RetrainingRequest",
+]

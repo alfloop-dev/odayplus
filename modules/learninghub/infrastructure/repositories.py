@@ -14,7 +14,12 @@ from models.shared_ml import (
     ModelVersion,
 )
 from models.shared_ml.validation import ValidationRun
-from modules.learninghub.domain import DatasetSnapshot
+from modules.learninghub.domain import (
+    DatasetSnapshot,
+    InferenceComparison,
+    MonitoringEvaluation,
+    RetrainingRequest,
+)
 
 
 class ReleaseDecisionRecord(Protocol):
@@ -48,6 +53,17 @@ class LearningHubRepository(Protocol):
     ) -> ReleaseDecisionRecord: ...
     def get_release_decision(self, release_id: str) -> object | None: ...
     def list_release_decisions(self) -> list[object]: ...
+    def save_monitoring_evaluation(
+        self, evaluation: MonitoringEvaluation
+    ) -> MonitoringEvaluation: ...
+    def get_monitoring_evaluation(self, evaluation_id: str) -> MonitoringEvaluation | None: ...
+    def list_monitoring_evaluations(self, model_name: str | None = None) -> list[MonitoringEvaluation]: ...
+    def save_retraining_request(self, request: RetrainingRequest) -> RetrainingRequest: ...
+    def get_retraining_request(self, request_id: str) -> RetrainingRequest | None: ...
+    def list_retraining_requests(self, model_name: str | None = None) -> list[RetrainingRequest]: ...
+    def save_inference_comparison(self, comparison: InferenceComparison) -> InferenceComparison: ...
+    def get_inference_comparison(self, comparison_id: str) -> InferenceComparison | None: ...
+    def list_inference_comparisons(self, model_name: str | None = None) -> list[InferenceComparison]: ...
 
 
 @dataclass
@@ -62,6 +78,9 @@ class InMemoryLearningHubRepository:
     _labels: dict[tuple[str, str], LabelDefinition] = field(default_factory=dict)
     _feature_sets: dict[str, FeatureSet] = field(default_factory=dict)
     _label_sets: dict[str, LabelSet] = field(default_factory=dict)
+    _monitoring_evaluations: dict[str, MonitoringEvaluation] = field(default_factory=dict)
+    _retraining_requests: dict[str, RetrainingRequest] = field(default_factory=dict)
+    _inference_comparisons: dict[str, InferenceComparison] = field(default_factory=dict)
 
     def save_dataset_snapshot(self, snapshot: DatasetSnapshot) -> DatasetSnapshot:
         self._datasets[snapshot.dataset_snapshot_id] = snapshot
@@ -138,6 +157,53 @@ class InMemoryLearningHubRepository:
 
     def list_release_decisions(self) -> list[object]:
         return list(self._release_decisions.values())
+
+    def save_monitoring_evaluation(
+        self, evaluation: MonitoringEvaluation
+    ) -> MonitoringEvaluation:
+        self._monitoring_evaluations[evaluation.evaluation_id] = evaluation
+        return evaluation
+
+    def get_monitoring_evaluation(self, evaluation_id: str) -> MonitoringEvaluation | None:
+        return self._monitoring_evaluations.get(evaluation_id)
+
+    def list_monitoring_evaluations(
+        self, model_name: str | None = None
+    ) -> list[MonitoringEvaluation]:
+        values = list(self._monitoring_evaluations.values())
+        if model_name is None:
+            return values
+        return [evaluation for evaluation in values if evaluation.model_name == model_name]
+
+    def save_retraining_request(self, request: RetrainingRequest) -> RetrainingRequest:
+        self._retraining_requests[request.request_id] = request
+        return request
+
+    def get_retraining_request(self, request_id: str) -> RetrainingRequest | None:
+        return self._retraining_requests.get(request_id)
+
+    def list_retraining_requests(
+        self, model_name: str | None = None
+    ) -> list[RetrainingRequest]:
+        values = list(self._retraining_requests.values())
+        if model_name is None:
+            return values
+        return [request for request in values if request.model_name == model_name]
+
+    def save_inference_comparison(self, comparison: InferenceComparison) -> InferenceComparison:
+        self._inference_comparisons[comparison.comparison_id] = comparison
+        return comparison
+
+    def get_inference_comparison(self, comparison_id: str) -> InferenceComparison | None:
+        return self._inference_comparisons.get(comparison_id)
+
+    def list_inference_comparisons(
+        self, model_name: str | None = None
+    ) -> list[InferenceComparison]:
+        values = list(self._inference_comparisons.values())
+        if model_name is None:
+            return values
+        return [comparison for comparison in values if comparison.model_name == model_name]
 
     def save_feature(self, feature: FeatureDefinition) -> FeatureDefinition:
         self._features[(feature.feature_name, feature.version)] = feature
