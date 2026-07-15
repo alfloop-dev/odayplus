@@ -79,6 +79,23 @@ export function missingListingsClientError(): OperatorApiError {
   };
 }
 
+/**
+ * A key identifying one logical merge, stable across retries.
+ *
+ * This is the whole point of the key: if a response is lost in transit and the
+ * operator retries, the server must recognise the SAME operation and replay its
+ * original result instead of merging again. A key minted per attempt would look
+ * like a fresh operation every time and defeat the guarantee. So the key is
+ * created once when the merge is initiated and retained until it succeeds, is
+ * cancelled, or is replaced by a different merge request.
+ */
+export function newMergeIdempotencyKey(
+  sourceListingId: string,
+  targetListingId: string,
+): string {
+  return `merge-${sourceListingId}-${targetListingId}-${randomToken()}`;
+}
+
 export const listingsApi = {
   /**
    * `riskSummary` is the exact text the dialog rendered and `riskAcknowledged`
@@ -86,7 +103,10 @@ export const listingsApi = {
    * event and rejects (422) a missing or unacknowledged disclosure rather than
    * inventing one. The reason is the operator's own words — never a default.
    *
-   * The idempotency key is per attempt, so a retried request cannot merge twice.
+   * `idempotencyKey` is supplied by the caller and must be the SAME value for
+   * every retry of one logical merge — see newMergeIdempotencyKey. The
+   * correlation ID is per attempt by design: each attempt is a distinct
+   * request to trace, even though they share one operation identity.
    */
   merge(
     client: OdpApiClient,
@@ -97,6 +117,7 @@ export const listingsApi = {
       reason: string;
       riskSummary: string;
       riskAcknowledged: boolean;
+      idempotencyKey: string;
     },
   ): Promise<OperatorApiResult<MergeListingResponse>> {
     return guardCall(
@@ -112,7 +133,7 @@ export const listingsApi = {
           },
           {
             correlationId: newCorrelationId(),
-            idempotencyKey: `merge-${sourceListingId}-${input.targetListingId}-${randomToken()}`,
+            idempotencyKey: input.idempotencyKey,
           },
         ),
       toListingApiError,

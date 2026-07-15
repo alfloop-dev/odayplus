@@ -16,7 +16,13 @@ import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
 import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
-import { buildListingsClient, listingsApi, missingListingsClientError, type ListingApiError } from "./network/listingsClient";
+import {
+  buildListingsClient,
+  listingsApi,
+  missingListingsClientError,
+  newMergeIdempotencyKey,
+  type ListingApiError,
+} from "./network/listingsClient";
 import { canMergeListing } from "./network/listingPermissions";
 import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
@@ -796,6 +802,10 @@ export function NetworkFindAreasWorkspace({
       targetListingId,
       sourceLabel: listingsEffective.find((item) => item.id === sourceListingId)?.address,
       targetLabel: listingsEffective.find((item) => item.id === targetListingId)?.address,
+      // Minted once per initiated merge and carried across every retry, so a
+      // retry after a lost response replays the original result server-side
+      // instead of merging a second time.
+      idempotencyKey: newMergeIdempotencyKey(sourceListingId, targetListingId),
     });
   }
 
@@ -822,6 +832,8 @@ export function NetworkFindAreasWorkspace({
         reason: form.reason,
         riskSummary: form.riskSummary,
         riskAcknowledged: form.riskAcknowledged,
+        // Same key on every retry of this request — see mergeListing().
+        idempotencyKey: mergeRequest.idempotencyKey,
       });
       if (!result.ok) {
         // The dialog stays open so the operator keeps their reason and can read

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { ListingApiError } from "./listingsClient";
+import { useModalDialogBehavior } from "./useModalDialogBehavior";
 
 // "Dialog 合併重複物件" — the confirmation surface for a Listing Radar merge
 // (ODP-OC-R5-011).
@@ -17,7 +18,10 @@ import type { ListingApiError } from "./listingsClient";
 //      store the text the operator actually read, not a re-derivation of it.
 //   3. No optimistic UI. Nothing is written until the server answers, and
 //      cancelling — or submitting without a reason or acknowledgement — writes
-//      nothing at all.
+//      nothing at all. While the write IS in flight the dialog cannot be
+//      dismissed (button, Escape or backdrop): hiding a high-impact write whose
+//      outcome is still unknown would leave the operator guessing whether it
+//      landed.
 
 const MIN_REASON_LEN = 10;
 
@@ -26,6 +30,8 @@ export type ListingMergeRequest = {
   targetListingId: string;
   sourceLabel?: string;
   targetLabel?: string;
+  /** Stable for this merge across retries; see newMergeIdempotencyKey. */
+  idempotencyKey: string;
 };
 
 export type ListingMergeForm = {
@@ -54,6 +60,14 @@ export function ListingMergeDialog({
   const { sourceListingId, targetListingId } = request;
   const riskSummary = buildMergeRiskSummary(sourceListingId, targetListingId);
 
+  // A write in flight is not dismissable — see rule 3 above.
+  const dismissible = !busy;
+  const requestClose = useCallback(() => {
+    if (busy) return;
+    onClose();
+  }, [busy, onClose]);
+  const panelRef = useModalDialogBehavior({ dismissible, onClose: requestClose });
+
   function handleSubmit() {
     if (busy) return;
     // merge_listing ALWAYS requires a reason server-side (422 otherwise), so
@@ -75,14 +89,21 @@ export function ListingMergeDialog({
 
   return (
     <div
-      aria-label={`合併重複物件 — ${sourceListingId} → ${targetListingId}`}
-      aria-modal="true"
       className={styles.reviewDialogOverlay}
       data-screen-label="Dialog 合併重複物件"
       data-testid="listing-merge-dialog"
-      role="dialog"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
+      }}
     >
-      <div className={styles.reviewDialog}>
+      <div
+        aria-busy={busy ? "true" : undefined}
+        aria-label={`合併重複物件 — ${sourceListingId} → ${targetListingId}`}
+        aria-modal="true"
+        className={styles.reviewDialog}
+        ref={panelRef}
+        role="dialog"
+      >
         <div className={styles.reviewDialogHead}>
           <div className={styles.reviewDialogTitle} data-testid="listing-merge-title">
             合併重複物件 · {sourceListingId} → {targetListingId}
@@ -91,7 +112,8 @@ export function ListingMergeDialog({
             aria-label="關閉"
             className={styles.reviewDialogClose}
             data-testid="listing-merge-close"
-            onClick={onClose}
+            disabled={busy}
+            onClick={requestClose}
             type="button"
           >
             ×
@@ -170,7 +192,8 @@ export function ListingMergeDialog({
           <button
             className={styles.reviewDialogCancel}
             data-testid="listing-merge-cancel"
-            onClick={onClose}
+            disabled={busy}
+            onClick={requestClose}
             type="button"
           >
             取消

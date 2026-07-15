@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import styles from "./intake.module.css";
+import { useModalDialogBehavior } from "../useModalDialogBehavior";
 
 // Shared modal shell for the four intake dialogs.
 //
-// The archived design markup has no aria/role/keyboard affordances at all
-// (it renders clickable <div>s), but §9 of the requirements makes every
-// dialog keyboard operable. Rather than repeat that per dialog, the shell
-// owns: labelled dialog semantics, Escape-to-close, initial focus, focus
-// restoration, and a focus trap.
+// This shell owns labelled dialog semantics and the intake visual family; the
+// keyboard/focus contract (Escape, initial focus, focus trap, restoration) is
+// shared with the other network dialogs via useModalDialogBehavior.
 
 export function IntakeDialogShell({
   ariaLabel,
@@ -28,51 +27,7 @@ export function IntakeDialogShell({
   stacked?: boolean;
   testId: string;
 }) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const restoreRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    restoreRef.current = document.activeElement as HTMLElement | null;
-    const panel = panelRef.current;
-    // Prefer the dialog's declared entry control. Falling back to the first
-    // focusable would land on the close button (it leads in DOM order), which
-    // is a poor place to start a form.
-    const preferred = panel?.querySelector<HTMLElement>("[data-autofocus]");
-    (preferred ?? focusables(panel)[0])?.focus();
-
-    return () => {
-      // Returning focus to the invoker keeps keyboard context after close.
-      restoreRef.current?.focus?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const items = focusables(panelRef.current);
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-
-      if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
+  const panelRef = useModalDialogBehavior({ onClose });
 
   return (
     <div
@@ -94,13 +49,4 @@ export function IntakeDialogShell({
       </div>
     </div>
   );
-}
-
-function focusables(root: HTMLElement | null): HTMLElement[] {
-  if (!root) return [];
-  return Array.from(
-    root.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ).filter((element) => element.offsetParent !== null || element === document.activeElement);
 }

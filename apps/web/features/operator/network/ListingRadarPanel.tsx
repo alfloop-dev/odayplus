@@ -7,7 +7,7 @@ import type { ListingRadarRow } from "../networkFindAreasViewModel";
 import type { OperatorRoleId } from "../navigation";
 import styles from "../networkFindAreas.module.css";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
-import { canMergeListing } from "./listingPermissions";
+import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -65,6 +65,15 @@ export function ListingRadarPanel({
     visibleRows[0] ??
     rows[0];
   const selectedListing = selectedRow ? listingById.get(selectedRow.id) : undefined;
+  // The detail pane's primary action doubles as the merge entry point, so it
+  // needs the SAME gate as the row-level button — otherwise an unauthorized
+  // role is still offered a merge whose handler silently does nothing.
+  const detailMergeDenied = Boolean(
+    selectedRow?.isDuplicate &&
+      selectedRow.status !== "archived" &&
+      selectedRow.status !== "candidate" &&
+      !canMergeListing(activeRoleId),
+  );
   const visibleListingCount = rows.filter((row) => row.status !== "archived").length;
   const sourceFilterOptions = [
     { id: "all", label: `全部來源 ${visibleListingCount}` },
@@ -283,17 +292,16 @@ export function ListingRadarPanel({
               </dl>
               <button
                 className={styles.detailPrimaryButton}
-                disabled={!selectedRow || selectedRow.status === "archived"}
+                data-testid="listing-detail-primary"
+                disabled={
+                  !selectedRow || selectedRow.status === "archived" || detailMergeDenied
+                }
                 onClick={() => {
-                  if (!selectedRow) return;
+                  if (!selectedRow || detailMergeDenied) return;
                   const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
                   if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
                     onConvert?.(selectedRow.id);
-                  } else if (
-                    selectedRow.id === "L-2029" &&
-                    mergeTarget &&
-                    canMergeListing(activeRoleId)
-                  ) {
+                  } else if (selectedRow.id === "L-2029" && mergeTarget) {
                     onMerge?.(selectedRow.id, mergeTarget);
                   } else if (selectedRow.id === "L-2030") {
                     onArchive?.(selectedRow.id);
@@ -301,8 +309,13 @@ export function ListingRadarPanel({
                 }}
                 type="button"
               >
-                {detailPrimaryLabel(selectedRow)}
+                {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId))}
               </button>
+              {detailMergeDenied ? (
+                <p className={styles.muted} data-testid="listing-detail-merge-denied">
+                  {MERGE_DENIED_NOTE}
+                </p>
+              ) : null}
             </>
           ) : (
             <div className={styles.emptyState}>No listing selected</div>
@@ -354,10 +367,15 @@ function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
   return "轉為候選點";
 }
 
-function detailPrimaryLabel(row: ListingRadarRow) {
+/**
+ * `canMerge` must be threaded in: offering "合併重複（保留目標物件）" to a role
+ * that cannot merge advertises an action the server would refuse, and the
+ * handler would silently no-op. The permission state is shown instead.
+ */
+function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean) {
   if (row.status === "candidate") return `前往候選點 ${row.candidateId ?? ""}`;
   if (row.status === "archived") return "已封存";
-  if (row.isDuplicate) return "合併重複（保留目標物件）";
+  if (row.isDuplicate) return canMerge ? "合併重複（保留目標物件）" : "無合併權限";
   if (row.hardRuleFailures.length) return "封存（硬規則未過）";
   return "轉為候選點";
 }

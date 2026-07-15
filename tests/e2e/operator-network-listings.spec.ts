@@ -163,9 +163,11 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await api.dispose();
   });
 
-  test("a role without listing:UPDATE is not offered the merge action", async ({ page }) => {
+  test("a role without listing:UPDATE is offered no merge entry point at all", async ({ page }) => {
     // ops-lead maps to operations_manager, which holds no listing grant, so the
-    // console must not offer a merge that the server would refuse.
+    // console must not offer a merge that the server would refuse — from EITHER
+    // entry point. The detail pane's primary action doubles as a merge button,
+    // so gating only the row-level button still advertises the action.
     await page.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });
@@ -176,7 +178,93 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     });
     await page.getByTestId("listing-filter-all").click();
     await expect(page.getByTestId("listing-row-L-2029")).toBeVisible();
+
+    // Entry point 1: the row action.
     await expect(page.getByTestId("merge-L-2029")).toHaveCount(0);
+
+    // Entry point 2: the detail pane's primary action.
+    await page.getByTestId("listing-row-L-2029").click();
+    const detailPrimary = page.getByTestId("listing-detail-primary");
+    await expect(detailPrimary).not.toContainText("合併重複");
+    await expect(detailPrimary).toBeDisabled();
+    await expect(page.getByTestId("listing-detail-merge-denied")).toBeVisible();
+
+    // And clicking it writes nothing.
+    await detailPrimary.click({ force: true });
+    await expect(page.getByTestId("listing-merge-dialog")).toHaveCount(0);
+  });
+
+  test("the merge dialog is keyboard operable and restores focus", async ({ page }) => {
+    await openRadarAsExpansionManager(page);
+
+    await page.getByTestId("merge-L-2029").click();
+    await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
+
+    // Initial focus lands on the declared entry control, not the close button.
+    await expect(page.getByTestId("listing-merge-reason")).toBeFocused();
+
+    // Focus is trapped inside the dialog.
+    for (let i = 0; i < 12; i += 1) {
+      await page.keyboard.press("Tab");
+      await expect(page.locator('[data-testid="listing-merge-dialog"] :focus')).toHaveCount(1);
+    }
+
+    // Escape closes it and focus returns to the invoking control.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("listing-merge-dialog")).toBeHidden();
+    await expect(page.getByTestId("merge-L-2029")).toBeFocused();
+  });
+
+  test("an in-flight merge cannot be dismissed and retries reuse one idempotency key", async ({
+    page,
+  }) => {
+    await openRadarAsExpansionManager(page);
+
+    // Hold the merge response open so the in-flight state is observable, and
+    // record what each attempt actually sent.
+    const sentKeys: string[] = [];
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let failFirst = true;
+    await page.route("**/network-listings/listings/L-2029/merge", async (route) => {
+      sentKeys.push(route.request().headers()["idempotency-key"] ?? "<none>");
+      if (failFirst) {
+        failFirst = false;
+        await held;
+        // Simulate a lost response: the operator retries the SAME merge.
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("merge-L-2029").click();
+    await page.getByTestId("listing-merge-reason").fill(OPERATOR_REASON);
+    await page.getByTestId("listing-merge-risk-ack").click();
+    await page.getByTestId("listing-merge-submit").click();
+
+    // In flight: the write cannot be dismissed by button, Escape, or backdrop.
+    await expect(page.getByTestId("listing-merge-submit")).toBeDisabled();
+    await expect(page.getByTestId("listing-merge-cancel")).toBeDisabled();
+    await expect(page.getByTestId("listing-merge-close")).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
+
+    release?.();
+    await expect(page.getByTestId("listing-merge-error")).toBeVisible();
+    // The dialog stayed open and kept the operator's reason.
+    await expect(page.getByTestId("listing-merge-reason")).toHaveValue(OPERATOR_REASON);
+
+    // Retry the same logical merge; it must carry the SAME idempotency key.
+    await page.getByTestId("listing-merge-submit").click();
+    await expect(page.getByTestId("listing-merge-dialog")).toBeHidden();
+    await expect(page.getByTestId("listing-row-L-2029")).toContainText("merged into L-2025");
+
+    expect(sentKeys).toHaveLength(2);
+    expect(sentKeys[0]).toBe(sentKeys[1]);
+    expect(sentKeys[0]).toContain("merge-L-2029-L-2025");
   });
 
   test("real HeatZone map stays nonblank and synchronized to selected zone and lens", async ({ page }) => {
