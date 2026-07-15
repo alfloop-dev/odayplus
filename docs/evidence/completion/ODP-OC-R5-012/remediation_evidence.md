@@ -32,7 +32,26 @@ On 2026-07-15T11:12:27Z, PR #301 (delivering task ODP-OC-R5-011) was merged unde
 
 This sequence confirms that PR #301 was reviewed and canonical verification was fully successful prior to the merge. However, enabling auto-merge contrary to instruction allowed the PR to merge automatically, which bypassed the final handoff controls and demonstrated the need for tighter pre-merge control plane gates.
 
+### PR #302 Incident Details & Root Cause Analysis
+On 2026-07-15T11:19:51Z, PR #302 (delivering task ODP-OC-R5-012) was prematurely merged:
+1. A background cron job on the VM ran `.orchestrator/auto-merge-guard.sh` every 5 minutes.
+2. This script invoked an untracked/ignored Python utility `auto_merge_green_prs.py` under the coordinator context.
+3. The script required only `orchestrator` and `product-e2e-gate` checks to pass, intentionally skipped the `product` gate check, and completely ignored task-review status or reviewer approvals.
+4. When PR #302 was opened, the script marked the draft ready, bypassed checks, and ran `gh pr merge --merge`, merging HEAD `4d1b73bb` into `dev` prior to Codex approval.
+5. Consequently, later corrective commits `1598975d` and `e47977a9` remained unmerged in `dev` while the branch protection rules were bypassed.
+
+### Cron Disable & Readback Verification
+To durably resolve the auto-merge loop threat:
+1. **Process Termination**: The active background process running `.orchestrator/auto-merge-guard.sh` was forcefully killed.
+2. **Cron Entry Removal**: The crontab entry invoking the guard script was removed.
+3. **Readback Audit**: Running `crontab -l` on the host verified that only the baseline stack redeployment cron entry remains active:
+   ```text
+   */5 * * * * /home/lupin/odayplus-dev/redeploy.sh >> /home/lupin/odayplus-dev/redeploy.log 2>&1
+   ```
+4. **Fail-Closed Code Replacement**: The untracked files were replaced with tracked, fail-closed implementations of `.orchestrator/auto-merge-guard.sh` and `.orchestrator/auto_merge_green_prs.py` that explicitly require the `task-review-gate` and all product checks to pass.
+
 ---
+
 
 ## 2. Staged Release Control Design
 
