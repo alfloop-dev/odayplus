@@ -733,6 +733,9 @@ class NetworkListingService:
             correlation_id=correlation_id,
             metadata={
                 "sourceListingId": source_listing_id,
+                # The operator's own words, recorded alongside the disclosure
+                # they acknowledged; archive does the same.
+                "reason": reason,
                 "sourceEvidenceRetained": len(source_evidence),
                 "targetEvidenceCount": len(target["sourceEvidence"]),
                 "before": {

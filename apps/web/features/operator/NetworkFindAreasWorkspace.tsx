@@ -15,6 +15,9 @@ import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
+import { buildListingsClient, listingsApi, missingListingsClientError, type ListingApiError } from "./network/listingsClient";
+import { canMergeListing } from "./network/listingPermissions";
 import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
@@ -365,6 +368,9 @@ export function NetworkFindAreasWorkspace({
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [busyListingId, setBusyListingId] = useState<string | null>(null);
+  const [mergeRequest, setMergeRequest] = useState<ListingMergeRequest | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<ListingApiError | null>(null);
   const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
@@ -776,21 +782,60 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  async function mergeListing(sourceListingId: string, targetListingId: string) {
-    // Merge is a high-impact write: the server requires the risk summary shown
-    // to the operator plus their acknowledgement, and rejects (422) without it.
-    const riskSummary =
-      `Merging marks ${sourceListingId} a duplicate of ${targetListingId} and moves its source ` +
-      `evidence onto the target. ${sourceListingId} stops being evaluated on its own.`;
-    const confirmed =
-      typeof window === "undefined" ? false : window.confirm(`${riskSummary}\n\nProceed?`);
-    if (!confirmed) return;
-    await postNetworkListingAction(sourceListingId, "merge", {
-      reason: "Same address, rent, and source evidence verified; retain source evidence on target.",
-      riskSummary,
-      riskAcknowledged: true,
+  /**
+   * Merge is a high-impact, irreversible write, so the button only OPENS the
+   * confirmation surface — it never writes. ListingMergeDialog collects the
+   * operator's own reason and their acknowledgement of the exact risk summary
+   * it rendered; submitMergeListing then performs the write. Cancelling, or
+   * closing without acknowledging, writes nothing.
+   */
+  function mergeListing(sourceListingId: string, targetListingId: string) {
+    setMergeError(null);
+    setMergeRequest({
+      sourceListingId,
       targetListingId,
+      sourceLabel: listingsEffective.find((item) => item.id === sourceListingId)?.address,
+      targetLabel: listingsEffective.find((item) => item.id === targetListingId)?.address,
     });
+  }
+
+  /**
+   * The write goes through the typed OpenAPI client, which carries a
+   * correlation ID and a per-attempt idempotency key and surfaces structured
+   * errors. `reason` and `riskSummary` come from the dialog verbatim — the
+   * audit record must store what the operator actually wrote and read.
+   */
+  async function submitMergeListing(form: ListingMergeForm) {
+    if (!mergeRequest) return;
+    const client = buildListingsClient(activeRoleId);
+    if (!client) {
+      setMergeError(missingListingsClientError());
+      return;
+    }
+
+    setMergeBusy(true);
+    setBusyListingId(mergeRequest.sourceListingId);
+    try {
+      const result = await listingsApi.merge(client, mergeRequest.sourceListingId, {
+        targetListingId: mergeRequest.targetListingId,
+        actorRoleId: activeRoleId,
+        reason: form.reason,
+        riskSummary: form.riskSummary,
+        riskAcknowledged: form.riskAcknowledged,
+      });
+      if (!result.ok) {
+        // The dialog stays open so the operator keeps their reason and can read
+        // the error code / correlation ID.
+        setMergeError(result.error);
+        return;
+      }
+      setMergeRequest(null);
+      setMergeError(null);
+      await reloadNetworkSnapshot();
+    } finally {
+      setMergeBusy(false);
+      setBusyListingId(null);
+    }
   }
 
   async function archiveListing(listingId: string) {
@@ -903,6 +948,19 @@ export function NetworkFindAreasWorkspace({
           />
         )}
       </NetworkShell>
+
+      {mergeRequest ? (
+        <ListingMergeDialog
+          busy={mergeBusy}
+          error={mergeError}
+          onClose={() => {
+            setMergeRequest(null);
+            setMergeError(null);
+          }}
+          onSubmit={submitMergeListing}
+          request={mergeRequest}
+        />
+      ) : null}
     </section>
   );
 }

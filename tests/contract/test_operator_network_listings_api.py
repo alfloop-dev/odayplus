@@ -110,6 +110,13 @@ def test_merge_l2029_into_l2025_retains_source_evidence() -> None:
     assert set(source_before["sourceEvidence"]).issubset(set(body["target"]["sourceEvidence"]))
     assert len(body["target"]["sourceEvidence"]) > len(target_before["sourceEvidence"])
     assert body["auditEvent"]["metadata"]["sourceEvidenceRetained"] == len(source_before["sourceEvidence"])
+    # The caller-supplied reason and acknowledged disclosure are both auditable.
+    assert body["auditEvent"]["metadata"]["reason"] == "Same address and broker evidence verified."
+    assert body["auditEvent"]["metadata"]["riskSummary"] == (
+        "Merging marks L-2029 a duplicate of L-2025 and moves its source evidence."
+    )
+    assert body["auditEvent"]["metadata"]["riskAcknowledged"] is True
+    assert body["auditEvent"]["correlationId"] == "corr-r4-005-merge"
 
 
 def test_archive_l2030_requires_reason_and_retains_hard_rule_evidence() -> None:

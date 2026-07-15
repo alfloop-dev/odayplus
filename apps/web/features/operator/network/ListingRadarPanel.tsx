@@ -7,6 +7,7 @@ import type { ListingRadarRow } from "../networkFindAreasViewModel";
 import type { OperatorRoleId } from "../navigation";
 import styles from "../networkFindAreas.module.css";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
+import { canMergeListing } from "./listingPermissions";
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -160,7 +161,11 @@ export function ListingRadarPanel({
                   !row.isDuplicate &&
                   row.hardRuleFailures.length === 0 &&
                   row.status !== "archived";
-                const canMerge = row.id === "L-2029" && Boolean(mergeTarget);
+                // Merge needs listing:UPDATE plus the service's actor allowlist;
+                // hiding it for roles that cannot clear both keeps the console
+                // from offering a button that is guaranteed to 403/422.
+                const canMerge =
+                  row.id === "L-2029" && Boolean(mergeTarget) && canMergeListing(activeRoleId);
                 const canArchive =
                   row.id === "L-2030" &&
                   row.status !== "archived" &&
@@ -284,7 +289,11 @@ export function ListingRadarPanel({
                   const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
                   if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
                     onConvert?.(selectedRow.id);
-                  } else if (selectedRow.id === "L-2029" && mergeTarget) {
+                  } else if (
+                    selectedRow.id === "L-2029" &&
+                    mergeTarget &&
+                    canMergeListing(activeRoleId)
+                  ) {
                     onMerge?.(selectedRow.id, mergeTarget);
                   } else if (selectedRow.id === "L-2030") {
                     onArchive?.(selectedRow.id);
