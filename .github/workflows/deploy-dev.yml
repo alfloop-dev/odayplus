@@ -68,7 +68,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Image metadata
-          # Use raw tag and sha tag as before
+        # Use raw tag and sha tag as before
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -99,16 +99,9 @@ jobs:
 
       - name: Sign the published Docker image
         env:
-          TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: |
-          images=""
-          for tag in ${TAGS}; do
-            images="${images} ${tag}"
-          done
-          for img in ${images}; do
-            cosign sign --yes "${img}@${DIGEST}"
-          done
+          cosign sign --yes "ghcr.io/${{ github.repository }}-${{ matrix.name }}@${DIGEST}"
 
   deploy:
     needs: build-and-publish
@@ -117,6 +110,16 @@ jobs:
       name: dev
       url: ${{ vars.ODP_DEV_DEPLOY_URL }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify image signatures before deploy
+        run: |
+          CI=true ./scripts/security/sign_images.sh verify "ghcr.io/${{ github.repository }}-api:dev"
+          CI=true ./scripts/security/sign_images.sh verify "ghcr.io/${{ github.repository }}-web:dev"
+
       # Images are published to ghcr.io/<owner>/odayplus-{api,web}:dev.
       # When a dev host exists, wire the rollout here: pull the :dev images and
       # `docker compose up -d`. Until ODP_DEV_HOST is configured the publish above

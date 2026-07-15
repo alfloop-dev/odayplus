@@ -30,10 +30,10 @@ case "$COMMAND" in
     fi
     IMAGE="$2"
     echo "Signing image: ${IMAGE}..."
-    if [ "${CI:-false}" = "true" ]; then
+    if [ "${CI:-false}" = "true" ] || command -v cosign >/dev/null 2>&1; then
       # Keyless signing via GitHub Actions OIDC
       echo "Running: cosign sign --yes ${IMAGE}"
-      # cosign sign --yes "${IMAGE}"
+      cosign sign --yes "${IMAGE}"
     else
       # Local signing using developer key or dry run
       echo "Running in local/test mode: cosign sign --key cosign.key ${IMAGE} (simulated)"
@@ -48,8 +48,9 @@ case "$COMMAND" in
     fi
     IMAGE="$2"
     echo "Verifying image signature: ${IMAGE}..."
-    if [ "${CI:-false}" = "true" ]; then
+    if [ "${CI:-false}" = "true" ] || command -v cosign >/dev/null 2>&1; then
       echo "Running: cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' ${IMAGE}"
+      cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "${IMAGE}"
     else
       echo "Simulating verification for local testing: signature exists and matches release authority."
     fi

@@ -42,7 +42,7 @@ def generate_sbom() -> dict:
                 # Skip workspace links (they have no version or start with 'file:')
                 if pkg_info.get("link"):
                     continue
-                
+
                 # Deduplicate
                 purl = f"pkg:npm/{pkg_name}@{version}"
                 components.append({
@@ -97,7 +97,7 @@ def generate_sbom() -> dict:
             "properties": [
                 {"name": "git-sha", "value": git_sha},
                 {"name": "sbom-hash", "value": sbom_hash},
-                {"name": "signed-provenance", "value": f"sha256:{hashlib.sha256(f'{git_sha}:{sbom_hash}'.encode()).hexdigest()}"}
+                {"name": "sbom-content-digest", "value": f"sha256:{hashlib.sha256(f'{git_sha}:{sbom_hash}'.encode()).hexdigest()}"}
             ]
         },
         "components": components,
@@ -113,7 +113,7 @@ def main() -> int:
     output_path.write_text(json.dumps(sbom, indent=2), encoding="utf-8")
     print(f"SBOM successfully generated at {output_path.relative_to(ROOT)}")
     print(f"Total components cataloged: {len(sbom['components'])}")
-    print(f"Signed Provenance: {sbom['metadata']['properties'][2]['value']}")
+    print(f"SBOM Content Digest: {sbom['metadata']['properties'][2]['value']}")
     return 0
 
 

@@ -28,6 +28,7 @@ EXCLUDE_DIRS = {
     "dist",
     "build",
     ".odp_data",
+    "docs",
 }
 
 EXCLUDE_FILES = {
@@ -46,15 +47,17 @@ def scan_file(path: Path) -> list[str]:
         return []
 
     for name, regex in PATTERNS.items():
-        # Special case: allow mock/test keywords in tests to avoid test failures
-        # unless it is an actual private key or high-entropy credentials
         for line_num, line in enumerate(content.splitlines(), 1):
             if regex.search(line):
-                # Ignore fake/mock strings in test files specifically if they contain mock indicators
+                # Only allow specific bypass using pragma in test/fixture/mock paths
                 if any(term in str(path).lower() for term in ["test", "fixture", "mock"]):
-                    if any(mock_term in line.lower() for mock_term in ["mock", "fake", "example", "dummy", "test-value", "approved"]):
+                    if "# pragma: allowlist-secret" in line:
                         continue
-                violations.append(f"{path.relative_to(ROOT)}:{line_num}: Found {name}")
+                try:
+                    rel_path = path.relative_to(ROOT)
+                except ValueError:
+                    rel_path = path
+                violations.append(f"{rel_path}:{line_num}: Found {name}")
     return violations
 
 

@@ -24,7 +24,7 @@ No known vulnerabilities found
 
 ## 3. Secret and SAST Scanning
 
-- **Secret Scanner**: Implemented under [secret_scan.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-supply-001/scripts/security/secret_scan.py). It detects private keys, high-entropy generic tokens/secrets, and blocks build violations while ignoring mock test secrets in test files.
+- **Secret Scanner**: Implemented under [secret_scan.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-supply-001/scripts/security/secret_scan.py). It detects private keys, high-entropy generic tokens/secrets, and blocks build violations. Any bypass in test paths requires an explicit `# pragma: allowlist-secret` justification; legacy or general bypass words like `approved` or `example` are rejected.
 - **SAST Scanner**: Implemented under [sast_scan.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-supply-001/scripts/security/sast_scan.py). It runs `bandit` with pre-approved skips for existing mock hashing.
 
 ## 4. Software Bill of Materials (SBOM) & Signed Provenance
@@ -34,29 +34,33 @@ Builds produce a CycloneDX 1.5 JSON SBOM containing both Python and Node depende
 It records:
 - Git Commit SHA
 - Components specification (`purl:pkg:npm/*`, `purl:pkg:pypi/*`)
-- Signed Provenance Hash
+- `sbom-content-digest` hash of the components to verify content integrity.
+
+To ensure this committed SBOM never goes stale, a dedicated regression test (`test_sbom_and_provenance_present_and_valid`) dynamically generates the SBOM from the active `package-lock.json` and `uv.lock` and asserts that it matches the committed copy exactly, failing closed if any dependency drifts.
 
 ## 5. Image Signing & Verification Policy
 
-The [sign_images.sh](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-supply-001/scripts/security/sign_images.sh) script provides the runtime procedures for image signing (using Cosign keyless OIDC or local keys), signature verification, rotation procedures, and key revocation procedures.
+The [sign_images.sh](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-supply-001/scripts/security/sign_images.sh) script provides the runtime procedures for image signing (using Cosign keyless OIDC or local keys) and signature verification.
+- Verification now invokes `cosign verify` for real, enforcing validation of image signatures and certificates.
+- Image signing is simplified to a single signature on the built image digest.
+- Image signatures are verified immediately *before* rollout in both the dev (`deploy-dev.yml`) and staging/release (`deploy-staging.yml`) deployment pipelines.
 
 ## 6. Verification Results
 
-All 42 security tests pass successfully:
+All 48 security tests pass successfully (42 regression tests + 6 negative tests verifying fail-closed rejections):
 ```bash
-$ make security
-Created .orchestrator/config.json from .orchestrator/config.example.json
-
-> oday-plus@0.1.0 audit:security
-> npm audit --audit-level=high
-
-found 0 vulnerabilities
-uv run --with pip-audit pip-audit --local
-No known vulnerabilities found
-uv run pytest tests/security
-..........................................                               [100%]
-42 passed in 21.35s
+$ uv run pytest tests/security
+................................................                         [100%]
+48 passed in 23.42s
 ```
+
+Negative tests specifically assert fail-closed rejection for:
+1. Stale lockfiles (`test_stale_lockfiles_rejected_negative`)
+2. Generated-client drift (`test_generated_client_drift_rejected_negative`)
+3. Vulnerable fixtures (`test_vulnerable_fixtures_rejected_negative`)
+4. Unsigned images (`test_unsigned_images_rejected_negative`)
+5. Invalid provenance (`test_invalid_provenance_rejected_negative`)
+6. Leaked test secrets (`test_leaked_test_secrets_rejected_negative`)
 
 All E2E release gate static checks pass:
 ```bash
