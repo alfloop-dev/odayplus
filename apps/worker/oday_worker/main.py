@@ -8,6 +8,7 @@ from apps.worker.oday_worker.handlers import build_default_registry
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
 from shared.jobs.queue import JobRecord, JobStatus
 from shared.jobs.registry import JobRegistry
+from shared.observability import SpanKind, Telemetry, TraceContext
 
 logger = logging.getLogger("oday-worker")
 
@@ -21,41 +22,107 @@ class ODayWorker:
         self,
         persistence: PersistenceBundle | None = None,
         registry: JobRegistry | None = None,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self.persistence = persistence or build_persistence()
         self.job_queue = self.persistence.job_queue
         # The registry composes domain jobs modularly (ODP-SD-03 §11); the loop
         # below owns the shared claim/retry/dead-letter state machine.
         self.registry = registry or build_default_registry()
+        self.telemetry = telemetry or Telemetry("oday-worker")
 
     def run_once(self) -> bool:
         """Claim and execute the next queued job. Returns True if a job was executed."""
         try:
             job = self.job_queue.claim_next()
         except Exception as exc:
-            logger.error("Failed to claim next job: %s", exc)
+            self.telemetry.logger.error("Failed to claim next job: %s", correlation_id="unknown", resource="job/queue", error_code=type(exc).__name__)
             return False
 
         if job is None:
             return False
 
-        logger.info("Executing job %s (type: %s)", job.job_id, job.job_type)
-        try:
-            self.execute_job(job)
-            self.job_queue.update_status(job.job_id, JobStatus.SUCCEEDED)
-            logger.info("Job %s succeeded", job.job_id)
-        except Exception as exc:
-            logger.error("Job %s failed: %s", job.job_id, exc)
-            # Retry behavior
-            payload = dict(job.payload)
-            retries = payload.get("_retry_count", 0)
-            if retries < 3:
-                payload["_retry_count"] = retries + 1
-                self.job_queue.update_status(job.job_id, JobStatus.QUEUED, payload=payload)
-                logger.info("Job %s queued for retry (attempt %d/3)", job.job_id, retries + 1)
-            else:
+        context = TraceContext(
+            correlation_id=job.correlation_id,
+            actor_id="worker",
+            job_id=job.job_id,
+        )
+
+        with self.telemetry.tracer.start_span(f"worker-{job.job_type}", SpanKind.WORKER, context=context):
+            self.telemetry.logger.info(
+                f"Executing job {job.job_id} (type: {job.job_type})",
+                correlation_id=job.correlation_id,
+                actor="worker",
+                resource=f"job/{job.job_type}",
+                action="execute",
+            )
+            
+            start_time = time.monotonic()
+            try:
+                self.execute_job(job)
+                duration = time.monotonic() - start_time
+                self.job_queue.update_status(job.job_id, JobStatus.SUCCEEDED)
+                
+                # Record metrics
+                self.telemetry.metrics.observe(
+                    "job_duration_seconds",
+                    duration,
+                    labels={"job_type": job.job_type, "status": "success"},
+                )
+                self.telemetry.logger.info(
+                    f"Job {job.job_id} succeeded",
+                    correlation_id=job.correlation_id,
+                    actor="worker",
+                    resource=f"job/{job.job_type}",
+                    action="execute",
+                    result="success",
+                )
+            except Exception as exc:
+                duration = time.monotonic() - start_time
                 self.job_queue.update_status(job.job_id, JobStatus.FAILED)
-                logger.info("Job %s marked failed (max retries reached)", job.job_id)
+                
+                # Record metrics
+                self.telemetry.metrics.observe(
+                    "job_duration_seconds",
+                    duration,
+                    labels={"job_type": job.job_type, "status": "failure"},
+                )
+                self.telemetry.metrics.increment(
+                    "job_failure_count",
+                    labels={"job_type": job.job_type, "error_class": type(exc).__name__},
+                )
+                self.telemetry.logger.error(
+                    f"Job {job.job_id} failed: {exc}",
+                    correlation_id=job.correlation_id,
+                    actor="worker",
+                    resource=f"job/{job.job_type}",
+                    action="execute",
+                    result="error",
+                    error_code=type(exc).__name__,
+                )
+                
+                # Retry behavior
+                payload = dict(job.payload)
+                retries = payload.get("_retry_count", 0)
+                if retries < 3:
+                    payload["_retry_count"] = retries + 1
+                    self.job_queue.update_status(job.job_id, JobStatus.QUEUED, payload=payload)
+                    self.telemetry.logger.info(
+                        f"Job {job.job_id} queued for retry (attempt {retries + 1}/3)",
+                        correlation_id=job.correlation_id,
+                        actor="worker",
+                        resource=f"job/{job.job_type}",
+                        action="retry",
+                    )
+                else:
+                    self.job_queue.update_status(job.job_id, JobStatus.FAILED)
+                    self.telemetry.logger.info(
+                        f"Job {job.job_id} marked failed (max retries reached)",
+                        correlation_id=job.correlation_id,
+                        actor="worker",
+                        resource=f"job/{job.job_type}",
+                        action="fail",
+                    )
 
         return True
 
@@ -70,3 +137,4 @@ class ODayWorker:
             executed = self.run_once()
             if not executed:
                 time.sleep(1.0)
+

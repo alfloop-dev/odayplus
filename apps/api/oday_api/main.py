@@ -115,15 +115,72 @@ else:
 
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
-            return health_payload()
+            # Liveness: simply check that process is running
+            return {"status": "ok", "service": "oday-api"}
+
+        @api.get("/readiness", tags=["system"])
+        def readiness(response: Response) -> dict[str, Any]:
+            # Readiness: check database connectivity
+            db_ok = True
+            details = {}
+            if bundle.is_durable:
+                try:
+                    bundle.engine.query("SELECT 1")
+                    details["database"] = "healthy"
+                except Exception as exc:
+                    db_ok = False
+                    details["database"] = f"unhealthy: {exc}"
+            else:
+                details["database"] = "healthy (in-memory)"
+
+            if not db_ok:
+                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+                return {"status": "unhealthy", "service": "oday-api", "details": details}
+            return {"status": "ok", "service": "oday-api", "details": details}
 
         @api.get("/health", tags=["platform"])
-        def health(request: Request) -> dict[str, str]:
-            return health_detail_payload(correlation_id=request.state.correlation_id)
-
         @api.get("/platform/health", tags=["platform"])
-        def platform_health(request: Request) -> dict[str, str]:
-            return health_detail_payload(correlation_id=request.state.correlation_id)
+        def health(request: Request, response: Response) -> dict[str, Any]:
+            # Detailed health: check database, job queue, and external providers
+            db_ok = True
+            db_details = "healthy (in-memory)"
+            if bundle.is_durable:
+                try:
+                    bundle.engine.query("SELECT 1")
+                    db_details = "healthy"
+                except Exception as exc:
+                    db_ok = False
+                    db_details = f"unhealthy: {exc}"
+
+            provider_ok = provider_validation.ok
+            provider_details = "healthy" if provider_ok else f"unhealthy: {provider_validation.errors}"
+
+            queue_ok = True
+            queue_details = "healthy"
+            try:
+                if bundle.is_durable:
+                    bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
+            except Exception as exc:
+                queue_ok = False
+                queue_details = f"unhealthy: {exc}"
+
+            overall_ok = db_ok and provider_ok and queue_ok
+            if not overall_ok:
+                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+            return {
+                "status": "ok" if overall_ok else "unhealthy",
+                "service": "oday-api",
+                "version": API_VERSION,
+                "time": datetime.now(UTC).isoformat(),
+                "correlation_id": request.state.correlation_id,
+                "dependencies": {
+                    "database": db_details,
+                    "job_queue": queue_details,
+                    "external_providers": provider_details,
+                }
+            }
+
 
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:

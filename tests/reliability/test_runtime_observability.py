@@ -475,3 +475,40 @@ def test_slo_defines_recovery_objectives() -> None:
     for system in ["cloud-sql", "audit-logs", "model-artifacts"]:
         assert system in recovery, system
         assert "rpo" in recovery[system] and "rto" in recovery[system]
+
+
+def test_worker_and_scheduler_export_telemetry() -> None:
+    from apps.scheduler.oday_scheduler.main import ODayScheduler
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.infrastructure.persistence.factory import build_persistence
+
+    # Set up
+    persistence = build_persistence(mode="memory")
+    logger_sink = ListSink()
+    telemetry = Telemetry(
+        "test-telemetry",
+        logger=StructuredLogger("test-telemetry", sink=logger_sink),
+    )
+
+    worker = ODayWorker(persistence=persistence, telemetry=telemetry)
+    scheduler = ODayScheduler(persistence=persistence, telemetry=telemetry)
+
+    # 1. Run scheduler once to enqueue a job
+    scheduler.run_once()
+    assert len(logger_sink.dicts) >= 2 # start + ok
+    assert logger_sink.dicts[0]["service"] == "test-telemetry"
+    assert logger_sink.dicts[1]["action"] == "enqueue"
+
+    # Verify span generated
+    spans = telemetry.tracer.spans_for(logger_sink.dicts[0]["correlation_id"])
+    assert len(spans) == 1
+    assert spans[0].name == "scheduler-tick"
+
+    # 2. Run worker once to consume the job
+    worker.run_once()
+    # Should have executed and logged
+    # Verify job metric updated
+    snapshot = telemetry.metrics.snapshot()
+    assert "job_duration_seconds" in snapshot
+    assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
+

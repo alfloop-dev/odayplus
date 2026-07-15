@@ -60,7 +60,9 @@ class PersistenceBundle:
     transaction_repository: Any
     machine_cycle_repository: Any
     external_fetch_state_store: Any = None
+    notification_repository: Any = None
     engine: Any = None
+
 
     @property
     def is_durable(self) -> bool:
@@ -87,6 +89,7 @@ def _memory_bundle() -> PersistenceBundle:
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+    from modules.notifications import InMemoryNotificationRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
     from shared.infrastructure.persistence.repositories import (
@@ -131,6 +134,7 @@ def _memory_bundle() -> PersistenceBundle:
         transaction_repository=InMemoryTransactionRepository(),
         machine_cycle_repository=InMemoryMachineCycleRepository(),
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
+        notification_repository=InMemoryNotificationRepository(),
     )
 
 
@@ -142,6 +146,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
+    from modules.notifications import DurableNotificationRepository
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
@@ -198,6 +203,7 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
         transaction_repository=DurableTransactionRepository(engine),
         machine_cycle_repository=DurableMachineCycleRepository(engine),
         external_fetch_state_store=DurableExternalFetchStateStore(store),
+        notification_repository=DurableNotificationRepository(engine),
         engine=engine,
     )
 
