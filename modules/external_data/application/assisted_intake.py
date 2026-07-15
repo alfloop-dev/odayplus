@@ -215,8 +215,8 @@ SOURCE_REGISTRY: tuple[SourceDefinition, ...] = (
         name="591 租屋",
         domain="591.com.tw",
         canonical_host="www.591.com.tw",
-        policy="APPROVED_RETRIEVAL",
-        policy_reason="單筆人工送件之物件頁擷取已取得書面授權（法務 2026-06-30 核備）。",
+        policy="ASSISTED_ENTRY_ONLY",
+        policy_reason="服務條款未授權伺服器擷取；依 fail-closed 原則，保留 URL 並由人工補錄必要欄位。",
         listing_id_pattern=r"rent-detail-(\d+)\.html",
     ),
     SourceDefinition(
@@ -244,6 +244,15 @@ SOURCE_REGISTRY: tuple[SourceDefinition, ...] = (
         canonical_host="listing-aggregator.example",
         policy="SOURCE_BLOCKED",
         policy_reason="治理裁定：來源為未授權轉載，資料使用範圍不明，停止處理並送治理覆核。",
+    ),
+    SourceDefinition(
+        source_id="SRC-SYNTHETIC",
+        name="模擬核准來源",
+        domain="synthetic.example",
+        canonical_host="www.synthetic.example",
+        policy="APPROVED_RETRIEVAL",
+        policy_reason="模擬測試專用之核准擷取來源（控制實驗 fixture）。",
+        listing_id_pattern=r"detail-(\d+)\.html",
     ),
 )
 
@@ -313,11 +322,11 @@ class RetrievalResult:
 
 RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
     # Clean new listing — 新莊副都心, no existing entity nearby.
-    "https://www.591.com.tw/rent-detail-77120345.html": RetrievalResult(
-        snapshot_id="SNAP-591-77120345",
+    "https://www.synthetic.example/detail-77120345.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-77120345",
         captured_at="2026-07-15T02:14:00Z",
         raw={
-            "source_listing_id": "s591-77120345",
+            "source_listing_id": "synthetic-77120345",
             "title": "新莊副都心 興德路一樓店面",
             "address_raw": "新北市新莊區興德路 30 號 1F",
             "rent_text": "NT$45,000 / 月",
@@ -334,11 +343,11 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
         },
     ),
     # Revision — same provider listing id as L-2024, rent reduced 58k -> 55k.
-    "https://www.591.com.tw/rent-detail-88520242.html": RetrievalResult(
-        snapshot_id="SNAP-591-88520242",
+    "https://www.synthetic.example/detail-88520242.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-88520242",
         captured_at="2026-07-15T02:20:00Z",
         raw={
-            "source_listing_id": "s591-2024",
+            "source_listing_id": "synthetic-2024",
             "title": "信義松仁路 臨路一樓店面（降價）",
             "address_raw": "台北市信義區松仁路 96 號 1F",
             "rent_text": "NT$55,000 / 月",
@@ -356,11 +365,11 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
     ),
     # Possible match — same normalized address as L-2025 but a different
     # provider id, floor, and rent. Ambiguous by construction; never auto-merged.
-    "https://www.591.com.tw/rent-detail-99310418.html": RetrievalResult(
-        snapshot_id="SNAP-591-99310418",
+    "https://www.synthetic.example/detail-99310418.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-99310418",
         captured_at="2026-07-15T02:31:00Z",
         raw={
-            "source_listing_id": "s591-99310418",
+            "source_listing_id": "synthetic-99310418",
             "title": "板橋府中 店面出租",
             "address_raw": "新北市板橋區府中路 52 號 2F",
             "rent_text": "NT$51,000 / 月",
@@ -374,11 +383,11 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
         },
     ),
     # Malformed source payload — fails the source contract and quarantines.
-    "https://www.591.com.tw/rent-detail-40028801.html": RetrievalResult(
-        snapshot_id="SNAP-591-40028801",
+    "https://www.synthetic.example/detail-40028801.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-40028801",
         captured_at="2026-07-15T02:36:00Z",
         raw={
-            "source_listing_id": "s591-40028801",
+            "source_listing_id": "synthetic-40028801",
             "title": "（版面異常）",
             "address_raw": "",
             "rent_text": "面議",
@@ -391,8 +400,8 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
         },
     ),
     # Retryable upstream timeout — corrections must survive a retry.
-    "https://www.591.com.tw/rent-detail-50000001.html": RetrievalResult(
-        snapshot_id="SNAP-591-50000001",
+    "https://www.synthetic.example/detail-50000001.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-50000001",
         captured_at="2026-07-15T02:41:00Z",
         failure=RetrievalFailure(
             code="ODP-INTAKE-RETRIEVAL-TIMEOUT",
