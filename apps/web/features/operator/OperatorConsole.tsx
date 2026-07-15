@@ -506,7 +506,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               ! 3
             </Button>
             {isNotificationOpen ? (
-              <div className={styles.notificationPanel}>
+              <div className={styles.notificationPanel} data-screen-label="Notifications">
                 <div className={styles.popoverTitle}>Notifications</div>
                 {notifications.map((notification) => (
                   <article className={styles.notificationItem} key={notification.title}>
@@ -536,7 +536,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               {activeRole.label}
             </Button>
             {isRoleMenuOpen ? (
-              <div className={styles.roleMenu}>
+              <div className={styles.roleMenu} data-screen-label="Role Switch Menu">
                 <div className={styles.popoverTitle}>Role switcher</div>
                 {OPERATOR_ROLES.map((role) => (
                   <button

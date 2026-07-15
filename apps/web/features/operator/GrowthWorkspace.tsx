@@ -84,8 +84,8 @@ export function GrowthWorkspace({
         }}
         lastUpdated={`${freshness.updatedAt} · model ${freshness.modelVersion}`}
       />
-      <div className="odp-content" data-testid="growth-workspace">
-        <section className={styles.overviewGrid} aria-label="Growth overview">
+      <div className="odp-content" data-testid="growth-workspace" data-screen-label="Growth 營收成長">
+        <section className={styles.overviewGrid} aria-label="Growth overview" data-screen-label="Growth 建立入口">
           <Metric label="分群數" value={String(vm.summary.segmentCount)} hint="納入成長評估的區隔" />
           <Metric label="進行中活動" value={String(vm.summary.activeCount)} hint="已核准至觀察中的 Growth Action" />
           <Metric label="判定有效" value={String(vm.summary.effectiveCount)} hint="達標且證據充足" />
@@ -135,7 +135,7 @@ function SegmentSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section className={styles.section} aria-label="Segments">
+    <section className={styles.section} aria-label="Segments" data-screen-label="Growth 會員分群">
       <h2 className={styles.sectionTitle}>分群</h2>
       <p className={styles.sectionHint}>選擇分群以聚焦其 PriceOps 建議與 Growth Action。</p>
       <div className={styles.filterBar} data-testid="growth-segment-filter">
@@ -210,7 +210,7 @@ function RecommendationSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section className={styles.section} aria-label="PriceOps recommendations">
+    <section className={styles.section} aria-label="PriceOps recommendations" data-screen-label="Growth PriceOps">
       <h2 className={styles.sectionTitle}>PriceOps 建議</h2>
       <p className={styles.sectionHint}>
         系統建議僅為 SYSTEM_RECOMMENDED；硬限制未通過的建議不可建立草稿，需先由 PriceOps 修正。
@@ -415,6 +415,7 @@ function CloseoutPanel({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   const [isApproved, setIsApproved] = useState(false);
+  const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
   const blockClass = gate.canClose ? styles.successBlock : styles.warningBlock;
 
   const handleApprove = () => {
@@ -447,7 +448,11 @@ function CloseoutPanel({
           type="button"
           className={styles.primaryButton}
           disabled={!gate.canClose || isApproved}
-          onClick={handleApprove}
+          onClick={() => {
+            if (gate.canClose) {
+              setShowOutcomeDialog(true);
+            }
+          }}
           data-testid="growth-close-button"
         >
           {isApproved ? "已結案" : "結案並回寫成效"}
@@ -466,6 +471,19 @@ function CloseoutPanel({
           重新整理判定
         </Link>
       </p>
+
+      {showOutcomeDialog && (
+        <div data-screen-label="Dialog Growth Outcome" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ width: "520px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", padding: "20px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 10px 0" }}>確認結案：{item.name}</h2>
+            <p style={{ fontSize: "12px", color: "#5A6478", marginBottom: "15px" }}>您即將提交本活動成效，並寫入系統稽核日誌中。</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+              <button onClick={() => setShowOutcomeDialog(false)} className={styles.secondaryButton} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
+              <button onClick={() => { handleApprove(); setShowOutcomeDialog(false); }} className={styles.primaryButton} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>確認結案</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -512,6 +530,7 @@ function CreateDraftModal({
         aria-labelledby="growth-draft-title"
         className={styles.modal}
         style={{ position: "relative", zIndex: 2 }}
+        data-screen-label="Dialog Growth Draft Builder"
       >
         <div className={styles.modalHeader}>
           <div>

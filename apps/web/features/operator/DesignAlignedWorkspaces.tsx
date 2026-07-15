@@ -498,6 +498,16 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
         <h1>門市營運</h1>
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>
       </header>
+
+      <div data-screen-label="Store Ops 全店四燈摘要" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "12px", color: "#1C2333" }}>全店營運狀況（四燈）</strong>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 需求</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 設備</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 清潔</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 利潤</span>
+        </div>
+      </div>
       <div className={styles.storeGrid}>
         <aside className={styles.storeQueue} aria-label="門市 Issue queue">
           <label className={styles.designSearch}>

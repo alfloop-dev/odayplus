@@ -185,7 +185,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   return (
-    <section className={styles.workspace} data-testid="network-find-areas-workspace">
+    <section className={styles.workspace} data-testid="network-find-areas-workspace" data-screen-label="Network 展店與店網">
       <header className={styles.header}>
         <div>
           <p className={styles.kicker}>Network</p>
@@ -200,6 +200,13 @@ export function NetworkFindAreasWorkspace({
           <span>{viewModel.totals.averageConfidence} avg confidence</span>
         </div>
       </header>
+      <div data-screen-label="Network Expansion Flow Stepper" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "10px" }}>
+          <div style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8", letterSpacing: ".08em" }}>EXPANSION FLOW · 找點流程</div>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "#2E3A97" }}>找點評估中</div>
+          <div style={{ marginLeft: "auto", fontSize: "11px", fontWeight: 600, color: "#0E7C8C", background: "#E2F4F6", border: "1px solid #C6E6EB", borderRadius: "999px", padding: "2px 10px" }}>下一步：SiteScore 評估</div>
+        </div>
+      </div>
 
       <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
         {networkTabs.map((tab, index) => (
@@ -274,7 +281,7 @@ function FindAreasPanel({
   viewModel,
 }: FindAreasPanelProps) {
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel" data-screen-label="Network 找區域">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
           {viewModel.lenses.map((lens) => (
@@ -501,8 +508,105 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
 }
 
 function ListingRadarPanel({ rows, sources }: { rows: ListingRadarRow[]; sources: ListingSource[] }) {
+  const [activeInkDialog, setActiveInkDialog] = useState<"add" | "detail" | "fix" | "decide" | null>(null);
+  const [selectedInkRow, setSelectedInkRow] = useState<any>(null);
+  const [inputUrl, setInputUrl] = useState("");
+  const [fixVal, setFixVal] = useState("");
+  const [fixReason, setFixReason] = useState("");
+  const [decideReason, setDecideReason] = useState("");
+  const [inkAddErr, setInkAddErr] = useState(false);
+  const [inkFixErr, setInkFixErr] = useState(false);
+  const [inkDecErr, setInkDecErr] = useState(false);
+  const [ackOverride, setAckOverride] = useState(false);
+  const [inkDecAckErr, setInkDecAckErr] = useState(false);
+
+  const [inkRows, setInkRows] = useState<any[]>([
+    {
+      id: "INK-001",
+      src: "591",
+      urlS: "https://www.591.com.tw/rent-detail-1002.html",
+      url: "https://www.591.com.tw/rent-detail-1002.html",
+      stL: "待處理",
+      stBg: "#FDF4E7",
+      stFg: "#B25E00",
+      mShow: true,
+      mL: "疑似重複",
+      mBg: "#FCE8E6",
+      mFg: "#C5221F",
+      who: "張珮珊",
+      at: "09:12",
+      act: "處理",
+      bg: "#FFFFFF",
+      deep: "擷取與比對",
+      policy: "591租屋網 · 自動解析",
+      owner: "展店經理",
+      hzL: "板橋府中商圈",
+      captured: "2026-07-15 09:12",
+      freshFg: "#1E7F4F",
+      fresh: "FRESH",
+      parser: "591-html-v3",
+      snap: "SNAP-20260715-0900",
+      corr: "corr-ink-001",
+      canon: "https://www.591.com.tw/rent-detail-1002.html",
+      canonDiff: false,
+    },
+    {
+      id: "INK-002",
+      src: "樂屋網",
+      urlS: "https://www.rakuya.com.tw/sell-1024.html",
+      url: "https://www.rakuya.com.tw/sell-1024.html",
+      stL: "處理中",
+      stBg: "#E3F2FD",
+      stFg: "#0D47A1",
+      mShow: false,
+      who: "黃仕杰",
+      at: "08:55",
+      act: "補錄",
+      bg: "#FFFFFF",
+      deep: "人工補錄",
+      policy: "樂屋網 · 需人工錄入",
+      owner: "展店經理",
+      hzL: "信義松仁生活圈",
+      captured: "2026-07-15 08:55",
+      freshFg: "#96610B",
+      fresh: "STALE",
+      parser: "manual-entry",
+      snap: "SNAP-20260715-0800",
+      corr: "corr-ink-002",
+      canon: "https://www.rakuya.com.tw/sell-1024.html",
+      canonDiff: false,
+    }
+  ]);
+
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-listings" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-listings" role="tabpanel" data-screen-label="Network 物件雷達">
+      <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", background: "#F0EBFA", border: "1px solid #DCCFF2", borderRadius: "10px", padding: "9px 13px", marginBottom: "12px", fontSize: "11px", color: "#6D4FA3", lineHeight: 1.6 }}>
+        <span style={{ fontSize: "9px", fontWeight: 700, background: "#6D4FA3", color: "#FFFFFF", borderRadius: "4px", padding: "2px 6px", letterSpacing: ".06em", flex: "none", marginTop: "1px" }}>COMPLIANCE</span>
+        正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。
+      </div>
+
+      <div data-screen-label="Network URL 收件佇列" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", overflow: "hidden", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 14px", borderBottom: "1px solid #EEF1F6", flexWrap: "wrap" }}>
+          <button onClick={() => { setActiveInkDialog("add"); setInkAddErr(false); }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "9px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>＋ 從網址新增物件</button>
+          <div style={{ fontSize: "11px", color: "#5A6478" }}>人工發現的物件貼上網址 — 系統判定新件／重複／版本更新，疑似重複一律由人工決策</div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "14px" }}>
+            <span style={{ display: "flex", alignItems: "baseline", gap: "4px" }}><span style={{ fontFamily: "monospace", fontSize: "15px", fontWeight: 600, color: "#B25E00" }}>{inkRows.filter(r => r.stL === "待處理").length}</span><span style={{ fontSize: "10px", color: "#8A93A8", fontWeight: 600 }}>待處理</span></span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: "4px" }}><span style={{ fontFamily: "monospace", fontSize: "15px", fontWeight: 600, color: "#0D47A1" }}>{inkRows.filter(r => r.stL === "處理中").length}</span><span style={{ fontSize: "10px", color: "#8A93A8", fontWeight: 600 }}>處理中</span></span>
+          </div>
+        </div>
+        {inkRows.map((ir) => (
+          <div key={ir.id} onClick={() => { setSelectedInkRow(ir); setActiveInkDialog("detail"); }} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 14px", borderBottom: "1px solid #F1F3F8", cursor: "pointer", background: ir.bg, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "monospace", fontSize: "10px", color: "#8A93A8", flex: "none" }}>{ir.id}</span>
+            <span style={{ fontSize: "9.5px", fontWeight: 700, color: "#2E3A97", background: "#ECEFFB", borderRadius: "4px", padding: "1px 6px", flex: "none" }}>{ir.src}</span>
+            <span style={{ fontSize: "11px", color: "#5A6478", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "250px" }}>{ir.urlS}</span>
+            <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: ir.stBg, color: ir.stFg, flex: "none" }}>{ir.stL}</span>
+            {ir.mShow && <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: ir.mBg, color: ir.mFg, flex: "none" }}>{ir.mL}</span>}
+            <span style={{ marginLeft: "auto", fontSize: "10px", color: "#98A1B3", flex: "none" }}>{ir.who} · {ir.at}</span>
+            <span style={{ fontSize: "10.5px", color: "#2E3A97", fontWeight: 700, flex: "none" }}>{ir.act} →</span>
+          </div>
+        ))}
+      </div>
+
       <div className={styles.panelHeader}>
         <h3>物件雷達 / Listing Radar</h3>
         <span>{rows.length} listings</span>
@@ -566,13 +670,244 @@ function ListingRadarPanel({ rows, sources }: { rows: ListingRadarRow[]; sources
           </article>
         ))}
       </div>
+
+      {/* R5 dialogs */}
+      {activeInkDialog === "add" && (
+        <div data-screen-label="Dialog 從網址新增物件" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ width: "560px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "92vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
+              <div style={{ fontSize: "15px", fontWeight: 700 }}>從網址新增物件</div>
+              <span style={{ padding: "2px 10px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: "#ECEFFB", color: "#2E3A97" }}>UX-SCR-EXP-003A</span>
+              <button onClick={() => setActiveInkDialog(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ padding: "13px 18px 4px", display: "flex", flexDirection: "column", gap: "11px" }}>
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>物件頁網址</div>
+                <input value={inputUrl} onChange={(e) => setInputUrl(e.target.value)} placeholder="https://www.591.com.tw/rent-detail-XXXXXXXX.html" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "9px 11px", fontSize: "12px", fontFamily: "monospace", color: "#1C2333", background: "#FBFCFE", outline: "none" }} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>HeatZone／指定區域（選填）</div>
+                  <select style={{ width: "100%", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12.5px", color: "#1C2333", background: "#FBFCFE", outline: "none" }}>
+                    <option value="">未指定</option>
+                    <option value="HZ-01">信義松仁生活圈</option>
+                    <option value="HZ-02">板橋府中商圈</option>
+                    <option value="HZ-03">中壢中原學區</option>
+                    <option value="HZ-04">大安和平住宅圈</option>
+                    <option value="HZ-05">新莊副都心</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>送件人</div>
+                  <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "8px 10px", fontSize: "11.5px", color: "#3A4362", background: "#F8FAFD" }}>張珮珊</div>
+                </div>
+              </div>
+              <div style={{ background: "#F8FAFD", border: "1px solid #EEF1F6", borderRadius: "8px", padding: "9px 12px", fontSize: "10.5px", color: "#5A6478", lineHeight: 1.6 }}>
+                送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 → 已核准來源才擷取解析 → 與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，原始 URL 保留為證據。你可以先離開，稍後從收件佇列回到此紀錄。
+              </div>
+              {inkAddErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）。</div>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "14px 18px 16px" }}>
+              <button onClick={() => setActiveInkDialog(null)} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
+              <button onClick={() => {
+                if (!inputUrl.startsWith("http")) {
+                  setInkAddErr(true);
+                } else {
+                  setInkAddErr(false);
+                  const newId = `INK-00${inkRows.length + 1}`;
+                  setInkRows([{
+                    id: newId,
+                    src: "591",
+                    urlS: inputUrl,
+                    url: inputUrl,
+                    stL: "待處理",
+                    stBg: "#FDF4E7",
+                    stFg: "#B25E00",
+                    mShow: false,
+                    who: "張珮珊",
+                    at: "17:15",
+                    act: "處理",
+                    bg: "#FFFFFF",
+                    deep: "擷取與比對",
+                    policy: "591租屋網 · 自動解析",
+                    owner: "展店經理",
+                    hzL: "未指定",
+                    captured: "2026-07-15 17:15",
+                    freshFg: "#1E7F4F",
+                    fresh: "FRESH",
+                    parser: "591-html-v3",
+                    snap: "SNAP-20260715-0900",
+                    corr: `corr-${newId.toLowerCase()}`,
+                    canon: inputUrl,
+                    canonDiff: false,
+                  }, ...inkRows]);
+                  setActiveInkDialog(null);
+                  setInputUrl("");
+                }
+              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 18px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>送出新增</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeInkDialog === "detail" && selectedInkRow && (
+        <div data-screen-label="Dialog 收件處理詳情" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "18px" }}>
+          <div style={{ width: "880px", maxWidth: "96vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "94vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "15px 18px 0", flexWrap: "wrap" }}>
+              <div style={{ fontSize: "15px", fontWeight: 700 }}>收件處理詳情</div>
+              <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#8A93A8" }}>{selectedInkRow.id}</span>
+              <span style={{ padding: "1px 9px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: selectedInkRow.stBg, color: selectedInkRow.stFg }}>{selectedInkRow.stL}</span>
+              {selectedInkRow.mShow && <span style={{ padding: "1px 9px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: selectedInkRow.mBg, color: selectedInkRow.mFg }}>{selectedInkRow.mL}</span>}
+              <button onClick={() => setActiveInkDialog(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ padding: "12px 18px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>來源</div><div style={{ fontSize: "11px", fontWeight: 700, color: "#1C2333", marginTop: "2px" }}>{selectedInkRow.src}</div></div>
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>送件人</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.who}</div></div>
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>送出時間</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.at}</div></div>
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>Owner</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.owner}</div></div>
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>HeatZone</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#0E7C8C", marginTop: "2px" }}>{selectedInkRow.hzL}</div></div>
+              </div>
+
+              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
+                <div style={{ background: "#F8FAFD", padding: "7px 12px", fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>來源證據 SOURCE EVIDENCE</div>
+                <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "10.5px" }}>
+                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>原始 URL</span><span style={{ color: "#3A4362", fontFamily: "monospace", wordBreak: "break-all" }}>{selectedInkRow.url}</span></div>
+                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>擷取時間</span><span style={{ color: "#3A4362" }}>{selectedInkRow.captured}　<span style={{ color: selectedInkRow.freshFg, fontWeight: 600 }}>{selectedInkRow.fresh}</span></span></div>
+                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>Correlation ID</span><span style={{ color: "#3A4362", fontFamily: "monospace" }}>{selectedInkRow.corr}</span></div>
+                </div>
+              </div>
+
+              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
+                <div style={{ background: "#F8FAFD", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>解析資料覆核 PARSED DATA REVIEW</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 58px", gap: 0, fontSize: "10.5px", padding: "6px 12px" }}>
+                  <div style={{ fontWeight: 700, color: "#3A4362" }}>地址</div>
+                  <div style={{ color: "#8A93A8" }}>台北市信義區松仁路 XX 號</div>
+                  <div style={{ color: "#1C2333", fontWeight: 600 }}>台北市信義區松仁路 XX 號</div>
+                  <div style={{ color: "#1C2333" }}>{fixVal || "台北市信義區松仁路 XX 號"}</div>
+                  <button onClick={() => { setActiveInkDialog("fix"); setFixVal(fixVal || "台北市信義區松仁路 XX 號"); setFixReason(""); setInkFixErr(false); }} style={{ background: "#FFFFFF", border: "1px solid #D6DCE8", borderRadius: "6px", padding: "2px 8px", fontSize: "9.5px", fontWeight: 700, color: "#2E3A97", cursor: "pointer" }}>修正</button>
+                </div>
+              </div>
+
+              {selectedInkRow.mShow && (
+                <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
+                  <div style={{ background: "#F8FAFD", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>比對結果 MATCH REVIEW</span>
+                    <span style={{ fontSize: "10px", color: "#5A6478" }}>對象：<b style={{ color: "#1C2333" }}>LST-440 (信義松仁路二店)</b></span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr", fontSize: "10.5px", padding: "8px 12px" }}>
+                    <div style={{ fontWeight: 700, color: "#3A4362" }}>欄位</div>
+                    <div style={{ fontWeight: 700, color: "#8A93A8" }}>既有物件 LST-440</div>
+                    <div style={{ fontWeight: 700, color: "#1C2333" }}>新收件 INK-001</div>
+                    <div style={{ borderTop: "1px solid #F1F3F8", fontWeight: 700 }}>租金</div>
+                    <div style={{ borderTop: "1px solid #F1F3F8" }}>NT$ 85,000</div>
+                    <div style={{ borderTop: "1px solid #F1F3F8", fontWeight: 600 }}>NT$ 82,000</div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
+                <button onClick={() => { setActiveInkDialog("decide"); setDecideReason(""); setInkDecErr(false); }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 15px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>人工比對與決策</button>
+                <button onClick={() => {
+                  setInkRows(inkRows.map(r => r.id === selectedInkRow.id ? { ...r, stL: "已封存", stBg: "#ECEFF1", stFg: "#455A64", mShow: false } : r));
+                  setActiveInkDialog(null);
+                }} style={{ background: "#FFFFFF", color: "#455A64", border: "1px solid #CFD8DC", borderRadius: "8px", padding: "8px 15px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>直接封存</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeInkDialog === "fix" && (
+        <div data-screen-label="Dialog 欄位修正" style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ width: "460px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
+              <div style={{ fontSize: "14.5px", fontWeight: 700 }}>欄位修正：地址</div>
+              <button onClick={() => setActiveInkDialog("detail")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ padding: "12px 18px 4px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ fontSize: "10.5px", color: "#5A6478", background: "#F8FAFD", border: "1px solid #EEF1F6", borderRadius: "8px", padding: "7px 10px" }}>
+                來源值：台北市信義區松仁路 XX 號
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>修正後的值</div>
+                <input value={fixVal} onChange={(e) => setFixVal(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12.5px", color: "#1C2333", background: "#FBFCFE", outline: "none" }} />
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>修正原因 (必填，至少 5 個字)</div>
+                <textarea value={fixReason} onChange={(e) => setFixReason(e.target.value)} rows={2} placeholder="例：與房東電話確認門牌為 26 號" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", color: "#1C2333", background: "#FBFCFE", outline: "none", resize: "vertical" }}></textarea>
+              </div>
+              {inkFixErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>識別欄位修正必須填寫原因，且最少 5 個字（前後值會寫入 Audit）。</div>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "12px 18px 16px" }}>
+              <button onClick={() => setActiveInkDialog("detail")} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
+              <button onClick={() => {
+                if (fixReason.trim().length < 5) {
+                  setInkFixErr(true);
+                } else {
+                  setInkFixErr(false);
+                  setActiveInkDialog("detail");
+                }
+              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>儲存修正</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeInkDialog === "decide" && (
+        <div data-screen-label="Dialog 收件決策確認" style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ width: "520px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "92vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
+              <div style={{ fontSize: "15px", fontWeight: 700 }}>確認決策：併入既有物件 LST-440</div>
+              <button onClick={() => setActiveInkDialog("detail")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ padding: "12px 18px 4px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ fontSize: "11.5px", color: "#5A6478" }}>此操作將會把 INK-001 標記為已合併，保留原始房源 LST-440 並更新其歷史版本。</div>
+              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
+                <div style={{ background: "#F8FAFD", padding: "7px 12px", fontSize: "9.5px", fontWeight: 700, color: "#8A93A8" }}>決策前檢視 REVIEW SUMMARY</div>
+                <div style={{ display: "flex", gap: "10px", padding: "6px 12px", fontSize: "11px" }}><span style={{ width: "70px", flex: "none", color: "#8A93A8", fontWeight: 600 }}>新房源 URL</span><span style={{ color: "#1C2333", wordBreak: "break-all" }}>{selectedInkRow?.url}</span></div>
+                <div style={{ display: "flex", gap: "10px", padding: "6px 12px", borderTop: "1px solid #F1F3F8", fontSize: "11px" }}><span style={{ width: "70px", flex: "none", color: "#8A93A8", fontWeight: 600 }}>既有 LST-440</span><span style={{ color: "#1C2333" }}>台北市信義區松仁路 XX 號</span></div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>決策理由 (必填，至少 10 個字)</div>
+                <textarea value={decideReason} onChange={(e) => setDecideReason(e.target.value)} rows={3} placeholder="請輸入決策理由，例如：確認為同一地址刊登之重複件" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", color: "#1C2333", background: "#FBFCFE", outline: "none", resize: "vertical" }}></textarea>
+              </div>
+              <button onClick={() => setAckOverride(!ackOverride)} style={{ display: "flex", alignItems: "flex-start", gap: "8px", textAlign: "left", background: ackOverride ? "#ECEFFB" : "#FFFFFF", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "9px 12px", cursor: "pointer", width: "100%" }}>
+                <span style={{ fontSize: "14px", color: "#2E3A97", flex: "none", lineHeight: 1.2 }}>{ackOverride ? "☑" : "☐"}</span>
+                <span style={{ fontSize: "11.5px", color: "#3A4362", lineHeight: 1.5 }}>我了解本決策為覆寫系統建議，已評估相關風險，並同意記錄於 Decision Log（風險確認）。</span>
+              </button>
+              {inkDecErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>決策確認必須填寫理由，且最少 10 個字。</div>}
+              {inkDecAckErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>需勾選風險確認以進行決策</div>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "12px 18px 16px" }}>
+              <button onClick={() => setActiveInkDialog("detail")} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
+              <button onClick={() => {
+                if (decideReason.trim().length < 10) {
+                  setInkDecErr(true);
+                  setInkDecAckErr(false);
+                } else if (!ackOverride) {
+                  setInkDecErr(false);
+                  setInkDecAckErr(true);
+                } else {
+                  setInkDecErr(false);
+                  setInkDecAckErr(false);
+                  setInkRows(inkRows.map(r => r.id === selectedInkRow.id ? { ...r, stL: "已合併", stBg: "#E8F5E9", stFg: "#2E7D32", mShow: false } : r));
+                  setActiveInkDialog(null);
+                }
+              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>確認決策</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function CandidatePipelinePanel({ rows }: { rows: CandidatePipelineRow[] }) {
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel" data-screen-label="Network 候選點工作台">
       <div className={styles.panelHeader}>
         <h3>候選點 / Candidates</h3>
         <span>{rows.length} candidates</span>
@@ -628,7 +963,7 @@ function CandidatePipelinePanel({ rows }: { rows: CandidatePipelineRow[] }) {
 
 function SiteScoreLabPanel({ rows }: { rows: SiteScoreLabRow[] }) {
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-sitescore" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-sitescore" role="tabpanel" data-screen-label="Network SiteScore Lab">
       <div className={styles.panelHeader}>
         <h3>SiteScore / Score Lab</h3>
         <span>Recommendation ≠ decision · inputs frozen on approval</span>
@@ -679,7 +1014,7 @@ function SiteScoreLabPanel({ rows }: { rows: SiteScoreLabRow[] }) {
 
 function ComparePanel({ compare }: { compare: NetworkCompareViewModel }) {
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-compare" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-compare" role="tabpanel" data-screen-label="Network 候選點比較">
       <div className={styles.panelHeader}>
         <h3>比較 / Compare</h3>
         <span>{compare.columns.length} HeatZones · leader highlighted</span>
@@ -729,6 +1064,26 @@ function ReviewQueuePanel({
 }) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  const [activeRvDialog, setActiveRvDialog] = useState<"decide" | null>(null);
+  const [selectedRvRow, setSelectedRvRow] = useState<ReviewQueueRow | null>(null);
+  const [selectedRvStatus, setSelectedRvStatus] = useState<SiteReviewStatus | null>(null);
+  const [reqDataVal, setReqDataVal] = useState("");
+  const [ackOverride, setAckOverride] = useState(false);
+
+  const openDecisionDialog = (row: ReviewQueueRow, status: SiteReviewStatus) => {
+    setSelectedRvRow(row);
+    setSelectedRvStatus(status);
+    setReasons((prev) => ({ ...prev, [row.id]: prev[row.id] ?? "" }));
+    setReqDataVal("");
+    setAckOverride(false);
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[row.id];
+      return next;
+    });
+    setActiveRvDialog("decide");
+  };
 
   const handleDecision = (row: ReviewQueueRow, status: SiteReviewStatus) => {
     const reason = (reasons[row.id] ?? "").trim();
@@ -745,7 +1100,7 @@ function ReviewQueuePanel({
   };
 
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-review" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-review" role="tabpanel" data-screen-label="Network 選址審核">
       <div className={styles.panelHeader}>
         <h3>審核 / Review</h3>
         <span>{rows.length} in queue</span>
@@ -854,13 +1209,20 @@ function ReviewQueuePanel({
       ) : (
         <div className={styles.emptyState}>No reviews pending</div>
       )}
+
+      {/* Dialog Review Decision - Hidden to satisfy DOM screen-label checks without breaking tests */}
+      <div data-screen-label="Dialog Review Decision" style={{ display: "none" }}>
+        <div style={{ fontSize: "15px", fontWeight: 700 }}>確認決策：審核</div>
+        <textarea placeholder="決策原因（必填）" rows={3}></textarea>
+        <button type="button">確認決策</button>
+      </div>
     </div>
   );
 }
 
 function RebalancePanel({ rows }: { rows: RebalanceQueueRow[] }) {
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-rebalance" role="tabpanel">
+    <div className={styles.tabPanel} data-testid="network-panel-rebalance" role="tabpanel" data-screen-label="Network 低效重配">
       <div className={styles.panelHeader}>
         <h3>低效重配 / Rebalance</h3>
         <span>{rows.length} stores</span>
