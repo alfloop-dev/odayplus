@@ -17,7 +17,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes import priceops as priceops_routes
 from apps.api.oday_api.main import create_app
+from modules.priceops.application import PriceOpsService
 from shared.api.errors import ErrorCode
 from shared.api.idempotency import (
     MISSING,
@@ -334,6 +336,148 @@ def test_create_plan_replay_keeps_the_legacy_created_flag() -> None:
     assert first.json()["idempotent_replay"] is False
     assert second.json()["created"] is False
     assert second.json()["idempotent_replay"] is True
+
+
+def _post_concurrently(
+    app: Any, url: str, body: dict[str, Any], key: str, *, count: int = 8
+) -> list[Any]:
+    """Fire `count` same-key POSTs that are genuinely in flight together.
+
+    Each thread gets its own `TestClient` over the *same* app: the app, and so
+    the router, its job store and its IdempotencyStore, is shared, which is
+    what makes the race under test real.
+
+    The warmup GET is required, and not incidental. FastAPI 0.138 resolves an
+    included router's routes lazily into a memoized cache
+    (`_IncludedRouter.effective_candidates`), and that cache is built without a
+    lock: it clears the candidate list, repopulates it, and only then stamps
+    the version. Concurrent *first* requests therefore race and one can match
+    against a still-empty list, which surfaces as a spurious 404. That is a
+    framework bug, unrelated to idempotency, and it would otherwise make this
+    test flake ~1 run in 4. One request ahead of the barrier warms the cache so
+    the test measures the idempotency policy and nothing else. See the note in
+    docs/evidence/completion/ODP-PGAP-API-001/verification.md.
+    """
+    TestClient(app).get("/api/v1/priceops/plans", headers=WRITE_HEADERS)
+
+    headers = {**WRITE_HEADERS, "Idempotency-Key": key}
+    barrier = threading.Barrier(count)
+    responses: list[Any] = []
+    lock = threading.Lock()
+
+    def submit() -> None:
+        client = TestClient(app)
+        barrier.wait()
+        response = client.post(url, json=body, headers=headers)
+        with lock:
+            responses.append(response)
+
+    threads = [threading.Thread(target=submit) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(responses) == count
+    return responses
+
+
+def test_concurrent_create_plan_with_one_key_creates_exactly_one_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Eight simultaneous same-key POSTs must yield one plan, not eight.
+
+    The store-level atomicity test above passed while `create_plan` was still
+    doing lookup -> service.create_plan -> remember as three separate steps
+    outside `run`, so the guarantee never reached the HTTP boundary: a
+    concurrent probe returned distinct plan_ids and two `created: true`
+    responses. This test drives the race through the real route, the layer
+    where the defect actually surfaced.
+
+    The service call is slowed so the check-then-act window is reliably caught:
+    a barrier alone syncs only the client threads, and the unguarded window is
+    short enough that the handler finishes inside one GIL switch interval, so
+    the bug it is meant to catch slips through. Under the fix only one request
+    executes, so the sleep is paid once rather than eight times.
+
+    `plan_id` is omitted so the server mints one per execution -- a
+    client-supplied id would mask a double-create behind a shared id.
+    """
+    original = PriceOpsService.create_plan
+
+    def slow_create_plan(self: Any, **kwargs: Any) -> Any:
+        time.sleep(0.05)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(PriceOpsService, "create_plan", slow_create_plan)
+
+    app = create_app(external_provider_validation=lambda: None)
+    body = _plan_body()
+    del body["plan_id"]
+    responses = _post_concurrently(
+        app, "/api/v1/priceops/plans", body, "concurrent-create-1"
+    )
+
+    for response in responses:
+        assert response.status_code == 201, response.text
+    payloads = [response.json() for response in responses]
+
+    plan_ids = {payload["plan_id"] for payload in payloads}
+    assert len(plan_ids) == 1, f"one key produced {len(plan_ids)} distinct plans: {plan_ids}"
+
+    created = [payload for payload in payloads if payload["created"]]
+    assert len(created) == 1, f"{len(created)} responses claimed created=true; exactly 1 may"
+    replayed = [payload for payload in payloads if payload["idempotent_replay"]]
+    assert len(replayed) == 7
+
+    # The winner's plan is the only one the repository ever saw.
+    listed = TestClient(app).get("/api/v1/priceops/plans", headers=WRITE_HEADERS).json()
+    assert [row["plan_id"] for row in listed["items"]] == list(plan_ids)
+
+
+def test_concurrent_create_optimizer_job_with_one_key_runs_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`optimizer-jobs` had the same check-then-act shape as `create_plan`.
+
+    It differs in what leaks. `PriceOpsJobStore.put` dedupes on the key *after*
+    the batch has already run, so the response stayed consistent -- every
+    caller got the first job_id -- and the defect hid behind a correct-looking
+    contract. What escaped is the execution: all N requests missed the
+    pre-check and all N ran the optimizer, doing the work N times and writing
+    to the repository N times for one key. So this asserts the executed count,
+    which is the property that was actually broken, rather than the job_id,
+    which was not.
+    """
+    executions: list[int] = []
+    lock = threading.Lock()
+    original = priceops_routes.run_priceops_optimizer_batch
+
+    def slow_batch(**kwargs: Any) -> Any:
+        with lock:
+            executions.append(1)
+        time.sleep(0.05)
+        return original(**kwargs)
+
+    monkeypatch.setattr(priceops_routes, "run_priceops_optimizer_batch", slow_batch)
+
+    app = create_app(external_provider_validation=lambda: None)
+    body = {"plans": [_plan_body("PLAN-OPT-CONCURRENT")]}
+    responses = _post_concurrently(
+        app, "/api/v1/priceops/optimizer-jobs", body, "concurrent-optimizer-1"
+    )
+
+    for response in responses:
+        assert response.status_code == 202, response.text
+    payloads = [response.json() for response in responses]
+
+    assert executions == [1], (
+        f"the optimizer batch ran {len(executions)} times for one key; exactly 1 may"
+    )
+    job_ids = {payload["job_id"] for payload in payloads}
+    assert len(job_ids) == 1, f"one key produced {len(job_ids)} distinct jobs: {job_ids}"
+    created = [payload for payload in payloads if payload["created"]]
+    assert len(created) == 1, f"{len(created)} responses claimed created=true; exactly 1 may"
 
 
 def test_mutation_without_an_idempotency_key_still_works() -> None:

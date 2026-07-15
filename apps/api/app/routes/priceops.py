@@ -5,12 +5,9 @@ from typing import Any
 
 from shared.api.errors import ApiError, ErrorCode
 from shared.api.idempotency import (
-    MISSING,
-    REPLAY_FIELD,
     IdempotencyConflictError,
     IdempotencyStore,
     apply_replay_marker,
-    request_fingerprint,
 )
 from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -124,14 +121,6 @@ else:
                 self._idempotency_index[idempotency_key] = result.job_id
             return result, True
 
-        def get_by_idempotency_key(self, idempotency_key: str | None) -> PriceOpsBatchResult | None:
-            if not idempotency_key:
-                return None
-            job_id = self._idempotency_index.get(idempotency_key)
-            if job_id is None:
-                return None
-            return self._jobs[job_id]
-
         def get(self, job_id: str) -> PriceOpsBatchResult | None:
             return self._jobs.get(job_id)
 
@@ -164,66 +153,42 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            if effective_key:
+
+            def _execute() -> dict[str, Any]:
                 try:
-                    replayed_plan_id = idempotency.lookup(
-                        key=effective_key,
-                        scope="priceops:create_plan",
-                        fingerprint=request_fingerprint(body.model_dump(mode="json")),
-                    )
-                except IdempotencyConflictError as exc:
-                    raise ApiError(
-                        status.HTTP_409_CONFLICT,
-                        str(exc),
-                        code=ErrorCode.IDEMPOTENCY_CONFLICT,
-                        next_action=(
-                            "Use a new Idempotency-Key, or resend the original request body."
-                        ),
+                    resolved = [_resolve_item(item) for item in body.items]
+                except ElasticityInputError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                if replayed_plan_id is not MISSING:
-                    plan = service.repository.get_plan(replayed_plan_id)
-                    if plan is not None:
-                        payload = plan.to_dict()
-                        # `created` is retained: existing callers and tests
-                        # branch on it. REPLAY_FIELD is the uniform signal that
-                        # every other guarded mutation now also emits.
-                        payload["created"] = False
-                        payload[REPLAY_FIELD] = True
-                        return payload
-            try:
-                resolved = [_resolve_item(item) for item in body.items]
-            except ElasticityInputError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-                ) from exc
-            bindings = [binding for _item, binding in resolved]
-            plan = service.create_plan(
-                tenant_id=body.tenant_id,
-                items=[plan_item for plan_item, _binding in resolved],
-                correlation_id=request.state.correlation_id,
-                plan_id=body.plan_id,
-                created_at=_parse_time(body.created_at),
-            )
-            if effective_key:
-                idempotency.remember(
-                    key=effective_key,
-                    scope="priceops:create_plan",
-                    fingerprint=request_fingerprint(body.model_dump(mode="json")),
-                    value=plan.plan_id,
+                bindings = [binding for _item, binding in resolved]
+                plan = service.create_plan(
+                    tenant_id=body.tenant_id,
+                    items=[plan_item for plan_item, _binding in resolved],
+                    correlation_id=request.state.correlation_id,
+                    plan_id=body.plan_id,
+                    created_at=_parse_time(body.created_at),
                 )
-            _record_audit(
-                active_audit_log,
-                request,
-                "priceops.plan_created.v1",
-                "create",
-                f"priceops/plans/{plan.plan_id}",
-                {"created": True, "elasticity_bindings": bindings},
+                _record_audit(
+                    active_audit_log,
+                    request,
+                    "priceops.plan_created.v1",
+                    "create",
+                    f"priceops/plans/{plan.plan_id}",
+                    {"created": True, "elasticity_bindings": bindings},
+                )
+                payload = plan.to_dict()
+                payload["created"] = True
+                payload["elasticity_bindings"] = bindings
+                return payload
+
+            return _guard_creation(
+                idempotency,
+                key=effective_key,
+                scope="priceops:create_plan",
+                payload=body.model_dump(mode="json"),
+                operation=_execute,
             )
-            payload = plan.to_dict()
-            payload["created"] = True
-            payload[REPLAY_FIELD] = False
-            payload["elasticity_bindings"] = bindings
-            return payload
 
         @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def create_optimizer_job(
@@ -232,9 +197,8 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            result = jobs.get_by_idempotency_key(effective_key)
-            created = result is None
-            if result is None:
+
+            def _execute() -> dict[str, Any]:
                 try:
                     plan_requests = [
                         PlanRequest(
@@ -249,7 +213,7 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result, created = jobs.put(
+                result, _created = jobs.put(
                     run_priceops_optimizer_batch(
                         requests=plan_requests,
                         optimized_at=_parse_time(body.optimized_at),
@@ -257,23 +221,31 @@ else:
                     ),
                     idempotency_key=effective_key,
                 )
-            audit_event = _record_audit(
-                active_audit_log,
-                request,
-                "priceops.optimized.v1",
-                "run_model",
-                "priceops/optimizer-job",
-                {
-                    "idempotency_key": effective_key,
-                    "plan_count": len(body.plans),
-                    "created": created,
-                },
+                audit_event = _record_audit(
+                    active_audit_log,
+                    request,
+                    "priceops.optimized.v1",
+                    "run_model",
+                    "priceops/optimizer-job",
+                    {
+                        "idempotency_key": effective_key,
+                        "plan_count": len(body.plans),
+                        "created": True,
+                    },
+                )
+                payload = result.to_dict()
+                payload["created"] = True
+                payload["audit_event_id"] = audit_event.event_id
+                payload["correlation_id"] = request.state.correlation_id
+                return payload
+
+            return _guard_creation(
+                idempotency,
+                key=effective_key,
+                scope="priceops:create_optimizer_job",
+                payload=body.model_dump(mode="json"),
+                operation=_execute,
             )
-            payload = result.to_dict()
-            payload["created"] = created
-            payload["audit_event_id"] = audit_event.event_id
-            payload["correlation_id"] = request.state.correlation_id
-            return payload
 
         @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def get_optimizer_job(job_id: str) -> dict[str, Any] | None:
@@ -590,6 +562,45 @@ else:
             )
         )
 
+    def _conflict_error(exc: IdempotencyConflictError) -> ApiError:
+        return ApiError(
+            status.HTTP_409_CONFLICT,
+            str(exc),
+            code=ErrorCode.IDEMPOTENCY_CONFLICT,
+            next_action="Use a new Idempotency-Key, or resend the original request body.",
+        )
+
+    def _guard_creation(
+        idempotency: IdempotencyStore,
+        *,
+        key: str | None,
+        scope: str,
+        payload: Any,
+        operation: Any,
+    ) -> dict[str, Any]:
+        """Run a creation under the idempotency policy and mark the replay.
+
+        The whole operation -- resolve, create, audit -- runs inside
+        ``IdempotencyStore.run`` so the lookup and the write are covered by one
+        lock. Looking up first and remembering afterwards leaves a
+        check-then-act window: these sync handlers run concurrently in the
+        threadpool, so N same-key POSTs all miss the lookup and all create,
+        returning N distinct ids and N ``created: true`` responses.
+        """
+        try:
+            outcome = idempotency.run(
+                key=key, scope=scope, payload=payload, operation=operation
+            )
+        except IdempotencyConflictError as exc:
+            raise _conflict_error(exc) from exc
+        result = apply_replay_marker(outcome.value, replayed=outcome.replayed)
+        if outcome.replayed:
+            # `created` predates this task and callers branch on it; a replay
+            # created nothing. apply_replay_marker already returned a copy, so
+            # the stored response is not mutated.
+            result["created"] = False
+        return result
+
     def _run(
         action: Any,
         audit_log: InMemoryAuditLog,
@@ -657,12 +668,7 @@ else:
                 operation=_execute,
             )
         except IdempotencyConflictError as exc:
-            raise ApiError(
-                status.HTTP_409_CONFLICT,
-                str(exc),
-                code=ErrorCode.IDEMPOTENCY_CONFLICT,
-                next_action="Use a new Idempotency-Key, or resend the original request body.",
-            ) from exc
+            raise _conflict_error(exc) from exc
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
 
     def _run_read(action: Any) -> dict[str, Any]:
