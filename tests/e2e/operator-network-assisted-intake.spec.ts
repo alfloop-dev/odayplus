@@ -13,17 +13,22 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * APPROVED_RETRIEVAL. They are fixture *inputs* to the real pipeline, not
  * pre-baked outputs, and are never presented as live provider evidence.
  *
- * Run this file on its own (as the task's verification command does):
+ * Run this file on its own:
  *   npx playwright test tests/e2e/operator-network-assisted-intake.spec.ts
  *
  * playwright.config.ts sets fullyParallel, so separate spec FILES run
  * concurrently against one shared FastAPI process. Several operator specs
  * (this one, operator-network-listings, e2e-operator-console) each POST
  * .../network-listings/reset, which wipes that singleton's state mid-test for
- * whichever file is running. That is a pre-existing property of the harness,
- * not of this suite; when running a broader selection locally, give this file
- * its own API port (ODP_API_PORT / ODP_API_BASE_URL) to keep state isolated.
+ * whichever file is running. This file therefore holds the operator backend
+ * lock for its whole run, so it is deterministic in the configured suite and
+ * not only standalone. See tests/e2e/_operatorBackendLock.ts.
  */
+
+import {
+  acquireOperatorBackendLock,
+  releaseOperatorBackendLock,
+} from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 
@@ -42,6 +47,17 @@ const URLS = {
 // The generous timeout covers the dev server's cold compile of /operator on
 // the first hit, which alone can exceed Playwright's 30s default.
 test.describe.configure({ mode: "serial", timeout: 120_000 });
+
+// Exclusive use of the shared operator backend for this file's whole run — the
+// reset in beforeEach is destructive to any other spec file resetting it
+// concurrently, and vice versa.
+test.beforeAll(async () => {
+  await acquireOperatorBackendLock();
+});
+
+test.afterAll(() => {
+  releaseOperatorBackendLock();
+});
 
 test.beforeEach(async () => {
   const api = await playwrightRequest.newContext({
@@ -171,6 +187,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-decide-dialog")).toBeVisible();
 
     await page.getByTestId("intake-decide-reason").fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
+
+    // A reason alone does not commit: the risk must be disclosed AND accepted.
+    await expect(page.getByTestId("intake-decide-risk-summary")).toContainText("物件收件匣");
+    await expect(page.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+    await page.getByTestId("intake-decide-submit").click();
+    await expect(page.getByTestId("intake-decide-error")).toContainText("了解此決策的影響");
+    await expect(page.getByTestId("intake-decide-dialog")).toBeVisible();
+
+    await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
 
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
@@ -192,6 +217,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-fix-error")).toContainText("必須填寫原因");
 
     await page.getByTestId("intake-fix-reason").fill("與房東電話確認門牌為 26 號");
+
+    // The risk of an identity correction is disclosed and must be accepted; the
+    // summary names the field and the before/after values being written.
+    await expect(page.getByTestId("intake-fix-risk-summary")).toContainText("新北市板橋區府中路 26 號 1F");
+    await page.getByTestId("intake-fix-submit").click();
+    await expect(page.getByTestId("intake-fix-error")).toContainText("了解此修正的影響");
+
+    await page.getByTestId("intake-fix-risk-ack").check();
     await page.getByTestId("intake-fix-submit").click();
 
     await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({ timeout: 15_000 });
@@ -217,6 +250,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByTestId("assisted-address").fill("新北市板橋區府中路 26 號 1F");
     await page.getByTestId("assisted-rent").fill("54000");
     await page.getByTestId("assisted-area").fill("22");
+
+    // Hand-keyed values carry no retrieved evidence — that risk is disclosed on
+    // the form and must be accepted before the correction is written.
+    await expect(page.getByTestId("intake-assisted-risk-summary")).toContainText("不具本系統擷取的來源證據");
+    await page.getByTestId("assisted-save").click();
+    await expect(page.getByTestId("intake-assisted-error")).toContainText("了解人工補錄的風險");
+
+    await page.getByTestId("assisted-risk-ack").check();
     await page.getByTestId("assisted-save").click();
 
     await expect(page.getByTestId("intake-fields-grid")).toBeVisible({ timeout: 15_000 });
