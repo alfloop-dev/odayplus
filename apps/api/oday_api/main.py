@@ -13,6 +13,8 @@ from typing import Any
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from modules.external_data.connectors import validate_external_providers_or_raise
+from shared.api.errors import install_error_handlers
+from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
@@ -104,6 +106,13 @@ else:
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
+
+        # Normalise every error leaving the app into the one envelope
+        # (ODP-PGAP-API-001). Registered before the routers so the 118 legacy
+        # `HTTPException(detail="...")` raises are covered without touching
+        # their call sites.
+        install_error_handlers(api)
+        install_deprecation_headers(api)
 
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
@@ -245,73 +254,82 @@ else:
         )
         scoring_bindings = seed_scoring_models(learning_repo, git_sha=release_sha)
 
-        api.include_router(
+        # Every product router is mounted through mount_versioned: once under
+        # /api/v1 (the contract the OpenAPI artifact and generated client
+        # describe) and once on its legacy unversioned path as a deprecated
+        # compatibility alias (ODP-PGAP-API-001). Before this, 12 of 14 routers
+        # had no versioned path at all.
+        mount_versioned(
+            api,
             create_heatzone_router(
                 store=heatzone_store,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
-            )
+            ),
         )
-        api.include_router(
-            create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
+        mount_versioned(
+            api, create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
         )
-        api.include_router(
+        mount_versioned(
+            api,
             create_external_data_router(
                 ingestion_service=ingestion_service, audit_log=audit_log
-            )
+            ),
         )
-        api.include_router(
-            create_listings_router(
-                audit_log=audit_log, repository=listing_repository
-            )
+        mount_versioned(
+            api, create_listings_router(audit_log=audit_log, repository=listing_repository)
         )
-        api.include_router(create_avm_router(repository=avm_repo, audit_log=audit_log))
-        api.include_router(
+        mount_versioned(api, create_avm_router(repository=avm_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
             create_forecastops_router(
                 repository=forecast_repository,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("forecastops"),
-            )
+            ),
         )
-        api.include_router(create_netplan_router(repository=netplan_repo, audit_log=audit_log))
-        api.include_router(
+        mount_versioned(api, create_netplan_router(repository=netplan_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
             create_learninghub_router(
                 repository=learning_repo,
                 artifact_store=model_artifacts,
                 audit_log=audit_log,
-            )
+            ),
         )
-        api.include_router(create_priceops_router(repository=price_repo, audit_log=audit_log))
-        api.include_router(
+        mount_versioned(api, create_priceops_router(repository=price_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
-            )
+            ),
         )
-        api.include_router(create_adlift_router(repository=adlift_repo, audit_log=audit_log))
-        api.include_router(
+        mount_versioned(api, create_adlift_router(repository=adlift_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
             create_operator_store_ops_router(
                 repository=store_ops_repo,
                 audit_log=audit_log,
             ),
-            prefix="/api/v1",
         )
-        api.include_router(
+        mount_versioned(
+            api,
             create_interventions_router(
                 workflow=interventions_workflow,
                 label_registry=label_registry,
-            )
+            ),
         )
-        api.include_router(
+        mount_versioned(
+            api,
             create_operator_router(
                 audit_log=audit_log,
                 document_store=operator_document_store,
                 listing_repository=listing_repository,
             ),
-            prefix="/api/v1",
         )
 
         api.state.audit_log = audit_log
