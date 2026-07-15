@@ -42,6 +42,8 @@ dependency-audit:
 	else \
 		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
 	fi
+	$(UV) run --with pip-audit pip-audit --local
+
 
 security: bootstrap dependency-audit
 	$(UV) run pytest tests/security

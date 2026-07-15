@@ -16,6 +16,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   e2e-operational-evidence:
@@ -42,6 +43,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run Secret Scan
+        run: python3 scripts/security/secret_scan.py
+
+      - name: Run Python SAST Scan
+        run: python3 scripts/security/sast_scan.py
+
+      - name: Generate SBOM
+        run: python3 scripts/security/generate_sbom.py
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -50,6 +68,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Image metadata
+          # Use raw tag and sha tag as before
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -63,6 +82,7 @@ jobs:
 
       - name: Build and push ${{ matrix.name }} image
         uses: docker/build-push-action@v6
+        id: build-and-push
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -71,6 +91,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          sbom: true
+          provenance: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the published Docker image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images="${images} ${tag}"
+          done
+          for img in ${images}; do
+            cosign sign --yes "${img}@${DIGEST}"
+          done
 
   deploy:
     needs: build-and-publish
