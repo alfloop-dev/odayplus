@@ -15,6 +15,7 @@
   --tone-warning: #c77700;
   --tone-danger: #d8334f;
   --tone-accent: #7c3aed;
+  --odp-layout-header-height: 0px;
   min-height: 100vh;
   min-width: 1180px;
   background:
