@@ -781,24 +781,26 @@ export class OdpApiClient {
   correctIntake(
     intakeId: string,
     payload: IntakeCorrectPayload,
-    options: { correlationId?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 
   decideIntake(
     intakeId: string,
     payload: IntakeDecidePayload,
-    options: { correlationId?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 
@@ -817,12 +819,13 @@ export class OdpApiClient {
   promoteIntake(
     intakeId: string,
     payload: IntakePromotePayload,
-    options: { correlationId?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<ConvertListingResponse> {
     return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/intake/${intakeId}/promote`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 }
