@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -36,13 +35,16 @@ from shared.audit.persistence import (
     EvidenceRetentionPolicy,
     GovernedEvidenceOperation,
     RetainedEvidence,
+    append_retained_evidence_governance,
     attach_retained_evidence_integrity,
     require_legal_hold_authority,
     require_retention_purge_authority,
     resolve_retention_policy,
+    tombstone_retained_evidence,
     verify_retained_evidence,
     verify_retained_evidence_chain,
 )
+from shared.audit.worm import AuditWormSink
 from shared.infrastructure.persistence.engine import SqliteEngine
 
 _EVIDENCE_INTEGRITY_COLUMNS: dict[str, str] = {
@@ -54,6 +56,9 @@ _EVIDENCE_INTEGRITY_COLUMNS: dict[str, str] = {
     "signature_alg": "TEXT",
     "worm_sink_id": "TEXT",
     "governance_log_json": "TEXT NOT NULL DEFAULT '[]'",
+    "governance_hash": "TEXT",
+    "purged_at": "TEXT",
+    "tombstone_hash": "TEXT",
 }
 
 
@@ -99,8 +104,11 @@ def retained_evidence_from_bundle(
 class DurableEvidenceBundleStore:
     """Durable mirror of ``InMemoryEvidenceBundleStore`` over SQLite."""
 
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self, engine: SqliteEngine, *, worm_sink: AuditWormSink | None = None
+    ) -> None:
         self._engine = engine
+        self._worm_sink = worm_sink
         self._ensure_integrity_columns()
 
     def save(self, record: RetainedEvidence) -> RetainedEvidence:
@@ -121,48 +129,12 @@ class DurableEvidenceBundleStore:
             str(last["record_hash"]) if last is not None else CHAIN_GENESIS_HASH
         )
         stamped = attach_retained_evidence_integrity(
-            record,
+            _record_for_sink(record, self._worm_sink),
             sequence=sequence,
             previous_hash=previous_hash,
         )
-        self._engine.execute(
-            "INSERT INTO durable_evidence_bundles("
-            "  export_id, program_id, purpose, requested_by, audit_event_id, "
-            "  bundle_checksum, data_classification, sensitive, export_scope, "
-            "  retention_class, retain_until, legal_hold, generated_at, "
-            "  period_start, period_end, correlation_id, bundle_json, created_at, "
-            "  sequence, previous_hash, record_hash, signature_key_id, "
-            "  signature_version, signature_alg, worm_sink_id, governance_log_json"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                stamped.export_id,
-                stamped.program_id,
-                stamped.purpose,
-                stamped.requested_by,
-                stamped.audit_event_id,
-                stamped.bundle_checksum,
-                stamped.data_classification,
-                1 if stamped.sensitive else 0,
-                stamped.export_scope,
-                stamped.retention_class,
-                stamped.retain_until.isoformat(),
-                1 if stamped.legal_hold else 0,
-                stamped.generated_at.isoformat(),
-                stamped.period_start.isoformat(),
-                stamped.period_end.isoformat(),
-                stamped.correlation_id,
-                json.dumps(stamped.bundle),
-                stamped.generated_at.isoformat(),
-                stamped.sequence,
-                stamped.previous_hash,
-                stamped.record_hash,
-                stamped.signature_key_id,
-                stamped.signature_version,
-                stamped.signature_alg,
-                stamped.worm_sink_id,
-                json.dumps(list(stamped.governance_log)),
-            ),
-        )
+        self._write_worm(stamped)
+        self._insert(stamped)
         return stamped
 
     def get(self, export_id: str) -> RetainedEvidence | None:
@@ -199,7 +171,7 @@ class DurableEvidenceBundleStore:
         # is_expired rule single-sourced on the record.
         rows = self._engine.query(
             "SELECT * FROM durable_evidence_bundles "
-            "WHERE retain_until <= ? AND legal_hold = 0 ORDER BY seq",
+            "WHERE retain_until <= ? AND legal_hold = 0 AND purged_at IS NULL ORDER BY seq",
             (as_of.isoformat(),),
         )
         return [self._row_to_record(row) for row in rows]
@@ -211,13 +183,15 @@ class DurableEvidenceBundleStore:
         context: GovernedEvidenceOperation | None = None,
     ) -> list[str]:
         require_retention_purge_authority(context)
-        expired = [record.export_id for record in self.list_expired(as_of)]
-        for export_id in expired:
-            self._engine.execute(
-                "DELETE FROM durable_evidence_bundles WHERE export_id = ?",
-                (export_id,),
-            )
-        return expired
+        expired = self.list_expired(as_of)
+        purged: list[str] = []
+        for record in expired:
+            require_retention_purge_authority(context, record)
+            tombstone = tombstone_retained_evidence(record, context=context)
+            self._write_worm(tombstone)
+            self._update_governance_state(tombstone)
+            purged.append(record.export_id)
+        return purged
 
     def apply_legal_hold(
         self, export_id: str, *, context: GovernedEvidenceOperation
@@ -226,16 +200,15 @@ class DurableEvidenceBundleStore:
         if record is None:
             raise KeyError(export_id)
         require_legal_hold_authority(context, record)
-        governance_log = (
-            *record.governance_log,
-            {"operation": "legal_hold", **context.to_dict()},
+        updated = append_retained_evidence_governance(
+            record,
+            operation="legal_hold",
+            context=context,
+            legal_hold=True,
         )
-        self._engine.execute(
-            "UPDATE durable_evidence_bundles "
-            "SET legal_hold = 1, governance_log_json = ? WHERE export_id = ?",
-            (json.dumps(list(governance_log)), export_id),
-        )
-        return replace(record, legal_hold=True, governance_log=governance_log)
+        self._write_worm(updated)
+        self._update_governance_state(updated)
+        return updated
 
     def delete(self, export_id: str) -> None:
         raise EvidenceImmutabilityError(
@@ -243,13 +216,95 @@ class DurableEvidenceBundleStore:
         )
 
     def verify_integrity(self) -> AuditChainVerification:
-        return verify_retained_evidence_chain(self.list_all())
+        rows = self._engine.query(
+            "SELECT * FROM durable_evidence_bundles ORDER BY seq"
+        )
+        return verify_retained_evidence_chain(self._row_to_record(row) for row in rows)
 
     def replay(self, records: Iterable[RetainedEvidence]) -> list[RetainedEvidence]:
         replayed: list[RetainedEvidence] = []
         for record in sorted(records, key=_retained_evidence_replay_key):
-            replayed.append(self.save(record))
+            existing = self._engine.query_one(
+                "SELECT export_id FROM durable_evidence_bundles WHERE export_id = ?",
+                (record.export_id,),
+            )
+            if existing is not None:
+                raise EvidenceImmutabilityError(
+                    f"retained evidence is append-only; overwrite denied for {record.export_id}"
+                )
+            verify_retained_evidence(record)
+            self._write_worm(record)
+            self._insert(record)
+            replayed.append(record)
         return replayed
+
+    def _insert(self, record: RetainedEvidence) -> None:
+        self._engine.execute(
+            "INSERT INTO durable_evidence_bundles("
+            "  export_id, program_id, purpose, requested_by, audit_event_id, "
+            "  bundle_checksum, data_classification, sensitive, export_scope, "
+            "  retention_class, retain_until, legal_hold, generated_at, "
+            "  period_start, period_end, correlation_id, bundle_json, created_at, "
+            "  sequence, previous_hash, record_hash, signature_key_id, "
+            "  signature_version, signature_alg, worm_sink_id, governance_log_json, "
+            "  governance_hash, purged_at, tombstone_hash"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            self._record_params(record),
+        )
+
+    def _record_params(self, record: RetainedEvidence) -> tuple[Any, ...]:
+        return (
+            record.export_id,
+            record.program_id,
+            record.purpose,
+            record.requested_by,
+            record.audit_event_id,
+            record.bundle_checksum,
+            record.data_classification,
+            1 if record.sensitive else 0,
+            record.export_scope,
+            record.retention_class,
+            record.retain_until.isoformat(),
+            1 if record.legal_hold else 0,
+            record.generated_at.isoformat(),
+            record.period_start.isoformat(),
+            record.period_end.isoformat(),
+            record.correlation_id,
+            json.dumps(record.bundle),
+            record.generated_at.isoformat(),
+            record.sequence,
+            record.previous_hash,
+            record.record_hash,
+            record.signature_key_id,
+            record.signature_version,
+            record.signature_alg,
+            record.worm_sink_id,
+            json.dumps(list(record.governance_log)),
+            record.governance_hash,
+            record.purged_at.isoformat() if record.purged_at else None,
+            record.tombstone_hash,
+        )
+
+    def _update_governance_state(self, record: RetainedEvidence) -> None:
+        self._engine.execute(
+            "UPDATE durable_evidence_bundles "
+            "SET legal_hold = ?, governance_log_json = ?, governance_hash = ?, "
+            "    purged_at = ?, tombstone_hash = ?, bundle_json = ? "
+            "WHERE export_id = ?",
+            (
+                1 if record.legal_hold else 0,
+                json.dumps(list(record.governance_log)),
+                record.governance_hash,
+                record.purged_at.isoformat() if record.purged_at else None,
+                record.tombstone_hash,
+                json.dumps(record.bundle),
+                record.export_id,
+            ),
+        )
+
+    def _write_worm(self, record: RetainedEvidence) -> None:
+        if self._worm_sink is not None:
+            self._worm_sink.write_retained_evidence(record)
 
     def _ensure_integrity_columns(self) -> None:
         existing = {
@@ -300,6 +355,13 @@ class DurableEvidenceBundleStore:
             worm_sink_id=values.get("worm_sink_id")
             or RetainedEvidence.__dataclass_fields__["worm_sink_id"].default,
             governance_log=governance_log,
+            governance_hash=values.get("governance_hash"),
+            purged_at=(
+                datetime.fromisoformat(values["purged_at"])
+                if values.get("purged_at")
+                else None
+            ),
+            tombstone_hash=values.get("tombstone_hash"),
         )
 
 
@@ -313,6 +375,18 @@ def _retained_evidence_replay_key(record: RetainedEvidence) -> tuple[int, str, s
         record.generated_at.isoformat(),
         record.export_id,
     )
+
+
+def _record_for_sink(
+    record: RetainedEvidence, worm_sink: AuditWormSink | None
+) -> RetainedEvidence:
+    if record.record_hash is not None:
+        return record
+    if worm_sink is None:
+        return record
+    from dataclasses import replace
+
+    return replace(record, worm_sink_id=worm_sink.sink_id)
 
 
 __all__ = ["DurableEvidenceBundleStore", "retained_evidence_from_bundle"]

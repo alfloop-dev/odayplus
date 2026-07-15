@@ -27,6 +27,7 @@ resource "google_storage_bucket" "worm" {
 
   retention_policy {
     retention_period = var.retention_period_seconds
+    is_locked        = true
   }
 }
 

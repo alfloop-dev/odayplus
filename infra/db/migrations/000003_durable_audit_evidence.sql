@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS durable_evidence_bundles (
     signature_version   TEXT,
     signature_alg       TEXT,
     worm_sink_id        TEXT,
-    governance_log_json TEXT NOT NULL DEFAULT '[]'
+    governance_log_json TEXT NOT NULL DEFAULT '[]',
+    governance_hash     TEXT,
+    purged_at           TEXT,
+    tombstone_hash      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_durable_evidence_program
     ON durable_evidence_bundles(program_id);
@@ -64,3 +67,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_evidence_sequence
     WHERE sequence IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_durable_evidence_record_hash
     ON durable_evidence_bundles(record_hash);
+CREATE INDEX IF NOT EXISTS idx_durable_evidence_purged_at
+    ON durable_evidence_bundles(purged_at);

@@ -22,6 +22,7 @@ from shared.audit.integrity import (
     attach_audit_event_integrity,
     verify_audit_chain,
 )
+from shared.audit.worm import AuditWormSink
 from shared.infrastructure.persistence.engine import SqliteEngine
 
 _INTEGRITY_COLUMNS: dict[str, str] = {
@@ -38,8 +39,11 @@ _INTEGRITY_COLUMNS: dict[str, str] = {
 class DurableAuditLog:
     """``record`` / ``list_events`` over the ``durable_audit_events`` table."""
 
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self, engine: SqliteEngine, *, worm_sink: AuditWormSink | None = None
+    ) -> None:
         self._engine = engine
+        self._worm_sink = worm_sink
         self._ensure_integrity_columns()
 
     def record(self, event: AuditEvent) -> AuditEvent:
@@ -58,11 +62,15 @@ class DurableAuditLog:
         previous_hash = (
             str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
         )
+        sink_id = _event_sink_id(event, self._worm_sink)
         attach_audit_event_integrity(
             event,
             sequence=sequence,
             previous_hash=previous_hash,
+            sink_id=sink_id,
         )
+        if self._worm_sink is not None:
+            self._worm_sink.write_audit_event(event)
         self._engine.execute(
             "INSERT INTO durable_audit_events("
             "  event_id, event_type, actor, action, resource, outcome, "
@@ -173,6 +181,14 @@ def _audit_event_replay_key(event: AuditEvent) -> tuple[int, str, str]:
         event.occurred_at.isoformat(),
         event.event_id,
     )
+
+
+def _event_sink_id(event: AuditEvent, worm_sink: AuditWormSink | None) -> str:
+    if event.event_hash is not None:
+        return event.worm_sink_id
+    if worm_sink is not None:
+        return worm_sink.sink_id
+    return event.worm_sink_id
 
 
 __all__ = ["DurableAuditLog"]

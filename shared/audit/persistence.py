@@ -37,6 +37,7 @@ from shared.audit.integrity import (
     canonical_json,
     sha256_hex,
 )
+from shared.audit.worm import AuditWormSink
 
 # --- retention policy --------------------------------------------------------
 
@@ -165,11 +166,14 @@ class RetainedEvidence:
     signature_alg: str = DEFAULT_AUDIT_SIGNATURE_ALG
     worm_sink_id: str = DEFAULT_AUDIT_WORM_SINK_ID
     governance_log: tuple[dict[str, Any], ...] = ()
+    governance_hash: str | None = None
+    purged_at: datetime | None = None
+    tombstone_hash: str | None = None
 
     def is_expired(self, as_of: datetime) -> bool:
         """A record is purgeable only when past retention and not on hold."""
 
-        return not self.legal_hold and as_of >= self.retain_until
+        return self.purged_at is None and not self.legal_hold and as_of >= self.retain_until
 
     def summary(self) -> dict[str, Any]:
         """Metadata view without the full bundle payload (for listings)."""
@@ -187,6 +191,7 @@ class RetainedEvidence:
             "retention_class": self.retention_class,
             "retain_until": self.retain_until.isoformat(),
             "legal_hold": self.legal_hold,
+            "purged_at": self.purged_at.isoformat() if self.purged_at else None,
             "generated_at": self.generated_at.isoformat(),
             "period_start": self.period_start.isoformat(),
             "period_end": self.period_end.isoformat(),
@@ -199,6 +204,8 @@ class RetainedEvidence:
                 "signature_version": self.signature_version,
                 "signature_alg": self.signature_alg,
                 "worm_sink_id": self.worm_sink_id,
+                "governance_hash": self.governance_hash,
+                "tombstone_hash": self.tombstone_hash,
             },
             "governance_log": list(self.governance_log),
         }
@@ -248,8 +255,9 @@ class InMemoryEvidenceBundleStore:
     store's ordinal ordering.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, worm_sink: AuditWormSink | None = None) -> None:
         self._records: dict[str, RetainedEvidence] = {}
+        self._worm_sink = worm_sink
 
     def save(self, record: RetainedEvidence) -> RetainedEvidence:
         if record.export_id in self._records:
@@ -262,10 +270,12 @@ class InMemoryEvidenceBundleStore:
             else CHAIN_GENESIS_HASH
         )
         stamped = attach_retained_evidence_integrity(
-            record,
-            sequence=len(self._records) + 1,
+            _record_for_sink(record, self._worm_sink),
+            sequence=self._next_sequence(),
             previous_hash=previous_hash or CHAIN_GENESIS_HASH,
         )
+        if self._worm_sink is not None:
+            self._worm_sink.write_retained_evidence(stamped)
         self._records[stamped.export_id] = stamped
         return stamped
 
@@ -290,10 +300,16 @@ class InMemoryEvidenceBundleStore:
         self, as_of: datetime, *, context: GovernedEvidenceOperation | None = None
     ) -> list[str]:
         require_retention_purge_authority(context)
-        expired = [r.export_id for r in self.list_expired(as_of)]
-        for export_id in expired:
-            del self._records[export_id]
-        return expired
+        expired = self.list_expired(as_of)
+        purged: list[str] = []
+        for record in expired:
+            require_retention_purge_authority(context, record)
+            tombstone = tombstone_retained_evidence(record, context=context)
+            if self._worm_sink is not None:
+                self._worm_sink.write_retained_evidence(tombstone)
+            self._records[record.export_id] = tombstone
+            purged.append(record.export_id)
+        return purged
 
     def apply_legal_hold(
         self, export_id: str, *, context: GovernedEvidenceOperation
@@ -302,14 +318,14 @@ class InMemoryEvidenceBundleStore:
         if record is None:
             raise KeyError(export_id)
         require_legal_hold_authority(context, record)
-        updated = replace(
+        updated = append_retained_evidence_governance(
             record,
+            operation="legal_hold",
+            context=context,
             legal_hold=True,
-            governance_log=(
-                *record.governance_log,
-                {"operation": "legal_hold", **context.to_dict()},
-            ),
         )
+        if self._worm_sink is not None:
+            self._worm_sink.write_retained_evidence(updated)
         self._records[export_id] = updated
         return updated
 
@@ -324,8 +340,20 @@ class InMemoryEvidenceBundleStore:
     def replay(self, records: Iterable[RetainedEvidence]) -> list[RetainedEvidence]:
         replayed: list[RetainedEvidence] = []
         for record in sorted(records, key=_retained_evidence_replay_key):
-            replayed.append(self.save(record))
+            if record.export_id in self._records:
+                raise EvidenceImmutabilityError(
+                    f"retained evidence is append-only; overwrite denied for {record.export_id}"
+                )
+            verify_retained_evidence(record)
+            if self._worm_sink is not None:
+                self._worm_sink.write_retained_evidence(record)
+            self._records[record.export_id] = record
+            replayed.append(record)
         return replayed
+
+    def _next_sequence(self) -> int:
+        existing = [record.sequence or 0 for record in self._records.values()]
+        return max(existing, default=0) + 1
 
 
 def retained_evidence_integrity_payload(
@@ -336,9 +364,9 @@ def retained_evidence_integrity_payload(
 ) -> dict[str, Any]:
     """Canonical payload covered by a retained-evidence record hash.
 
-    ``legal_hold`` and ``governance_log`` are governed retention sidecars and
-    are intentionally excluded so a legal hold can be applied without mutating
-    the immutable bundle content hash chain.
+    Mutable governance state is covered by ``governance_hash`` so legal holds
+    and purge tombstones can be appended without rewriting the immutable content
+    hash that successors point at.
     """
 
     return {
@@ -367,6 +395,54 @@ def retained_evidence_integrity_payload(
     }
 
 
+def retained_evidence_governance_payload(record: RetainedEvidence) -> dict[str, Any]:
+    """Canonical payload for retention/legal-hold sidecar integrity."""
+
+    return {
+        "export_id": record.export_id,
+        "sequence": record.sequence,
+        "record_hash": record.record_hash,
+        "legal_hold": record.legal_hold,
+        "purged_at": record.purged_at.isoformat() if record.purged_at else None,
+        "governance_log": list(record.governance_log),
+        "signature_key_id": record.signature_key_id,
+        "signature_version": record.signature_version,
+        "signature_alg": record.signature_alg,
+        "worm_sink_id": record.worm_sink_id,
+    }
+
+
+def retained_evidence_tombstone_payload(record: RetainedEvidence) -> dict[str, Any]:
+    """Canonical payload for a purged record tombstone."""
+
+    return {
+        "export_id": record.export_id,
+        "program_id": record.program_id,
+        "purpose": record.purpose,
+        "requested_by": record.requested_by,
+        "audit_event_id": record.audit_event_id,
+        "bundle_checksum": record.bundle_checksum,
+        "data_classification": record.data_classification,
+        "sensitive": record.sensitive,
+        "export_scope": record.export_scope,
+        "retention_class": record.retention_class,
+        "retain_until": record.retain_until.isoformat(),
+        "generated_at": record.generated_at.isoformat(),
+        "period_start": record.period_start.isoformat(),
+        "period_end": record.period_end.isoformat(),
+        "correlation_id": record.correlation_id,
+        "sequence": record.sequence,
+        "previous_hash": record.previous_hash,
+        "record_hash": record.record_hash,
+        "purged_at": record.purged_at.isoformat() if record.purged_at else None,
+        "tombstone_bundle": record.bundle,
+        "signature_key_id": record.signature_key_id,
+        "signature_version": record.signature_version,
+        "signature_alg": record.signature_alg,
+        "worm_sink_id": record.worm_sink_id,
+    }
+
+
 def attach_retained_evidence_integrity(
     record: RetainedEvidence,
     *,
@@ -383,6 +459,93 @@ def attach_retained_evidence_integrity(
         sequence=sequence,
         previous_hash=previous_hash,
         record_hash=record_hash,
+        governance_hash=sha256_hex(
+            retained_evidence_governance_payload(
+                replace(record, sequence=sequence, previous_hash=previous_hash, record_hash=record_hash)
+            )
+        ),
+    )
+
+
+def append_retained_evidence_governance(
+    record: RetainedEvidence,
+    *,
+    operation: str,
+    context: GovernedEvidenceOperation,
+    legal_hold: bool | None = None,
+    purged_at: datetime | None = None,
+    bundle: dict[str, Any] | None = None,
+) -> RetainedEvidence:
+    """Append a tamper-evident governance operation to a retained record."""
+
+    previous_governance_hash = (
+        record.governance_log[-1].get("governance_hash")
+        if record.governance_log
+        else record.record_hash
+    ) or CHAIN_GENESIS_HASH
+    entry = {
+        "operation": operation,
+        **context.to_dict(),
+        "previous_governance_hash": previous_governance_hash,
+        "target_record_hash": record.record_hash,
+    }
+    entry["governance_hash"] = sha256_hex(
+        {
+            "export_id": record.export_id,
+            "sequence": record.sequence,
+            **{key: value for key, value in entry.items() if key != "governance_hash"},
+        }
+    )
+    updated = replace(
+        record,
+        legal_hold=record.legal_hold if legal_hold is None else legal_hold,
+        purged_at=record.purged_at if purged_at is None else purged_at,
+        bundle=record.bundle if bundle is None else bundle,
+        governance_log=(*record.governance_log, entry),
+    )
+    return attach_retained_evidence_governance_integrity(updated)
+
+
+def tombstone_retained_evidence(
+    record: RetainedEvidence,
+    *,
+    context: GovernedEvidenceOperation | None,
+) -> RetainedEvidence:
+    if context is None:
+        raise EvidenceGovernanceError("retention purge requires governed operation context")
+    purged_at = context.requested_at
+    tombstone_bundle = {
+        "purged": True,
+        "export_id": record.export_id,
+        "program_id": record.program_id,
+        "bundle_checksum": record.bundle_checksum,
+        "record_hash": record.record_hash,
+        "retention_class": record.retention_class,
+        "retain_until": record.retain_until.isoformat(),
+        "purged_at": purged_at.isoformat(),
+        "purge_correlation_id": context.correlation_id,
+    }
+    governed = append_retained_evidence_governance(
+        record,
+        operation="retention_purge",
+        context=context,
+        purged_at=purged_at,
+        bundle=tombstone_bundle,
+    )
+    return attach_retained_evidence_governance_integrity(
+        replace(
+            governed,
+            tombstone_hash=sha256_hex(retained_evidence_tombstone_payload(governed)),
+        )
+    )
+
+
+def attach_retained_evidence_governance_integrity(
+    record: RetainedEvidence,
+) -> RetainedEvidence:
+    return replace(
+        record,
+        governance_hash=sha256_hex(retained_evidence_governance_payload(record)),
     )
 
 
@@ -395,24 +558,98 @@ def verify_retained_evidence(record: RetainedEvidence) -> None:
         raise EvidenceIntegrityError(
             f"retained evidence {record.export_id} is missing integrity metadata"
         )
-    expected = sha256_hex(
-        retained_evidence_integrity_payload(
-            record,
-            sequence=record.sequence,
-            previous_hash=record.previous_hash,
+    if record.purged_at is None:
+        expected = sha256_hex(
+            retained_evidence_integrity_payload(
+                record,
+                sequence=record.sequence,
+                previous_hash=record.previous_hash,
+            )
         )
-    )
-    if expected != record.record_hash:
+        if expected != record.record_hash:
+            raise EvidenceIntegrityError(
+                f"retained evidence {record.export_id} hash mismatch"
+            )
+        if record.bundle.get("bundle_checksum") != record.bundle_checksum:
+            raise EvidenceIntegrityError(
+                f"retained evidence {record.export_id} bundle checksum mismatch"
+            )
+        canonical = canonical_json(record.bundle)
+        if not canonical:
+            raise EvidenceIntegrityError(f"retained evidence {record.export_id} is empty")
+    else:
+        _verify_retained_evidence_tombstone(record)
+    _verify_retained_evidence_governance(record)
+
+
+def _verify_retained_evidence_tombstone(record: RetainedEvidence) -> None:
+    if record.tombstone_hash is None:
         raise EvidenceIntegrityError(
-            f"retained evidence {record.export_id} hash mismatch"
+            f"retained evidence {record.export_id} purge tombstone hash missing"
+        )
+    if record.bundle.get("purged") is not True:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} purge tombstone missing"
+        )
+    if record.bundle.get("record_hash") != record.record_hash:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} purge tombstone record hash mismatch"
         )
     if record.bundle.get("bundle_checksum") != record.bundle_checksum:
         raise EvidenceIntegrityError(
-            f"retained evidence {record.export_id} bundle checksum mismatch"
+            f"retained evidence {record.export_id} purge tombstone checksum mismatch"
         )
-    canonical = canonical_json(record.bundle)
-    if not canonical:
-        raise EvidenceIntegrityError(f"retained evidence {record.export_id} is empty")
+    expected = sha256_hex(retained_evidence_tombstone_payload(record))
+    if expected != record.tombstone_hash:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} purge tombstone hash mismatch"
+        )
+
+
+def _verify_retained_evidence_governance(record: RetainedEvidence) -> None:
+    if record.governance_hash is None:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} governance hash missing"
+        )
+    previous_governance_hash = record.record_hash or CHAIN_GENESIS_HASH
+    legal_hold_seen = False
+    purge_seen = False
+    for index, entry in enumerate(record.governance_log):
+        if entry.get("previous_governance_hash") != previous_governance_hash:
+            raise EvidenceIntegrityError(
+                f"retained evidence {record.export_id} governance chain mismatch at {index}"
+            )
+        expected = sha256_hex(
+            {
+                "export_id": record.export_id,
+                "sequence": record.sequence,
+                **{
+                    key: value
+                    for key, value in entry.items()
+                    if key != "governance_hash"
+                },
+            }
+        )
+        if entry.get("governance_hash") != expected:
+            raise EvidenceIntegrityError(
+                f"retained evidence {record.export_id} governance hash mismatch at {index}"
+            )
+        previous_governance_hash = str(entry["governance_hash"])
+        legal_hold_seen = legal_hold_seen or entry.get("operation") == "legal_hold"
+        purge_seen = purge_seen or entry.get("operation") == "retention_purge"
+    if record.legal_hold != legal_hold_seen:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} legal hold state mismatch"
+        )
+    if (record.purged_at is not None) != purge_seen:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} purge state mismatch"
+        )
+    expected_governance_hash = sha256_hex(retained_evidence_governance_payload(record))
+    if expected_governance_hash != record.governance_hash:
+        raise EvidenceIntegrityError(
+            f"retained evidence {record.export_id} governance state hash mismatch"
+        )
 
 
 def verify_retained_evidence_chain(
@@ -469,6 +706,7 @@ def require_legal_hold_authority(
 
 def require_retention_purge_authority(
     context: GovernedEvidenceOperation | None,
+    record: RetainedEvidence | None = None,
 ) -> None:
     if context is None:
         raise EvidenceGovernanceError("retention purge requires governed operation context")
@@ -476,6 +714,29 @@ def require_retention_purge_authority(
         raise EvidenceGovernanceError("role is not authorized to purge retained evidence")
     if not context.reason.strip():
         raise EvidenceGovernanceError("retention purge requires reason")
+    if record is None:
+        return
+    if context.actor == record.requested_by:
+        raise EvidenceGovernanceError(
+            "separation of duties: exporter cannot purge retained evidence"
+        )
+    export_governance = record.bundle.get("export_governance")
+    if isinstance(export_governance, dict) and context.actor == export_governance.get(
+        "authorized_by"
+    ):
+        raise EvidenceGovernanceError(
+            "separation of duties: export authorizer cannot purge retained evidence"
+        )
+
+
+def _record_for_sink(
+    record: RetainedEvidence, worm_sink: AuditWormSink | None
+) -> RetainedEvidence:
+    if record.record_hash is not None:
+        return record
+    if worm_sink is None:
+        return record
+    return replace(record, worm_sink_id=worm_sink.sink_id)
 
 
 __all__ = [
@@ -493,9 +754,11 @@ __all__ = [
     "RetainedEvidence",
     "RETENTION_PURGE_ROLES",
     "attach_retained_evidence_integrity",
+    "append_retained_evidence_governance",
     "require_legal_hold_authority",
     "require_retention_purge_authority",
     "resolve_retention_policy",
+    "tombstone_retained_evidence",
     "verify_retained_evidence",
     "verify_retained_evidence_chain",
 ]

@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
+
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
 
@@ -67,7 +69,7 @@ class PersistenceBundle:
         return self.engine is not None
 
 
-def _memory_bundle() -> PersistenceBundle:
+def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
@@ -103,8 +105,8 @@ def _memory_bundle() -> PersistenceBundle:
 
     return PersistenceBundle(
         mode="memory",
-        audit_log=InMemoryAuditLog(),
-        evidence_store=InMemoryEvidenceBundleStore(),
+        audit_log=InMemoryAuditLog(worm_sink=worm_sink),
+        evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
@@ -134,7 +136,9 @@ def _memory_bundle() -> PersistenceBundle:
     )
 
 
-def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
+def _durable_bundle(
+    db_path: str | Path, *, worm_sink: AuditWormSink | None = None
+) -> PersistenceBundle:
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -169,10 +173,14 @@ def _durable_bundle(db_path: str | Path) -> PersistenceBundle:
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
+    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
+        default_root=worm_root
+    )
     return PersistenceBundle(
         mode="durable",
-        audit_log=DurableAuditLog(engine),
-        evidence_store=DurableEvidenceBundleStore(engine),
+        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
@@ -212,10 +220,11 @@ def build_persistence(
     Args mirror the env knobs and override them when supplied (used by tests).
     """
     resolved_mode = (mode or os.environ.get("ODP_PERSISTENCE", "memory")).strip().lower()
+    worm_sink = build_audit_worm_sink_from_env()
     if resolved_mode in _DURABLE_MODES:
         resolved_path = db_path or os.environ.get("ODP_DB_PATH", DEFAULT_DB_PATH)
-        return _durable_bundle(resolved_path)
-    return _memory_bundle()
+        return _durable_bundle(resolved_path, worm_sink=worm_sink)
+    return _memory_bundle(worm_sink=worm_sink)
 
 
 __all__ = ["DEFAULT_DB_PATH", "PersistenceBundle", "build_persistence"]

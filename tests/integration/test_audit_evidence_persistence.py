@@ -29,7 +29,7 @@ from modules.opsboard.audit import (
     DecisionCard,
     EvidenceExportRequest,
 )
-from shared.audit import AuditEvent
+from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.audit.persistence import (
     RETENTION_REGULATORY,
     RETENTION_STANDARD,
@@ -40,6 +40,7 @@ from shared.audit.persistence import (
     InMemoryEvidenceBundleStore,
     resolve_retention_policy,
 )
+from shared.audit.worm import AuditWormReceipt
 from shared.auth import Role
 from shared.infrastructure.persistence import build_persistence
 from shared.infrastructure.persistence.factory import _durable_bundle
@@ -51,6 +52,35 @@ from tests.integration._authz import (
 )
 
 NOW = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+
+
+class RecordingWormSink:
+    sink_id = "gs://odp-test-audit-worm/audit-evidence"
+
+    def __init__(self) -> None:
+        self.writes: list[dict[str, str]] = []
+
+    def write_audit_event(self, event) -> AuditWormReceipt:
+        receipt = AuditWormReceipt(
+            sink_id=self.sink_id,
+            object_uri=f"{self.sink_id}/audit-events/{event.sequence}-{event.event_id}.json",
+            record_type="audit-events",
+            record_id=event.event_id,
+            checksum=event.event_hash or "",
+        )
+        self.writes.append(receipt.to_dict())
+        return receipt
+
+    def write_retained_evidence(self, record) -> AuditWormReceipt:
+        receipt = AuditWormReceipt(
+            sink_id=self.sink_id,
+            object_uri=f"{self.sink_id}/retained-evidence/{record.sequence}-{record.export_id}.json",
+            record_type="retained-evidence",
+            record_id=record.export_id,
+            checksum=record.record_hash or record.tombstone_hash or "",
+        )
+        self.writes.append(receipt.to_dict())
+        return receipt
 
 
 @pytest.fixture
@@ -219,6 +249,44 @@ def test_export_persists_retained_record_with_metadata() -> None:
     assert set(bundle.audit_events[0]) >= {"event_id", "integrity"}
 
 
+def test_export_writes_audit_event_and_bundle_to_worm_sink() -> None:
+    sink = RecordingWormSink()
+    audit_log = InMemoryAuditLog(worm_sink=sink)
+    store = InMemoryEvidenceBundleStore(worm_sink=sink)
+    service = AuditEvidenceExportService(audit_log=audit_log, evidence_store=store)
+    event = service.audit_log.record(
+        AuditEvent(
+            event_type="intervention.effect_evaluated.v1",
+            actor="analyst-a",
+            action="evaluate",
+            resource="intervention/intv-001",
+            outcome="completed",
+            correlation_id="corr-worm-runtime-1",
+            occurred_at=NOW,
+        )
+    )
+
+    bundle = service.export(
+        _request(correlation_id="corr-worm-runtime-1"),
+        decision_cards=(_ready_card(event.event_id),),
+        generated_at=NOW,
+    )
+
+    record = store.get(bundle.export_id)
+    assert record is not None
+    assert event.worm_sink_id == sink.sink_id
+    assert record.worm_sink_id == sink.sink_id
+    assert {write["record_type"] for write in sink.writes} == {
+        "audit-events",
+        "retained-evidence",
+    }
+    assert bundle.export_id in {
+        write["record_id"]
+        for write in sink.writes
+        if write["record_type"] == "retained-evidence"
+    }
+
+
 def record_retention_days() -> int:
     return resolve_retention_policy("restricted", sensitive=True).retention_days
 
@@ -350,6 +418,129 @@ def test_purge_expired_respects_legal_hold(db_path) -> None:
         bundle_persistence.engine.close()
 
 
+def test_retention_purge_tombstones_non_tail_without_breaking_chain(db_path) -> None:
+    old = NOW - timedelta(days=500)
+    for store_factory in (
+        lambda: (InMemoryAuditLog(), InMemoryEvidenceBundleStore(), None),
+        lambda: _durable_store_for_test(db_path),
+    ):
+        audit_log, store, close = store_factory()
+        try:
+            service = AuditEvidenceExportService(
+                audit_log=audit_log,
+                evidence_store=store,
+            )
+            standard = service.export(
+                EvidenceExportRequest(
+                    program_id="program-standard-expired",
+                    purpose="standard retention export",
+                    requested_by="reviewer-standard",
+                    from_time=old - timedelta(days=1),
+                    to_time=old + timedelta(days=1),
+                    correlation_ids=("corr-standard-expired",),
+                    export_scope="tenant=t1",
+                    data_classification="internal",
+                    sensitive=False,
+                ),
+                decision_cards=(_ready_card("evt-standard"),),
+                generated_at=old,
+            )
+            regulatory = service.export(
+                _request(
+                    correlation_id="corr-regulatory-retained",
+                    requested_by="reviewer-regulatory",
+                    sensitive=True,
+                    classification="restricted",
+                ),
+                decision_cards=(_ready_card("evt-regulatory"),),
+                generated_at=old,
+            )
+
+            purged = store.purge_expired(
+                NOW,
+                context=GovernedEvidenceOperation(
+                    actor="records-a",
+                    role="records_manager",
+                    reason="scheduled standard-retention sweep",
+                    correlation_id="corr-non-tail-purge",
+                ),
+            )
+
+            assert purged == [standard.export_id]
+            records = store.list_all()
+            assert [record.export_id for record in records[:2]] == [
+                standard.export_id,
+                regulatory.export_id,
+            ]
+            assert records[0].purged_at is not None
+            assert records[0].bundle["purged"] is True
+            assert records[1].previous_hash == records[0].record_hash
+            assert store.verify_integrity().ok is True
+
+            new_bundle = service.export(
+                EvidenceExportRequest(
+                    program_id="program-standard-new",
+                    purpose="new standard export",
+                    requested_by="reviewer-new",
+                    from_time=NOW - timedelta(days=1),
+                    to_time=NOW + timedelta(days=1),
+                    correlation_ids=("corr-standard-new",),
+                    export_scope="tenant=t1",
+                    data_classification="internal",
+                    sensitive=False,
+                ),
+                decision_cards=(_ready_card("evt-new"),),
+                generated_at=NOW,
+            )
+            assert store.get(new_bundle.export_id).sequence == 3
+        finally:
+            if close is not None:
+                close()
+
+
+def test_retention_purge_rejects_exporter_actor_sod() -> None:
+    old = NOW - timedelta(days=500)
+    audit_log = InMemoryAuditLog()
+    store = InMemoryEvidenceBundleStore()
+    service = AuditEvidenceExportService(audit_log=audit_log, evidence_store=store)
+    bundle = service.export(
+        EvidenceExportRequest(
+            program_id="program-self-purge",
+            purpose="standard export by records actor",
+            requested_by="records-a",
+            from_time=old - timedelta(days=1),
+            to_time=old + timedelta(days=1),
+            correlation_ids=("corr-self-purge",),
+            export_scope="tenant=t1",
+            data_classification="internal",
+            sensitive=False,
+        ),
+        decision_cards=(_ready_card("evt-self-purge"),),
+        generated_at=old,
+    )
+
+    with pytest.raises(EvidenceGovernanceError, match="exporter cannot purge"):
+        store.purge_expired(
+            NOW,
+            context=GovernedEvidenceOperation(
+                actor="records-a",
+                role="records_manager",
+                reason="self purge attempt",
+                correlation_id="corr-self-purge",
+            ),
+        )
+    assert store.get(bundle.export_id).purged_at is None
+
+
+def _durable_store_for_test(db_path):
+    bundle_persistence = _durable_bundle(db_path)
+    return (
+        bundle_persistence.audit_log,
+        bundle_persistence.evidence_store,
+        bundle_persistence.engine.close,
+    )
+
+
 def test_api_governance_blocks_spoofing_and_purges_only_non_held(db_path) -> None:
     old = NOW - timedelta(days=500)
     bundle_persistence = _durable_bundle(db_path)
@@ -458,7 +649,11 @@ def test_api_governance_blocks_spoofing_and_purges_only_non_held(db_path) -> Non
         assert purged.status_code == 200
         assert purged.json()["purged_export_ids"] == [purge_id]
         assert store.get(held_id) is not None
-        assert store.get(purge_id) is None
+        purged_record = store.get(purge_id)
+        assert purged_record is not None
+        assert purged_record.purged_at is not None
+        assert purged_record.bundle["purged"] is True
+        assert store.verify_integrity().ok is True
     finally:
         bundle_persistence.engine.close()
 
@@ -496,6 +691,52 @@ def test_durable_evidence_store_rejects_bundle_tamper(db_path) -> None:
 
         with pytest.raises(EvidenceIntegrityError):
             bundle_persistence.evidence_store.get(bundle.export_id)
+    finally:
+        bundle_persistence.engine.close()
+
+
+def test_durable_evidence_store_rejects_legal_hold_tamper(db_path) -> None:
+    bundle_persistence = _durable_bundle(db_path)
+    try:
+        service = AuditEvidenceExportService(
+            audit_log=bundle_persistence.audit_log,
+            evidence_store=bundle_persistence.evidence_store,
+        )
+        bundle = service.export(
+            EvidenceExportRequest(
+                program_id="program-hold-tamper",
+                purpose="legal hold tamper test",
+                requested_by="reviewer-b",
+                from_time=NOW - timedelta(days=1),
+                to_time=NOW + timedelta(days=1),
+                correlation_ids=("corr-hold-tamper",),
+                export_scope="tenant=t1",
+                data_classification="internal",
+                sensitive=False,
+            ),
+            decision_cards=(_ready_card("evt-hold-tamper"),),
+            generated_at=NOW,
+        )
+        held = bundle_persistence.evidence_store.apply_legal_hold(
+            bundle.export_id,
+            context=GovernedEvidenceOperation(
+                actor="legal-a",
+                role="legal",
+                reason="litigation hold",
+                correlation_id="corr-hold-tamper",
+            ),
+        )
+        assert held.legal_hold is True
+        assert bundle_persistence.evidence_store.verify_integrity().ok is True
+
+        bundle_persistence.engine.execute(
+            "UPDATE durable_evidence_bundles SET legal_hold = 0 WHERE export_id = ?",
+            (bundle.export_id,),
+        )
+
+        with pytest.raises(EvidenceIntegrityError):
+            bundle_persistence.evidence_store.get(bundle.export_id)
+        assert bundle_persistence.evidence_store.verify_integrity().ok is False
     finally:
         bundle_persistence.engine.close()
 

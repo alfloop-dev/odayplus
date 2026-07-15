@@ -17,6 +17,7 @@ from shared.audit.integrity import (
     attach_audit_event_integrity,
     verify_audit_chain,
 )
+from shared.audit.worm import AuditWormSink
 
 
 @dataclass(frozen=True)
@@ -67,18 +68,23 @@ class AuditEvent:
 
 
 class InMemoryAuditLog:
-    def __init__(self) -> None:
+    def __init__(self, *, worm_sink: AuditWormSink | None = None) -> None:
         self._events: list[AuditEvent] = []
+        self._worm_sink = worm_sink
 
     def record(self, event: AuditEvent) -> AuditEvent:
         previous_hash = (
             self._events[-1].event_hash if self._events else CHAIN_GENESIS_HASH
         )
+        sink_id = _event_sink_id(event, self._worm_sink)
         attach_audit_event_integrity(
             event,
             sequence=len(self._events) + 1,
             previous_hash=previous_hash or CHAIN_GENESIS_HASH,
+            sink_id=sink_id,
         )
+        if self._worm_sink is not None:
+            self._worm_sink.write_audit_event(event)
         self._events.append(event)
         return event
 
@@ -120,3 +126,11 @@ def _audit_event_replay_key(event: AuditEvent) -> tuple[int, str, str]:
         event.occurred_at.isoformat(),
         event.event_id,
     )
+
+
+def _event_sink_id(event: AuditEvent, worm_sink: AuditWormSink | None) -> str:
+    if event.event_hash is not None:
+        return event.worm_sink_id
+    if worm_sink is not None:
+        return worm_sink.sink_id
+    return event.worm_sink_id
