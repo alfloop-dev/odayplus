@@ -339,21 +339,69 @@ export function resolveApiBaseUrl(
   return null;
 }
 
+/**
+ * FastAPI rejects a request from one of two layers, and each shapes `detail`
+ * differently: a route handler raising HTTPException produces a plain string,
+ * while Pydantic body validation produces an array of field errors. Callers
+ * must handle both, so the union is explicit rather than `any`.
+ */
+export type ApiValidationIssue = {
+  loc?: Array<string | number>;
+  msg?: string;
+  type?: string;
+};
+
+export type ApiErrorBody = {
+  detail?: string | ApiValidationIssue[];
+};
+
 export class OdpApiError extends Error {
   readonly status: number;
   readonly url: string;
   readonly correlationId?: string;
+  /** Parsed response body, when the server sent JSON. */
+  readonly body?: ApiErrorBody;
+  /**
+   * Server-supplied reason, flattened to a single string. The backend writes
+   * operator-facing zh-TW copy here (policy refusals, reason-required, role
+   * denials), so the UI must render this rather than invent its own message.
+   */
+  readonly detail?: string;
 
   constructor(
     message: string,
-    options: { status: number; url: string; correlationId?: string },
+    options: {
+      status: number;
+      url: string;
+      correlationId?: string;
+      body?: ApiErrorBody;
+    },
   ) {
     super(message);
     this.name = "OdpApiError";
     this.status = options.status;
     this.url = options.url;
     this.correlationId = options.correlationId;
+    this.body = options.body;
+    this.detail = flattenApiDetail(options.body?.detail);
   }
+}
+
+/** Reduce FastAPI's `string | ValidationIssue[]` detail to displayable text. */
+export function flattenApiDetail(
+  detail: string | ApiValidationIssue[] | undefined,
+): string | undefined {
+  if (typeof detail === "string") return detail || undefined;
+  if (!Array.isArray(detail)) return undefined;
+  const parts = detail
+    .map((issue) => {
+      const field = (issue.loc ?? [])
+        .filter((segment) => segment !== "body")
+        .join(".");
+      return field && issue.msg ? `${field}: ${issue.msg}` : (issue.msg ?? "");
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join("; ") : undefined;
 }
 
 export type OdpApiClientOptions = {
@@ -406,20 +454,33 @@ export class OdpApiClient {
         // The backend is the source of truth — never serve a stale cached
         // copy, otherwise a backend state change would not reach the UI.
         cache: "no-store",
+        // defaultHeaders carry the caller's identity (subject/roles/tenant) and
+        // are spread FIRST: a per-request correlation or idempotency key is
+        // more specific than a client-construction default and must win, and
+        // content-type must not be overridable at all.
         headers: {
           accept: "application/json",
+          ...this.defaultHeaders,
           ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
           ...(options.correlationId ? { [CORRELATION_ID_HEADER]: options.correlationId } : {}),
           ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
-          ...this.defaultHeaders,
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
       if (!response.ok) {
+        // Read the body before throwing — the server's `detail` is the only
+        // place the operator-facing refusal reason exists.
+        let body: ApiErrorBody | undefined;
+        try {
+          body = (await response.json()) as ApiErrorBody;
+        } catch {
+          body = undefined;
+        }
         throw new OdpApiError(`ODay API ${response.status} for ${path}`, {
           status: response.status,
           url,
           correlationId: response.headers.get(CORRELATION_ID_HEADER) ?? options.correlationId,
+          body,
         });
       }
       return (await response.json()) as T;
@@ -759,12 +820,141 @@ export class OdpApiClient {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Assisted listing intake contract (ODP-OC-R5-011)
+//
+// These mirror modules/external_data/application/assisted_intake.py. The wire
+// format carries `policyLabel` and `matchResult.outcomeLabel` inline but has
+// NO `stageLabel`, so the stage labels below are the single shared source of
+// truth for TypeScript callers instead of being re-typed per surface.
+// ---------------------------------------------------------------------------
+
+/** assisted_intake.INTAKE_STAGES */
+export type IntakeStage =
+  | "SUBMITTED"
+  | "CHECKING_IDENTITY"
+  | "CHECKING_SOURCE_POLICY"
+  | "AWAITING_ASSISTED_ENTRY"
+  | "RETRIEVING"
+  | "PARSING"
+  | "MATCHING"
+  | "NEEDS_REVIEW"
+  | "READY"
+  | "QUARANTINED"
+  | "FAILED";
+
+export const INTAKE_STAGES: readonly IntakeStage[] = [
+  "SUBMITTED",
+  "CHECKING_IDENTITY",
+  "CHECKING_SOURCE_POLICY",
+  "AWAITING_ASSISTED_ENTRY",
+  "RETRIEVING",
+  "PARSING",
+  "MATCHING",
+  "NEEDS_REVIEW",
+  "READY",
+  "QUARANTINED",
+  "FAILED",
+] as const;
+
+/** assisted_intake.STAGE_LABEL */
+export const INTAKE_STAGE_LABEL: Record<IntakeStage, string> = {
+  SUBMITTED: "已送出",
+  CHECKING_IDENTITY: "識別檢查",
+  CHECKING_SOURCE_POLICY: "來源政策",
+  AWAITING_ASSISTED_ENTRY: "待人工補錄",
+  RETRIEVING: "擷取中",
+  PARSING: "解析中",
+  MATCHING: "比對中",
+  NEEDS_REVIEW: "待人工覆核",
+  READY: "可決策",
+  QUARANTINED: "已隔離",
+  FAILED: "處理失敗",
+};
+
+/** assisted_intake.TERMINAL_STAGES */
+export const TERMINAL_INTAKE_STAGES: readonly IntakeStage[] = [
+  "NEEDS_REVIEW",
+  "READY",
+  "QUARANTINED",
+  "FAILED",
+  "AWAITING_ASSISTED_ENTRY",
+] as const;
+
+/** assisted_intake.SOURCE_POLICY_STATES */
+export type SourcePolicyState =
+  | "APPROVED_RETRIEVAL"
+  | "ASSISTED_ENTRY_ONLY"
+  | "AUTH_REQUIRED"
+  | "SOURCE_BLOCKED"
+  | "POLICY_UNKNOWN";
+
+/** assisted_intake.SOURCE_POLICY_LABEL */
+export const SOURCE_POLICY_LABEL: Record<SourcePolicyState, string> = {
+  APPROVED_RETRIEVAL: "已核准擷取",
+  ASSISTED_ENTRY_ONLY: "僅人工補錄",
+  AUTH_REQUIRED: "需授權帳號",
+  SOURCE_BLOCKED: "來源封鎖",
+  POLICY_UNKNOWN: "政策未知",
+};
+
+/** assisted_intake.MATCH_OUTCOMES */
+export type MatchOutcome =
+  | "NEW"
+  | "EXACT_DUPLICATE"
+  | "REVISION"
+  | "POSSIBLE_MATCH"
+  | "QUARANTINED";
+
+/** assisted_intake.MATCH_OUTCOME_LABEL */
+export const MATCH_OUTCOME_LABEL: Record<MatchOutcome, string> = {
+  NEW: "新物件",
+  EXACT_DUPLICATE: "完全重複",
+  REVISION: "版本更新",
+  POSSIBLE_MATCH: "疑似重複",
+  QUARANTINED: "已隔離",
+};
+
+/**
+ * assisted_intake.IDENTITY_FIELDS — correcting any of these requires a reason
+ * (the server returns 422 without one), so the dialog must demand it up front.
+ */
+export const INTAKE_IDENTITY_FIELDS = [
+  "providerListingId",
+  "address",
+  "rent",
+  "areaPing",
+] as const;
+
+/** assisted_intake.CORRECTABLE_FIELDS */
+export const INTAKE_CORRECTABLE_FIELDS = [
+  ...INTAKE_IDENTITY_FIELDS,
+  "floor",
+  "listingType",
+  "listingStatus",
+] as const;
+
+export type IntakeCorrectableField = (typeof INTAKE_CORRECTABLE_FIELDS)[number];
+
+/** assisted_intake.ASSISTED_ENTRY_REQUIRED_FIELDS */
+export const ASSISTED_ENTRY_REQUIRED_FIELDS = ["address", "rent", "areaPing"] as const;
+
+/** Accepted by NetworkListingService.decide_intake. */
+export type IntakeDecideAction =
+  | "create"
+  | "revise"
+  | "duplicate"
+  | "quarantine"
+  | "reject";
+
+export type IntakeFieldValue = string | number | boolean | null;
+
 export type IntakeFieldCell = {
   key: string;
   label: string;
-  sourceValue: any;
-  normalizedValue: any;
-  correctedValue: any;
+  sourceValue: IntakeFieldValue;
+  normalizedValue: IntakeFieldValue;
+  correctedValue: IntakeFieldValue;
   correctionReason: string | null;
   identity: boolean;
   lowConfidence: boolean;
@@ -778,13 +968,23 @@ export type MatchSignalDto = {
 };
 
 export type MatchResultDto = {
-  outcome: "NEW" | "EXACT_DUPLICATE" | "REVISION" | "POSSIBLE_MATCH" | "QUARANTINED";
+  outcome: MatchOutcome;
   outcomeLabel: string;
   confidence: number;
   targetListingId: string | null;
   agreeingSignals: MatchSignalDto[];
   contradictingSignals: MatchSignalDto[];
   summary: string;
+};
+
+/**
+ * Written by decide/correct so the audit trail keeps the before/after values
+ * and the risk summary the reviewer was shown at the point of decision.
+ */
+export type IntakeAuditMetadata = {
+  beforeAfter?: Record<string, { before?: IntakeFieldValue; after?: IntakeFieldValue }>;
+  riskSummary?: string;
+  [key: string]: unknown;
 };
 
 export type IntakeAuditEvent = {
@@ -796,7 +996,14 @@ export type IntakeAuditEvent = {
   targetId: string;
   message: string;
   correlationId: string | null;
-  metadata?: Record<string, any>;
+  metadata?: IntakeAuditMetadata;
+};
+
+export type IntakeFailure = {
+  code: string;
+  summary: string;
+  nextAction: string;
+  retryable: boolean;
 };
 
 export type AssistedIntake = {
@@ -806,12 +1013,12 @@ export type AssistedIntake = {
   submitter: string;
   owner: string;
   heatZoneId: string | null;
-  stage: string;
+  stage: IntakeStage;
   sourceId: string;
-  policy: string;
+  policy: SourcePolicyState;
   policyLabel: string;
   policyReason: string;
-  rawSnapshot: any | null;
+  rawSnapshot: Record<string, unknown> | null;
   snapshotId: string | null;
   capturedAt: string | null;
   parserVersion: string;
@@ -820,12 +1027,7 @@ export type AssistedIntake = {
   matchResult: MatchResultDto | null;
   auditEvents: IntakeAuditEvent[];
   idempotencyKey?: string | null;
-  failure?: {
-    code: string;
-    summary: string;
-    nextAction: string;
-    retryable: boolean;
-  } | null;
+  failure?: IntakeFailure | null;
 };
 
 export type NetworkListingRadarSnapshot = {
@@ -946,14 +1148,15 @@ export type IntakeSubmitPayload = {
 };
 
 export type IntakeCorrectPayload = {
-  fields: Record<string, any>;
+  /** Keyed by IntakeCorrectableField; a reason is mandatory for identity fields. */
+  fields: Partial<Record<IntakeCorrectableField, IntakeFieldValue>>;
   reason?: string | null;
   actorRoleId?: string;
   actorName?: string | null;
 };
 
 export type IntakeDecidePayload = {
-  action: string;
+  action: IntakeDecideAction;
   reason?: string | null;
   actorRoleId?: string;
   actorName?: string | null;

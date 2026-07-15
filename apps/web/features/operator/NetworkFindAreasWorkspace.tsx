@@ -824,6 +824,7 @@ export function NetworkFindAreasWorkspace({
       <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
         {activeTab === 1 ? (
           <ListingRadarPanel
+            activeRoleId={activeRoleId}
             busyListingId={busyListingId}
             listings={listingsEffective}
             onArchive={archiveListing}
@@ -833,7 +834,6 @@ export function NetworkFindAreasWorkspace({
             selectedHeatZoneId={effectiveSelectedId}
             selectedZoneLabel={selectedZoneLabel}
             sources={listingSourcesEffective}
-            onIntakeSuccess={reloadNetworkSnapshot}
           />
         ) : activeTab === 2 ? (
           <CandidatePanel
