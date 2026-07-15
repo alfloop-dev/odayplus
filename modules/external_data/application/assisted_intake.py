@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from modules.external_data.security import validate_submitted_listing_url
+
 # ---------------------------------------------------------------------------
 # Processing stages — real stages, never a fabricated percentage
 # (ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS §5.2).
@@ -434,6 +436,10 @@ def validate_url(raw_url: str) -> str:
     parts = urlsplit(candidate)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise IntakeUrlError("請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）")
+    try:
+        validate_submitted_listing_url(candidate)
+    except ValueError as exc:
+        raise IntakeUrlError(str(exc)) from exc
     return candidate
 
 

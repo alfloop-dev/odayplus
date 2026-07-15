@@ -21,6 +21,14 @@ HEADERS = {
 }
 
 
+def _write_headers(key: str) -> dict[str, str]:
+    return {
+        **HEADERS,
+        "X-Correlation-Id": f"corr-{key}",
+        "Idempotency-Key": f"idem-{key}",
+    }
+
+
 @pytest.fixture
 def db_path(tmp_path) -> str:
     return str(tmp_path / "intake_durable.sqlite3")
@@ -94,7 +102,7 @@ def test_duplicate_and_revision_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("integration-revision-decide"),
     )
     assert decide_resp.status_code == 200
     assert decide_resp.json()["stage"] == "READY"
@@ -133,7 +141,7 @@ def test_ambiguous_entity_match_review_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("integration-ambiguous-correct"),
     )
     assert correct_resp.status_code == 200
     corrected_data = correct_resp.json()
@@ -212,7 +220,7 @@ def test_timeout_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=HEADERS,
+        headers=_write_headers("integration-timeout-correct"),
     )
     assert correct_resp.status_code == 200
 
@@ -313,7 +321,12 @@ def test_durable_intake_repository_round_trips_through_public_contract(db_path) 
 def _merge_l2029(client: TestClient, *, idempotency_key: str, reason: str):
     return client.post(
         "/api/v1/operator/network-listings/listings/L-2029/merge",
-        headers={**HEADERS, "x-operator-role": "expansion-manager", "Idempotency-Key": idempotency_key},
+        headers={
+            **HEADERS,
+            "x-operator-role": "expansion-manager",
+            "Idempotency-Key": idempotency_key,
+            "X-Correlation-Id": f"corr-{idempotency_key}",
+        },
         json={
             "actorRoleId": "expansionManager",
             "actorName": "王若寧",

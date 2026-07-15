@@ -233,6 +233,66 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-timeline")).toContainText("門牌");
   });
 
+  test("correct and decide writes carry retry-stable idempotency keys", async ({ page }) => {
+    const correctKeys: string[] = [];
+    const decideKeys: string[] = [];
+    let failFirstCorrect = true;
+    let failFirstDecide = true;
+
+    await page.route("**/network-listings/intake/*/correct", async (route) => {
+      correctKeys.push(route.request().headers()["idempotency-key"] ?? "<none>");
+      if (failFirstCorrect) {
+        failFirstCorrect = false;
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        return;
+      }
+      await route.continue();
+    });
+    await page.route("**/network-listings/intake/*/decide", async (route) => {
+      decideKeys.push(route.request().headers()["idempotency-key"] ?? "<none>");
+      if (failFirstDecide) {
+        failFirstDecide = false;
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        return;
+      }
+      await route.continue();
+    });
+
+    await openRadarAsExpansionManager(page);
+    await submitUrl(page, URLS.possible);
+
+    await page.getByTestId("intake-fix-address").click();
+    await page.getByTestId("intake-fix-value").fill("新北市板橋區府中路 26 號 1F");
+    await page.getByTestId("intake-fix-reason").fill("與房東電話確認門牌為 26 號");
+    await page.getByTestId("intake-fix-risk-ack").check();
+    await page.getByTestId("intake-fix-submit").click();
+    await expect(page.getByTestId("intake-fix-error")).toBeVisible();
+    await expect(page.getByTestId("intake-fix-reason")).toHaveValue("與房東電話確認門牌為 26 號");
+
+    await page.getByTestId("intake-fix-submit").click();
+    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({ timeout: 15_000 });
+    expect(correctKeys).toHaveLength(2);
+    expect(correctKeys[0]).toBe(correctKeys[1]);
+    expect(correctKeys[0]).not.toBe("<none>");
+    expect(correctKeys[0]).toContain("intake-correct-");
+
+    await page.getByTestId("intake-decide-create").click();
+    await page.getByTestId("intake-decide-reason").fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
+    await page.getByTestId("intake-decide-risk-ack").check();
+    await page.getByTestId("intake-decide-submit").click();
+    await expect(page.getByTestId("intake-decide-error")).toBeVisible();
+    await expect(page.getByTestId("intake-decide-reason")).toHaveValue(
+      "實地確認樓層與提供者 ID 為不同物件，判定為新物件。",
+    );
+
+    await page.getByTestId("intake-decide-submit").click();
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    expect(decideKeys).toHaveLength(2);
+    expect(decideKeys[0]).toBe(decideKeys[1]);
+    expect(decideKeys[0]).not.toBe("<none>");
+    expect(decideKeys[0]).toContain("intake-decide-create-");
+  });
+
   test("assisted-entry-only source keeps the URL and never fetches the page", async ({ page }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.assistedOnly);

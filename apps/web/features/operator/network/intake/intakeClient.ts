@@ -94,6 +94,7 @@ export function missingClientError(): IntakeApiError {
 }
 
 export type IntakeResult<T> = OperatorApiResult<T>;
+type IntakeWriteOptions = { idempotencyKey: string; correlationId?: string };
 
 function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
   return guardCall(run, toIntakeApiError);
@@ -137,9 +138,13 @@ export const intakeApi = {
     client: OdpApiClient,
     intakeId: string,
     payload: IntakeCorrectPayload,
+    options: IntakeWriteOptions,
   ): Promise<IntakeResult<AssistedIntake>> {
     return guard(() =>
-      client.correctIntake(intakeId, payload, { correlationId: newCorrelationId() }),
+      client.correctIntake(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+      }),
     );
   },
 
@@ -147,9 +152,13 @@ export const intakeApi = {
     client: OdpApiClient,
     intakeId: string,
     payload: IntakeDecidePayload,
+    options: IntakeWriteOptions,
   ): Promise<IntakeResult<AssistedIntake>> {
     return guard(() =>
-      client.decideIntake(intakeId, payload, { correlationId: newCorrelationId() }),
+      client.decideIntake(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+      }),
     );
   },
 
@@ -174,12 +183,16 @@ export const intakeApi = {
     actorRoleId: string,
     reason: string,
     risk: { riskSummary: string; riskAcknowledged: boolean },
+    options: IntakeWriteOptions,
   ): Promise<IntakeResult<ConvertListingResponse>> {
     return guard(() =>
       client.promoteIntake(
         intakeId,
         { actorRoleId, reason, ...risk },
-        { correlationId: newCorrelationId() },
+        {
+          correlationId: options.correlationId ?? newCorrelationId(),
+          idempotencyKey: options.idempotencyKey,
+        },
       ),
     );
   },
@@ -187,11 +200,30 @@ export const intakeApi = {
 
 export { newCorrelationId };
 
-/** Stable per-attempt key so a retry of the *same* submission dedups server-side. */
+/** Stable per-submission key so a retry of the *same* submission dedups server-side. */
 export function newIdempotencyKey(url: string): string {
   return `intake-${canonicalKeyPart(url)}-${randomToken()}`;
 }
 
+/** A key identifying one high-impact intake write, stable across retries. */
+export function newIntakeActionIdempotencyKey(
+  intakeId: string,
+  action: string,
+  detail?: string,
+): string {
+  const suffix = detail ? `-${canonicalKeyPart(detail)}` : "";
+  return (
+    `intake-${canonicalKeyPart(action)}-${canonicalKeyPart(intakeId)}` +
+    `${suffix}-${randomToken()}`
+  );
+}
+
 function canonicalKeyPart(url: string): string {
-  return url.replace(/^https?:\/\/(www\.)?/, "").replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40);
+  return (
+    url
+      .replace(/^https?:\/\/(www\.)?/, "")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "item"
+  );
 }
