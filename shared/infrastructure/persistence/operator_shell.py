@@ -41,7 +41,7 @@ class DurableShellRepository:
         return self._store.list_all(self._IDEMPOTENCY)
 
     def save_idempotency_record(self, record: ShellIdempotencyRecord) -> None:
-        self._store.put(self._IDEMPOTENCY, f"{record.action}:{record.key}", record)
+        self._store.put(self._IDEMPOTENCY, f"{record.action}:{record.actor_subject_id}:{record.key}", record)
 
     def clear(self) -> None:
         for collection in (*SHELL_COLLECTIONS, self._IDEMPOTENCY):

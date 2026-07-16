@@ -274,6 +274,11 @@ def require_permission(
 
         principal = principal_from_headers(request.headers, boundary=boundary)
         if rbac_allows(principal, resource_type, action):
+            request.state.operator_principal = principal
+            request.state.operator_subject_id = principal.subject_id
+            request.state.operator_system_roles = ",".join(
+                sorted(role.value for role in principal.roles)
+            )
             return principal
 
         source_ip = request.client.host if request.client else None

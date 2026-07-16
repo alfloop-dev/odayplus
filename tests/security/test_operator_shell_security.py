@@ -264,3 +264,91 @@ def test_cross_actor_idempotency_replay_is_blocked() -> None:
         json={"notificationId": notification_id},
     )
     assert resp6.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch) -> None:
+    from modules.opsboard.auth import AuthBoundaryConfig, SigningKey, encode_compact_jwt
+    from apps.api.oday_api.security import dependencies as deps
+    from datetime import UTC, datetime, timedelta
+
+    # 1. Setup live AuthenticationBoundary
+    issuer = "https://idp.oday.test"
+    audience = "oday-plus-api"
+    key = SigningKey(kid="k1", algorithm="HS256", secret=b"api-wiring-secret")
+
+    monkeypatch.setenv("ODP_AUTH_ISSUER", issuer)
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", audience)
+    monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "k1:api-wiring-secret")
+    deps.reset_default_boundary()
+
+    try:
+        client = _client()
+
+        # Helper to generate JWT token headers
+        def _bearer_headers(sub: str, roles: list[str]) -> dict[str, str]:
+            now = datetime.now(UTC)
+            payload = {
+                "sub": sub,
+                "iss": issuer,
+                "aud": audience,
+                "iat": now.timestamp(),
+                "exp": (now + timedelta(hours=1)).timestamp(),
+                "roles": roles,
+                "tenant_id": "tenant-a",
+            }
+            token = encode_compact_jwt(payload, key)
+            return {"authorization": f"Bearer {token}"}
+
+        # Test Blocker 1: franchisee X-Subject-Id spoofing under live boundary
+        # Attacker holds a valid franchisee-002 token but tries to spoof franchisee-001
+        attacker_headers = _bearer_headers(sub="franchisee-002", roles=["franchisee"])
+        # We explicitly add X-Subject-Id to try to spoof
+        attacker_headers["X-Subject-Id"] = "franchisee-001"
+
+        # Attacker posts a report
+        resp_spoof = client.post(
+            "/api/v1/operator/shell/franchisee/reports",
+            headers=attacker_headers,
+            json={"category": "staffing", "message": "Attacker report"},
+        )
+        assert resp_spoof.status_code == status.HTTP_200_OK
+        assert resp_spoof.json()["report"]["subjectId"] == "franchisee-002"
+
+        # Test Blocker 2: Same-role A -> B -> A-retry idempotency sequence
+        # Two operators share the 'ops-lead' role (subject-a and subject-b)
+        headers_a = _bearer_headers(sub="subject-a", roles=["operations_manager"])
+        headers_a["X-Operator-Role"] = "ops-lead"
+        headers_b = _bearer_headers(sub="subject-b", roles=["operations_manager"])
+        headers_b["X-Operator-Role"] = "ops-lead"
+
+        from uuid import uuid4
+        idem_key = f"same-role-idemp-{uuid4().hex[:8]}"
+
+        # A calls settings with key=idem_key
+        resp_a1 = client.put(
+            "/api/v1/operator/shell/settings",
+            headers={**headers_a, "Idempotency-Key": idem_key},
+            json={"values": {"density": "comfortable"}},
+        )
+        assert resp_a1.json().get("idempotentReplay") is False
+
+        # B calls settings with the SAME key
+        resp_b = client.put(
+            "/api/v1/operator/shell/settings",
+            headers={**headers_b, "Idempotency-Key": idem_key},
+            json={"values": {"density": "comfortable"}},
+        )
+        assert resp_b.status_code == status.HTTP_200_OK
+        assert resp_b.json().get("idempotentReplay") is False  # B must NOT get a replay of A's cached response
+
+        # A retries settings with the SAME key
+        resp_a2 = client.put(
+            "/api/v1/operator/shell/settings",
+            headers={**headers_a, "Idempotency-Key": idem_key},
+            json={"values": {"density": "comfortable"}},
+        )
+        assert resp_a2.status_code == status.HTTP_200_OK
+        assert resp_a2.json().get("idempotentReplay") is True  # A gets their own cached response replayed!
+
+    finally:
+        deps.reset_default_boundary()

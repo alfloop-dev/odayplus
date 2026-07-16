@@ -103,7 +103,7 @@ class InMemoryShellRepository:
     """Non-durable ShellRepository used when no document store is wired."""
 
     _records: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
-    _idempotency: dict[tuple[str, str], ShellIdempotencyRecord] = field(default_factory=dict)
+    _idempotency: dict[tuple[str, str | None, str], ShellIdempotencyRecord] = field(default_factory=dict)
 
     def list_records(self, collection: str) -> list[dict[str, Any]]:
         return [deepcopy(value) for value in self._records.get(collection, {}).values()]
@@ -124,7 +124,7 @@ class InMemoryShellRepository:
         ]
 
     def save_idempotency_record(self, record: ShellIdempotencyRecord) -> None:
-        self._idempotency[(record.action, record.key)] = ShellIdempotencyRecord(
+        self._idempotency[(record.action, record.actor_subject_id, record.key)] = ShellIdempotencyRecord(
             action=record.action,
             key=record.key,
             response=deepcopy(record.response),
@@ -328,7 +328,7 @@ class ShellService:
         self._repo: ShellRepository = (
             repository if repository is not None else InMemoryShellRepository()
         )
-        self._idempotency_cache: dict[tuple[str, str], ShellIdempotencyRecord] = {}
+        self._idempotency_cache: dict[tuple[str, str | None, str], ShellIdempotencyRecord] = {}
         self._audit_feed: list[dict[str, Any]] = []
         self._load_idempotency_cache()
 
@@ -338,7 +338,7 @@ class ShellService:
 
     def _load_idempotency_cache(self) -> None:
         self._idempotency_cache = {
-            (record.action, record.key): record
+            (record.action, record.actor_subject_id, record.key): record
             for record in self._repo.list_idempotency_records()
         }
 
@@ -352,7 +352,7 @@ class ShellService:
     ) -> dict[str, Any] | None:
         if not key:
             return None
-        record = self._idempotency_cache.get((action, key))
+        record = self._idempotency_cache.get((action, subject_id, key))
         if record is None:
             return None
         # Check if actor matches:
@@ -380,7 +380,7 @@ class ShellService:
             actor_role_id=role_id,
             actor_subject_id=subject_id,
         )
-        self._idempotency_cache[(action, key)] = record
+        self._idempotency_cache[(action, subject_id, key)] = record
         self._repo.save_idempotency_record(record)
 
     def _records_by_id(self, collection: str, id_field: str) -> dict[str, dict[str, Any]]:

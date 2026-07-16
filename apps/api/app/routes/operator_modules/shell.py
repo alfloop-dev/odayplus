@@ -31,6 +31,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from shared.auth.identity import Principal
+
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.application.shell import (
     ShellConflict,
@@ -541,36 +543,35 @@ def create_shell_sub_router(
     # Product shell — Franchisee (separate resource; see module docstring)
     # ------------------------------------------------------------------
 
-    @router.get("/shell/franchisee", dependencies=[Depends(require_franchisee_view_fn)])
+    @router.get("/shell/franchisee")
     def shell_franchisee(
         request: Request,
         store_id: str | None = Query(default=None, alias="storeId"),
-        x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+        principal: Principal = Depends(require_franchisee_view_fn),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the franchisee-scoped view (no operator-only data)."""
         return shell.get_franchisee_view(
-            subject_id=x_subject_id,
+            subject_id=principal.subject_id,
             store_id=store_id,
             correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
         )
 
     @router.post(
         "/shell/franchisee/acknowledgement",
-        dependencies=[Depends(require_franchisee_write_fn)],
     )
     def shell_franchisee_acknowledge(
         body: FranchiseeAcknowledgeRequest,
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+        principal: Principal = Depends(require_franchisee_write_fn),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Record a franchisee acknowledgement. Audited and idempotent."""
         try:
             return shell.franchisee_acknowledge(
                 notification_id=body.notificationId,
-                subject_id=x_subject_id,
+                subject_id=principal.subject_id,
                 store_id=body.storeId,
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
@@ -580,13 +581,12 @@ def create_shell_sub_router(
 
     @router.post(
         "/shell/franchisee/reports",
-        dependencies=[Depends(require_franchisee_write_fn)],
     )
     def shell_franchisee_report(
         body: FranchiseeReportRequest,
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+        principal: Principal = Depends(require_franchisee_write_fn),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Record a franchisee field report. Audited and idempotent."""
@@ -594,7 +594,7 @@ def create_shell_sub_router(
             return shell.franchisee_report(
                 category=body.category,
                 message=body.message,
-                subject_id=x_subject_id,
+                subject_id=principal.subject_id,
                 store_id=body.storeId,
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
