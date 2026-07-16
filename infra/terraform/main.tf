@@ -36,6 +36,17 @@ resource "google_storage_bucket" "artifacts" {
   labels                      = local.labels
 }
 
+module "audit_evidence" {
+  source = "./audit"
+
+  project_id                            = var.project_id
+  region                                = var.region
+  environment                           = var.environment
+  labels                                = local.labels
+  product_runtime_service_account_email = google_service_account.runtime.email
+  retention_period_seconds              = var.audit_retention_period_seconds
+}
+
 resource "google_sql_database_instance" "primary" {
   name             = "${local.name_prefix}-sql"
   database_version = "POSTGRES_16"

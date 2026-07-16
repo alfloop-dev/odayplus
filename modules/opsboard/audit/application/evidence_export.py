@@ -16,7 +16,9 @@ from modules.opsboard.audit.domain.evidence import (
 )
 from modules.opsboard.audit.evidence_store import retained_evidence_from_bundle
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.integrity import sha256_hex
 from shared.audit.persistence import EvidenceBundleStore, resolve_retention_policy
+from shared.audit.policy import mask_email, mask_phone, mask_text
 
 
 class AuditEvidenceExportError(ValueError):
@@ -47,8 +49,9 @@ class AuditEvidenceExportService:
         decision_cards: Sequence[DecisionCard],
         generated_at: datetime | None = None,
     ) -> AuditEvidenceBundle:
+        normalized_generated_at = generated_at or datetime.now(UTC)
         try:
-            self._validate_request(request)
+            self._validate_request(request, as_of=normalized_generated_at)
             if not decision_cards:
                 raise AuditEvidenceExportError(
                     "export requires at least one decision card"
@@ -60,22 +63,24 @@ class AuditEvidenceExportService:
                 self._record_denial(request, reason=str(exc))
             raise
 
-        normalized_generated_at = generated_at or datetime.now(UTC)
+        exported_cards = tuple(
+            _decision_card_for_export(card, request=request) for card in decision_cards
+        )
         events = tuple(
-            event.to_dict()
+            _audit_event_for_export(event.to_dict(), request=request)
             for event in self._events_for_request(
                 correlation_ids=request.correlation_ids,
                 from_time=request.from_time,
                 to_time=request.to_time,
             )
         )
-        matrix = build_subsidy_matrix(decision_cards)
+        matrix = build_subsidy_matrix(exported_cards)
         missing = tuple(row.requirement_id for row in matrix if row.status != "READY")
         export_id = f"audit-export-{uuid4()}"
         checksum = build_bundle_checksum(
             export_id=export_id,
             request=request,
-            decision_cards=decision_cards,
+            decision_cards=exported_cards,
             audit_events=events,
             subsidy_matrix=matrix,
             generated_at=normalized_generated_at,
@@ -84,6 +89,24 @@ class AuditEvidenceExportService:
             request.data_classification, sensitive=request.sensitive
         )
         retain_until = retention_policy.retain_until(normalized_generated_at)
+        identity_boundary = request.identity_boundary or f"principal:{request.requested_by}"
+        download_evidence_id = sha256_hex(
+            {
+                "export_id": export_id,
+                "requested_by": request.requested_by,
+                "identity_boundary": identity_boundary,
+                "purpose_scope": request.purpose_scope,
+                "expires_at": request.expires_at.isoformat()
+                if request.expires_at
+                else None,
+            }
+        )
+        event_hashes = [
+            str(event["integrity"]["event_hash"])
+            for event in events
+            if isinstance(event.get("integrity"), dict)
+            and event["integrity"].get("event_hash")
+        ]
         export_event = self.audit_log.record(
             AuditEvent(
                 event_type="audit.evidence_export.v1",
@@ -103,6 +126,19 @@ class AuditEvidenceExportService:
                     "retention_class": retention_policy.retention_class,
                     "retain_until": retain_until.isoformat(),
                     "data_classification": request.data_classification,
+                    "sensitive": request.sensitive,
+                    "export_scope": request.export_scope,
+                    "purpose_scope": request.purpose_scope,
+                    "expires_at": request.expires_at.isoformat()
+                    if request.expires_at
+                    else None,
+                    "authorized_by": request.authorized_by,
+                    "authorization_id": request.authorization_id,
+                    "masking_profile": request.masking_profile,
+                    "identity_boundary": identity_boundary,
+                    "download_evidence_id": download_evidence_id,
+                    "audit_chain_start": event_hashes[0] if event_hashes else None,
+                    "audit_chain_end": event_hashes[-1] if event_hashes else None,
                 },
             )
         )
@@ -115,7 +151,7 @@ class AuditEvidenceExportService:
             period_end=request.to_time,
             generated_at=normalized_generated_at,
             policy_version=AUDIT_EVIDENCE_POLICY_VERSION,
-            decision_cards=tuple(decision_cards),
+            decision_cards=exported_cards,
             audit_events=events,
             subsidy_matrix=matrix,
             missing_requirements=missing,
@@ -123,6 +159,18 @@ class AuditEvidenceExportService:
             audit_event_id=export_event.event_id,
             retention_class=retention_policy.retention_class,
             retain_until=retain_until,
+            data_classification=request.data_classification,
+            sensitive=request.sensitive,
+            export_scope=request.export_scope,
+            purpose_scope=request.purpose_scope,
+            expires_at=request.expires_at,
+            authorized_by=request.authorized_by,
+            authorization_id=request.authorization_id,
+            masking_profile=request.masking_profile,
+            identity_boundary=identity_boundary,
+            download_evidence_id=download_evidence_id,
+            audit_chain_start=event_hashes[0] if event_hashes else None,
+            audit_chain_end=event_hashes[-1] if event_hashes else None,
         )
         if self.evidence_store is not None:
             self.evidence_store.save(
@@ -154,7 +202,9 @@ class AuditEvidenceExportService:
     def _record_denial(self, request: EvidenceExportRequest, *, reason: str) -> None:
         """Audit a denied sensitive export request (durable when the log is)."""
 
-        correlation_id = request.correlation_ids[0] if request.correlation_ids else "unknown"
+        correlation_id = (
+            request.correlation_ids[0] if request.correlation_ids else "unknown"
+        )
         self.audit_log.record(
             AuditEvent(
                 event_type="audit.evidence_export.v1",
@@ -168,11 +218,19 @@ class AuditEvidenceExportService:
                     "sensitive": True,
                     "data_classification": request.data_classification,
                     "export_scope": request.export_scope,
+                    "purpose_scope": request.purpose_scope,
+                    "expires_at": request.expires_at.isoformat()
+                    if request.expires_at
+                    else None,
+                    "authorized_by": request.authorized_by,
+                    "authorization_id": request.authorization_id,
                 },
             )
         )
 
-    def _validate_request(self, request: EvidenceExportRequest) -> None:
+    def _validate_request(
+        self, request: EvidenceExportRequest, *, as_of: datetime
+    ) -> None:
         if not request.program_id.strip():
             raise AuditEvidenceExportError("program_id is required")
         if not request.requested_by.strip():
@@ -185,6 +243,23 @@ class AuditEvidenceExportService:
             raise AuditEvidenceExportError("sensitive export requires export_scope")
         if request.from_time > request.to_time:
             raise AuditEvidenceExportError("from_time must be before to_time")
+        if request.masking_profile not in {"masked", "unmasked"}:
+            raise AuditEvidenceExportError("masking_profile must be masked or unmasked")
+        if request.sensitive:
+            if request.masking_profile != "masked":
+                raise AuditEvidenceExportError("sensitive export requires masking")
+            if not (request.purpose_scope or "").strip():
+                raise AuditEvidenceExportError("sensitive export requires purpose_scope")
+            if request.expires_at is None:
+                raise AuditEvidenceExportError("sensitive export requires expires_at")
+            if request.expires_at <= as_of:
+                raise AuditEvidenceExportError("sensitive export authorization expired")
+            if not (request.authorized_by or "").strip():
+                raise AuditEvidenceExportError("sensitive export requires authorized_by")
+            if request.authorized_by == request.requested_by:
+                raise AuditEvidenceExportError(
+                    "separation of duties: exporter cannot authorize own export"
+                )
 
 
 def decision_card_from_mapping(payload: dict[str, Any]) -> DecisionCard:
@@ -234,3 +309,50 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _decision_card_for_export(
+    card: DecisionCard, *, request: EvidenceExportRequest
+) -> DecisionCard:
+    if not request.sensitive or request.masking_profile != "masked":
+        return card
+    return replace(
+        card,
+        rationale=mask_text(card.rationale),
+        metrics=_mask_mapping(card.metrics),
+    )
+
+
+def _audit_event_for_export(
+    payload: dict[str, Any], *, request: EvidenceExportRequest
+) -> dict[str, Any]:
+    if not request.sensitive or request.masking_profile != "masked":
+        return payload
+    masked = dict(payload)
+    metadata = masked.get("metadata")
+    if isinstance(metadata, dict):
+        masked["metadata"] = _mask_mapping(metadata)
+    return masked
+
+
+def _mask_mapping(payload: dict[str, Any]) -> dict[str, Any]:
+    return {str(key): _mask_value(str(key), value) for key, value in payload.items()}
+
+
+def _mask_value(key: str, value: Any) -> Any:
+    lowered = key.lower()
+    if isinstance(value, dict):
+        return _mask_mapping(value)
+    if isinstance(value, list):
+        return [_mask_value(key, item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_mask_value(key, item) for item in value)
+    if not isinstance(value, str):
+        return value
+    if "email" in lowered or "@" in value:
+        return mask_email(value)
+    if "phone" in lowered:
+        return mask_phone(value)
+    if any(token in lowered for token in ("pii", "name", "rationale", "comment")):
+        return mask_text(value)
+    return value

@@ -94,5 +94,22 @@
       "secondary_metric": "external_connector_failure_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness"
     }
-  ]
+  ],
+  "routing": {
+    "default_receiver": "admin",
+    "routes": [
+      {
+        "severity": "P1",
+        "receiver": "ops-lead"
+      },
+      {
+        "severity": "P2",
+        "receiver": "oncall-engineer"
+      },
+      {
+        "severity": "P3",
+        "receiver": "oncall-engineer"
+      }
+    ]
+  }
 }
