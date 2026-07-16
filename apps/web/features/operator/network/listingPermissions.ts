@@ -26,4 +26,4 @@ export function canMergeListing(roleId: OperatorRoleId): boolean {
 }
 
 export const MERGE_DENIED_NOTE =
-  "你的角色不可合併物件；請切換為展店經理，或洽平台維運調整角色權限。";
+  "你的角色不可標記重複；請切換為展店經理，或洽平台維運調整角色權限。";
