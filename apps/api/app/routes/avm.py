@@ -152,13 +152,6 @@ else:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
             return case.to_dict()
 
-        @router.get("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def get_dataroom(case_id: str) -> dict[str, Any]:
-            dataroom = service.dataroom(case_id)
-            if dataroom is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="dataroom not found")
-            return dataroom.to_dict()
-
         @router.post("/cases/{case_id}/normalize", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def normalize(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
             margin = _run(

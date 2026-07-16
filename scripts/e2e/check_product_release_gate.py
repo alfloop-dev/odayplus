@@ -424,7 +424,7 @@ def main() -> int:
                         errors.append(
                             f"forbidden mock switch found in production code: {path.relative_to(ROOT)}"
                         )
-                except Exception as e:
+                except Exception:
                     pass
 
     if errors:
