@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=IBM+Plex+Mono:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#FFFFFF;}
+@media print{.no-print{display:none;}}
+</style>
+</helmet>
+<div style="font-family:'Noto Sans TC',-apple-system,'Segoe UI',sans-serif;color:#1C2333;background:#FFFFFF;max-width:1080px;margin:0 auto;padding:36px 40px 60px;font-size:12.5px;line-height:1.6;">
+
+<div style="display:flex;align-items:center;gap:12px;border-bottom:3px solid #181E38;padding-bottom:14px;">
+<div style="width:30px;height:30px;border-radius:8px;background:#2E3A97;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">O</div>
+<div>
+<div style="font-size:19px;font-weight:700;">Oday Plus Operator Console R5 Design Summary</div>
+<div style="font-size:11px;color:#5A6478;letter-spacing:.05em;">R5 · DEMO_STATE_VERSION: oday-plus-r5-20260714 · 與 main interactive HTML／thumbnail 同一版本 · 2026/07/14 · 含 ODP-UXD-003-ADD-001 Assisted Listing Intake</div>
+</div>
+<div style="margin-left:auto;padding:3px 12px;border:1.5px solid #B98E33;color:#96610B;font-size:10px;font-weight:700;border-radius:999px;letter-spacing:.08em;">POC DEMO · R5</div>
+</div>
+
+<div style="margin-top:14px;background:#FBF1DD;border:1.5px solid #E4C88A;border-radius:10px;padding:11px 16px;font-size:12px;color:#96610B;font-weight:600;">
+⚠ 此檔為靜態設計摘要，不是完整互動原型。完整互動請開啟 <span style="font-family:'IBM Plex Mono',monospace;">Oday Plus Operator Console.dc.html</span>。
+</div>
+
+<div style="margin-top:16px;background:#F2F4F8;border:1px solid #E3E8F0;border-radius:12px;padding:14px 18px;">
+<div style="font-size:11px;font-weight:700;color:#8A93A8;letter-spacing:.08em;margin-bottom:6px;">R4 封版 CLEANUP（相對 R3）</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 22px;font-size:11.5px;color:#3A4362;">
+<div>1. 移除舊 renderVals error 截圖，uploads 已清空。</div>
+<div>2. thumbnail 重新產生（Today 工作台畫面），非白圖。</div>
+<div>3. 正式 DEMO_STATE_VERSION = "oday-plus-r4-20260707"；舊 state 自動 resetDemoState()，全 array fallback 防 undefined.filter/.map。</div>
+<div>4. Network mock data 統一為 R4 命名（A-100x 區域 / L-202x 物件 / CS-100x 候選點）；LST-301、CND-311 等舊資料已移除，租金全頁一致。</div>
+<div>5. Golden flow 確認可互動點完：找區域→物件雷達→候選點→SiteScore→比較→審核，含狀態同步。</div>
+<div>6. Growth 三入口皆可建 Draft 並送核准；Store Ops 四燈 chip 可篩 Issue Queue（佇列標示目前篩選＋一鍵清除）。</div>
+</div>
+</div>
+
+<div style="margin-top:22px;">
+<div style="font-size:15px;font-weight:700;border-left:4px solid #2E3A97;padding-left:10px;">Today 今日工作</div>
+<div style="margin-top:8px;font-size:11.5px;color:#3A4362;line-height:1.7;">依角色產生的今日佇列：待辦（含 SLA 倒數）、待核准、觀察中成效三段。範例（營運主管視角）：ISS-1024 付款異常紅燈（信義松仁）、APR-501 SiteScore 審核（板橋府中 WAIT 76）、GRW-201 離峰促銷觀察中 D+9。點擊任一項直接進入對應工作區；六種角色（營運主管／客服主管／工務主任／行銷經理／展店經理／PM 稽核）各見不同佇列與可見範圍。</div>
+</div>
+
+<div style="margin-top:22px;">
+<div style="font-size:15px;font-weight:700;border-left:4px solid #C4342C;padding-left:10px;">Store Ops · 全店四燈摘要＋快速篩選</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;">
+<div style="border:1px solid #E3E8F0;border-radius:10px;padding:9px 13px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#C4342C;margin-right:6px;"></span><b>紅燈</b><div style="font-size:20px;font-family:'IBM Plex Mono',monospace;">3</div><div style="font-size:10px;color:#B3261E;font-weight:600;">+1 vs 昨日</div></div>
+<div style="border:1px solid #E3E8F0;border-radius:10px;padding:9px 13px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D08700;margin-right:6px;"></span><b>橙燈</b><div style="font-size:20px;font-family:'IBM Plex Mono',monospace;">8</div><div style="font-size:10px;color:#1E7F4F;font-weight:600;">-2 vs 昨日</div></div>
+<div style="border:1px solid #E3E8F0;border-radius:10px;padding:9px 13px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#E8C44A;margin-right:6px;"></span><b>黃燈</b><div style="font-size:20px;font-family:'IBM Plex Mono',monospace;">14</div><div style="font-size:10px;color:#5A6472;">持平</div></div>
+<div style="border:1px solid #E3E8F0;border-radius:10px;padding:9px 13px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2E9E63;margin-right:6px;"></span><b>綠燈</b><div style="font-size:20px;font-family:'IBM Plex Mono',monospace;">52</div><div style="font-size:10px;color:#1E7F4F;font-weight:600;">已恢復 5 間 · Outcome Ready 4 件</div></div>
+</div>
+<div style="display:flex;gap:18px;margin-top:8px;font-size:11px;color:#3A4362;flex-wrap:wrap;">
+<span>主要異常來源：設備／維修 <b>42%</b> · 客服／評語 <b>31%</b> · 營收偏離 <b>18%</b> · 成本異常 <b>9%</b></span>
+<span style="color:#5A6478;">篩選 chips：查看紅燈｜查看橙燈｜設備風險｜客服聲量｜營收偏離｜成本異常 — 點擊即篩 Issue Queue，佇列頂部顯示「目前篩選：×」可一鍵清除</span>
+</div>
+<div style="margin-top:8px;font-size:11px;color:#5A6478;">Issue Detail 保留 ForecastOps tab：當前燈號、28 天營收預測 vs 實際 band、營收偏離、成本／客服聲量／設備工單訊號、建議行動、最近／下次更新時間。Issue lifecycle：新進→分類→指派→處置→執行→觀察→成效→結案。</div>
+</div>
+
+<div style="margin-top:24px;">
+<div style="font-size:15px;font-weight:700;border-left:4px solid #2E3A97;padding-left:10px;">Network · Expansion Flow Stepper（R4 統一資料）</div>
+<div style="display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap;">
+<span style="border:1.5px solid #2E3A97;background:#ECEFFB;color:#2E3A97;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:700;">① 找區域 Find Areas</span><span style="color:#98A1B3;">→</span>
+<span style="border:1px solid #C6CFEA;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:600;">② 物件雷達 Listing Radar</span><span style="color:#98A1B3;">→</span>
+<span style="border:1px solid #C6CFEA;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:600;">③ 候選點 Candidate</span><span style="color:#98A1B3;">→</span>
+<span style="border:1px solid #C6CFEA;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:600;">④ SiteScore</span><span style="color:#98A1B3;">→</span>
+<span style="border:1px solid #C6CFEA;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:600;">⑤ 比較 Compare</span><span style="color:#98A1B3;">→</span>
+<span style="border:1px solid #C6CFEA;border-radius:9px;padding:5px 12px;font-size:11.5px;font-weight:600;">⑥ 審核 Review</span>
+</div>
+<div style="margin-top:8px;background:#F8FAFD;border:1px solid #EEF1F6;border-radius:9px;padding:9px 13px;font-size:11px;color:#3A4362;">
+Golden flow（R4 資料）：信義松仁生活圈（86）→ L-2024 591｜信義區松仁路 18 坪店面（NT$58,000）→ CS-1001 信義松仁候選點 → SiteScore 82 GO（回本 22 個月）→ 加入比較 → 送審 → 審核決策。每步可點擊切換 tab，顯示 current／completed／next／blocked（缺資料）；同一物件的租金與 ID 在所有頁面一致。
+</div>
+<div style="margin-top:8px;font-size:11px;color:#3A4362;line-height:1.7;">
+<b>R4 資料集</b>　區域：信義松仁生活圈 86 · 板橋府中商圈 78 · 大安和平住宅圈 74 · 新莊副都心 71 · 中壢中原學區 69。物件：L-2024 信義松仁 58,000 · L-2025 板橋府中 52,000 · L-2026 中壢中原 36,000 · L-2027 大安和平 64,000 · L-2028 新莊副都心 48,000。候選點：CS-1001 信義松仁（由 L-2024 轉入）· CS-1002 板橋府中 76 WAIT（回本 27）· CS-1003 中壢中原 68 INVESTIGATE（回本 31，缺件）· CS-1004 大安和平 49 REJECT（租金過高＋稀釋）。
+</div>
+</div>
+
+<div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+<div style="border:1px solid #E3E8F0;border-radius:12px;padding:13px 16px;">
+<div style="font-size:12.5px;font-weight:700;color:#2E3A97;">② 物件雷達 Listing Radar</div>
+<div style="font-size:11px;color:#3A4362;margin-top:5px;">9 個物件來源（591／樂屋／仲介 feed／CSV／人工…）。L-2024：NT$58,000／月 · 18 坪 · 1F 臨路 · Geocode 0.94 · 硬規則 3/3 · 唯一物件。CTA＝轉為候選點（建立 CS-1001，狀態 Ready for SiteScore，自動切至候選點工作台）；重複物件可合併（L-2029 同址）、硬規未過封存（L-2030 超坪）。選區 chip 保留於頁面上方，可清除。</div>
+</div>
+<div style="border:1px solid #E3E8F0;border-radius:12px;padding:13px 16px;">
+<div style="font-size:12.5px;font-weight:700;color:#2E3A97;">③ 候選點資料完整度 Gate</div>
+<div style="font-size:11px;color:#3A4362;margin-top:5px;line-height:1.7;">
+地址定位 ✓ 租金 ✓ 坪數 ✓ 樓層 ✓ 用途 ✓ Geocode ≥ 0.80 ✓ Hard rule ✓ 來源可信度 ✓ 現勘 ⚠ 仲介聯絡 ⚠ 照片附件 ⚠<br>
+缺地址／Geocode → 要求人工確認地址（鎖評分）；缺租金坪數樓層 → 補資料；硬規則 fail → 標記不適合；資料齊未現勘 → 可評分＋降信心警示。狀態機：Draft → Need Data → Ready for SiteScore → Scoring → Evaluated → Shortlisted → Pending Review → Approved／Rejected／On Hold／Expired。
+</div>
+</div>
+</div>
+
+<div style="margin-top:14px;border:1.5px solid #2E3A97;border-radius:12px;overflow:hidden;">
+<div style="background:#ECEFFB;padding:9px 16px;font-size:12.5px;font-weight:700;color:#2E3A97;">④ SiteScore 評分卡 — CS-1001 信義松仁候選點（R4）</div>
+<div style="padding:13px 16px;">
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+<span style="font-size:26px;font-weight:600;font-family:'IBM Plex Mono',monospace;">82</span><span style="font-size:11px;color:#98A1B3;">/ 100</span>
+<span style="padding:2px 12px;border-radius:999px;font-size:12px;font-weight:700;background:#E5F3EA;color:#1E7F4F;">GO</span>
+<span style="padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700;background:#EEF1F5;color:#5A6472;">信心 中高</span>
+<span style="margin-left:auto;font-size:9.5px;color:#98A1B3;font-family:'IBM Plex Mono',monospace;">SiteScore v2.3 · 快照 FS-20260704-0600</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;font-size:11px;color:#3A4362;">
+<div><b>Revenue Path（P50）</b>：M1 NT$182K → M3 NT$268K → M6 NT$342K → M12 NT$428K；P10 NT$356K ／ P90 NT$512K。</div>
+<div><b>Payback</b>：22 個月 · CAPEX NT$1.6M（14 台）· 租金 NT$58,000（區間 P45）。</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:10px;">
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">租金合理性</div><div style="font-size:10px;font-weight:700;color:#1E7F4F;">合理（P45）</div></div>
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">自家稀釋</div><div style="font-size:10px;font-weight:700;color:#1E7F4F;">4%（低）</div></div>
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">競店壓力</div><div style="font-size:10px;font-weight:700;color:#96610B;">中（無 24h）</div></div>
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">需求強度</div><div style="font-size:10px;font-weight:700;color:#1E7F4F;">強（84）</div></div>
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">POI 適配</div><div style="font-size:10px;font-weight:700;color:#1E7F4F;">高</div></div>
+<div style="border:1px solid #E9EDF4;border-radius:8px;padding:6px 9px;"><div style="font-size:9px;color:#98A1B3;font-weight:700;">可及性／停車</div><div style="font-size:10px;font-weight:700;color:#96610B;">中</div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;font-size:11px;color:#3A4362;">
+<div><b style="color:#1E7F4F;">支持原因</b><br>· 住宅＋商辦混合，夜間洗烘需求強<br>· 既有店 650m，稀釋僅 4%<br>· 降租後租金落於區間 P45</div>
+<div><b style="color:#B3261E;">主要風險</b><br>· 週末停車不易<br>· 租約含 3% 年調條款<br>· 晚間人流資料信心中等</div>
+</div>
+<div style="margin-top:10px;background:#FBF1DD;border:1px solid #EDDDB5;border-radius:9px;padding:9px 12px;font-size:11px;color:#96610B;">
+<b>WAIT 條件（CS-1002 板橋府中 76）</b>：站前施工 Q4 前複評 · 租金議價至 NT$48,000 以下 · 補晚間人流資料。<b>REJECT 原因（CS-1004 大安和平 49）</b>：租金 P90 回本 41 個月超出上限 30 · 服務圈重疊 12% · 面寬停車不足。
+</div>
+</div>
+</div>
+
+<div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+<div style="border:1px solid #E3E8F0;border-radius:12px;padding:13px 16px;">
+<div style="font-size:12.5px;font-weight:700;color:#2E3A97;">⑤ 比較 · 系統推薦　⑥ 審核 · 決策規則</div>
+<div style="font-size:11px;color:#3A4362;margin-top:5px;line-height:1.7;">
+推薦：<b>信義松仁（GO 82）</b>；備選：板橋府中（WAIT 76）；不建議：大安和平（REJECT 49）。CTA：送審信義松仁 · 保留備選 · 封存 · 比較報告 preview。<br>
+Review 決策 dialog：<b>原因必填</b>寫入 Decision Log；Approve GO → Approved；Approve WAIT → 必填條件，Candidate = On Hold；Return → 必填需補資料，Candidate = Need Data；Reject → Rejected；Override → 覆寫理由＋風險確認 checkbox。決策後 Candidate／Review 狀態同步。
+</div>
+</div>
+<div style="border:1px solid #E3E8F0;border-radius:12px;padding:13px 16px;">
+<div style="font-size:12.5px;font-weight:700;color:#0E7C8C;">Growth · 三個建立入口＋Draft Builder</div>
+<div style="font-size:11px;color:#3A4362;margin-top:5px;line-height:1.7;">
+<b>＋建立離峰促銷</b>（平日 10:00–14:00 · 洗烘 9 折）／<b>＋建立會員召回</b>（60 天未回訪 · LINE 券）／<b>＋建立 PriceOps 測試</b>（現價→建議價 · 含回滾條件）。<br>
+五步 Builder：基本設定→客群／時段→預估效益→風險／衝突（重疊 · PriceOps 衝突 · 預算 · 打擾 · 主管核准）→送核准。送核准後 Pending Approval 進 Govern 核准中心；核准 → Scheduled → Running → Observing → Outcome Ready（Effective／Ineffective／Inconclusive）。Lifecycle 決策寫入 Decision Log。
+</div>
+</div>
+</div>
+
+<div style="margin-top:24px;">
+<div style="font-size:15px;font-weight:700;border-left:4px solid #2E3A97;padding-left:10px;">Network · Assisted Listing Intake（R5 新增 · ODP-UXD-003-ADD-001）</div>
+<div style="margin-top:8px;font-size:11.5px;color:#3A4362;line-height:1.75;">
+<b>從網址新增物件</b>：物件雷達頂部主入口＋Find Areas 區域面板帶入本區入口。展店人員貼上外部物件頁 URL，系統判定 <b>NEW／EXACT DUPLICATE／REVISION／POSSIBLE MATCH／QUARANTINED</b>；疑似重複一律人工決策，不自動合併。不隱含持續爬取 591／樂屋 — 排程探索與清單頁爬取不在本設計內。<br>
+<b>處理狀態為實際階段</b>（非百分比）：SUBMITTED → CHECKING_IDENTITY → CHECKING_SOURCE_POLICY →（RETRIEVING → PARSING｜AWAITING_ASSISTED_ENTRY）→ MATCHING → READY／NEEDS_REVIEW／QUARANTINED／FAILED。identity 檢查在擷取前攔截完全相同 URL。<br>
+<b>來源政策</b>：APPROVED_RETRIEVAL（擷取＋解析）· ASSISTED_ENTRY_ONLY（不擷取，保留 URL，人工補錄）· AUTH_REQUIRED（不在 UI 索取憑證）· SOURCE_BLOCKED／POLICY_UNKNOWN（fail-closed 隔離＋治理覆核）。<br>
+<b>解析資料覆核</b>：每欄位分列來源值／正規化值／人工修正／低信心標記；識別欄位（提供者 ID、地址、租金、坪數）修正必填原因，前後值寫入 Audit。<br>
+<b>重複／版本比對</b>：既有 vs 送件並排、變更欄位「▲ 變更」標記（不只靠顏色）＋螢幕閱讀器變更摘要、一致／矛盾訊號具名（來源 ID、canonical URL、正規化地址、坪數、樓層、租金）。決策四選一：建立新物件／加入既有物件版本／標記重複／送交資料管理員 — 高影響決策先看 Review Summary 再確認，不做 optimistic UI。<br>
+<b>證據與稽核</b>：原始 vs canonical URL、擷取時間與新鮮度、parser 版本、快照 ID、correlation ID 於決策點可見；每個決策記錄操作者、時間、原因、前後值。錯誤（驗證牆、來源移除、政策未知）顯示摘要＋錯誤碼＋correlation＋下一步，可重試失敗保留已填內容。
+</div>
+</div>
+
+<div style="margin-top:24px;">
+<div style="font-size:15px;font-weight:700;border-left:4px solid #6D4FA3;padding-left:10px;">Govern · 治理稽核</div>
+<div style="margin-top:8px;font-size:11.5px;color:#3A4362;line-height:1.7;">核准中心：Growth 活動核准 · Network SiteScore 審核 · Store Ops 退款批次 · Evidence 匯出，退回／駁回必填理由。Decision Log：系統建議 vs 最終決策＋理由＋決策者＋模型版本＋資料快照。Audit Trail：Issue 操作、Camera 調閱（含目的）、核准、Network／Growth 行為，隱私敏感操作標記。</div>
+</div>
+
+<div style="margin-top:28px;border-top:1px solid #E3E8F0;padding-top:12px;display:flex;gap:14px;font-size:10px;color:#98A1B3;flex-wrap:wrap;">
+<span>Oday Plus Operator Console · R5 Design Summary（靜態摘要 · 所有數據皆為 mock）</span>
+<span>版本一致性：main / summary / thumbnail = oday-plus-r5-20260714</span>
+<span style="margin-left:auto;">互動版：Oday Plus Operator Console.dc.html</span>
+</div>
+</div>
+</x-dc>
+</body>
+</html>

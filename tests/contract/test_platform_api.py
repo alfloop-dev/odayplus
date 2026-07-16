@@ -87,13 +87,22 @@ def test_job_lookup_and_openapi_contract() -> None:
     assert lookup.json()["job_id"] == job_id
     assert openapi.status_code == 200
     paths = openapi.json()["paths"]
+    # Probes stay unversioned: they are wired into deploy manifests and load
+    # balancers that must not be asked to learn a version prefix.
     assert "/health" in paths
     assert "/healthz" in paths
     assert "/platform/health" in paths
     assert "/platform/version" in paths
-    assert "/jobs" in paths
-    assert "/jobs/{job_id}" in paths
-    assert "/audit/events" in paths
+    # Jobs and audit reads are product operations, so the *documented* contract
+    # is versioned (ODP-PGAP-API-001). The unversioned paths this test's own
+    # requests above still use keep working as deprecated aliases, but are
+    # deliberately absent from the schema so the generated client cannot target
+    # them.
+    assert "/api/v1/jobs" in paths
+    assert "/api/v1/jobs/{job_id}" in paths
+    assert "/api/v1/audit/events" in paths
+    assert "/jobs" not in paths
+    assert "/audit/events" not in paths
 
 
 def test_external_data_freshness_api_exposes_lineage_and_correlation() -> None:

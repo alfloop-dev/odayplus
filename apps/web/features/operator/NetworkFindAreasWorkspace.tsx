@@ -10,21 +10,43 @@ import {
   REBALANCE_STORE_FIXTURES,
   SITE_REVIEW_FIXTURES,
 } from "./fixtures";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
 import styles from "./networkFindAreas.module.css";
-import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview, SiteReviewStatus, CandidateStatus } from "./types";
+import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
+import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
+import {
+  buildListingsClient,
+  listingsApi,
+  missingListingsClientError,
+  newMergeIdempotencyKey,
+  type ListingApiError,
+} from "./network/listingsClient";
+import { canMergeListing } from "./network/listingPermissions";
+import { CandidatePanel } from "./network/CandidatePanel";
+import { SiteScorePanel } from "./network/SiteScorePanel";
+import { ComparePanel } from "./network/ComparePanel";
+import { ReviewPanel } from "./network/ReviewPanel";
+import { NetworkShell } from "./network/NetworkShell";
+import { RebalancePanel } from "./network/RebalancePanel";
+import type { ExpansionStep } from "./network/ExpansionStepper";
+import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
+import type {
+  NetworkReviewsSnapshot,
+  ReviewDecisionAction,
+  ReviewDecisionForm,
+} from "./network/networkReviewTypes";
 import {
   buildNetworkFindAreasViewModel,
-  type CandidatePipelineRow,
   type ListingRadarRow,
-  type NetworkCompareViewModel,
   type NetworkFindAreasLens,
   type NetworkFindAreasMapPoint,
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
-  type RebalanceQueueRow,
-  type ReviewQueueRow,
-  type SiteScoreLabRow,
 } from "./networkFindAreasViewModel";
+import { HeatZoneMap } from "../map/HeatZoneMap";
+import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
 
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;
@@ -33,7 +55,6 @@ export type NetworkFindAreasWorkspaceCallbacks = {
   onSourceListings?: (heatZone: OperatorHeatZone) => void;
   onScoreCandidate?: (candidate: Candidate, heatZone: OperatorHeatZone) => void;
   onSubmitReview?: (heatZone: OperatorHeatZone) => void;
-  onDecideReview?: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
 };
 
 export type NetworkFindAreasWorkspaceProps = {
@@ -46,7 +67,25 @@ export type NetworkFindAreasWorkspaceProps = {
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
   trackedHeatZoneIds?: string[];
+  /**
+   * Active operator console role. Binds the Network Review read/decide security
+   * headers, the decision actor, and whether the review decision bar is shown
+   * (canDecide). Defaults to the console default role.
+   */
+  activeRoleId?: OperatorRoleId;
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
+  /**
+   * Live API binding for heatzone scores. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * HEAT_ZONE_FIXTURES and shows a fixture-mode indicator.
+   */
+  liveHeatZones?: ApiBinding<OperatorHeatZone>;
+  /**
+   * Live API binding for candidate sites. When `source === "api"` the
+   * workspace renders live items; otherwise it falls back to bundled
+   * CANDIDATE_FIXTURES.
+   */
+  liveCandidates?: ApiBinding<Candidate>;
 };
 
 const networkTabs = [
@@ -59,28 +98,322 @@ const networkTabs = [
   "低效重配 / Rebalance",
 ] as const;
 
+type NetworkListingDetail = Listing & {
+  archivedReason?: string;
+  convertedAt?: string;
+  firstSeenAt?: string;
+  fitScore?: number;
+  floor?: string;
+  frontageMeters?: number;
+  hardRuleSummary?: string;
+  mergeReason?: string;
+  mergedIntoId?: string;
+  sourceEvidence?: string[];
+  sourceListingId?: string;
+  sourceUrl?: string;
+};
+
+type NetworkListingsSnapshot = {
+  source?: "api" | "fixture";
+  heatZones?: OperatorHeatZone[];
+  listingSources?: ListingSource[];
+  listings?: NetworkListingDetail[];
+  candidates?: Candidate[];
+  siteReviews?: SiteReview[];
+  expansionSteps?: ExpansionStep[];
+  selectedHeatZoneId?: string;
+  selectedLens?: NetworkFindAreasLens;
+  correlationId?: string;
+  assistedIntakes?: any[];
+};
+
+type NetworkRebalanceSnapshot = {
+  source?: "api" | "fixture";
+  stores?: RebalanceStore[];
+  selectedStoreId?: string;
+  metadata?: {
+    canonicalPackage?: string;
+    screenLabels?: string[];
+    avm?: Record<string, unknown>;
+    netPlan?: Record<string, unknown>;
+  };
+  correlationId?: string;
+};
+
+const NETWORK_OPERATOR_HEADERS = {
+  "X-Operator-Role": "expansion-manager",
+  "X-Roles": "expansion_user",
+  "X-Subject-Id": "operator-expansion-manager",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const NETWORK_ACTOR = {
+  actorName: "王若寧",
+  actorRoleId: "expansionManager",
+};
+
+// Network Review decision authority is bound to the ACTIVE operator console
+// role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
+// Site Reviewer backend role holds but Expansion (expansion_user) does not.
+//
+// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
+//   reads and decides as the Site Reviewer backend identity (sitescore
+//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
+// - Expansion (and any other network-capable role) reads as expansion_user
+//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
+//   (canDecide=false). If a decide POST is still attempted it carries the
+//   role's own non-approving identity, so the API fails closed with 403 —
+//   defense in depth behind the hidden bar.
+const SITE_REVIEWER_REVIEW_HEADERS = {
+  "X-Operator-Role": "site-reviewer",
+  "X-Roles": "site_reviewer",
+  "X-Subject-Id": "operator-site-reviewer",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const EXPANSION_REVIEW_HEADERS = {
+  "X-Operator-Role": "expansion-manager",
+  "X-Roles": "expansion_user",
+  "X-Subject-Id": "operator-expansion-manager",
+  "X-Tenant-Id": "tenant-a",
+};
+
+const SITE_REVIEWER_ACTOR = {
+  actorName: "陳映辰",
+  actorRoleId: "siteReviewer",
+};
+
+const EXPANSION_ACTOR = {
+  actorName: "王若寧",
+  actorRoleId: "expansionManager",
+};
+
+// Console roles authorized to decide a Network site review. Only the operations
+// lead carries an approval mandate on this surface; Expansion prepares/submits
+// but cannot decide (ODP-OC-R4-007 acceptance).
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+
+type NetworkReviewIdentity = {
+  canDecide: boolean;
+  readHeaders: Record<string, string>;
+  decideHeaders: Record<string, string>;
+  actor: { actorName: string; actorRoleId: string };
+};
+
+function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
+  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
+    return {
+      canDecide: true,
+      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
+      actor: SITE_REVIEWER_ACTOR,
+    };
+  }
+  return {
+    canDecide: false,
+    readHeaders: EXPANSION_REVIEW_HEADERS,
+    decideHeaders: EXPANSION_REVIEW_HEADERS,
+    actor: EXPANSION_ACTOR,
+  };
+}
+
+async function fetchNetworkReviewsSnapshot(
+  readHeaders: Record<string, string>,
+): Promise<NetworkReviewsSnapshot | null> {
+  try {
+    const response = await fetch(`/api/v1/operator/network-reviews`, {
+      cache: "no-store",
+      headers: {
+        ...readHeaders,
+        "X-Correlation-Id": "corr-r4-007-reviews-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkReviewsSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchNetworkSnapshot(
+  selectedHeatZoneId: string,
+  lens: NetworkFindAreasLens,
+): Promise<NetworkListingsSnapshot | null> {
+  try {
+    const params = new URLSearchParams({
+      lens,
+      selectedHeatZoneId,
+    });
+    const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
+      cache: "no-store",
+      headers: {
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkListingsSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | null> {
+  try {
+    const response = await fetch(`/api/v1/operator/network-scoring`, {
+      cache: "no-store",
+      headers: {
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": "corr-r4-006-scoring-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkScoringSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
+  try {
+    const response = await fetch("/api/v1/operator/network-rebalance", {
+      cache: "no-store",
+      headers: {
+        ...NETWORK_OPERATOR_HEADERS,
+        "X-Correlation-Id": "corr-r4-008-rebalance-read",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as NetworkRebalanceSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: boolean): ExpansionStep[] {
+  return [
+    {
+      id: "find",
+      label: "Find Area",
+      state: "completed",
+      tabIndex: 0,
+      entityId: selectedHeatZoneId,
+      summary: `${selectedHeatZoneId} selected.`,
+    },
+    {
+      id: "radar",
+      label: "Listing Radar",
+      state: hasCandidate ? "completed" : "current",
+      tabIndex: 1,
+      entityId: "L-2024",
+      summary: "Review clean, duplicate, and hard-rule listings.",
+    },
+    {
+      id: "candidate",
+      label: "Candidate",
+      state: hasCandidate ? "current" : "next",
+      tabIndex: 2,
+      entityId: hasCandidate ? "CS-1001" : "L-2024",
+      summary: "Convert listing into a candidate site.",
+    },
+    {
+      id: "sitescore",
+      label: "SiteScore",
+      state: hasCandidate ? "next" : "blocked",
+      tabIndex: 3,
+      entityId: "CS-1001",
+      summary: "Score candidate after conversion.",
+    },
+    {
+      id: "compare",
+      label: "Compare",
+      state: hasCandidate ? "next" : "blocked",
+      tabIndex: 4,
+      entityId: "CS-1001",
+      summary: "Compare candidate alternatives.",
+    },
+    {
+      id: "review",
+      label: "Review",
+      state: "blocked",
+      tabIndex: 5,
+      entityId: null,
+      summary: "Review opens after scoring gate.",
+    },
+  ];
+}
+
 export function NetworkFindAreasWorkspace({
   activeLens,
+  activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
-  candidates = CANDIDATE_FIXTURES,
-  heatZones = HEAT_ZONE_FIXTURES,
+  candidates: candidatesProp = CANDIDATE_FIXTURES,
+  heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
   listings = LISTING_FIXTURES,
   listingSources = LISTING_SOURCE_FIXTURES,
   rebalanceStores = REBALANCE_STORE_FIXTURES,
   siteReviews = SITE_REVIEW_FIXTURES,
   selectedHeatZoneId,
   trackedHeatZoneIds,
+  liveHeatZones,
+  liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
   const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
   const [activeTab, setActiveTab] = useState(0);
-  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviews);
+  const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
+  const [networkApiError, setNetworkApiError] = useState<string | null>(null);
+  const [busyListingId, setBusyListingId] = useState<string | null>(null);
+  const [mergeRequest, setMergeRequest] = useState<ListingMergeRequest | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<ListingApiError | null>(null);
+  const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
+  const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
+  const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
+  const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const snapshotHeatZones = networkSnapshot?.heatZones?.length ? networkSnapshot.heatZones : undefined;
+  const heatZones =
+    snapshotHeatZones ??
+    (liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
+      ? liveHeatZones.items
+      : heatZonesProp);
+  const listingsEffective = networkSnapshot?.listings?.length ? networkSnapshot.listings : listings;
+  const listingSourcesEffective = networkSnapshot?.listingSources?.length ? networkSnapshot.listingSources : listingSources;
+  const candidates =
+    networkSnapshot?.candidates ??
+    (liveCandidates?.source === "api" && liveCandidates.items.length > 0
+      ? liveCandidates.items
+      : candidatesProp);
+  const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
+  const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length ? rebalanceSnapshot.stores : rebalanceStores;
+
+  // True when every Network R4 intake binding is still falling back to fixtures.
+  const isFixtureFallback =
+    networkSnapshot?.source !== "api" &&
+    ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
+      (liveCandidates !== undefined && liveCandidates.source !== "api"));
+
+  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviewsEffective);
   const [localCandidates, setLocalCandidates] = useState<Candidate[]>(() => candidates);
 
   useEffect(() => {
-    setLocalSiteReviews(siteReviews);
-  }, [siteReviews]);
+    setLocalSiteReviews(siteReviewsEffective);
+  }, [siteReviewsEffective]);
 
   useEffect(() => {
     setLocalCandidates(candidates);
@@ -91,19 +424,267 @@ export function NetworkFindAreasWorkspace({
   const effectiveTrackedIds = trackedHeatZoneIds ?? Array.from(localTrackedIds);
   const trackedSet = useMemo(() => new Set(effectiveTrackedIds), [effectiveTrackedIds]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+      if (!cancelled && snapshot) {
+        setNetworkSnapshot(snapshot);
+        setNetworkApiError(null);
+      } else if (!cancelled && !snapshot) {
+        setNetworkApiError("network-listings API unavailable; using fixtures");
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveLens, effectiveSelectedId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadScoring() {
+      const snapshot = await fetchNetworkScoringSnapshot();
+      if (!cancelled && snapshot) {
+        setScoringSnapshot(snapshot);
+      }
+    }
+    loadScoring();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRebalance() {
+      const snapshot = await fetchNetworkRebalanceSnapshot();
+      if (!cancelled && snapshot) {
+        setRebalanceSnapshot(snapshot);
+        setRebalanceApiError(null);
+      } else if (!cancelled && !snapshot) {
+        setRebalanceApiError("network-rebalance API unavailable; using fixtures");
+      }
+    }
+    loadRebalance();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadReviews() {
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (!cancelled && snapshot) {
+        setReviewsSnapshot(snapshot);
+      }
+    }
+    loadReviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewIdentity]);
+
+  // Decide a review as the active operator role's review identity. The decision
+  // syncs Candidate + Review + Approval + Decision + Audit atomically
+  // server-side; on success we reload the queue. Returns false so the dialog
+  // stays open when the server rejects the decision (policy 422 / role 403 /
+  // conflict 409). A non-deciding role reaching this path carries its own
+  // non-approving headers, so the API fails closed with 403.
+  async function submitReviewDecision(
+    reviewId: string,
+    action: ReviewDecisionAction,
+    form: ReviewDecisionForm,
+  ): Promise<boolean> {
+    setReviewSubmitting(true);
+    setReviewError(null);
+    try {
+      const requiredData = form.requiredData
+        .split(/[、,]/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const response = await fetch(`/api/v1/operator/network-reviews/${reviewId}/decide`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-007-decide-${reviewId}-${action}`,
+          "X-Correlation-Id": `corr-r4-007-decide-${reviewId}`,
+          ...reviewIdentity.decideHeaders,
+        },
+        body: JSON.stringify({
+          ...reviewIdentity.actor,
+          decision: action,
+          reason: form.reason,
+          conditions: form.conditions,
+          requiredData,
+          overrideAck: form.overrideAck,
+        }),
+      });
+      if (!response.ok) {
+        setReviewError(`review decision failed (${response.status})`);
+        return false;
+      }
+      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (snapshot) {
+        setReviewsSnapshot(snapshot);
+      }
+      return true;
+    } catch {
+      setReviewError("review decision failed");
+      return false;
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
+  async function reloadScoringSnapshot() {
+    const snapshot = await fetchNetworkScoringSnapshot();
+    if (snapshot) {
+      setScoringSnapshot(snapshot);
+    }
+  }
+
+  async function postScoringAction(
+    path: string,
+    body: Record<string, unknown>,
+    busyId: string | null,
+    idempotencyKey?: string,
+  ) {
+    setBusyCandidateId(busyId);
+    try {
+      const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-Id": `corr-r4-006-${path.replace(/\//g, "-")}`,
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({ ...NETWORK_ACTOR, ...body }),
+      });
+      if (!response.ok) {
+        setNetworkApiError(`network-scoring ${path} failed (${response.status})`);
+        return false;
+      }
+      await reloadScoringSnapshot();
+      return true;
+    } catch {
+      setNetworkApiError(`network-scoring ${path} failed`);
+      return false;
+    } finally {
+      setBusyCandidateId(null);
+    }
+  }
+
+  async function runSiteScore(candidateId: string) {
+    await postScoringAction(
+      `candidates/${candidateId}/score`,
+      {},
+      candidateId,
+      `r4-006-score-${candidateId}`,
+    );
+  }
+
+  async function scoreAllCandidates() {
+    await postScoringAction("score", {}, "batch", "r4-006-score-batch");
+  }
+
+  async function toggleCompareCandidate(candidateId: string) {
+    const current = scoringSnapshot?.compareSet ?? [];
+    const next = current.includes(candidateId)
+      ? current.filter((id) => id !== candidateId)
+      : [...current, candidateId];
+    await postScoringAction("compare", { candidateIds: next }, candidateId, `r4-006-compare-${candidateId}`);
+  }
+
+  async function reloadRebalanceSnapshot() {
+    const snapshot = await fetchNetworkRebalanceSnapshot();
+    if (snapshot) {
+      setRebalanceSnapshot(snapshot);
+      setRebalanceApiError(null);
+    }
+  }
+
+  async function postRebalanceAction(
+    storeId: string,
+    action: "request-avm" | "complete-avm" | "solve-netplan" | "submit-review",
+  ) {
+    const endpoint =
+      action === "request-avm"
+        ? `/api/v1/operator/network-rebalance/stores/${storeId}/avm/request`
+        : action === "complete-avm"
+          ? `/api/v1/operator/network-rebalance/stores/${storeId}/avm/complete`
+          : action === "solve-netplan"
+            ? `/api/v1/operator/network-rebalance/stores/${storeId}/netplan/solve`
+            : `/api/v1/operator/network-rebalance/stores/${storeId}/submit-review`;
+    const busyKey = `${storeId}:${action}`;
+    setBusyRebalanceAction(busyKey);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-008-${action}-${storeId}`,
+          "X-Correlation-Id": `corr-r4-008-${action}-${storeId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          ...NETWORK_ACTOR,
+          reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
+        }),
+      });
+      if (!response.ok) {
+        setRebalanceApiError(`network-rebalance ${action} failed (${response.status})`);
+        return;
+      }
+      await reloadRebalanceSnapshot();
+    } catch {
+      setRebalanceApiError(`network-rebalance ${action} failed`);
+    } finally {
+      setBusyRebalanceAction(null);
+    }
+  }
+
+  async function selectRebalanceScenario(storeId: string, scenarioId: string) {
+    const busyKey = `${storeId}:select-scenario:${scenarioId}`;
+    setBusyRebalanceAction(busyKey);
+    try {
+      const response = await fetch(`/api/v1/operator/network-rebalance/stores/${storeId}/scenarios/${scenarioId}/select`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-008-select-${storeId}-${scenarioId}`,
+          "X-Correlation-Id": `corr-r4-008-select-${storeId}-${scenarioId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify(NETWORK_ACTOR),
+      });
+      if (!response.ok) {
+        setRebalanceApiError(`network-rebalance select failed (${response.status})`);
+        return;
+      }
+      await reloadRebalanceSnapshot();
+    } catch {
+      setRebalanceApiError("network-rebalance select failed");
+    } finally {
+      setBusyRebalanceAction(null);
+    }
+  }
+
   const viewModel = useMemo(
     () =>
       buildNetworkFindAreasViewModel({
         activeLens: effectiveLens,
         candidates: localCandidates,
         heatZones,
-        listings,
-        listingSources,
-        rebalanceStores,
+        listings: listingsEffective,
+        listingSources: listingSourcesEffective,
+        rebalanceStores: rebalanceStoresEffective,
         selectedHeatZoneId: effectiveSelectedId,
         siteReviews: localSiteReviews,
       }),
-    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listings, listingSources, rebalanceStores, localSiteReviews],
+    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
   );
 
   const selectedZone = viewModel.selectedZone;
@@ -141,6 +722,7 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
+      setActiveTab(1);
     }
   }
 
@@ -156,101 +738,241 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  function handleDecideReview(reviewId: string, status: SiteReviewStatus, reason: string) {
-    setLocalSiteReviews((prev) =>
-      prev.map((r) =>
-        r.id === reviewId
-          ? {
-              ...r,
-              status,
-              reason,
-              decidedAt: new Date().toISOString().substring(0, 19).replace("T", " "),
-            }
-          : r
-      )
-    );
-
-    const review = localSiteReviews.find((r) => r.id === reviewId);
-    if (review) {
-      const candidateStatus: CandidateStatus | undefined =
-        status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "returned" ? "wait" : undefined;
-      if (candidateStatus) {
-        setLocalCandidates((prev) =>
-          prev.map((c) => (c.id === review.candidateId ? { ...c, status: candidateStatus } : c))
-        );
-      }
+  async function reloadNetworkSnapshot() {
+    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+    if (snapshot) {
+      setNetworkSnapshot(snapshot);
+      setNetworkApiError(null);
     }
-
-    callbacks?.onDecideReview?.(reviewId, status, reason);
   }
 
+  async function postNetworkListingAction(
+    listingId: string,
+    action: "convert" | "merge" | "archive",
+    body: Record<string, unknown>,
+  ) {
+    setBusyListingId(listingId);
+    try {
+      const response = await fetch(`/api/v1/operator/network-listings/listings/${listingId}/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `r4-005-${action}-${listingId}`,
+          "X-Correlation-Id": `corr-r4-005-${action}-${listingId}`,
+          ...NETWORK_OPERATOR_HEADERS,
+        },
+        body: JSON.stringify({
+          ...NETWORK_ACTOR,
+          ...body,
+        }),
+      });
+      if (!response.ok) {
+        setNetworkApiError(`network-listings ${action} failed (${response.status})`);
+        return null;
+      }
+      const payload = (await response.json()) as NetworkListingsSnapshot;
+      await reloadNetworkSnapshot();
+      return payload;
+    } catch {
+      setNetworkApiError(`network-listings ${action} failed`);
+      return null;
+    } finally {
+      setBusyListingId(null);
+    }
+  }
+
+  async function convertListing(listingId: string) {
+    const payload = await postNetworkListingAction(listingId, "convert", {});
+    if (payload) {
+      setActiveTab(2);
+    }
+  }
+
+  /**
+   * Merge is a high-impact, irreversible write, so the button only OPENS the
+   * confirmation surface — it never writes. ListingMergeDialog collects the
+   * operator's own reason and their acknowledgement of the exact risk summary
+   * it rendered; submitMergeListing then performs the write. Cancelling, or
+   * closing without acknowledging, writes nothing.
+   */
+  function mergeListing(sourceListingId: string, targetListingId: string) {
+    setMergeError(null);
+    setMergeRequest({
+      sourceListingId,
+      targetListingId,
+      sourceLabel: listingsEffective.find((item) => item.id === sourceListingId)?.address,
+      targetLabel: listingsEffective.find((item) => item.id === targetListingId)?.address,
+      // Minted once per initiated merge and carried across every retry, so a
+      // retry after a lost response replays the original result server-side
+      // instead of merging a second time.
+      idempotencyKey: newMergeIdempotencyKey(sourceListingId, targetListingId),
+    });
+  }
+
+  /**
+   * The write goes through the typed OpenAPI client, which carries a
+   * correlation ID and a per-attempt idempotency key and surfaces structured
+   * errors. `reason` and `riskSummary` come from the dialog verbatim — the
+   * audit record must store what the operator actually wrote and read.
+   */
+  async function submitMergeListing(form: ListingMergeForm) {
+    if (!mergeRequest) return;
+    const client = buildListingsClient(activeRoleId);
+    if (!client) {
+      setMergeError(missingListingsClientError());
+      return;
+    }
+
+    setMergeBusy(true);
+    setBusyListingId(mergeRequest.sourceListingId);
+    try {
+      const result = await listingsApi.merge(client, mergeRequest.sourceListingId, {
+        targetListingId: mergeRequest.targetListingId,
+        actorRoleId: activeRoleId,
+        reason: form.reason,
+        riskSummary: form.riskSummary,
+        riskAcknowledged: form.riskAcknowledged,
+        // Same key on every retry of this request — see mergeListing().
+        idempotencyKey: mergeRequest.idempotencyKey,
+      });
+      if (!result.ok) {
+        // The dialog stays open so the operator keeps their reason and can read
+        // the error code / correlation ID.
+        setMergeError(result.error);
+        return;
+      }
+      setMergeRequest(null);
+      setMergeError(null);
+      await reloadNetworkSnapshot();
+    } finally {
+      setMergeBusy(false);
+      setBusyListingId(null);
+    }
+  }
+
+  async function archiveListing(listingId: string) {
+    await postNetworkListingAction(listingId, "archive", {
+      reason: "Hard-rule archive: area and floor exceed ODAY_G2 intake policy.",
+    });
+  }
+
+  const expansionSteps =
+    networkSnapshot?.expansionSteps ??
+    buildFallbackExpansionSteps(
+      effectiveSelectedId,
+      viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
+    );
+  const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
+
   return (
-    <section className={styles.workspace} data-testid="network-find-areas-workspace" data-screen-label="Network 展店與店網">
+    <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
         <div>
           <p className={styles.kicker}>Network</p>
-          <h2>Find Areas</h2>
+          <h2>展店與店網</h2>
+          <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
         </div>
         <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <span>{viewModel.totals.heatZones} HeatZones</span>
-          <span>{viewModel.totals.listings} listings</span>
-          <span>{viewModel.totals.candidates} candidates</span>
-          <span>{viewModel.totals.reviews} reviews</span>
-          <span>{viewModel.totals.rebalances} rebalances</span>
-          <span>{viewModel.totals.averageConfidence} avg confidence</span>
+          <span><strong>{viewModel.totals.heatZones}</strong> HeatZones</span>
+          <span><strong>{viewModel.totals.listings}</strong> listings</span>
+          <span><strong>{viewModel.totals.candidates}</strong> candidates</span>
+          <span><strong>{viewModel.totals.reviews}</strong> reviews</span>
+          <span><strong>{viewModel.totals.rebalances}</strong> rebalances</span>
+          <span><strong>{viewModel.totals.averageConfidence}</strong> avg confidence</span>
+          {isFixtureFallback && (
+            <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
+              fixture data
+            </span>
+          )}
+          {networkApiError ? <span className={styles.muted}>{networkApiError}</span> : null}
         </div>
       </header>
-      <div data-screen-label="Network Expansion Flow Stepper" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "10px" }}>
-          <div style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8", letterSpacing: ".08em" }}>EXPANSION FLOW · 找點流程</div>
-          <div style={{ fontSize: "11px", fontWeight: 700, color: "#2E3A97" }}>找點評估中</div>
-          <div style={{ marginLeft: "auto", fontSize: "11px", fontWeight: 600, color: "#0E7C8C", background: "#E2F4F6", border: "1px solid #C6E6EB", borderRadius: "999px", padding: "2px 10px" }}>下一步：SiteScore 評估</div>
-        </div>
-      </div>
 
-      <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
-        {networkTabs.map((tab, index) => (
-          <button
-            aria-current={index === activeTab ? "page" : undefined}
-            aria-selected={index === activeTab}
-            className={classNames(styles.tab, index === activeTab && styles.tabActive)}
-            data-testid={`network-tab-${index}`}
-            key={tab}
-            onClick={() => setActiveTab(index)}
-            role="tab"
-            type="button"
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
+      <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
+        {activeTab === 1 ? (
+          <ListingRadarPanel
+            activeRoleId={activeRoleId}
+            busyListingId={busyListingId}
+            listings={listingsEffective}
+            onArchive={archiveListing}
+            onConvert={convertListing}
+            onMerge={mergeListing}
+            rows={viewModel.listingRadar}
+            selectedHeatZoneId={effectiveSelectedId}
+            selectedZoneLabel={selectedZoneLabel}
+            sources={listingSourcesEffective}
+          />
+        ) : activeTab === 2 ? (
+          <CandidatePanel
+            busyCandidateId={busyCandidateId}
+            candidates={scoringSnapshot?.candidates ?? []}
+            fallbackRows={viewModel.candidatePipeline}
+            onScore={runSiteScore}
+            onScoreAll={scoreAllCandidates}
+            onToggleCompare={toggleCompareCandidate}
+          />
+        ) : activeTab === 3 ? (
+          <SiteScorePanel
+            busyCandidateId={busyCandidateId}
+            candidates={scoringSnapshot?.candidates ?? []}
+            fallbackRows={viewModel.siteScoreLab}
+            modelVersion={scoringSnapshot?.modelVersion}
+            onRescore={runSiteScore}
+            scorecards={scoringSnapshot?.scorecards ?? []}
+          />
+        ) : activeTab === 4 ? (
+          <ComparePanel compare={scoringSnapshot?.compare ?? null} fallback={viewModel.compare} />
+        ) : activeTab === 5 ? (
+          <ReviewPanel
+            reviews={reviewsSnapshot?.reviews ?? []}
+            fallbackRows={viewModel.reviewQueue}
+            canDecide={reviewIdentity.canDecide}
+            submitting={reviewSubmitting}
+            decideError={reviewError}
+            onDecide={submitReviewDecision}
+          />
+        ) : activeTab === 6 ? (
+          <RebalancePanel
+            apiError={rebalanceApiError}
+            busyAction={busyRebalanceAction}
+            onCompleteAvm={(storeId) => postRebalanceAction(storeId, "complete-avm")}
+            onRequestAvm={(storeId) => postRebalanceAction(storeId, "request-avm")}
+            onSelectScenario={selectRebalanceScenario}
+            onSolveNetPlan={(storeId) => postRebalanceAction(storeId, "solve-netplan")}
+            onSubmitReview={(storeId) => postRebalanceAction(storeId, "submit-review")}
+            rows={viewModel.rebalanceQueue}
+          />
+        ) : (
+          <FindAreasPanel
+            viewModel={viewModel}
+            selectedZone={selectedZone}
+            effectiveLens={effectiveLens}
+            isSelectedTracked={isSelectedTracked}
+            heatZones={heatZones}
+            listings={listingsEffective}
+            candidates={localCandidates}
+            onSelectZone={selectHeatZone}
+            onChangeLens={changeLens}
+            onToggleTracked={toggleTracked}
+            onSourceListings={sourceListings}
+            onScoreCandidate={scoreCandidate}
+            onSubmitReview={submitReview}
+          />
+        )}
+      </NetworkShell>
 
-      {activeTab === 1 ? (
-        <ListingRadarPanel rows={viewModel.listingRadar} sources={listingSources} />
-      ) : activeTab === 2 ? (
-        <CandidatePipelinePanel rows={viewModel.candidatePipeline} />
-      ) : activeTab === 3 ? (
-        <SiteScoreLabPanel rows={viewModel.siteScoreLab} />
-      ) : activeTab === 4 ? (
-        <ComparePanel compare={viewModel.compare} />
-      ) : activeTab === 5 ? (
-        <ReviewQueuePanel rows={viewModel.reviewQueue} onDecideReview={handleDecideReview} />
-      ) : activeTab === 6 ? (
-        <RebalancePanel rows={viewModel.rebalanceQueue} />
-      ) : (
-        <FindAreasPanel
-          viewModel={viewModel}
-          selectedZone={selectedZone}
-          effectiveLens={effectiveLens}
-          isSelectedTracked={isSelectedTracked}
-          onSelectZone={selectHeatZone}
-          onChangeLens={changeLens}
-          onToggleTracked={toggleTracked}
-          onSourceListings={sourceListings}
-          onScoreCandidate={scoreCandidate}
-          onSubmitReview={submitReview}
+      {mergeRequest ? (
+        <ListingMergeDialog
+          busy={mergeBusy}
+          error={mergeError}
+          onClose={() => {
+            setMergeRequest(null);
+            setMergeError(null);
+          }}
+          onSubmit={submitMergeListing}
+          request={mergeRequest}
         />
-      )}
+      ) : null}
     </section>
   );
 }
@@ -260,6 +982,9 @@ type FindAreasPanelProps = {
   selectedZone: NetworkFindAreasZoneViewModel | null;
   effectiveLens: NetworkFindAreasLens;
   isSelectedTracked: boolean;
+  heatZones: OperatorHeatZone[];
+  listings: Listing[];
+  candidates: Candidate[];
   onSelectZone: (zone: NetworkFindAreasZoneViewModel) => void;
   onChangeLens: (lens: NetworkFindAreasLens) => void;
   onToggleTracked: () => void;
@@ -269,8 +994,11 @@ type FindAreasPanelProps = {
 };
 
 function FindAreasPanel({
+  candidates,
   effectiveLens,
+  heatZones,
   isSelectedTracked,
+  listings,
   onChangeLens,
   onScoreCandidate,
   onSelectZone,
@@ -280,8 +1008,21 @@ function FindAreasPanel({
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
+  const mapZones = useMemo(
+    () => heatZones.map(operatorHeatZoneToMapZone),
+    [heatZones],
+  );
+  const mapListings = useMemo(
+    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
+    [listings, heatZones],
+  );
+  const mapCandidates = useMemo(
+    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
+    [candidates, heatZones],
+  );
+  const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
   return (
-    <div className={styles.tabPanel} data-testid="network-panel-find-areas" role="tabpanel" data-screen-label="Network 找區域">
+    <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
           {viewModel.lenses.map((lens) => (
@@ -320,35 +1061,17 @@ function FindAreasPanel({
             <h3>HeatZone Lens Map</h3>
             <span>{viewModel.activeLens}</span>
           </div>
-          <div className={styles.mapCanvas} aria-label="Deterministic local HeatZone map">
-            <div className={styles.mapGrid} aria-hidden="true" />
-            <div className={styles.mapRoadA} aria-hidden="true" />
-            <div className={styles.mapRoadB} aria-hidden="true" />
-            <div className={styles.mapRoadC} aria-hidden="true" />
-            {viewModel.mapPoints.map((point) => (
-              <MapPoint key={`${point.type}-${point.id}`} point={point} />
-            ))}
-            {viewModel.zones.map((zone) => (
-              <button
-                aria-current={selectedZone?.id === zone.id ? "true" : undefined}
-                className={styles.zoneMarker}
-                data-tone={zone.mapTone}
-                key={zone.id}
-                onClick={() => onSelectZone(zone)}
-                style={
-                  {
-                    "--marker-size": `${zone.mapSize}px`,
-                    "--x": `${zone.mapX}%`,
-                    "--y": `${zone.mapY}%`,
-                  } as CSSProperties
-                }
-                type="button"
-              >
-                <strong>{zone.id}</strong>
-                <span>{zone.lensLabel}</span>
-              </button>
-            ))}
-          </div>
+          {/* Real MapLibre/deck.gl HeatZoneMap – replaces CSS-grid placeholder.
+              When no tile URL is configured (default), HeatZoneMap falls back to
+              its local MapLibre style (deterministic CSS background), preserving
+              the tile-fallback contract from the task brief. */}
+          <HeatZoneMap
+            zones={mapZones}
+            listings={mapListings}
+            candidates={mapCandidates}
+            selectedZoneId={selectedMapZoneId}
+            freshness={OPERATOR_MAP_FRESHNESS}
+          />
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
@@ -507,816 +1230,6 @@ function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
   );
 }
 
-function ListingRadarPanel({ rows, sources }: { rows: ListingRadarRow[]; sources: ListingSource[] }) {
-  const [activeInkDialog, setActiveInkDialog] = useState<"add" | "detail" | "fix" | "decide" | null>(null);
-  const [selectedInkRow, setSelectedInkRow] = useState<any>(null);
-  const [inputUrl, setInputUrl] = useState("");
-  const [fixVal, setFixVal] = useState("");
-  const [fixReason, setFixReason] = useState("");
-  const [decideReason, setDecideReason] = useState("");
-  const [inkAddErr, setInkAddErr] = useState(false);
-  const [inkFixErr, setInkFixErr] = useState(false);
-  const [inkDecErr, setInkDecErr] = useState(false);
-  const [ackOverride, setAckOverride] = useState(false);
-  const [inkDecAckErr, setInkDecAckErr] = useState(false);
-
-  const [inkRows, setInkRows] = useState<any[]>([
-    {
-      id: "INK-001",
-      src: "591",
-      urlS: "https://www.591.com.tw/rent-detail-1002.html",
-      url: "https://www.591.com.tw/rent-detail-1002.html",
-      stL: "待處理",
-      stBg: "#FDF4E7",
-      stFg: "#B25E00",
-      mShow: true,
-      mL: "疑似重複",
-      mBg: "#FCE8E6",
-      mFg: "#C5221F",
-      who: "張珮珊",
-      at: "09:12",
-      act: "處理",
-      bg: "#FFFFFF",
-      deep: "擷取與比對",
-      policy: "591租屋網 · 自動解析",
-      owner: "展店經理",
-      hzL: "板橋府中商圈",
-      captured: "2026-07-15 09:12",
-      freshFg: "#1E7F4F",
-      fresh: "FRESH",
-      parser: "591-html-v3",
-      snap: "SNAP-20260715-0900",
-      corr: "corr-ink-001",
-      canon: "https://www.591.com.tw/rent-detail-1002.html",
-      canonDiff: false,
-    },
-    {
-      id: "INK-002",
-      src: "樂屋網",
-      urlS: "https://www.rakuya.com.tw/sell-1024.html",
-      url: "https://www.rakuya.com.tw/sell-1024.html",
-      stL: "處理中",
-      stBg: "#E3F2FD",
-      stFg: "#0D47A1",
-      mShow: false,
-      who: "黃仕杰",
-      at: "08:55",
-      act: "補錄",
-      bg: "#FFFFFF",
-      deep: "人工補錄",
-      policy: "樂屋網 · 需人工錄入",
-      owner: "展店經理",
-      hzL: "信義松仁生活圈",
-      captured: "2026-07-15 08:55",
-      freshFg: "#96610B",
-      fresh: "STALE",
-      parser: "manual-entry",
-      snap: "SNAP-20260715-0800",
-      corr: "corr-ink-002",
-      canon: "https://www.rakuya.com.tw/sell-1024.html",
-      canonDiff: false,
-    }
-  ]);
-
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-listings" role="tabpanel" data-screen-label="Network 物件雷達">
-      <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", background: "#F0EBFA", border: "1px solid #DCCFF2", borderRadius: "10px", padding: "9px 13px", marginBottom: "12px", fontSize: "11px", color: "#6D4FA3", lineHeight: 1.6 }}>
-        <span style={{ fontSize: "9px", fontWeight: 700, background: "#6D4FA3", color: "#FFFFFF", borderRadius: "4px", padding: "2px 6px", letterSpacing: ".06em", flex: "none", marginTop: "1px" }}>COMPLIANCE</span>
-        正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。
-      </div>
-
-      <div data-screen-label="Network URL 收件佇列" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", overflow: "hidden", marginBottom: "12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 14px", borderBottom: "1px solid #EEF1F6", flexWrap: "wrap" }}>
-          <button onClick={() => { setActiveInkDialog("add"); setInkAddErr(false); }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "9px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>＋ 從網址新增物件</button>
-          <div style={{ fontSize: "11px", color: "#5A6478" }}>人工發現的物件貼上網址 — 系統判定新件／重複／版本更新，疑似重複一律由人工決策</div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: "14px" }}>
-            <span style={{ display: "flex", alignItems: "baseline", gap: "4px" }}><span style={{ fontFamily: "monospace", fontSize: "15px", fontWeight: 600, color: "#B25E00" }}>{inkRows.filter(r => r.stL === "待處理").length}</span><span style={{ fontSize: "10px", color: "#8A93A8", fontWeight: 600 }}>待處理</span></span>
-            <span style={{ display: "flex", alignItems: "baseline", gap: "4px" }}><span style={{ fontFamily: "monospace", fontSize: "15px", fontWeight: 600, color: "#0D47A1" }}>{inkRows.filter(r => r.stL === "處理中").length}</span><span style={{ fontSize: "10px", color: "#8A93A8", fontWeight: 600 }}>處理中</span></span>
-          </div>
-        </div>
-        {inkRows.map((ir) => (
-          <div key={ir.id} onClick={() => { setSelectedInkRow(ir); setActiveInkDialog("detail"); }} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 14px", borderBottom: "1px solid #F1F3F8", cursor: "pointer", background: ir.bg, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "monospace", fontSize: "10px", color: "#8A93A8", flex: "none" }}>{ir.id}</span>
-            <span style={{ fontSize: "9.5px", fontWeight: 700, color: "#2E3A97", background: "#ECEFFB", borderRadius: "4px", padding: "1px 6px", flex: "none" }}>{ir.src}</span>
-            <span style={{ fontSize: "11px", color: "#5A6478", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "250px" }}>{ir.urlS}</span>
-            <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: ir.stBg, color: ir.stFg, flex: "none" }}>{ir.stL}</span>
-            {ir.mShow && <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: ir.mBg, color: ir.mFg, flex: "none" }}>{ir.mL}</span>}
-            <span style={{ marginLeft: "auto", fontSize: "10px", color: "#98A1B3", flex: "none" }}>{ir.who} · {ir.at}</span>
-            <span style={{ fontSize: "10.5px", color: "#2E3A97", fontWeight: 700, flex: "none" }}>{ir.act} →</span>
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.panelHeader}>
-        <h3>物件雷達 / Listing Radar</h3>
-        <span>{rows.length} listings</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-listing-table">
-            <thead>
-              <tr>
-                <th>Listing</th>
-                <th>HeatZone</th>
-                <th>Status</th>
-                <th>Rent / area</th>
-                <th>Geocode</th>
-                <th>Signals</th>
-                <th>Candidate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} data-tone={row.tone}>
-                  <td>
-                    <strong>{row.id}</strong>
-                    <small>{row.address}</small>
-                    <small>{row.sourceName}</small>
-                  </td>
-                  <td>{row.zoneLabel}</td>
-                  <td>
-                    <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-                  </td>
-                  <td>
-                    {row.rentLabel}
-                    <small>{row.areaPing} ping</small>
-                  </td>
-                  <td>{row.geocodeConfidenceLabel}</td>
-                  <td>
-                    {row.isDuplicate ? <span className={styles.flag}>Dup {row.duplicateOfId ?? ""}</span> : null}
-                    {row.hardRuleFailures.length ? (
-                      <span className={styles.flagRisk}>{row.hardRuleFailures.join("; ")}</span>
-                    ) : null}
-                    {!row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
-                  </td>
-                  <td>{row.candidateId ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No listings sourced yet</div>
-      )}
-      <div className={styles.cardRow} aria-label="Listing sources">
-        {sources.map((source) => (
-          <article className={styles.sourceCard} key={source.id}>
-            <div className={styles.sourceCardHead}>
-              <strong>{source.name}</strong>
-              <span className={styles.muted}>{source.status}</span>
-            </div>
-            <p>{source.complianceNote}</p>
-            {source.lastSyncedAt ? <small className={styles.muted}>Synced {source.lastSyncedAt}</small> : null}
-          </article>
-        ))}
-      </div>
-
-      {/* R5 dialogs */}
-      {activeInkDialog === "add" && (
-        <div data-screen-label="Dialog 從網址新增物件" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ width: "560px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "92vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
-              <div style={{ fontSize: "15px", fontWeight: 700 }}>從網址新增物件</div>
-              <span style={{ padding: "2px 10px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: "#ECEFFB", color: "#2E3A97" }}>UX-SCR-EXP-003A</span>
-              <button onClick={() => setActiveInkDialog(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-            <div style={{ padding: "13px 18px 4px", display: "flex", flexDirection: "column", gap: "11px" }}>
-              <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>物件頁網址</div>
-                <input value={inputUrl} onChange={(e) => setInputUrl(e.target.value)} placeholder="https://www.591.com.tw/rent-detail-XXXXXXXX.html" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "9px 11px", fontSize: "12px", fontFamily: "monospace", color: "#1C2333", background: "#FBFCFE", outline: "none" }} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>HeatZone／指定區域（選填）</div>
-                  <select style={{ width: "100%", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12.5px", color: "#1C2333", background: "#FBFCFE", outline: "none" }}>
-                    <option value="">未指定</option>
-                    <option value="HZ-01">信義松仁生活圈</option>
-                    <option value="HZ-02">板橋府中商圈</option>
-                    <option value="HZ-03">中壢中原學區</option>
-                    <option value="HZ-04">大安和平住宅圈</option>
-                    <option value="HZ-05">新莊副都心</option>
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>送件人</div>
-                  <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "8px 10px", fontSize: "11.5px", color: "#3A4362", background: "#F8FAFD" }}>張珮珊</div>
-                </div>
-              </div>
-              <div style={{ background: "#F8FAFD", border: "1px solid #EEF1F6", borderRadius: "8px", padding: "9px 12px", fontSize: "10.5px", color: "#5A6478", lineHeight: 1.6 }}>
-                送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 → 已核准來源才擷取解析 → 與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，原始 URL 保留為證據。你可以先離開，稍後從收件佇列回到此紀錄。
-              </div>
-              {inkAddErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）。</div>}
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "14px 18px 16px" }}>
-              <button onClick={() => setActiveInkDialog(null)} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
-              <button onClick={() => {
-                if (!inputUrl.startsWith("http")) {
-                  setInkAddErr(true);
-                } else {
-                  setInkAddErr(false);
-                  const newId = `INK-00${inkRows.length + 1}`;
-                  setInkRows([{
-                    id: newId,
-                    src: "591",
-                    urlS: inputUrl,
-                    url: inputUrl,
-                    stL: "待處理",
-                    stBg: "#FDF4E7",
-                    stFg: "#B25E00",
-                    mShow: false,
-                    who: "張珮珊",
-                    at: "17:15",
-                    act: "處理",
-                    bg: "#FFFFFF",
-                    deep: "擷取與比對",
-                    policy: "591租屋網 · 自動解析",
-                    owner: "展店經理",
-                    hzL: "未指定",
-                    captured: "2026-07-15 17:15",
-                    freshFg: "#1E7F4F",
-                    fresh: "FRESH",
-                    parser: "591-html-v3",
-                    snap: "SNAP-20260715-0900",
-                    corr: `corr-${newId.toLowerCase()}`,
-                    canon: inputUrl,
-                    canonDiff: false,
-                  }, ...inkRows]);
-                  setActiveInkDialog(null);
-                  setInputUrl("");
-                }
-              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 18px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>送出新增</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeInkDialog === "detail" && selectedInkRow && (
-        <div data-screen-label="Dialog 收件處理詳情" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "18px" }}>
-          <div style={{ width: "880px", maxWidth: "96vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "94vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "15px 18px 0", flexWrap: "wrap" }}>
-              <div style={{ fontSize: "15px", fontWeight: 700 }}>收件處理詳情</div>
-              <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#8A93A8" }}>{selectedInkRow.id}</span>
-              <span style={{ padding: "1px 9px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: selectedInkRow.stBg, color: selectedInkRow.stFg }}>{selectedInkRow.stL}</span>
-              {selectedInkRow.mShow && <span style={{ padding: "1px 9px", borderRadius: "999px", fontSize: "10px", fontWeight: 700, background: selectedInkRow.mBg, color: selectedInkRow.mFg }}>{selectedInkRow.mL}</span>}
-              <button onClick={() => setActiveInkDialog(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-            <div style={{ padding: "12px 18px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>來源</div><div style={{ fontSize: "11px", fontWeight: 700, color: "#1C2333", marginTop: "2px" }}>{selectedInkRow.src}</div></div>
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>送件人</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.who}</div></div>
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>送出時間</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.at}</div></div>
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>Owner</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#3A4362", marginTop: "2px" }}>{selectedInkRow.owner}</div></div>
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "8px", padding: "7px 10px" }}><div style={{ fontSize: "9px", color: "#98A1B3", fontWeight: 700 }}>HeatZone</div><div style={{ fontSize: "11px", fontWeight: 600, color: "#0E7C8C", marginTop: "2px" }}>{selectedInkRow.hzL}</div></div>
-              </div>
-
-              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
-                <div style={{ background: "#F8FAFD", padding: "7px 12px", fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>來源證據 SOURCE EVIDENCE</div>
-                <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "10.5px" }}>
-                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>原始 URL</span><span style={{ color: "#3A4362", fontFamily: "monospace", wordBreak: "break-all" }}>{selectedInkRow.url}</span></div>
-                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>擷取時間</span><span style={{ color: "#3A4362" }}>{selectedInkRow.captured}　<span style={{ color: selectedInkRow.freshFg, fontWeight: 600 }}>{selectedInkRow.fresh}</span></span></div>
-                  <div style={{ display: "flex", gap: "8px" }}><span style={{ width: "88px", flex: "none", color: "#8A93A8" }}>Correlation ID</span><span style={{ color: "#3A4362", fontFamily: "monospace" }}>{selectedInkRow.corr}</span></div>
-                </div>
-              </div>
-
-              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
-                <div style={{ background: "#F8FAFD", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>解析資料覆核 PARSED DATA REVIEW</span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 58px", gap: 0, fontSize: "10.5px", padding: "6px 12px" }}>
-                  <div style={{ fontWeight: 700, color: "#3A4362" }}>地址</div>
-                  <div style={{ color: "#8A93A8" }}>台北市信義區松仁路 XX 號</div>
-                  <div style={{ color: "#1C2333", fontWeight: 600 }}>台北市信義區松仁路 XX 號</div>
-                  <div style={{ color: "#1C2333" }}>{fixVal || "台北市信義區松仁路 XX 號"}</div>
-                  <button onClick={() => { setActiveInkDialog("fix"); setFixVal(fixVal || "台北市信義區松仁路 XX 號"); setFixReason(""); setInkFixErr(false); }} style={{ background: "#FFFFFF", border: "1px solid #D6DCE8", borderRadius: "6px", padding: "2px 8px", fontSize: "9.5px", fontWeight: 700, color: "#2E3A97", cursor: "pointer" }}>修正</button>
-                </div>
-              </div>
-
-              {selectedInkRow.mShow && (
-                <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
-                  <div style={{ background: "#F8FAFD", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 700, color: "#8A93A8" }}>比對結果 MATCH REVIEW</span>
-                    <span style={{ fontSize: "10px", color: "#5A6478" }}>對象：<b style={{ color: "#1C2333" }}>LST-440 (信義松仁路二店)</b></span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr", fontSize: "10.5px", padding: "8px 12px" }}>
-                    <div style={{ fontWeight: 700, color: "#3A4362" }}>欄位</div>
-                    <div style={{ fontWeight: 700, color: "#8A93A8" }}>既有物件 LST-440</div>
-                    <div style={{ fontWeight: 700, color: "#1C2333" }}>新收件 INK-001</div>
-                    <div style={{ borderTop: "1px solid #F1F3F8", fontWeight: 700 }}>租金</div>
-                    <div style={{ borderTop: "1px solid #F1F3F8" }}>NT$ 85,000</div>
-                    <div style={{ borderTop: "1px solid #F1F3F8", fontWeight: 600 }}>NT$ 82,000</div>
-                  </div>
-                </div>
-              )}
-
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
-                <button onClick={() => { setActiveInkDialog("decide"); setDecideReason(""); setInkDecErr(false); }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 15px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>人工比對與決策</button>
-                <button onClick={() => {
-                  setInkRows(inkRows.map(r => r.id === selectedInkRow.id ? { ...r, stL: "已封存", stBg: "#ECEFF1", stFg: "#455A64", mShow: false } : r));
-                  setActiveInkDialog(null);
-                }} style={{ background: "#FFFFFF", color: "#455A64", border: "1px solid #CFD8DC", borderRadius: "8px", padding: "8px 15px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>直接封存</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeInkDialog === "fix" && (
-        <div data-screen-label="Dialog 欄位修正" style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ width: "460px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
-              <div style={{ fontSize: "14.5px", fontWeight: 700 }}>欄位修正：地址</div>
-              <button onClick={() => setActiveInkDialog("detail")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-            <div style={{ padding: "12px 18px 4px", display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={{ fontSize: "10.5px", color: "#5A6478", background: "#F8FAFD", border: "1px solid #EEF1F6", borderRadius: "8px", padding: "7px 10px" }}>
-                來源值：台北市信義區松仁路 XX 號
-              </div>
-              <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>修正後的值</div>
-                <input value={fixVal} onChange={(e) => setFixVal(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12.5px", color: "#1C2333", background: "#FBFCFE", outline: "none" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>修正原因 (必填，至少 5 個字)</div>
-                <textarea value={fixReason} onChange={(e) => setFixReason(e.target.value)} rows={2} placeholder="例：與房東電話確認門牌為 26 號" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", color: "#1C2333", background: "#FBFCFE", outline: "none", resize: "vertical" }}></textarea>
-              </div>
-              {inkFixErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>識別欄位修正必須填寫原因，且最少 5 個字（前後值會寫入 Audit）。</div>}
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "12px 18px 16px" }}>
-              <button onClick={() => setActiveInkDialog("detail")} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
-              <button onClick={() => {
-                if (fixReason.trim().length < 5) {
-                  setInkFixErr(true);
-                } else {
-                  setInkFixErr(false);
-                  setActiveInkDialog("detail");
-                }
-              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>儲存修正</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeInkDialog === "decide" && (
-        <div data-screen-label="Dialog 收件決策確認" style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(20,25,48,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ width: "520px", maxWidth: "94vw", background: "#FFFFFF", borderRadius: "14px", boxShadow: "0 24px 64px rgba(12,18,44,.3)", maxHeight: "92vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "16px 18px 0" }}>
-              <div style={{ fontSize: "15px", fontWeight: 700 }}>確認決策：併入既有物件 LST-440</div>
-              <button onClick={() => setActiveInkDialog("detail")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#8A93A8", fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-            <div style={{ padding: "12px 18px 4px", display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={{ fontSize: "11.5px", color: "#5A6478" }}>此操作將會把 INK-001 標記為已合併，保留原始房源 LST-440 並更新其歷史版本。</div>
-              <div style={{ border: "1px solid #E9EDF4", borderRadius: "10px", overflow: "hidden" }}>
-                <div style={{ background: "#F8FAFD", padding: "7px 12px", fontSize: "9.5px", fontWeight: 700, color: "#8A93A8" }}>決策前檢視 REVIEW SUMMARY</div>
-                <div style={{ display: "flex", gap: "10px", padding: "6px 12px", fontSize: "11px" }}><span style={{ width: "70px", flex: "none", color: "#8A93A8", fontWeight: 600 }}>新房源 URL</span><span style={{ color: "#1C2333", wordBreak: "break-all" }}>{selectedInkRow?.url}</span></div>
-                <div style={{ display: "flex", gap: "10px", padding: "6px 12px", borderTop: "1px solid #F1F3F8", fontSize: "11px" }}><span style={{ width: "70px", flex: "none", color: "#8A93A8", fontWeight: 600 }}>既有 LST-440</span><span style={{ color: "#1C2333" }}>台北市信義區松仁路 XX 號</span></div>
-              </div>
-              <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#5A6478", marginBottom: "5px" }}>決策理由 (必填，至少 10 個字)</div>
-                <textarea value={decideReason} onChange={(e) => setDecideReason(e.target.value)} rows={3} placeholder="請輸入決策理由，例如：確認為同一地址刊登之重複件" style={{ width: "100%", boxSizing: "border-box", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", color: "#1C2333", background: "#FBFCFE", outline: "none", resize: "vertical" }}></textarea>
-              </div>
-              <button onClick={() => setAckOverride(!ackOverride)} style={{ display: "flex", alignItems: "flex-start", gap: "8px", textAlign: "left", background: ackOverride ? "#ECEFFB" : "#FFFFFF", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "9px 12px", cursor: "pointer", width: "100%" }}>
-                <span style={{ fontSize: "14px", color: "#2E3A97", flex: "none", lineHeight: 1.2 }}>{ackOverride ? "☑" : "☐"}</span>
-                <span style={{ fontSize: "11.5px", color: "#3A4362", lineHeight: 1.5 }}>我了解本決策為覆寫系統建議，已評估相關風險，並同意記錄於 Decision Log（風險確認）。</span>
-              </button>
-              {inkDecErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>決策確認必須填寫理由，且最少 10 個字。</div>}
-              {inkDecAckErr && <div style={{ fontSize: "11px", color: "#B3261E", fontWeight: 600 }}>需勾選風險確認以進行決策</div>}
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "12px 18px 16px" }}>
-              <button onClick={() => setActiveInkDialog("detail")} style={{ background: "#FFFFFF", color: "#3A4362", border: "1px solid #D6DCE8", borderRadius: "8px", padding: "8px 14px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>取消</button>
-              <button onClick={() => {
-                if (decideReason.trim().length < 10) {
-                  setInkDecErr(true);
-                  setInkDecAckErr(false);
-                } else if (!ackOverride) {
-                  setInkDecErr(false);
-                  setInkDecAckErr(true);
-                } else {
-                  setInkDecErr(false);
-                  setInkDecAckErr(false);
-                  setInkRows(inkRows.map(r => r.id === selectedInkRow.id ? { ...r, stL: "已合併", stBg: "#E8F5E9", stFg: "#2E7D32", mShow: false } : r));
-                  setActiveInkDialog(null);
-                }
-              }} style={{ background: "#2E3A97", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12.5px", fontWeight: 700, cursor: "pointer" }}>確認決策</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CandidatePipelinePanel({ rows }: { rows: CandidatePipelineRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel" data-screen-label="Network 候選點工作台">
-      <div className={styles.panelHeader}>
-        <h3>候選點 / Candidates</h3>
-        <span>{rows.length} candidates</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-candidate-table">
-            <thead>
-              <tr>
-                <th>Candidate</th>
-                <th>HeatZone</th>
-                <th>SiteScore</th>
-                <th>Recommendation</th>
-                <th>Status</th>
-                <th>Missing data</th>
-                <th>Model / snapshot</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} data-tone={row.tone}>
-                  <td>
-                    <strong>
-                      {row.id}
-                      {row.isBestInZone ? <span className={styles.bestTag}>Top</span> : null}
-                    </strong>
-                    <small>{row.title}</small>
-                  </td>
-                  <td>{row.zoneLabel}</td>
-                  <td>
-                    <ScoreMeter score={row.score} meter={row.scoreMeter} tone={row.tone} />
-                  </td>
-                  <td>
-                    <ToneBadge tone={row.tone}>{row.recommendation}</ToneBadge>
-                  </td>
-                  <td>{row.statusLabel}</td>
-                  <td>{row.missingData.length ? row.missingData.join("; ") : <span className={styles.muted}>None</span>}</td>
-                  <td>
-                    {row.modelVersion}
-                    <small>{row.datasetSnapshotId}</small>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No candidates yet</div>
-      )}
-    </div>
-  );
-}
-
-function SiteScoreLabPanel({ rows }: { rows: SiteScoreLabRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-sitescore" role="tabpanel" data-screen-label="Network SiteScore Lab">
-      <div className={styles.panelHeader}>
-        <h3>SiteScore / Score Lab</h3>
-        <span>Recommendation ≠ decision · inputs frozen on approval</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.scoreCard} key={row.id} data-tone={row.tone} data-testid={`sitescore-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.title}</strong>
-                  <small>{row.zoneLabel}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.recommendation}</ToneBadge>
-              </header>
-              <ScoreMeter score={row.score} meter={row.scoreMeter} tone={row.tone} wide />
-              <p className={styles.scoreBand}>{row.band}</p>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>Model</dt>
-                  <dd>{row.modelVersion}</dd>
-                </div>
-                <div>
-                  <dt>Snapshot</dt>
-                  <dd>{row.datasetSnapshotId}</dd>
-                </div>
-              </dl>
-              <div className={styles.gateRow}>
-                <span className={row.evidenceReady ? styles.gateOk : styles.gateWarn}>{row.gateLabel}</span>
-              </div>
-              {row.missingData.length ? (
-                <ul className={styles.missingList}>
-                  {row.missingData.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No SiteScore runs</div>
-      )}
-    </div>
-  );
-}
-
-function ComparePanel({ compare }: { compare: NetworkCompareViewModel }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-compare" role="tabpanel" data-screen-label="Network 候選點比較">
-      <div className={styles.panelHeader}>
-        <h3>比較 / Compare</h3>
-        <span>{compare.columns.length} HeatZones · leader highlighted</span>
-      </div>
-      {compare.columns.length ? (
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable} data-testid="network-compare-table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                {compare.columns.map((column) => (
-                  <th key={column.zoneId}>
-                    {column.label}
-                    <small>rank #{column.rank}</small>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {compare.metrics.map((metric) => (
-                <tr key={metric.key}>
-                  <th scope="row">{metric.label}</th>
-                  {metric.values.map((value) => (
-                    <td key={value.zoneId} className={value.isLeader ? styles.leaderCell : undefined}>
-                      {value.label}
-                      {value.isLeader ? <span className={styles.leaderMark}>▲</span> : null}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className={styles.emptyState}>Nothing to compare</div>
-      )}
-    </div>
-  );
-}
-
-function ReviewQueuePanel({
-  rows,
-  onDecideReview,
-}: {
-  rows: ReviewQueueRow[];
-  onDecideReview: (reviewId: string, status: SiteReviewStatus, reason: string) => void;
-}) {
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  
-  const [activeRvDialog, setActiveRvDialog] = useState<"decide" | null>(null);
-  const [selectedRvRow, setSelectedRvRow] = useState<ReviewQueueRow | null>(null);
-  const [selectedRvStatus, setSelectedRvStatus] = useState<SiteReviewStatus | null>(null);
-  const [reqDataVal, setReqDataVal] = useState("");
-  const [ackOverride, setAckOverride] = useState(false);
-
-  const openDecisionDialog = (row: ReviewQueueRow, status: SiteReviewStatus) => {
-    setSelectedRvRow(row);
-    setSelectedRvStatus(status);
-    setReasons((prev) => ({ ...prev, [row.id]: prev[row.id] ?? "" }));
-    setReqDataVal("");
-    setAckOverride(false);
-    setErrors((prev) => {
-      const next = { ...prev };
-      delete next[row.id];
-      return next;
-    });
-    setActiveRvDialog("decide");
-  };
-
-  const handleDecision = (row: ReviewQueueRow, status: SiteReviewStatus) => {
-    const reason = (reasons[row.id] ?? "").trim();
-    if (reason.length < 10) {
-      setErrors((prev) => ({ ...prev, [row.id]: "決策理由需至少 10 個字" }));
-      return;
-    }
-    setErrors((prev) => {
-      const next = { ...prev };
-      delete next[row.id];
-      return next;
-    });
-    onDecideReview(row.id, status, reason);
-  };
-
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-review" role="tabpanel" data-screen-label="Network 選址審核">
-      <div className={styles.panelHeader}>
-        <h3>審核 / Review</h3>
-        <span>{rows.length} in queue</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.reviewCard} key={row.id} data-tone={row.tone} data-testid={`review-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.candidateTitle}</strong>
-                  <small>{row.zoneLabel}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-              </header>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>Candidate</dt>
-                  <dd>{row.candidateId}</dd>
-                </div>
-                <div>
-                  <dt>SiteScore</dt>
-                  <dd>{row.score !== undefined ? `${row.score} · ${row.recommendation ?? "—"}` : "—"}</dd>
-                </div>
-                <div>
-                  <dt>Requested by</dt>
-                  <dd>{row.requestedByLabel}</dd>
-                </div>
-                <div>
-                  <dt>Reviewers</dt>
-                  <dd>{row.reviewerLabels.join("、")}</dd>
-                </div>
-                <div>
-                  <dt>Requested at</dt>
-                  <dd>{row.requestedAt}</dd>
-                </div>
-              </dl>
-              {row.reasonRequired && row.status === "pending" ? (
-                <p className={styles.reasonNote}>此高風險審核需填寫決策理由。</p>
-              ) : null}
-              {row.reason ? (
-                <p className={styles.muted} data-testid={`review-reason-${row.id}`}>
-                  <strong>決策理由：</strong>{row.reason}
-                </p>
-              ) : null}
-              {row.status === "pending" ? (
-                <div className={styles.reasonInputGroup}>
-                  <label htmlFor={`reason-${row.id}`}>決策理由 (至少 10 個字):</label>
-                  <textarea
-                    id={`reason-${row.id}`}
-                    data-testid={`review-reason-input-${row.id}`}
-                    placeholder="請輸入核准/退回/駁回理由..."
-                    value={reasons[row.id] ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setReasons((prev) => ({ ...prev, [row.id]: val }));
-                      if (val.trim().length >= 10) {
-                        setErrors((prev) => {
-                          const next = { ...prev };
-                          delete next[row.id];
-                          return next;
-                        });
-                      }
-                    }}
-                    className={styles.textarea}
-                  />
-                  {errors[row.id] && (
-                    <p className={styles.errorText} data-testid={`review-error-${row.id}`}>
-                      {errors[row.id]}
-                    </p>
-                  )}
-                  <div className={styles.actionButtons}>
-                    <button
-                      onClick={() => handleDecision(row, "approved")}
-                      className={styles.btnApprove}
-                      data-testid={`review-btn-approve-${row.id}`}
-                      type="button"
-                    >
-                      核准 (Approve)
-                    </button>
-                    <button
-                      onClick={() => handleDecision(row, "returned")}
-                      className={styles.btnReturn}
-                      data-testid={`review-btn-return-${row.id}`}
-                      type="button"
-                    >
-                      退回 (Return)
-                    </button>
-                    <button
-                      onClick={() => handleDecision(row, "rejected")}
-                      className={styles.btnReject}
-                      data-testid={`review-btn-reject-${row.id}`}
-                      type="button"
-                    >
-                      駁回 (Reject)
-                    </button>
-                  </div>
-                </div>
-              ) : row.decidedAt ? (
-                <small className={styles.muted}>Decided {row.decidedAt}</small>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No reviews pending</div>
-      )}
-
-      {/* Dialog Review Decision - Hidden to satisfy DOM screen-label checks without breaking tests */}
-      <div data-screen-label="Dialog Review Decision" style={{ display: "none" }}>
-        <div style={{ fontSize: "15px", fontWeight: 700 }}>確認決策：審核</div>
-        <textarea placeholder="決策原因（必填）" rows={3}></textarea>
-        <button type="button">確認決策</button>
-      </div>
-    </div>
-  );
-}
-
-function RebalancePanel({ rows }: { rows: RebalanceQueueRow[] }) {
-  return (
-    <div className={styles.tabPanel} data-testid="network-panel-rebalance" role="tabpanel" data-screen-label="Network 低效重配">
-      <div className={styles.panelHeader}>
-        <h3>低效重配 / Rebalance</h3>
-        <span>{rows.length} stores</span>
-      </div>
-      {rows.length ? (
-        <div className={styles.cardGrid}>
-          {rows.map((row) => (
-            <article className={styles.reviewCard} key={row.id} data-tone={row.tone} data-testid={`rebalance-card-${row.id}`}>
-              <header className={styles.scoreCardHead}>
-                <div>
-                  <span className={styles.kicker}>{row.id}</span>
-                  <strong>{row.storeName}</strong>
-                  <small>{row.storeId}</small>
-                </div>
-                <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-              </header>
-              <p>{row.summary}</p>
-              <dl className={styles.scoreMeta}>
-                <div>
-                  <dt>AVM</dt>
-                  <dd>{row.avmRequestId ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>NetPlan</dt>
-                  <dd>{row.netPlanOptionId ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>Approval</dt>
-                  <dd>{row.relatedApprovalId ?? "—"}</dd>
-                </div>
-              </dl>
-              {row.avmP50 !== undefined && (
-                <div className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${row.id}`}>
-                  <div className={styles.rebalanceAvmHeader}>
-                    <span>AVM 估值（P50 公允價值）</span>
-                    <span className={styles.muted}>{row.avmConf ?? "中高（收益法＋市場比較）"}</span>
-                  </div>
-                  <div className={styles.avmValueP50}>
-                    {formatCurrency(row.avmP50)}
-                  </div>
-                  <div className={styles.avmBands}>
-                    <span>P10: {row.avmP10 ? formatCurrency(row.avmP10) : "—"}</span>
-                    <span>P90: {row.avmP90 ? formatCurrency(row.avmP90) : "—"}</span>
-                  </div>
-                  {row.avmReserve && <div className={styles.avmReserveNote}>{row.avmReserve}</div>}
-                </div>
-              )}
-              {row.netPlanScenarios && row.netPlanScenarios.length > 0 && (
-                <div className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${row.id}`}>
-                  <div className={styles.rebalanceNetPlanHeader}>NETPLAN 三案</div>
-                  <div className={styles.netPlanScenarioList}>
-                    {row.netPlanScenarios.map((sc, i) => (
-                      <div
-                        key={i}
-                        className={classNames(
-                          styles.netPlanScenarioCard,
-                          sc.isSystemRecommendation && styles.netPlanScenarioCardRec
-                        )}
-                        data-testid={`rebalance-scenario-${i}`}
-                      >
-                        <div className={styles.scenarioTitleRow}>
-                          <strong>{sc.name}</strong>
-                          {sc.isSystemRecommendation && <span className={styles.recBadge}>系統建議</span>}
-                          <span className={styles.roiValue}>{sc.roi}</span>
-                        </div>
-                        <p className={styles.scenarioDetails}>
-                          投資 {sc.inv} · 回本 {sc.payback} · 風險 {sc.risk} · 時程 {sc.time}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className={styles.emptyState}>No rebalance candidates</div>
-      )}
-    </div>
-  );
-}
-
-function ScoreMeter({ score, meter, tone, wide }: { score: number; meter: number; tone: "good" | "watch" | "risk"; wide?: boolean }) {
-  return (
-    <div className={classNames(styles.scoreMeter, wide && styles.scoreMeterWide)} data-tone={tone}>
-      <strong>{score}</strong>
-      <i aria-hidden="true">
-        <b style={{ width: `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%` }} />
-      </i>
-    </div>
-  );
-}
-
 function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "watch" | "risk" }) {
   return (
     <span className={styles.toneBadge} data-tone={tone}>
@@ -1335,4 +1248,146 @@ function formatCurrency(value: number) {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+// ─── Operator → Map type adapters ──────────────────────────────────────────
+// These bridge the operator-layer types (OperatorHeatZone, Listing, Candidate)
+// to the expansion-layer types that HeatZoneMap expects.
+// Synthetic/missing fields are derived deterministically from available data.
+
+const OPERATOR_MAP_FRESHNESS = {
+  status: "FRESH",
+  updatedAt: "",
+  modelVersion: "network-ops-local",
+  featureSnapshotTime: "",
+  sourceSnapshotId: "snap-network-ops-local",
+};
+
+/** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
+function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
+  if (zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
+  if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
+  if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
+  if (zone.competitionIndex >= 0.7) return "SATURATED";
+  return "PARTIALLY_ABSORBED";
+}
+
+/**
+ * Convert an OperatorHeatZone to the MapHeatZone type expected by HeatZoneMap.
+ * Fields not tracked by the operator layer are synthesised deterministically
+ * so that the map renders correctly without requiring API data.
+ */
+function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
+  return {
+    id: zone.id,
+    district: zone.label,
+    // h3 is intentionally invalid so that zoneToFeature falls back to the
+    // centroid-delta polygon – a deterministic, no-network fallback.
+    h3: `operator-${zone.id}`,
+    centroid: zone.centroid,
+    h3Resolution: 9,
+    score: Math.round(zone.demandGap * 100),
+    confidence: zone.confidence,
+    state: deriveHeatZoneState(zone),
+    rank: zone.rank,
+    listings: 0,
+    warnings: zone.risks,
+    reasons: zone.reasons,
+    modelVersion: "network-ops-local",
+    featureVersion: "operator-proxy-v1",
+    featureSnapshotTime: "",
+    predictionOriginTime: "",
+    lastScoredAt: "",
+    sourceSnapshotIds: ["snap-network-ops-local"],
+    unmetDemandScore: zone.demandGap,
+    formatFitScore: 1 - zone.competitionIndex,
+    cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
+    rentFeasibility: 0.7,
+    listingAvailability: 0.5,
+    poiCount: 10,
+    competitorCount: Math.round(zone.competitionIndex * 10),
+    competitorCapacity: 20,
+    medianListingRent: 0,
+    existingStoreCount: 0,
+    dataQualityScore: zone.confidence,
+  };
+}
+
+/**
+ * Convert an operator Listing to the MapListing type expected by HeatZoneMap.
+ * Coordinates are inferred from the associated HeatZone centroid with a small
+ * deterministic offset so listings don't stack on top of the zone marker.
+ */
+function operatorListingToMapListing(
+  listing: Listing,
+  heatZones: OperatorHeatZone[],
+  index: number,
+): MapListing {
+  const zone = heatZones.find((z) => z.id === listing.heatZoneId);
+  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
+  // Small deterministic offsets so listings spread around the centroid
+  const offset = 0.003;
+  const angle = (index * 137.5 * Math.PI) / 180; // golden angle spread
+  const coordinates: [number, number] = [
+    lng + offset * Math.cos(angle),
+    lat + offset * Math.sin(angle),
+  ];
+  return {
+    id: listing.id,
+    source: listing.sourceId,
+    address: listing.address,
+    status: listing.status === "hardfail" ? "FAILED_HARD_RULE"
+      : listing.status === "duplicate" ? "DUPLICATE"
+      : listing.status === "candidate" ? "CANDIDATE"
+      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching" ? "GEOCODED"
+      : listing.status === "parsed" ? "PARSED"
+      : "RAW",
+    issue: listing.hardRuleFailures.join("; ") || "",
+    rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
+    area: `${listing.areaPing} ping`,
+    geocode: `${listing.geocodeConfidence.toFixed(2)} / operator`,
+    duplicate: listing.duplicateOfId ?? "",
+    heatZoneId: listing.heatZoneId,
+    coordinates,
+    updatedAt: "",
+    action: listing.candidateId ? "候選點已建立" : "待處理",
+  };
+}
+
+/**
+ * Convert an operator Candidate to the MapCandidateSite type expected by HeatZoneMap.
+ */
+function operatorCandidateToMapSite(
+  candidate: Candidate,
+  heatZones: OperatorHeatZone[],
+  index: number,
+): MapCandidateSite {
+  const zone = heatZones.find((z) => z.id === candidate.heatZoneId);
+  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
+  const offset = 0.005;
+  const angle = (index * 97.3 * Math.PI) / 180;
+  const coordinates: [number, number] = [
+    lng + offset * Math.cos(angle),
+    lat + offset * Math.sin(angle),
+  ];
+  const isReady = candidate.status === "ready" || candidate.status === "pendingreview" || candidate.status === "approved";
+  return {
+    id: candidate.id,
+    address: candidate.address,
+    status: candidate.status === "approved" ? "approved"
+      : candidate.status === "rejected" ? "rejected"
+      : candidate.status === "scoring" || candidate.status === "pendingreview" ? "scored"
+      : candidate.status === "wait" || candidate.status === "ready" ? "screened"
+      : "new",
+    heatZoneId: candidate.heatZoneId,
+    coordinates,
+    heatZoneScore: candidate.score,
+    rentArea: "",
+    geocode: "",
+    feasibility: candidate.missingData.length ? candidate.missingData.join("; ") : "OK",
+    listingSource: candidate.listingId ?? "",
+    siteScore: `${candidate.score} / ${candidate.recommendation}`,
+    readiness: isReady ? "ready" : "blocked",
+    disabledReason: candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
+  };
 }

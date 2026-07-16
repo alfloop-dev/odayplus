@@ -1,0 +1,16 @@
+{
+  "$comment": [
+    "Approved breaking API changes (ODP-PGAP-API-001).",
+    "",
+    "scripts/openapi/check_drift.py fails CI on any breaking change to",
+    "packages/openapi-client/openapi.json whose signature is not listed here.",
+    "",
+    "Add an entry only when the break is intentional AND existing callers have a",
+    "migration. Each entry must name the task that approved it and what a caller",
+    "must do; 'signature' is copied verbatim from the check_drift.py failure.",
+    "",
+    "An entry is a permanent record, not a mute button: once the affected",
+    "release has shipped and no caller remains on the old contract, delete it."
+  ],
+  "approved": []
+}

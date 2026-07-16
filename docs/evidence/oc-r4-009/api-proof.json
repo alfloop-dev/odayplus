@@ -1,0 +1,71 @@
+{
+  "task": "ODP-OC-R4-009",
+  "design_source": "r4-20260707-package-6",
+  "data_screen_label": "Govern 治理稽核",
+  "captured": [
+    {
+      "step": "GET /snapshot",
+      "status": 200,
+      "approvals_modules": [
+        "Govern",
+        "Growth",
+        "Network",
+        "Store Ops"
+      ],
+      "decisions_modules": [
+        "Growth",
+        "Network",
+        "Store Ops"
+      ],
+      "statusBoard_panels": [
+        "connectors",
+        "dataQuality",
+        "models",
+        "runbooks",
+        "sla",
+        "users"
+      ],
+      "pendingApprovals": 4
+    },
+    {
+      "step": "POST /decisions reject w/ short reason",
+      "status": 422,
+      "detail": "退回或駁回理由需至少 10 個字 (return/reject requires a reason of at least 10 characters)"
+    },
+    {
+      "step": "POST /decisions reject w/ reason",
+      "status": 200,
+      "finalDecision": "Rejected",
+      "correlation_id": "corr-oc-r4-009-proof"
+    },
+    {
+      "step": "POST /evidence-package",
+      "status": 200,
+      "package_id": "EVD-2026-0705-03",
+      "scope": {
+        "dateFrom": "2026-06-01",
+        "dateTo": "2026-07-03",
+        "modules": [
+          "Store Ops",
+          "Growth",
+          "Network"
+        ],
+        "contents": [
+          "Audit Trail",
+          "Decision Log",
+          "Outcome 對比",
+          "SLA 報表"
+        ]
+      },
+      "format": "PDF",
+      "actor": "PM／稽核",
+      "correlationId": "corr-oc-r4-009-proof",
+      "retentionPolicy": "7 天簽章 URL，actor 欄位遮罩",
+      "range": "2026-06-01 – 2026-07-03"
+    },
+    {
+      "step": "POST /decisions without permission (fail-closed)",
+      "status": 403
+    }
+  ]
+}

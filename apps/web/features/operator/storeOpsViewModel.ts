@@ -382,8 +382,9 @@ export function getPrimaryActionLabel(issue: Issue | undefined): string {
     case "triaged":
       return "指派 Owner";
     case "assigned":
-    case "inprogress":
       return "建立 Field Action";
+    case "inprogress":
+      return "提交 Field Report";
     case "executed":
       return "開始 Observation";
     case "observing":

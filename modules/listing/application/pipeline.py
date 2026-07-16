@@ -36,6 +36,12 @@ class ListingRepository(Protocol):
     def list_candidates(self) -> list[CandidateSiteDraft]:
         ...
 
+    def list_listings(self) -> list[Listing]:
+        ...
+
+    def get_listing(self, listing_id: str) -> Listing | None:
+        ...
+
 
 @dataclass(frozen=True)
 class ListingPipelineRecord:

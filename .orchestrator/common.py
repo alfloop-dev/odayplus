@@ -813,6 +813,9 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
     source_plane = str(task.get("source_plane") or "").strip()
+    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
     recent = _recent_task_activity(config, task_id)
     path = task_brief_path(task_id)
     ensure_parent(path)
@@ -847,6 +850,12 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     body.extend(["", "## Artifacts"])
     artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
     body.extend([f"- {item}" for item in artifacts] or ["- none"])
+    body.extend(["", "## Source Documents"])
+    body.extend([f"- {item}" for item in source_docs] or ["- none"])
+    body.extend(["", "## Acceptance"])
+    body.extend([f"- {item}" for item in acceptance] or ["- none"])
+    body.extend(["", "## Verification"])
+    body.extend([f"- `{item}`" for item in verification] or ["- none"])
     body.extend(["", "## Recent Task Activity"])
     if recent:
         body.extend(

@@ -5,7 +5,7 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap lint test smoke dependency-audit security node-check product-e2e-gate product-release-gate ci clean
+.PHONY: help bootstrap lint test smoke dependency-audit security node-check api-contract api-contract-refresh product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
@@ -45,6 +45,18 @@ dependency-audit:
 
 security: bootstrap dependency-audit
 	$(UV) run pytest tests/security
+
+# API contract gate (ODP-PGAP-API-001): the OpenAPI artifact matches the live
+# app, the generated TypeScript client matches the artifact, and no unapproved
+# breaking change reaches the target branch.
+# Regenerate after an intentional API change with:
+#   make api-contract-refresh
+api-contract: bootstrap
+	$(UV) run python scripts/openapi/check_drift.py --base-ref $${ODP_API_BASE_REF:-origin/dev}
+
+api-contract-refresh: bootstrap
+	$(UV) run python scripts/openapi/export_openapi.py
+	$(UV) run python scripts/openapi/generate_client.py
 
 node-check:
 	@if [[ -f package-lock.json ]]; then \

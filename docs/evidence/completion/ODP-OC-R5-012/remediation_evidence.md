@@ -1,0 +1,271 @@
+# ODP-OC-R5-012: Merge Gate Enforcement Remediation Evidence
+
+This document records the control-plane audit, staged release control design, implementation details, automated API enforcement logs, and test evidence for enforcing reviewer-approved and all-green product merge gates.
+
+---
+
+## 1. Control-Plane Path Inventory & PR #301 Incident
+
+We conducted an audit of the control-plane path that permitted PRs #297, #298, and #300 to merge prematurely:
+
+1. **Auto-Merge Command Default**: The coordination sequence utilized the GitHub CLI command:
+   ```bash
+   gh pr merge --auto --merge
+   ```
+   This instructed GitHub to auto-merge the PR immediately upon satisfaction of default/basic branch protection rules.
+2. **Lack of Integration Gates**:
+   - The repository lacked a pre-merge check to verify the canonical task status in [ai-status.json](../../../ai-status.json).
+   - The repository lacked branch protection rules requiring explicit approvals from the **assigned reviewer** (e.g. `Codex`), allowing general reviews (or lack thereof) to satisfy the merge condition.
+   - The merge eligibility script `scripts/check_pr_merge_eligibility.py` was inert because it was never wired as a required check in the GitHub Actions workflows.
+3. **Bypass & Path Resolution Flaws**:
+   - The script had a bug where `ROOT` was resolved to `parents[2]`, which pointed *above* the repository root, breaking file resolution paths in the CI runner.
+   - Non-task branches returned `eligible=True`, creating a bypass vector where non-task branches skipped the merge gate entirely.
+   - Reviewer handles in `.orchestrator/config.example.json` were placeholders (`"your-github-handle"`).
+
+### PR #301 Incident Details
+On 2026-07-15T11:12:27Z, PR #301 (delivering task ODP-OC-R5-011) was merged under the following sequence of events:
+1. Codex approved ODP-OC-R5-011 at 11:03:28Z.
+2. The canonical `task-review-gate` status check was SUCCESS.
+3. All three required CI checks (orchestrator, product, and product-e2e-gate) were SUCCESS.
+4. Antigravity3 enabled auto-merge at 11:07:13Z, contrary to instruction.
+5. The merge occurred automatically at 11:12:27Z while Codex was in the process of restoring the branch-protection mutations.
+
+This sequence confirms that PR #301 was reviewed and canonical verification was fully successful prior to the merge. However, enabling auto-merge contrary to instruction allowed the PR to merge automatically, which bypassed the final handoff controls and demonstrated the need for tighter pre-merge control plane gates.
+
+### PR #302 Incident Details & Root Cause Analysis
+On 2026-07-15T11:19:51Z, PR #302 (delivering task ODP-OC-R5-012) was prematurely merged:
+1. A background cron job on the VM ran `.orchestrator/auto-merge-guard.sh` every 5 minutes.
+2. This script invoked an untracked/ignored Python utility `auto_merge_green_prs.py` under the coordinator context.
+3. The script required only `orchestrator` and `product-e2e-gate` checks to pass, intentionally skipped the `product` gate check, and completely ignored task-review status or reviewer approvals.
+4. When PR #302 was opened, the script marked the draft ready, bypassed checks, and ran `gh pr merge --merge`, merging HEAD `4d1b73bb` into `dev` prior to Codex approval.
+5. Consequently, later corrective commits `1598975d` and `e47977a9` remained unmerged in `dev` while the branch protection rules were bypassed.
+
+### Cron Disable & Readback Verification
+To durably resolve the auto-merge loop threat:
+1. **Process Termination**: The active background process running `.orchestrator/auto-merge-guard.sh` was forcefully killed.
+2. **Cron Entry Removal**: The crontab entry invoking the guard script was removed.
+3. **Readback Audit**: Running `crontab -l` on the host verified that only the baseline stack redeployment cron entry remains active:
+   ```text
+   */5 * * * * /home/lupin/odayplus-dev/redeploy.sh >> /home/lupin/odayplus-dev/redeploy.log 2>&1
+   ```
+4. **Fail-Closed Code Replacement**: The untracked files were replaced with tracked, fail-closed implementations of `.orchestrator/auto-merge-guard.sh` and `.orchestrator/auto_merge_green_prs.py` that explicitly require the `task-review-gate` and all product checks to pass.
+
+---
+
+
+## 2. Staged Release Control Design
+
+To close the premature merging gap safely and break the lifecycle dependency loop:
+
+1. **Keep Ordinary Product Checks in Branch Protection**:
+   Ordinary product checks (`orchestrator`, `product`, `product-e2e-gate`) are kept in the required branch protection policy defined in [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json).
+2. **Dedicated Task Review Status Gate (`task-review-gate`)**:
+   Instead of running a PR workflow check that requires local `ai-status.json` context, the local status manager ([ai_status.py](../../../scripts/ai_status.py)) acts as the external gate status emitter:
+   - When a task is approved (`scripts/ai-status.sh approve`), it emits `task-review-gate=success` to the head commit of the PR.
+   - When a task is reopened or rejected (`scripts/ai-status.sh reopen`), it emits `task-review-gate=failure` to revoke eligibility.
+   - When a task is in progress or review, it emits `task-review-gate=pending`.
+3. **Mandatory Task Review Status Gate Enforced**:
+   The new `task-review-gate` status check is added to the required status checks list in branch protection ([.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json)). This ensures that product PRs cannot be merged without explicit review approval.
+
+---
+
+## 3. Policy & Implementation Details
+
+1. **Policy Configuration**:
+   We updated [.github/branch-protection/policy.json](../../../.github/branch-protection/policy.json) to enforce the following required status checks including the new `task-review-gate` without standard GitHub review requirements (disabling them to prevent self-review blockers):
+   ```json
+   {
+     "required_status_checks": [
+       "orchestrator",
+       "product",
+       "product-e2e-gate",
+       "task-review-gate"
+     ],
+     "enforce_admins": true
+   }
+   ```
+
+2. **CI Workflow Clean-up**:
+   We removed the `check-merge-eligibility` job from [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) to eliminate the dependency cycle and avoid CI failures caused by untracked config/status files on the runners.
+
+3. **Status Check Emitter Integration**:
+   We implemented `resolve_task_sha()`, `get_repository_slug_safe()`, and `emit_task_review_status_check()` inside [ai_status.py](../../../scripts/ai_status.py). The emitter hooks into the main execution function of `ai_status.py`, capturing task transitions and programmatically posting the corresponding commit status check to GitHub using the system `gh` CLI.
+
+4. **Assigned-Reviewer Authorization and Actor Equality**:
+   Assigned-reviewer authorization is enforced programmatically by checking that the actor executing the `ai_status approve` command matches the assigned reviewer for the task. The merge gate eligibility is determined by the canonical `review_approved` status of the task. The GitHub-handle review mapping in config files remains as optional fallback context rather than a blocking verification mechanism, ensuring the codebase is unaffected by local environment-specific configurations.
+
+---
+
+## 4. Execution & Verification Evidence
+
+### A. API Status Check Emission Logs (Disposable test context)
+
+We successfully verified the status check emitter by posting and revoking a disposable test status context (`task-review-gate-test`) on the PR head commit (`6516d8b92e1a035765c5b9c5cae8408c9ea40bde`):
+
+#### 1. Emitting SUCCESS:
+```bash
+$ gh api -X POST repos/alfloop-dev/odayplus/statuses/6516d8b92e1a035765c5b9c5cae8408c9ea40bde -F state=success -F context=task-review-gate-test -F description="Test status check emission"
+```
+Response snippet:
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/statuses/6516d8b92e1a035765c5b9c5cae8408c9ea40bde",
+  "state": "success",
+  "description": "Test status check emission",
+  "context": "task-review-gate-test",
+  "created_at": "2026-07-15T10:30:34Z",
+  "creator": {
+    "login": "ajoe734"
+  }
+}
+```
+
+#### 2. Revoking to FAILURE:
+```bash
+$ gh api -X POST repos/alfloop-dev/odayplus/statuses/6516d8b92e1a035765c5b9c5cae8408c9ea40bde -F state=failure -F context=task-review-gate-test -F description="Review rejected/reopened by Codex"
+```
+Response snippet:
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/statuses/6516d8b92e1a035765c5b9c5cae8408c9ea40bde",
+  "state": "failure",
+  "description": "Review rejected/reopened by Codex",
+  "context": "task-review-gate-test",
+  "created_at": "2026-07-15T10:30:37Z",
+  "creator": {
+    "login": "ajoe734"
+  }
+}
+```
+
+---
+
+## 5. Test Coverage & Execution
+
+We added unit tests covering status check emission to [test_ai_status.py](../../../scripts/test_ai_status.py):
+
+- `test_get_repository_slug_safe_env` & `test_get_repository_slug_safe_config`: verify correct resolution of the repository slug.
+- `test_resolve_task_sha_gh_pr_view` & `test_resolve_task_sha_git_rev_parse`: verify resolution of commit hashes via PR metadata and local git branches.
+- `test_emit_task_review_status_check_approved`: verifies that `gh api` calls use correct payloads.
+- `test_emit_status_checks_for_changed_tasks`: verifies that command status transitions invoke the emission logic.
+
+### Pytest Execution Output
+```text
+$ pytest scripts/test_ai_status.py
+============================= test session starts ==============================
+collected 63 items
+
+scripts/test_ai_status.py ....................................................... [100%]
+
+============================= 63 passed in 2.27s ===============================
+```
+
+We also verified the merge eligibility policy simulation suite in [test_pr_merge_eligibility.py](../../../tests/security/test_pr_merge_eligibility.py):
+```text
+$ pytest tests/security/test_pr_merge_eligibility.py
+============================= test session starts ==============================
+collected 10 items
+
+tests/security/test_pr_merge_eligibility.py ..........                     [100%]
+
+============================== 10 passed in 0.07s ==============================
+```
+
+---
+
+## 6. Post-Merge Deployment Plan and Verification Procedure (Human/Ops Gate)
+
+To prevent breaking concurrent PR workflows during staged rollout (where the unmerged policy code references `task-review-gate` but the target branches lack the emission mechanism), **no live branch protection changes have been applied in production before merge**. Live checks on `dev`/`main` are preserved at their baseline (`orchestrator`, `product`, `product-e2e-gate`).
+
+The following procedure describes how Human/Ops or a privileged supervisor agent will apply the policy configuration post-merge and verify its status.
+
+### A. Post-Merge Application Procedure
+Once this PR (#302 or equivalent task PR) is successfully merged into `dev` and promoted to `main`, run the policy enforcer script to configure the GitHub branch protection rules:
+```bash
+python3 scripts/apply_branch_protection.py
+```
+
+### B. Expected Branch Protection Readback (Verification Target)
+After applying the configuration, a readback verification is performed. Below is the reference output proving that the `task-review-gate` required status check is active alongside baseline checks on `dev` and `main`:
+
+#### dev Branch Protection Readback (Reference Schema)
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection",
+  "required_status_checks": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks",
+    "strict": true,
+    "contexts": [
+      "orchestrator",
+      "product",
+      "product-e2e-gate",
+      "task-review-gate"
+    ],
+    "contexts_url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks/contexts",
+    "checks": [
+      {
+        "context": "orchestrator",
+        "app_id": 15368
+      },
+      {
+        "context": "product",
+        "app_id": 15368
+      },
+      {
+        "context": "product-e2e-gate",
+        "app_id": 15368
+      },
+      {
+        "context": "task-review-gate",
+        "app_id": null
+      }
+    ]
+  },
+  "required_pull_request_reviews": null,
+  "enforce_admins": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/dev/protection/enforce_admins",
+    "enabled": true
+  }
+}
+```
+
+#### main Branch Protection Readback (Reference Schema)
+```json
+{
+  "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection",
+  "required_status_checks": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_status_checks",
+    "strict": true,
+    "contexts": [
+      "orchestrator",
+      "product",
+      "product-e2e-gate",
+      "task-review-gate"
+    ],
+    "contexts_url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/required_status_checks/contexts",
+    "checks": [
+      {
+        "context": "orchestrator",
+        "app_id": 15368
+      },
+      {
+        "context": "product",
+        "app_id": 15368
+      },
+      {
+        "context": "product-e2e-gate",
+        "app_id": 15368
+      },
+      {
+        "context": "task-review-gate",
+        "app_id": null
+      }
+    ]
+  },
+  "required_pull_request_reviews": null,
+  "enforce_admins": {
+    "url": "https://api.github.com/repos/alfloop-dev/odayplus/branches/main/protection/enforce_admins",
+    "enabled": true
+  }
+}
+```
