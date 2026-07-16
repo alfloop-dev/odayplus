@@ -73,11 +73,12 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
       return false;
     };
 
-    // 1. Test empty API response by wiping durable sqlite and restarting API
+    // 1. Test empty API response by stopping API, wiping sqlite files via worker, and starting API
+    execSync(`docker compose -p ${project} stop api`, { stdio: "ignore" });
     try {
-      execSync(`docker compose -p ${project} exec -T api rm -f /data/product-e2e.sqlite3`, { stdio: "ignore" });
+      execSync(`docker compose -p ${project} exec -T worker rm -f /data/product-e2e.sqlite3 /data/product-e2e.sqlite3-shm /data/product-e2e.sqlite3-wal`, { stdio: "ignore" });
     } catch (e) {}
-    execSync(`docker compose -p ${project} restart api`, { stdio: "ignore" });
+    execSync(`docker compose -p ${project} start api`, { stdio: "ignore" });
     await waitApi();
 
     await page.setExtraHTTPHeaders({
