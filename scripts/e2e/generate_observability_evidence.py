@@ -15,7 +15,6 @@ from apps.api.oday_api.main import create_app
 from apps.worker.oday_worker.main import ODayWorker
 from modules.notifications import (
     ConsoleNotificationAdapter,
-    DurableNotificationRepository,
     NotificationService,
 )
 from shared.infrastructure.persistence import build_persistence

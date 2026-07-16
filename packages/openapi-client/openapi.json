@@ -22727,9 +22727,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
+                  "additionalProperties": true,
                   "title": "Response Health Health Get",
                   "type": "object"
                 }
@@ -22771,16 +22769,14 @@
     },
     "/platform/health": {
       "get": {
-        "operationId": "platform_health_platform_health_get",
+        "operationId": "health_platform_health_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Platform Health Platform Health Get",
+                  "additionalProperties": true,
+                  "title": "Response Health Platform Health Get",
                   "type": "object"
                 }
               }
@@ -22788,7 +22784,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Platform Health",
+        "summary": "Health",
         "tags": [
           "platform"
         ]
@@ -22816,6 +22812,29 @@
         "summary": "Platform Version",
         "tags": [
           "platform"
+        ]
+      }
+    },
+    "/readiness": {
+      "get": {
+        "operationId": "readiness_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Readiness Readiness Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "system"
         ]
       }
     }
