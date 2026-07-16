@@ -173,18 +173,31 @@ export type EvaluatePayload = {
 
 /** EvidenceExportPayload */
 export type EvidenceExportPayload = {
+  authorization_id?: string | null;
+  authorized_by?: string | null;
   build_version?: string;
   correlation_ids: string[];
   data_classification?: string;
   decision_cards: Record<string, unknown>[];
   environment?: string;
+  expires_at?: string | null;
   export_scope: string;
   from_time: string;
+  identity_boundary?: string | null;
+  masking_profile?: string;
   program_id: string;
   purpose: string;
+  purpose_scope?: string | null;
   requested_by: string;
   sensitive?: boolean;
   to_time: string;
+};
+
+/** EvidenceGovernancePayload */
+export type EvidenceGovernancePayload = {
+  correlation_id?: string | null;
+  reason: string;
+  role: string;
 };
 
 /** POST /operator/governance/evidence-package — export an Evidence Package. */
@@ -220,6 +233,14 @@ export type EvidencePurposeResponse = {
   correlationId?: string | null;
   evidenceId: string;
   purpose: string;
+};
+
+/** EvidenceRetentionPurgePayload */
+export type EvidenceRetentionPurgePayload = {
+  as_of: string;
+  correlation_id?: string | null;
+  reason: string;
+  role: string;
 };
 
 /** ExecutePayload */
@@ -782,6 +803,9 @@ export const API_PATHS = {
   "/api/v1/audit/evidence/export": ["POST"],
   "/api/v1/audit/evidence/exports": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}": ["GET"],
+  "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
+  "/api/v1/audit/evidence/retention/expired": ["GET"],
+  "/api/v1/audit/evidence/retention/purge": ["POST"],
   "/api/v1/avm/cases": ["GET", "POST"],
   "/api/v1/avm/cases/{case_id}": ["GET"],
   "/api/v1/avm/cases/{case_id}/dataroom": ["GET", "POST"],
