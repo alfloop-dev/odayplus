@@ -176,24 +176,19 @@ export function AvmWorkspace({
     let active = true;
     const fetchDetails = async () => {
       setLoading(true);
-      const apiBase =
-        process.env.NEXT_PUBLIC_ODP_API_BASE_URL ||
-        process.env.NEXT_PUBLIC_API_URL ||
-        "http://127.0.0.1:8099";
-
       const headers: Record<string, string> = {};
       if (currentUser?.subjectId) headers["x-subject-id"] = currentUser.subjectId;
       if (currentUser?.roles) headers["x-roles"] = currentUser.roles;
       if (currentUser?.tenantId) headers["x-tenant-id"] = currentUser.tenantId;
 
       try {
-        const caseRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}`, { headers });
+        const caseRes = await fetch(`/avm/cases/${activeCaseId}`, { headers });
         if (!caseRes.ok) throw new Error("Failed to fetch case");
         const liveCase = await caseRes.json();
 
         let report: any = null;
         try {
-          const reportRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}/report`, { headers });
+          const reportRes = await fetch(`/avm/cases/${activeCaseId}/report`, { headers });
           if (reportRes.ok) report = await reportRes.json();
         } catch (e) {
           // ignore
@@ -201,7 +196,7 @@ export function AvmWorkspace({
 
         let dataroom: any = null;
         try {
-          const drRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}/dataroom`, { headers });
+          const drRes = await fetch(`/avm/cases/${activeCaseId}/dataroom`, { headers });
           if (drRes.ok) dataroom = await drRes.json();
         } catch (e) {
           // ignore
