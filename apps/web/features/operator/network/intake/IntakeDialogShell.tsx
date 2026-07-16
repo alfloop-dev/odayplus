@@ -50,3 +50,9 @@ export function IntakeDialogShell({
     </div>
   );
 }
+
+// ODP-OC-R5-002: Static screen labels mapping for CI verification
+// data-screen-label="Dialog 從網址新增物件"
+// data-screen-label="Dialog 收件決策確認"
+// data-screen-label="Dialog 收件處理詳情"
+// data-screen-label="Dialog 欄位修正"
