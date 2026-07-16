@@ -20,6 +20,9 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
   test.describe.configure({ mode: "serial" });
 
   test("AVM workspace drawer allows keyboard closing and return focus working", async ({ page }) => {
+    page.on("console", (msg) => console.log("BROWSER CONSOLE:", msg.text()));
+    page.on("pageerror", (err) => console.log("BROWSER ERROR:", err.message));
+
     // Navigate to case cases page
     await page.goto("/w/dealroom/cases");
 
