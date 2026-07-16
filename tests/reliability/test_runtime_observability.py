@@ -511,3 +511,69 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     snapshot = telemetry.metrics.snapshot()
     assert "job_duration_seconds" in snapshot
     assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
+
+
+def test_alert_routing_and_real_notification_delivery() -> None:
+    from modules.notifications import (
+        ConsoleNotificationAdapter,
+        InMemoryNotificationRepository,
+        NotificationService,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = ConsoleNotificationAdapter()
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    # Setup preferences
+    service.set_preferences("ops-lead", ["email", "sms"])
+
+    # Initialize AlertRouter
+    router = AlertRouter(notification_service=service)
+
+    # Trigger P1 Alert
+    nid = router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query")
+    assert nid is not None
+
+    # Verify routing target
+    routed = router.route_alert("audit-write-failure")
+    assert routed["receiver"] == "ops-lead"
+
+    # Verify delivery
+    assert len(adapter.sent_messages) == 1
+    msg = adapter.sent_messages[0]
+    assert msg["notification_id"] == nid
+    assert msg["user_id"] == "ops-lead"
+    assert "ALERT: [P1] Audit write failure" in msg["title"]
+    assert "Durable storage write timeout" in msg["detail"]
+
+
+def test_api_telemetry_export() -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import ListSink, SpanKind, StructuredLogger, Telemetry
+
+    logger_sink = ListSink()
+    telemetry = Telemetry(
+        "test-api",
+        logger=StructuredLogger("test-api", sink=logger_sink),
+    )
+
+    app = create_app(telemetry=telemetry, external_provider_validation=lambda: None)
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    corr_id = response.headers.get("X-Correlation-ID")
+    assert corr_id is not None
+
+    spans = telemetry.tracer.spans_for(corr_id)
+    assert len(spans) == 1
+    assert spans[0].name == "HTTP GET /healthz"
+    assert spans[0].kind == SpanKind.API
+
+    snapshot = telemetry.metrics.snapshot()
+    assert "api_latency_ms" in snapshot
+

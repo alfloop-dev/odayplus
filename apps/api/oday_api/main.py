@@ -85,13 +85,16 @@ else:
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_ingestion_service: Any = None,
+        telemetry: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
         # (ODP_PERSISTENCE / ODP_DB_PATH). Explicit arguments still win, so
         # tests can inject hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
+        from shared.observability import SpanKind, SpanStatus, Telemetry, TraceContext
 
+        telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
         bundle = persistence or build_persistence()
         audit_log = audit_log or bundle.audit_log
@@ -118,9 +121,28 @@ else:
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
             request.state.correlation_id = context.correlation_id
-            response = await call_next(request)
-            response.headers[CORRELATION_ID_HEADER] = context.correlation_id
-            return response
+
+            trace_ctx = TraceContext(
+                correlation_id=context.correlation_id,
+                actor_id="user",
+                request_id=context.correlation_id,
+            )
+
+            with telemetry.operation(
+                name=f"HTTP {request.method} {request.url.path}",
+                kind=SpanKind.API,
+                context=trace_ctx,
+                resource="HTTP",
+                action=request.method,
+                latency_labels={"service": "oday-api", "route": request.url.path},
+            ) as span:
+                response = await call_next(request)
+                if response.status_code >= 400:
+                    span.status = SpanStatus.ERROR
+                    span.error_code = f"HTTP_{response.status_code}"
+                response.headers[CORRELATION_ID_HEADER] = context.correlation_id
+                return response
+
 
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:

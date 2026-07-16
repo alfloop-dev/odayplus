@@ -5,6 +5,7 @@ from modules.notifications.application import (
 )
 from modules.notifications.domain import NotificationReceipt, UserPreference
 from modules.notifications.infrastructure import (
+    ConsoleNotificationAdapter,
     DurableNotificationRepository,
     InMemoryNotificationRepository,
 )
@@ -14,7 +15,9 @@ __all__ = [
     "NotificationReceipt",
     "InMemoryNotificationRepository",
     "DurableNotificationRepository",
+    "ConsoleNotificationAdapter",
     "NotificationAdapter",
     "MockNotificationAdapter",
     "NotificationService",
 ]
+

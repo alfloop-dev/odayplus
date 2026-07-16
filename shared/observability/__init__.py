@@ -6,6 +6,7 @@ application/worker stage uses to emit all three signals under one
 ``correlation_id``.
 """
 
+from shared.observability.alerts import AlertRouter
 from shared.observability.audit import (
     AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
     HIGH_RISK_AUDIT_ACTIONS,
@@ -53,6 +54,7 @@ from shared.observability.tracing import (
 )
 
 __all__ = [
+    "AlertRouter",
     "AUDIT_EVIDENCE_EXPORT_EVENT_TYPE",
     "HIGH_RISK_AUDIT_ACTIONS",
     "AuditCompletenessReport",
@@ -89,3 +91,4 @@ __all__ = [
     "build_evidence_bundle",
     "check_audit_completeness",
 ]
+
