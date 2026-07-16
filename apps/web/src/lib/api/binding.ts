@@ -37,29 +37,16 @@ export async function loadApiBinding<T>(options: {
     process.env.NODE_ENV === "production" ||
     process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true";
 
-  let mockError = false;
-  let mockEmpty = false;
-  let mockUnconfigured = false;
-
   try {
     const reqHeaders = await headers();
     if (reqHeaders.get("x-production-mode") === "true") {
       isProduction = true;
     }
-    if (reqHeaders.get("x-test-mock-unconfigured") === "true") {
-      mockUnconfigured = true;
-    }
-    if (reqHeaders.get("x-test-mock-error") === "true") {
-      mockError = true;
-    }
-    if (reqHeaders.get("x-test-mock-empty") === "true") {
-      mockEmpty = true;
-    }
   } catch (e) {
     // Ignore outside request context
   }
 
-  if (!client || mockUnconfigured) {
+  if (!client) {
     return {
       state: "unconfigured",
       items: [],
@@ -68,20 +55,7 @@ export async function loadApiBinding<T>(options: {
     };
   }
 
-  if (mockEmpty) {
-    return {
-      state: "empty",
-      items: [],
-      source: isProduction ? "api" : "fixture",
-      baseUrl: client.baseUrl,
-      fetchedAt,
-    };
-  }
-
   try {
-    if (mockError) {
-      throw new Error("Mocked Server Error");
-    }
     const items = await fetcher(client);
     if (items.length === 0) {
       return {

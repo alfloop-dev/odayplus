@@ -623,7 +623,7 @@ function ExportPanel({ decision }: { decision: AuditDecision }) {
     <section className={styles.panel} data-testid="evidence-export-panel">
       <h2>Evidence Export</h2>
       <p>Fields: decision_id / entity / model_version / feature_snapshot_time / actor / decision_time / execution_status / outcome_status / audit_status.</p>
-      
+
       {error && (
         <div
           data-testid="export-error"

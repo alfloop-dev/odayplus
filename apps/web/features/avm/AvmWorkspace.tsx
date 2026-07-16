@@ -960,6 +960,7 @@ function Drawer({
   caseId: string;
 }) {
   const router = useRouter();
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   // Escape key close handler
   useEffect(() => {
@@ -975,8 +976,21 @@ function Drawer({
 
   // Autofocus close button on mount
   useEffect(() => {
-    const closeBtn = document.getElementById("drawer-close-btn");
-    closeBtn?.focus();
+    let attempts = 0;
+    let timer: NodeJS.Timeout;
+    const tryFocus = () => {
+      const el = closeBtnRef.current;
+      if (el) {
+        el.focus();
+        if (document.activeElement === el || attempts >= 10) {
+          return;
+        }
+      }
+      attempts++;
+      timer = setTimeout(tryFocus, 50);
+    };
+    timer = setTimeout(tryFocus, 50);
+    return () => clearTimeout(timer);
   }, [caseId]);
 
   const handleClose = () => {
@@ -995,6 +1009,7 @@ function Drawer({
       <div className={styles.drawerHeader}>
         <h2>{title}</h2>
         <button
+          ref={closeBtnRef}
           onClick={handleClose}
           id="drawer-close-btn"
           aria-label={`Close ${title}`}

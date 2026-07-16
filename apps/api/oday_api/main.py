@@ -165,7 +165,15 @@ else:
             return job.to_dict()
 
         @api.get("/audit/events", tags=["audit"])
-        def list_audit_events(correlation_id: str | None = None) -> dict[str, Any]:
+        def list_audit_events(
+            correlation_id: str | None = None,
+            x_test_mock_empty: str | None = Header(default=None, alias="x-test-mock-empty"),
+            x_test_mock_error: str | None = Header(default=None, alias="x-test-mock-error"),
+        ) -> dict[str, Any]:
+            if x_test_mock_error == "true":
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Mocked Server Error")
+            if x_test_mock_empty == "true":
+                return {"events": []}
             return {
                 "events": [
                     event.to_dict()
