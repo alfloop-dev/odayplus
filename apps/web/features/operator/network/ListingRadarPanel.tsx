@@ -378,13 +378,13 @@ function listingTitle(row: ListingRadarRow) {
 function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
   if (row.status === "candidate") return "已轉候選";
   if (row.status === "archived") return "已封存";
-  if (row.isDuplicate) return `合併重複${mergeTarget ? ` ${mergeTarget}` : ""}`;
+  if (row.isDuplicate) return `標記重複${mergeTarget ? ` ${mergeTarget}` : ""}`;
   if (row.hardRuleFailures.length) return "封存";
   return "轉為候選點";
 }
 
 /**
- * `canMerge` must be threaded in: offering "合併重複（保留目標物件）" to a role
+ * `canMerge` must be threaded in: offering "標記重複（保留目標物件）" to a role
  * that cannot merge advertises an action the server would refuse, and the
  * handler would silently no-op. The permission state is shown instead.
  *
@@ -394,8 +394,8 @@ function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
 function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean, mergedIntoId?: string) {
   if (row.status === "candidate") return `前往候選點 ${row.candidateId ?? ""}`;
   if (row.status === "archived") return "已封存";
-  if (mergedIntoId) return `已合併至 ${mergedIntoId}`;
-  if (row.isDuplicate) return canMerge ? "合併重複（保留目標物件）" : "無合併權限";
+  if (mergedIntoId) return `已標記重複至 ${mergedIntoId}`;
+  if (row.isDuplicate) return canMerge ? "標記重複（保留目標物件）" : "無標記重複權限";
   if (row.hardRuleFailures.length) return "封存（硬規則未過）";
   return "轉為候選點";
 }

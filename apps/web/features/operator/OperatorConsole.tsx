@@ -1010,7 +1010,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               ! {shellEnvelope.header.counts.notifications}
             </Button>
             {isNotificationOpen ? (
-              <div className={styles.notificationPanel}>
+              <div className={styles.notificationPanel} data-screen-label="Notifications">
                 <div className={styles.popoverTitle}>Notifications</div>
                 {liveNotifications.map((notification) => (
                   <article className={styles.notificationItem} key={notification.id ?? notification.title}>
@@ -1118,7 +1118,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               {activeRole.label}
             </Button>
             {isRoleMenuOpen ? (
-              <div className={styles.roleMenu}>
+              <div className={styles.roleMenu} data-screen-label="Role Switch Menu">
                 <div className={styles.popoverTitle}>Role switcher</div>
                 {rolesForShell.map((role) => (
                   <button

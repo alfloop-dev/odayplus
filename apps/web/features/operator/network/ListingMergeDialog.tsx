@@ -5,7 +5,7 @@ import styles from "../networkFindAreas.module.css";
 import type { ListingApiError } from "./listingsClient";
 import { useModalDialogBehavior } from "./useModalDialogBehavior";
 
-// "Dialog 合併重複物件" — the confirmation surface for a Listing Radar merge
+// "Dialog 收件決策確認" (對齊設計稿「標記重複」決策) — the confirmation surface for a Listing Radar merge
 // (ODP-OC-R5-011).
 //
 // Merge is a high-impact, irreversible write, so three rules are load-bearing
@@ -73,7 +73,7 @@ export function ListingMergeDialog({
     // merge_listing ALWAYS requires a reason server-side (422 otherwise), so
     // the dialog never treats it as optional.
     if (reason.trim().length < MIN_REASON_LEN) {
-      setLocalError("合併原因必填（至少 10 字 — 寫入 Audit）。");
+      setLocalError("標記重複原因必填（至少 10 字 — 寫入 Audit）。");
       return;
     }
     if (!riskAcknowledged) {
@@ -90,7 +90,7 @@ export function ListingMergeDialog({
   return (
     <div
       className={styles.reviewDialogOverlay}
-      data-screen-label="Dialog 合併重複物件"
+      data-screen-label="Dialog 收件決策確認"
       data-testid="listing-merge-dialog"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) requestClose();
@@ -98,7 +98,7 @@ export function ListingMergeDialog({
     >
       <div
         aria-busy={busy ? "true" : undefined}
-        aria-label={`合併重複物件 — ${sourceListingId} → ${targetListingId}`}
+        aria-label={`標記重複 — ${sourceListingId} → ${targetListingId}`}
         aria-modal="true"
         className={styles.reviewDialog}
         ref={panelRef}
@@ -106,7 +106,7 @@ export function ListingMergeDialog({
       >
         <div className={styles.reviewDialogHead}>
           <div className={styles.reviewDialogTitle} data-testid="listing-merge-title">
-            合併重複物件 · {sourceListingId} → {targetListingId}
+            標記重複 · {sourceListingId} → {targetListingId}
           </div>
           <button
             aria-label="關閉"
@@ -122,7 +122,7 @@ export function ListingMergeDialog({
 
         <div className={styles.reviewDialogBody}>
           <div className={styles.reviewDialogSub}>
-            合併前檢視 — 送出後 {sourceListingId} 不再獨立評估
+            標記重複前檢視 — 送出後 {sourceListingId} 不再獨立評估
           </div>
 
           <div data-testid="listing-merge-summary">
@@ -136,7 +136,7 @@ export function ListingMergeDialog({
 
           <div className={styles.reviewDialogField}>
             <span className={styles.reviewDialogFieldLabel}>
-              合併原因（必填 — 寫入 Audit）
+              標記重複原因（必填 — 寫入 Audit）
             </span>
             <textarea
               className={styles.reviewDialogInput}
@@ -164,7 +164,7 @@ export function ListingMergeDialog({
               {riskAcknowledged ? "☑" : "☐"}
             </span>
             <span className={styles.reviewAckText}>
-              我已閱讀並了解上述風險，確認執行合併（將連同此摘要寫入 Audit）。
+              我已閱讀並了解上述風險，確認執行標記重複（將連同此摘要寫入 Audit）。
             </span>
           </button>
 
@@ -205,7 +205,7 @@ export function ListingMergeDialog({
             onClick={handleSubmit}
             type="button"
           >
-            {busy ? "寫入中…" : "確認合併"}
+            {busy ? "寫入中…" : "確認標記重複"}
           </button>
         </div>
       </div>
@@ -220,7 +220,7 @@ export function ListingMergeDialog({
  */
 export function buildMergeRiskSummary(sourceListingId: string, targetListingId: string): string {
   return (
-    `合併後將把 ${sourceListingId} 標記為 ${targetListingId} 的重複，並把其來源證據移轉至 ` +
+    `標記重複後將把 ${sourceListingId} 標記為 ${targetListingId} 的重複，並把其來源證據移轉至 ` +
     `${targetListingId}。${sourceListingId} 將不再獨立進入網絡評估，且此操作無法自助復原。`
   );
 }

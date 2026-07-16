@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+from shared.audit import AuditImmutabilityError
+from shared.audit.events import AuditEvent, InMemoryAuditLog
 from shared.audit.policy import (
     AuditOutcome,
     build_security_event,
@@ -87,3 +91,43 @@ def test_build_security_event_captures_auth_context() -> None:
     assert event.occurred_at
     data = event.to_dict()
     assert data["outcome"] == "deny"
+
+
+def test_in_memory_audit_log_hash_chain_detects_tamper() -> None:
+    log = InMemoryAuditLog()
+    first = log.record(
+        AuditEvent(
+            event_type="audit.test.v1",
+            actor="auditor-a",
+            action="export",
+            resource="audit/export-1",
+            outcome="success",
+            correlation_id="corr-audit-chain",
+            metadata={"reason": "chain test"},
+        )
+    )
+    second = log.record(
+        AuditEvent(
+            event_type="audit.test.v1",
+            actor="auditor-b",
+            action="view",
+            resource="audit/export-1",
+            outcome="success",
+            correlation_id="corr-audit-chain",
+        )
+    )
+
+    assert first.event_hash
+    assert second.previous_hash == first.event_hash
+    assert log.verify_chain().ok is True
+
+    object.__setattr__(first, "metadata", {"reason": "tampered"})
+    assert log.verify_chain().ok is False
+
+
+def test_audit_log_denies_product_mutation_methods() -> None:
+    log = InMemoryAuditLog()
+    with pytest.raises(AuditImmutabilityError):
+        log.delete_event("evt-1")
+    with pytest.raises(AuditImmutabilityError):
+        log.update_event_metadata("evt-1", {"reason": "rewrite"})

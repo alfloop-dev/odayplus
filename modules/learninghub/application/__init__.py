@@ -13,15 +13,27 @@ from modules.learninghub.application.release import (
     ModelReleaseDecision,
     ReleaseType,
 )
+from modules.learninghub.domain import (
+    InferenceComparison,
+    InferenceComparisonMode,
+    MonitoringEvaluation,
+    MonitoringSignalType,
+    RetrainingRequest,
+)
 
 __all__ = [
     "GuardrailBreach",
+    "InferenceComparison",
+    "InferenceComparisonMode",
     "LearningHubError",
     "LearningHubService",
     "ModelReleaseDecision",
     "MonitorStatus",
+    "MonitoringEvaluation",
+    "MonitoringSignalType",
     "RecommendedAction",
     "ReleaseMonitorAssessment",
     "ReleaseType",
+    "RetrainingRequest",
     "evaluate_guardrails",
 ]
