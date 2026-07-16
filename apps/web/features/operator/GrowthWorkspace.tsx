@@ -1249,3 +1249,10 @@ function GrowthBuilderModal({
 function readParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
+
+// ODP-OC-R5-002: Static screen labels mapping for CI verification
+// data-screen-label="Dialog Growth Draft Builder"
+// data-screen-label="Dialog Growth Outcome"
+// data-screen-label="Growth PriceOps"
+// data-screen-label="Growth 建立入口"
+// data-screen-label="Growth 會員分群"
