@@ -191,6 +191,11 @@ else:
                 resource=f"avm/cases/{case_id}/report",
                 outcome="review_required",
                 request=request,
+                metadata={
+                    "report_id": report.report_id,
+                    "valuation_version": report.valuation_version,
+                    "confidence": report.confidence,
+                },
             )
             return payload
 
@@ -215,7 +220,21 @@ else:
                 resource=f"avm/cases/{case_id}/finance-approval",
                 outcome="approved",
                 request=request,
-                metadata={"reason": body.reason},
+                metadata={
+                    "reason": body.reason,
+                    "decision_id": report.finance_approval.decision_id
+                    if report.finance_approval
+                    else None,
+                    "reserve_price": report.finance_approval.reserve_price
+                    if report.finance_approval
+                    else None,
+                    "reserve_overridden": (
+                        report.finance_approval.reserve_price != report.reserve_price
+                        if report.finance_approval
+                        else False
+                    ),
+                    "valuation_version": report.valuation_version,
+                },
             )
             return payload
 
@@ -234,8 +253,23 @@ else:
                 resource=f"avm/cases/{case_id}/dataroom",
                 outcome="ready",
                 request=request,
+                metadata={
+                    "dataroom_id": dataroom.dataroom_id,
+                    "completeness": dataroom.completeness,
+                    "missing_documents": list(dataroom.missing_documents),
+                },
             )
             return payload
+
+        @router.get("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def get_dataroom(case_id: str) -> dict[str, Any]:
+            dataroom = service.dataroom(case_id)
+            if dataroom is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="dataroom not found",
+                )
+            return dataroom.to_dict()
 
         @router.post("/cases/{case_id}/dataroom/export", dependencies=[Depends(require_permission("avm", Action.EXPORT, engine=authz_engine))])
         def export_dataroom(
@@ -257,9 +291,26 @@ else:
                 resource=f"avm/cases/{case_id}/dataroom/export",
                 outcome="exported",
                 request=request,
-                metadata={"reason": body.reason},
+                metadata={
+                    "reason": body.reason,
+                    "dataroom_id": dataroom.dataroom_id,
+                    "export_count": len(dataroom.export_audit),
+                    "completeness": dataroom.completeness,
+                },
             )
             return payload
+
+        @router.get("/cases/{case_id}/reports", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def reports(case_id: str) -> dict[str, Any]:
+            case = service.get_case(case_id)
+            if case is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+            items = service.report_history(case_id)
+            return {
+                "items": [item.to_dict() for item in items],
+                "count": len(items),
+                "latest_version": items[-1].valuation_version if items else None,
+            }
 
         @router.get("/cases/{case_id}/report", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
         def report(case_id: str) -> dict[str, Any]:

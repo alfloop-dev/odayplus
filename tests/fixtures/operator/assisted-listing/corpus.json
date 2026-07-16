@@ -1,0 +1,85 @@
+{
+  "https://www.synthetic.example/detail-77120345.html": {
+    "snapshot_id": "SNAP-SYNTHETIC-77120345",
+    "captured_at": "2026-07-15T02:14:00Z",
+    "raw": {
+      "source_listing_id": "synthetic-77120345",
+      "title": "新莊副都心 興德路一樓店面",
+      "address_raw": "新北市新莊區興德路 30 號 1F",
+      "rent_text": "NT$45,000 / 月",
+      "rent_amount": 45000,
+      "area_text": "16 坪",
+      "area_ping": 16.0,
+      "floor": "1F",
+      "listing_type": "店面",
+      "listing_status": "active",
+      "management_fee": 2000,
+      "deposit": "二個月",
+      "available_from": "2026-08-01",
+      "confidence": 0.92
+    }
+  },
+  "https://www.synthetic.example/detail-88520242.html": {
+    "snapshot_id": "SNAP-SYNTHETIC-88520242",
+    "captured_at": "2026-07-15T02:20:00Z",
+    "raw": {
+      "source_listing_id": "synthetic-2024",
+      "title": "信義松仁路 臨路一樓店面（降價）",
+      "address_raw": "台北市信義區松仁路 96 號 1F",
+      "rent_text": "NT$55,000 / 月",
+      "rent_amount": 55000,
+      "area_text": "18 坪",
+      "area_ping": 18.0,
+      "floor": "1F 臨路",
+      "listing_type": "店面",
+      "listing_status": "active",
+      "management_fee": 3000,
+      "deposit": "二個月",
+      "available_from": "2026-08-15",
+      "confidence": 0.94
+    }
+  },
+  "https://www.synthetic.example/detail-99310418.html": {
+    "snapshot_id": "SNAP-SYNTHETIC-99310418",
+    "captured_at": "2026-07-15T02:31:00Z",
+    "raw": {
+      "source_listing_id": "synthetic-99310418",
+      "title": "板橋府中 店面出租",
+      "address_raw": "新北市板橋區府中路 52 號 2F",
+      "rent_text": "NT$51,000 / 月",
+      "rent_amount": 51000,
+      "area_text": "22 坪",
+      "area_ping": 22.0,
+      "floor": "2F",
+      "listing_type": "店面",
+      "listing_status": "active",
+      "confidence": 0.71
+    }
+  },
+  "https://www.synthetic.example/detail-40028801.html": {
+    "snapshot_id": "SNAP-SYNTHETIC-40028801",
+    "captured_at": "2026-07-15T02:36:00Z",
+    "raw": {
+      "source_listing_id": "synthetic-40028801",
+      "title": "（版面異常）",
+      "address_raw": "",
+      "rent_text": "面議",
+      "rent_amount": -1,
+      "area_text": "",
+      "floor": "",
+      "listing_type": "",
+      "listing_status": "active",
+      "confidence": 0.12
+    }
+  },
+  "https://www.synthetic.example/detail-50000001.html": {
+    "snapshot_id": "SNAP-SYNTHETIC-50000001",
+    "captured_at": "2026-07-15T02:41:00Z",
+    "failure": {
+      "code": "ODP-INTAKE-RETRIEVAL-TIMEOUT",
+      "summary": "來源頁擷取逾時（上游未於 10 秒內回應）。",
+      "next_action": "稍後重試；已填寫的修正內容會保留。",
+      "retryable": true
+    }
+  }
+}

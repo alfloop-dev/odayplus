@@ -31,6 +31,7 @@ import type {
   StoreOpsWorkflowIssue,
   StoreOpsWorkflowPayloadBase,
 } from "./storeOpsWorkflowTypes";
+import { STORE_OPS_REFRESH_EVENT } from "./storeOpsWorkflowTypes";
 
 export type {
   StoreOpsActionPayload,
@@ -112,6 +113,87 @@ const roleLabels: Record<OperatorRoleId, string> = {
 };
 
 const roleOptions = OPERATOR_ROLE_IDS.map((roleId) => ({ label: roleLabels[roleId], value: roleId }));
+
+const roleApiRoles: Record<OperatorRoleId, string> = {
+  opsLead: "operations_manager",
+  supportLead: "operations_manager",
+  facilitiesLead: "regional_supervisor",
+  marketingManager: "marketing_manager",
+  expansionManager: "expansion_user",
+  auditPm: "auditor",
+};
+
+const workflowActionEndpoints: Partial<Record<StoreOpsWorkflowDialogType, string>> = {
+  triage: "triage",
+  assign: "assign",
+  action: "actions",
+  fieldReport: "field-report",
+  outcome: "outcome",
+  escalate: "escalate",
+  replyReview: "reply-review",
+  transfer: "transfer",
+};
+
+async function submitStoreOpsWorkflow(
+  type: StoreOpsWorkflowDialogType,
+  payload: StoreOpsWorkflowPayloadBase & Record<string, unknown>,
+) {
+  if (typeof window === "undefined") return;
+
+  const roleId = (window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId | null) || "opsLead";
+  const correlationId = `corr-store-ops-${Math.random().toString(36).slice(2, 11)}`;
+  const idempotencyKey = `idem-store-ops-${payload.issueId}-${type}-${Math.random().toString(36).slice(2, 11)}`;
+  const path =
+    type === "cameraPurpose"
+      ? `/api/v1/operator/store-ops/issues/${payload.issueId}/camera-purpose`
+      : workflowActionEndpoints[type]
+        ? `/api/v1/operator/store-ops/issues/${payload.issueId}/${workflowActionEndpoints[type]}`
+        : "";
+
+  if (!path) return;
+
+  try {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+        "X-Correlation-ID": correlationId,
+        "X-Subject-Id": `operator-${roleId}`,
+        "X-Roles": roleApiRoles[roleId] ?? "operations_manager",
+        "X-Tenant-Id": "tenant-a",
+      },
+      body: JSON.stringify({
+        ...payload,
+        actorRoleId: roleId,
+        actorName: roleLabels[roleId] ?? "Operator",
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    window.dispatchEvent(
+      new CustomEvent(STORE_OPS_REFRESH_EVENT, {
+        detail: {
+          ok: response.ok,
+          status: response.status,
+          type,
+          issueId: payload.issueId,
+          body,
+        },
+      }),
+    );
+  } catch (error) {
+    window.dispatchEvent(
+      new CustomEvent(STORE_OPS_REFRESH_EVENT, {
+        detail: {
+          ok: false,
+          type,
+          issueId: payload.issueId,
+          error: error instanceof Error ? error.message : "Store Ops API request failed",
+        },
+      }),
+    );
+  }
+}
 
 const severityOptions: Array<{ label: string; value: Severity }> = [
   { label: "Low", value: "low" },
@@ -254,6 +336,7 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onTriage?.(payload);
     callbacks?.onSubmit?.({ type: "triage", payload });
+    void submitStoreOpsWorkflow("triage", payload);
     onClose();
   }
 
@@ -333,6 +416,7 @@ function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onAssign?.(payload);
     callbacks?.onSubmit?.({ type: "assign", payload });
+    void submitStoreOpsWorkflow("assign", payload);
     onClose();
   }
 
@@ -381,6 +465,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onCreateAction?.(payload);
     callbacks?.onSubmit?.({ type: "action", payload });
+    void submitStoreOpsWorkflow("action", payload);
     onClose();
   }
 
@@ -472,6 +557,7 @@ function FieldReportForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onFieldReport?.(payload);
     callbacks?.onSubmit?.({ type: "fieldReport", payload });
+    void submitStoreOpsWorkflow("fieldReport", payload);
     onClose();
   }
 
@@ -547,6 +633,7 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onOutcome?.(payload);
     callbacks?.onSubmit?.({ type: "outcome", payload });
+    void submitStoreOpsWorkflow("outcome", payload);
     onClose();
   }
 
@@ -621,6 +708,7 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onEscalate?.(payload);
     callbacks?.onSubmit?.({ type: "escalate", payload });
+    void submitStoreOpsWorkflow("escalate", payload);
     onClose();
   }
 
@@ -699,6 +787,7 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onCameraPurpose?.(payload);
     callbacks?.onSubmit?.({ type: "cameraPurpose", payload });
+    void submitStoreOpsWorkflow("cameraPurpose", payload);
     onClose();
   }
 
@@ -767,6 +856,7 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onReplyReview?.(payload);
     callbacks?.onSubmit?.({ type: "replyReview", payload });
+    void submitStoreOpsWorkflow("replyReview", payload);
     onClose();
   }
 
@@ -838,6 +928,7 @@ function TransferForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     };
     callbacks?.onTransfer?.(payload);
     callbacks?.onSubmit?.({ type: "transfer", payload });
+    void submitStoreOpsWorkflow("transfer", payload);
     onClose();
   }
 

@@ -8,6 +8,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
+
 # Versions (output-contract principle §5.1 of ODP-MOD-07).
 ADLIFT_MODEL_VERSION = "adlift-did-v1"
 ADLIFT_FEATURE_VERSION = "matched-control-view-v1"
@@ -22,6 +24,9 @@ MIN_PRE_TREND_POINTS = 2
 # IROMI = incremental gross margin / ad spend (ODP-ML-05 §4, AC-07-04).
 SCALE_IROMI = 1.5
 CONTINUE_IROMI = 1.0
+
+# Two-sided confidence level for the matched-pair DiD effect interval (90% CI).
+DID_EFFECT_CI_ALPHA = 0.10
 
 
 class EvidenceLevel(StrEnum):
@@ -227,15 +232,28 @@ class ContaminationFinding:
 
 @dataclass(frozen=True)
 class EffectInterval:
-    """Dispersion of the per-store-day matched-pair gross-margin effect."""
+    """Confidence interval for the per-store-day matched-pair gross-margin effect.
+
+    For the DiD design ``low``/``high`` are a t-based confidence interval around
+    the mean pairwise effect and ``standard_error`` is its OLS standard error;
+    for the non-causal before/after fallback the interval collapses to the point
+    estimate.
+    """
 
     metric: str
     low: float
     point: float
     high: float
+    standard_error: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"metric": self.metric, "low": self.low, "point": self.point, "high": self.high}
+        return {
+            "metric": self.metric,
+            "low": self.low,
+            "point": self.point,
+            "high": self.high,
+            "standard_error": self.standard_error,
+        }
 
 
 @dataclass(frozen=True)
@@ -672,12 +690,41 @@ def _estimate_incrementality(
         surface_gross_margin=surface_gross_margin,
         incremental_revenue=round(incremental_revenue, 2),
         incremental_gross_margin=round(incremental_gross_margin, 2),
-        effect_interval=EffectInterval(
+        effect_interval=_did_effect_interval(gm_effects),
+    )
+
+
+def _did_effect_interval(effects: Sequence[float]) -> EffectInterval:
+    """Confidence interval for the mean matched-pair DiD gross-margin effect.
+
+    The per-pair effects are a sample of the per-store-day treatment effect.
+    Regressing them on a constant with ``statsmodels`` OLS yields the mean
+    (point estimate — identical to the previous simple average), its standard
+    error and a t-based confidence interval. This is proper DiD inference rather
+    than reporting the raw min/max spread. With fewer than two pairs the standard
+    error is not identified, so the interval degenerates to the point estimate.
+    """
+    point = round(_mean(effects), 4)
+    n = len(effects)
+    if n < 2:
+        return EffectInterval(
             metric="did_gm_per_store_day",
-            low=round(min(gm_effects), 4),
-            point=round(_mean(gm_effects), 4),
-            high=round(max(gm_effects), 4),
-        ),
+            low=point,
+            point=point,
+            high=point,
+            standard_error=0.0,
+        )
+    import statsmodels.api as sm
+
+    outcome = np.asarray(effects, dtype=float)
+    fit = sm.OLS(outcome, np.ones(n)).fit()
+    low, high = (float(bound) for bound in fit.conf_int(alpha=DID_EFFECT_CI_ALPHA)[0])
+    return EffectInterval(
+        metric="did_gm_per_store_day",
+        low=round(low, 4),
+        point=point,
+        high=round(high, 4),
+        standard_error=round(float(fit.bse[0]), 6),
     )
 
 
@@ -797,16 +844,17 @@ def _normalised_slope(values: Sequence[float]) -> float:
 
 
 def _least_squares_slope(values: Sequence[float]) -> float:
+    """Ordinary-least-squares slope of ``values`` against their index.
+
+    Backed by ``numpy.polyfit`` (degree-1 least squares) so the pre-trend test
+    uses the library implementation rather than a hand-rolled normal equation.
+    """
     n = len(values)
     if n < 2:
         return 0.0
-    mean_x = (n - 1) / 2
-    mean_y = sum(values) / n
-    numerator = sum((index - mean_x) * (value - mean_y) for index, value in enumerate(values))
-    denominator = sum((index - mean_x) ** 2 for index in range(n))
-    if denominator == 0:
-        return 0.0
-    return numerator / denominator
+    index = np.arange(n, dtype=float)
+    slope = np.polyfit(index, np.asarray(values, dtype=float), 1)[0]
+    return float(slope)
 
 
 def _mean(values: Sequence[float]) -> float:

@@ -77,6 +77,13 @@ else:
         replicated: bool = False
         now: str | None = None
 
+    class ClosePayload(BaseModel):
+        actor: str = Field(min_length=1)
+        disposition: str
+        reason: str = ""
+        follow_up: bool = False
+        follow_up_kind: str | None = None
+
     def _parse_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
@@ -284,6 +291,22 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
+        @router.post("/{intervention_id}/close", dependencies=[Depends(require_permission("intervention", Action.APPROVE, engine=authz_engine))])
+        def close_case(
+            intervention_id: str, body: ClosePayload, request: Request
+        ) -> dict[str, Any]:
+            return _run(
+                lambda: active_workflow.close_case(
+                    intervention_id,
+                    actor=body.actor,
+                    disposition=body.disposition,
+                    reason=body.reason,
+                    follow_up=body.follow_up,
+                    follow_up_kind=body.follow_up_kind,
+                    correlation_id=request.state.correlation_id,
+                )
+            )
+
         @router.get("/{intervention_id}/label", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def get_label(intervention_id: str) -> dict[str, Any]:
             _get_or_404(intervention_id)
@@ -297,7 +320,9 @@ else:
         def _run(action: Any) -> dict[str, Any]:
             try:
                 return action().to_dict()
-            except InterventionError as exc:
+            except (InterventionError, ValueError) as exc:
+                # InterventionError subclasses ValueError; a bad enum value (e.g.
+                # an unknown disposition/kind) also surfaces as a domain 422.
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc

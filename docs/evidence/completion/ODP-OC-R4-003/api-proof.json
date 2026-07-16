@@ -1,0 +1,43 @@
+{
+  "task_id": "ODP-OC-R4-003",
+  "owner": "Codex",
+  "api_prefix": "/api/v1/operator/store-ops",
+  "proof_date": "2026-07-14",
+  "read_endpoints": [
+    "GET /summary",
+    "GET /issues",
+    "GET /issues/{issue_id}",
+    "GET /issues/{issue_id}/evidence"
+  ],
+  "write_endpoints": [
+    "POST /issues/{issue_id}/triage",
+    "POST /issues/{issue_id}/assign",
+    "POST /issues/{issue_id}/actions",
+    "POST /issues/{issue_id}/field-report",
+    "POST /issues/{issue_id}/outcome",
+    "POST /issues/{issue_id}/escalate",
+    "POST /issues/{issue_id}/reply-review",
+    "POST /issues/{issue_id}/transfer",
+    "POST /issues/{issue_id}/camera-purpose"
+  ],
+  "four_light_query_contract": {
+    "example": "/api/v1/operator/store-ops/issues?light=operations&lightStatus=red",
+    "expected_issue_ids": ["ISS-1024"],
+    "filter_echo": {
+      "light": "operations",
+      "lightStatus": "red"
+    }
+  },
+  "durability_contract": {
+    "repository": "DurableStoreOpsRepository",
+    "storage": "SqliteDocumentStore",
+    "state_collection": "opsboard.store_ops.state",
+    "idempotency_collection": "opsboard.store_ops.idempotency",
+    "restart_proof": "tests/contract/test_operator_api.py::test_store_ops_issue_1024_lifecycle_and_camera_purpose_survive_restart"
+  },
+  "policy_contract": {
+    "invalid_transition_status": 409,
+    "camera_policy_rejection_status": 422,
+    "idempotent_replay": "same response, no additional Store Ops audit event"
+  }
+}

@@ -51,6 +51,9 @@ class InMemoryAVMRepository:
         versions = self._reports.get(case_id, [])
         return versions[-1] if versions else None
 
+    def report_history(self, case_id: str) -> list[ValuationReport]:
+        return list(self._reports.get(case_id, []))
+
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._datarooms[dataroom.case_id] = dataroom
         return dataroom
