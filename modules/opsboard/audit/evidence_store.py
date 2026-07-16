@@ -112,30 +112,31 @@ class DurableEvidenceBundleStore:
         self._ensure_integrity_columns()
 
     def save(self, record: RetainedEvidence) -> RetainedEvidence:
-        existing = self._engine.query_one(
-            "SELECT export_id FROM durable_evidence_bundles WHERE export_id = ?",
-            (record.export_id,),
-        )
-        if existing is not None:
-            raise EvidenceImmutabilityError(
-                f"retained evidence is append-only; overwrite denied for {record.export_id}"
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT export_id FROM durable_evidence_bundles WHERE export_id = ?",
+                (record.export_id,),
             )
-        last = self._engine.query_one(
-            "SELECT sequence, record_hash FROM durable_evidence_bundles "
-            "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
-        )
-        sequence = int(last["sequence"]) + 1 if last is not None else 1
-        previous_hash = (
-            str(last["record_hash"]) if last is not None else CHAIN_GENESIS_HASH
-        )
-        stamped = attach_retained_evidence_integrity(
-            _record_for_sink(record, self._worm_sink),
-            sequence=sequence,
-            previous_hash=previous_hash,
-        )
-        self._write_worm(stamped)
-        self._insert(stamped)
-        return stamped
+            if existing is not None:
+                raise EvidenceImmutabilityError(
+                    f"retained evidence is append-only; overwrite denied for {record.export_id}"
+                )
+            last = self._engine.query_one(
+                "SELECT sequence, record_hash FROM durable_evidence_bundles "
+                "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+            )
+            sequence = int(last["sequence"]) + 1 if last is not None else 1
+            previous_hash = (
+                str(last["record_hash"]) if last is not None else CHAIN_GENESIS_HASH
+            )
+            stamped = attach_retained_evidence_integrity(
+                _record_for_sink(record, self._worm_sink),
+                sequence=sequence,
+                previous_hash=previous_hash,
+            )
+            self._write_worm(stamped)
+            self._insert(stamped)
+            return stamped
 
     def get(self, export_id: str) -> RetainedEvidence | None:
         row = self._engine.query_one(

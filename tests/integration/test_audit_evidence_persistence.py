@@ -17,6 +17,7 @@ public interfaces.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -763,6 +764,33 @@ def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
         )
 
         assert bundle_persistence.audit_log.verify_chain().ok is False
+    finally:
+        bundle_persistence.engine.close()
+
+
+def test_durable_audit_log_serializes_concurrent_sequence_allocation(db_path) -> None:
+    bundle_persistence = _durable_bundle(db_path)
+
+    def record_event(index: int) -> AuditEvent:
+        return bundle_persistence.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.model_release.v1",
+                actor=f"release-operator-{index}",
+                action="request_release",
+                resource=f"learninghub/release/{index}",
+                outcome="accepted",
+                correlation_id="corr-audit-concurrent",
+                occurred_at=NOW + timedelta(seconds=index),
+                metadata={"release_index": index},
+            )
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            events = list(executor.map(record_event, range(24)))
+
+        assert sorted(event.sequence for event in events) == list(range(1, 25))
+        assert bundle_persistence.audit_log.verify_chain().ok is True
     finally:
         bundle_persistence.engine.close()
 

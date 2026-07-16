@@ -47,58 +47,59 @@ class DurableAuditLog:
         self._ensure_integrity_columns()
 
     def record(self, event: AuditEvent) -> AuditEvent:
-        existing = self._engine.query_one(
-            "SELECT * FROM durable_audit_events WHERE event_id = ?",
-            (event.event_id,),
-        )
-        if existing is not None:
-            return self._row_to_event(existing)
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT * FROM durable_audit_events WHERE event_id = ?",
+                (event.event_id,),
+            )
+            if existing is not None:
+                return self._row_to_event(existing)
 
-        last = self._engine.query_one(
-            "SELECT sequence, event_hash FROM durable_audit_events "
-            "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
-        )
-        sequence = int(last["sequence"]) + 1 if last is not None else 1
-        previous_hash = (
-            str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
-        )
-        sink_id = _event_sink_id(event, self._worm_sink)
-        attach_audit_event_integrity(
-            event,
-            sequence=sequence,
-            previous_hash=previous_hash,
-            sink_id=sink_id,
-        )
-        if self._worm_sink is not None:
-            self._worm_sink.write_audit_event(event)
-        self._engine.execute(
-            "INSERT INTO durable_audit_events("
-            "  event_id, event_type, actor, action, resource, outcome, "
-            "  correlation_id, job_id, metadata_json, occurred_at, "
-            "  sequence, previous_hash, event_hash, signature_key_id, "
-            "  signature_version, signature_alg, worm_sink_id"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                event.event_id,
-                event.event_type,
-                event.actor,
-                event.action,
-                event.resource,
-                event.outcome,
-                event.correlation_id,
-                event.job_id,
-                json.dumps(event.metadata),
-                event.occurred_at.isoformat(),
-                event.sequence,
-                event.previous_hash,
-                event.event_hash,
-                event.signature_key_id,
-                event.signature_version,
-                event.signature_alg,
-                event.worm_sink_id,
-            ),
-        )
-        return event
+            last = self._engine.query_one(
+                "SELECT sequence, event_hash FROM durable_audit_events "
+                "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+            )
+            sequence = int(last["sequence"]) + 1 if last is not None else 1
+            previous_hash = (
+                str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
+            )
+            sink_id = _event_sink_id(event, self._worm_sink)
+            attach_audit_event_integrity(
+                event,
+                sequence=sequence,
+                previous_hash=previous_hash,
+                sink_id=sink_id,
+            )
+            if self._worm_sink is not None:
+                self._worm_sink.write_audit_event(event)
+            self._engine.execute(
+                "INSERT INTO durable_audit_events("
+                "  event_id, event_type, actor, action, resource, outcome, "
+                "  correlation_id, job_id, metadata_json, occurred_at, "
+                "  sequence, previous_hash, event_hash, signature_key_id, "
+                "  signature_version, signature_alg, worm_sink_id"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    event.event_id,
+                    event.event_type,
+                    event.actor,
+                    event.action,
+                    event.resource,
+                    event.outcome,
+                    event.correlation_id,
+                    event.job_id,
+                    json.dumps(event.metadata),
+                    event.occurred_at.isoformat(),
+                    event.sequence,
+                    event.previous_hash,
+                    event.event_hash,
+                    event.signature_key_id,
+                    event.signature_version,
+                    event.signature_alg,
+                    event.worm_sink_id,
+                ),
+            )
+            return event
 
     def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
         events = self._read_events()
