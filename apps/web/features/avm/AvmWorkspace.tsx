@@ -247,7 +247,7 @@ export function AvmWorkspace({
       />
     );
   }
-  return <AvmOverview />;
+  return <AvmOverview isProduction={isProduction} />;
 }
 
 // Client-side Offline Indicator
@@ -482,12 +482,20 @@ function Header({
   title,
   summary,
   caseId,
+  freshness = {
+    updatedAt: "2026-07-13",
+    modelVersion: "dealroom-avm-baseline-v1",
+    sourceSnapshotId: "snapshot-2026-07-13",
+  },
   currentUser,
+  isProduction = false,
 }: {
   title: string;
   summary: string;
   caseId?: string;
+  freshness?: { updatedAt: string; modelVersion: string; sourceSnapshotId: string };
   currentUser?: { subjectId: string; roles: string };
+  isProduction?: boolean;
 }) {
   return (
     <PageHeader
@@ -510,7 +518,7 @@ function Header({
           <a className={styles.secondaryButton} href="#audit">
             View audit
           </a>
-          <ClientCreateCaseButton currentUser={currentUser} />
+          {!isProduction && <ClientCreateCaseButton currentUser={currentUser} />}
         </div>
       }
     />
@@ -534,12 +542,13 @@ function WorkspaceNav({ active }: { active: AvmRouteKey }) {
   );
 }
 
-function AvmOverview() {
+function AvmOverview({ isProduction }: { isProduction: boolean }) {
   return (
     <>
       <Header
         title="DealRoomAVM 估值"
         summary="對門市做三鏡估值、財務核准並備妥交易資料室。"
+        isProduction={isProduction}
       />
       <main className="odp-content" data-testid="avm-overview-page">
         <WorkspaceNav active="overview" />
@@ -604,6 +613,7 @@ function CasesListPage({
         title="估值案件"
         summary="對門市做三鏡估值、財務核准並備妥交易資料室。"
         currentUser={currentUser}
+        isProduction={isProduction}
       />
       <main className="odp-content" data-testid="avm-cases-page">
         <WorkspaceNav active="cases" />
@@ -785,6 +795,7 @@ function CaseDetailPage({
         summary={`目前狀態 ${c.status}，fair P50 ${c.fairPrice.p50.toLocaleString()}，confidence ${c.confidence}。系統估值與人工核准分離呈現。`}
         caseId={c.caseId}
         currentUser={currentUser}
+        isProduction={isProduction}
       />
       <main className="odp-content" data-testid="avm-case-detail-page">
         <WorkspaceNav active="caseDetail" />

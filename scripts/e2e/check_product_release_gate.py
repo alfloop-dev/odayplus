@@ -411,6 +411,7 @@ def main() -> int:
     production_directories = [
         ROOT / "apps/api",
         ROOT / "apps/web/src",
+        ROOT / "apps/web/features",
     ]
     for directory in production_directories:
         if not directory.exists():
