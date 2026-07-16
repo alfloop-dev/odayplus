@@ -85,13 +85,16 @@ else:
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_ingestion_service: Any = None,
+        telemetry: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, which selects in-memory
         # (default) or durable SQLite storage from the environment
         # (ODP_PERSISTENCE / ODP_DB_PATH). Explicit arguments still win, so
         # tests can inject hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
+        from shared.observability import SpanKind, SpanStatus, Telemetry, TraceContext
 
+        telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
         bundle = persistence or build_persistence()
         audit_log = audit_log or bundle.audit_log
@@ -118,21 +121,111 @@ else:
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
             request.state.correlation_id = context.correlation_id
-            response = await call_next(request)
-            response.headers[CORRELATION_ID_HEADER] = context.correlation_id
-            return response
+
+            trace_ctx = TraceContext(
+                correlation_id=context.correlation_id,
+                actor_id="user",
+                request_id=context.correlation_id,
+            )
+
+            with telemetry.operation(
+                name=f"HTTP {request.method} {request.url.path}",
+                kind=SpanKind.API,
+                context=trace_ctx,
+                resource="HTTP",
+                action=request.method,
+                latency_labels={"service": "oday-api", "route": request.url.path},
+            ) as span:
+                response = await call_next(request)
+                if response.status_code >= 400:
+                    span.status = SpanStatus.ERROR
+                    span.error_code = f"HTTP_{response.status_code}"
+                response.headers[CORRELATION_ID_HEADER] = context.correlation_id
+                return response
+
 
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
-            return health_payload()
+            # Liveness: simply check that process is running
+            return {"status": "ok", "service": "oday-api"}
+
+        @api.get("/readiness", tags=["system"])
+        def readiness(response: Response) -> dict[str, Any]:
+            # Readiness: check database connectivity
+            db_ok = True
+            details = {}
+            if bundle.is_durable:
+                try:
+                    bundle.engine.query("SELECT 1")
+                    details["database"] = "healthy"
+                except Exception as exc:
+                    db_ok = False
+                    details["database"] = f"unhealthy: {exc}"
+            else:
+                details["database"] = "healthy (in-memory)"
+
+            if not db_ok:
+                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+                return {"status": "unhealthy", "service": "oday-api", "details": details}
+            return {"status": "ok", "service": "oday-api", "details": details}
 
         @api.get("/health", tags=["platform"])
-        def health(request: Request) -> dict[str, str]:
-            return health_detail_payload(correlation_id=request.state.correlation_id)
-
         @api.get("/platform/health", tags=["platform"])
-        def platform_health(request: Request) -> dict[str, str]:
-            return health_detail_payload(correlation_id=request.state.correlation_id)
+        def health(request: Request, response: Response) -> dict[str, Any]:
+            # Detailed health: check database, job queue, and external providers
+            db_ok = True
+            db_details = "healthy (in-memory)"
+            if bundle.is_durable:
+                try:
+                    bundle.engine.query("SELECT 1")
+                    db_details = "healthy"
+                except Exception as exc:
+                    db_ok = False
+                    db_details = f"unhealthy: {exc}"
+
+            if hasattr(provider_validation, "ok"):
+                provider_ok = provider_validation.ok
+                provider_errors = getattr(provider_validation, "errors", ())
+            elif callable(provider_validation):
+                try:
+                    provider_validation()
+                    provider_ok = True
+                    provider_errors = ()
+                except Exception as exc:
+                    provider_ok = False
+                    provider_errors = (str(exc),)
+            else:
+                provider_ok = True
+                provider_errors = ()
+
+            provider_details = "healthy" if provider_ok else f"unhealthy: {provider_errors}"
+
+            queue_ok = True
+            queue_details = "healthy"
+            try:
+                if bundle.is_durable:
+                    bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
+            except Exception as exc:
+                queue_ok = False
+                queue_details = f"unhealthy: {exc}"
+
+            overall_ok = db_ok and provider_ok and queue_ok
+            if not overall_ok:
+                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+            return {
+                "status": "ok" if overall_ok else "unhealthy",
+                "service": "oday-api",
+                "version": API_VERSION,
+                "time": datetime.now(UTC).isoformat(),
+                "correlation_id": request.state.correlation_id,
+                "dependencies": {
+                    "database": db_details,
+                    "job_queue": queue_details,
+                    "external_providers": provider_details,
+                }
+            }
+
 
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:

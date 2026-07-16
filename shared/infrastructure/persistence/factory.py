@@ -62,7 +62,9 @@ class PersistenceBundle:
     transaction_repository: Any
     machine_cycle_repository: Any
     external_fetch_state_store: Any = None
+    notification_repository: Any = None
     engine: Any = None
+
 
     @property
     def is_durable(self) -> bool:
@@ -86,6 +88,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.learninghub.infrastructure import InMemoryLearningHubRepository
     from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
+    from modules.notifications import InMemoryNotificationRepository
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
@@ -133,6 +136,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         transaction_repository=InMemoryTransactionRepository(),
         machine_cycle_repository=InMemoryMachineCycleRepository(),
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
+        notification_repository=InMemoryNotificationRepository(),
     )
 
 
@@ -140,6 +144,7 @@ def _durable_bundle(
     db_path: str | Path, *, worm_sink: AuditWormSink | None = None
 ) -> PersistenceBundle:
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -206,6 +211,7 @@ def _durable_bundle(
         transaction_repository=DurableTransactionRepository(engine),
         machine_cycle_repository=DurableMachineCycleRepository(engine),
         external_fetch_state_store=DurableExternalFetchStateStore(store),
+        notification_repository=DurableNotificationRepository(engine),
         engine=engine,
     )
 

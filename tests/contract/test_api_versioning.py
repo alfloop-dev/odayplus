@@ -9,7 +9,7 @@ from shared.api.versioning import API_V1_PREFIX, alias_paths, versioned_paths
 
 # Probes are infrastructure, not product contract: they are wired into deploy
 # manifests and load balancers, so they stay unversioned by design.
-UNVERSIONED_BY_DESIGN = {"/healthz", "/health", "/platform/health", "/platform/version"}
+UNVERSIONED_BY_DESIGN = {"/healthz", "/health", "/platform/health", "/platform/version", "/readiness"}
 
 DOC_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
