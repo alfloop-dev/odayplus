@@ -407,6 +407,26 @@ def main() -> int:
         if required_token not in closeout_pickup_text:
             errors.append(f"closeout pickup board missing token: {required_token}")
 
+    # Scan production code for forbidden x-test-mock switches
+    production_directories = [
+        ROOT / "apps/api",
+        ROOT / "apps/web/src",
+        ROOT / "apps/web/features",
+    ]
+    for directory in production_directories:
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".ts", ".tsx", ".js", ".jsx"):
+                try:
+                    content = path.read_text(encoding="utf-8")
+                    if "x-test-mock" in content:
+                        errors.append(
+                            f"forbidden mock switch found in production code: {path.relative_to(ROOT)}"
+                        )
+                except Exception:
+                    pass
+
     if errors:
         print("Product release gate failed:")
         for error in errors:

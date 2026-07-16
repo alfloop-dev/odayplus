@@ -1,0 +1,87 @@
+{
+  "schema": "oday-plus.operator-console-r5-task-source-audit.v1",
+  "captured_at": "2026-07-15T04:10:00Z",
+  "canonical_design": {
+    "version": "R5",
+    "package": 7,
+    "latest_pointer": "docs_archive/00_source_zips/operator_console/LATEST.json",
+    "zip_sha256": "fa1a980d1d0c3fe2102e11ac009a57a1fe25bdb5539f9bd03378c2a628a9b552",
+    "interactive_html_sha256": "1e1bcfa329842216422b1d3ae2a44e7014dc8005cc156e2dcc978a6e4a5c3a2d",
+    "screen_label_count": 37
+  },
+  "status": "dispatch_sources_aligned_implementation_not_yet_complete",
+  "active_execution_tasks": [
+    {
+      "task_id": "ODP-OC-R5-000",
+      "role": "archive_and_source_publication",
+      "source_alignment": "package_7_direct",
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-001",
+      "role": "assisted_listing_product_implementation",
+      "source_alignment": "package_7_interactive_plus_requirements_plus_ODP-EXT-002",
+      "required_screen_label_count": 5,
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-004",
+      "role": "assisted_listing_functional_product_e2e_validation",
+      "source_alignment": "package_7_interactive_plus_requirements_plus_ODP-EXT-002",
+      "required_screen_label_count": 5,
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-005",
+      "role": "assisted_listing_retrieval_security_validation",
+      "source_alignment": "package_7_interactive_plus_requirements_plus_ODP-EXT-002",
+      "required_screen_label_count": 5,
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-002",
+      "role": "product_visual_accessibility_and_regression_gate",
+      "source_alignment": "package_7_hash_and_37_labels",
+      "required_screen_label_count": 37,
+      "release_authority": false
+    },
+    {
+      "task_id": "ODP-OC-R5-003",
+      "role": "staging_rollback_and_cutover",
+      "source_alignment": "package_7_release_provenance",
+      "required_screen_label_count": 37,
+      "release_authority": true
+    },
+    {
+      "task_id": "ODP-EXT-002",
+      "role": "historical_ingestion_contract_composed_by_R5_001",
+      "source_alignment": "historical_brief_preserved_R5_addendum_points_to_package_7",
+      "r5_addendum": "docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md",
+      "release_authority": false
+    }
+  ],
+  "legacy_task_disposition": [
+    {
+      "task_id": "ODP-OC-R4-001..010",
+      "disposition": "historical_completed_input_not_current_design_parity"
+    },
+    {
+      "task_id": "ODP-OC-R4-011",
+      "disposition": "may_fix_existing_red_gate_but_no_R5_release_authority",
+      "absorbed_by": "ODP-OC-R5-002"
+    },
+    {
+      "task_id": "ODP-OC-R4-012",
+      "disposition": "superseded",
+      "superseded_by": "ODP-OC-R5-003"
+    }
+  ],
+  "required_added_screen_labels": [
+    "Network URL 收件佇列",
+    "Dialog 從網址新增物件",
+    "Dialog 收件處理詳情",
+    "Dialog 欄位修正",
+    "Dialog 收件決策確認"
+  ],
+  "audit_conclusion": "All non-historical tasks that can change current implementation, validation, or release now cite package 7 / R5. This proves dispatch-source alignment only; implementation remains incomplete until R5-001 through R5-003 acceptance passes."
+}

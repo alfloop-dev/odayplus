@@ -1,14 +1,20 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import { FranchiseeWorkspace } from "../../../features/shell/FranchiseeWorkspace.tsx";
+import { loadApiResource } from "../../../features/shell/resource.ts";
+import { getServerApiClient } from "../../lib/api/client.ts";
 
-export default function FranchiseePage() {
-  return (
-    <ModulePlaceholder
-      routeKey="franchisee"
-      scope={[
-        "加盟主檢視：門市健康度摘要與通知",
-        "簡易回報與任務確認（行動裝置可用）",
-        "不承擔完整模型審查，敏感資料依權限呈現",
-      ]}
-    />
-  );
+// Scoped to the calling franchisee's own store and reports — never cached
+// across callers.
+export const dynamic = "force-dynamic";
+
+export default async function FranchiseePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ storeId?: string }>;
+}) {
+  const { storeId } = await searchParams;
+  const view = await loadApiResource({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.getShellFranchisee(storeId),
+  });
+  return <FranchiseeWorkspace view={view} />;
 }

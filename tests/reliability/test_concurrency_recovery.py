@@ -421,7 +421,7 @@ def test_migration_upgrade_idempotent(tmp_path) -> None:
     conn.close()
 
     # 2. Boot SqliteEngine against this pre-existing database.
-    # It must execute the migrations (including 000004_job_lease_columns.sql),
+    # It must execute the migrations (including 000006_job_lease_columns.sql),
     # adding attempts, leased_until, max_retries, and successfully executing without duplicate errors.
     from shared.infrastructure.persistence.engine import SqliteEngine
     engine = SqliteEngine(db_file)

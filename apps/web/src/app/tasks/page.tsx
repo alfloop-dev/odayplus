@@ -1,13 +1,23 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import {
+  TaskCenterWorkspace,
+  type TaskCenterSearchParams,
+} from "../../../features/shell/TaskCenterWorkspace.tsx";
+import { loadApiResource } from "../../../features/shell/resource.ts";
+import { getServerApiClient } from "../../lib/api/client.ts";
 
-export default function TasksPage() {
-  return (
-    <ModulePlaceholder
-      routeKey="tasks"
-      scope={[
-        "待核准決策、待補件、待觀察窗成熟的決策任務",
-        "指派、SLA 與批次操作（compact 密度收件匣）",
-      ]}
-    />
-  );
+// Task assignment and SLA state change on every write; a cached Task Center
+// would show an operator a task someone else already took.
+export const dynamic = "force-dynamic";
+
+export default async function TasksPage({
+  searchParams,
+}: {
+  searchParams: Promise<TaskCenterSearchParams>;
+}) {
+  const params = await searchParams;
+  const tasks = await loadApiResource({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.getShellTasks(params),
+  });
+  return <TaskCenterWorkspace tasks={tasks} searchParams={params} />;
 }

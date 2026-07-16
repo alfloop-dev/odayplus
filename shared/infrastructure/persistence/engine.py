@@ -28,8 +28,11 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrat
 _SCHEMA_FILES = (
     "000002_durable_e2e_persistence.sql",
     "000003_durable_audit_evidence.sql",
-    "000004_job_lease_columns.sql",
+    "000004_durable_product_domain.sql",
+    "000005_durable_notifications.sql",
+    "000006_job_lease_columns.sql",
 )
+
 
 
 class SqliteEngine:

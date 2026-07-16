@@ -94,22 +94,30 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("audit", Action.VIEW)
     ),
     Role.EXPANSION_USER: frozenset(
-        _grant("heatzone", Action.VIEW, Action.CREATE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("heatzone", Action.VIEW, Action.CREATE)
         | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE)
     ),
     Role.SITE_REVIEWER: frozenset(
-        _grant("heatzone", Action.VIEW)
+        _grant("operator_console", Action.VIEW)
+        | _grant("heatzone", Action.VIEW)
         | _grant("listing", Action.VIEW, Action.CREATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE, Action.APPROVE, Action.OVERRIDE)
     ),
     Role.OPERATIONS_MANAGER: frozenset(
-        _grant("forecastops", Action.VIEW, Action.CREATE, Action.EXECUTE)
+        _grant("operator_console", Action.VIEW, Action.UPDATE)
+        | _grant("forecastops", Action.VIEW, Action.CREATE, Action.EXECUTE)
         | _grant("intervention", Action.VIEW, Action.CREATE, Action.APPROVE)
         | _grant("audit", Action.VIEW)
+        # Read-only into the franchisee portal so operations can support a
+        # franchisee without a second account; no CREATE, so an operator
+        # cannot file an acknowledgement on a franchisee's behalf.
+        | _grant("franchisee_portal", Action.VIEW)
     ),
     Role.REGIONAL_SUPERVISOR: frozenset(
-        _grant("forecastops", Action.VIEW)
+        _grant("operator_console", Action.VIEW)
+        | _grant("forecastops", Action.VIEW)
         | _grant("intervention", Action.VIEW, Action.EXECUTE)
         | _grant("audit", Action.VIEW)
     ),
@@ -117,15 +125,27 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("priceops", Action.VIEW, Action.CREATE, Action.APPROVE, Action.EXECUTE)
     ),
     Role.MARKETING_MANAGER: frozenset(
-        _grant("adlift", Action.VIEW, Action.CREATE, Action.APPROVE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("adlift", Action.VIEW, Action.CREATE, Action.APPROVE)
     ),
     Role.FINANCE_LEGAL: frozenset(
         _grant("avm", Action.VIEW, Action.CREATE, Action.APPROVE)
         | _grant("dealroom", Action.VIEW)
         | _grant("avm", Action.EXPORT)
+        | _grant("audit", Action.VIEW, Action.UPDATE)
+    ),
+    Role.COMPLIANCE_OFFICER: frozenset(
+        _grant("audit", Action.VIEW, Action.UPDATE, Action.DELETE, Action.EXPORT)
+    ),
+    Role.RECORDS_MANAGER: frozenset(
+        _grant("audit", Action.VIEW, Action.DELETE)
+    ),
+    Role.RETENTION_MANAGER: frozenset(
+        _grant("audit", Action.VIEW, Action.DELETE)
     ),
     Role.EXECUTIVE: frozenset(
-        _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
+        _grant("operator_console", Action.VIEW)
+        | _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
         | _grant("heatzone", Action.VIEW, Action.APPROVE)
         | _grant("sitescore", Action.VIEW, Action.APPROVE)
         | _grant("audit", Action.VIEW)
@@ -134,9 +154,14 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("forecastops", Action.VIEW)
         | _grant("intervention", Action.VIEW)
         | _grant("audit", Action.VIEW)
+        # The franchisee portal is a separate resource from operator_console:
+        # a franchisee may read their own store's approved view and file
+        # acknowledgements/reports, but never gains operator-console access.
+        | _grant("franchisee_portal", Action.VIEW, Action.CREATE)
     ),
     Role.AUDITOR: frozenset(
-        _grant("audit", Action.VIEW, Action.EXPORT)
+        _grant("operator_console", Action.VIEW)
+        | _grant("audit", Action.VIEW, Action.EXPORT)
         | _grant("model", Action.VIEW)
         | _grant("decision", Action.VIEW)
     ),

@@ -10,52 +10,143 @@ persist audit/correlation metadata").
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime
+from typing import Any
 
 from shared.audit.events import AuditEvent
+from shared.audit.integrity import (
+    CHAIN_GENESIS_HASH,
+    AuditChainVerification,
+    AuditImmutabilityError,
+    attach_audit_event_integrity,
+    verify_audit_chain,
+)
+from shared.audit.worm import AuditWormSink
 from shared.infrastructure.persistence.engine import SqliteEngine
+
+_INTEGRITY_COLUMNS: dict[str, str] = {
+    "sequence": "INTEGER",
+    "previous_hash": "TEXT",
+    "event_hash": "TEXT",
+    "signature_key_id": "TEXT",
+    "signature_version": "TEXT",
+    "signature_alg": "TEXT",
+    "worm_sink_id": "TEXT",
+}
 
 
 class DurableAuditLog:
     """``record`` / ``list_events`` over the ``durable_audit_events`` table."""
 
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self, engine: SqliteEngine, *, worm_sink: AuditWormSink | None = None
+    ) -> None:
         self._engine = engine
+        self._worm_sink = worm_sink
+        self._ensure_integrity_columns()
 
     def record(self, event: AuditEvent) -> AuditEvent:
-        self._engine.execute(
-            "INSERT INTO durable_audit_events("
-            "  event_id, event_type, actor, action, resource, outcome, "
-            "  correlation_id, job_id, metadata_json, occurred_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(event_id) DO NOTHING",
-            (
-                event.event_id,
-                event.event_type,
-                event.actor,
-                event.action,
-                event.resource,
-                event.outcome,
-                event.correlation_id,
-                event.job_id,
-                json.dumps(event.metadata),
-                event.occurred_at.isoformat(),
-            ),
-        )
-        return event
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT * FROM durable_audit_events WHERE event_id = ?",
+                (event.event_id,),
+            )
+            if existing is not None:
+                return self._row_to_event(existing)
+
+            last = self._engine.query_one(
+                "SELECT sequence, event_hash FROM durable_audit_events "
+                "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+            )
+            sequence = int(last["sequence"]) + 1 if last is not None else 1
+            previous_hash = (
+                str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
+            )
+            sink_id = _event_sink_id(event, self._worm_sink)
+            attach_audit_event_integrity(
+                event,
+                sequence=sequence,
+                previous_hash=previous_hash,
+                sink_id=sink_id,
+            )
+            if self._worm_sink is not None:
+                self._worm_sink.write_audit_event(event)
+            self._engine.execute(
+                "INSERT INTO durable_audit_events("
+                "  event_id, event_type, actor, action, resource, outcome, "
+                "  correlation_id, job_id, metadata_json, occurred_at, "
+                "  sequence, previous_hash, event_hash, signature_key_id, "
+                "  signature_version, signature_alg, worm_sink_id"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    event.event_id,
+                    event.event_type,
+                    event.actor,
+                    event.action,
+                    event.resource,
+                    event.outcome,
+                    event.correlation_id,
+                    event.job_id,
+                    json.dumps(event.metadata),
+                    event.occurred_at.isoformat(),
+                    event.sequence,
+                    event.previous_hash,
+                    event.event_hash,
+                    event.signature_key_id,
+                    event.signature_version,
+                    event.signature_alg,
+                    event.worm_sink_id,
+                ),
+            )
+            return event
 
     def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
+        events = self._read_events()
+        verify_audit_chain(events).raise_for_tamper()
         if correlation_id is None:
-            rows = self._engine.query("SELECT * FROM durable_audit_events ORDER BY seq")
-        else:
-            rows = self._engine.query(
-                "SELECT * FROM durable_audit_events WHERE correlation_id = ? ORDER BY seq",
-                (correlation_id,),
-            )
+            return events
+        return [event for event in events if event.correlation_id == correlation_id]
+
+    def verify_chain(self) -> AuditChainVerification:
+        return verify_audit_chain(self._read_events())
+
+    def replay(self, events: Iterable[AuditEvent]) -> list[AuditEvent]:
+        """Append restored events while preserving the original chain order."""
+
+        replayed: list[AuditEvent] = []
+        for event in sorted(events, key=_audit_event_replay_key):
+            replayed.append(self.record(event))
+        return replayed
+
+    def delete_event(self, event_id: str) -> None:
+        raise AuditImmutabilityError(
+            f"audit sink is append-only; delete denied for {event_id}"
+        )
+
+    def update_event_metadata(self, event_id: str, metadata: dict[str, Any]) -> None:
+        raise AuditImmutabilityError(
+            f"audit sink is append-only; update denied for {event_id}"
+        )
+
+    def _ensure_integrity_columns(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._engine.query("PRAGMA table_info(durable_audit_events)")
+        }
+        for column, column_type in _INTEGRITY_COLUMNS.items():
+            if column not in existing:
+                self._engine.execute(
+                    f"ALTER TABLE durable_audit_events ADD COLUMN {column} {column_type}"
+                )
+
+    def _read_events(self) -> list[AuditEvent]:
+        rows = self._engine.query("SELECT * FROM durable_audit_events ORDER BY seq")
         return [self._row_to_event(row) for row in rows]
 
     @staticmethod
     def _row_to_event(row) -> AuditEvent:
+        values = _row_values(row)
         return AuditEvent(
             event_type=row["event_type"],
             actor=row["actor"],
@@ -67,7 +158,38 @@ class DurableAuditLog:
             job_id=row["job_id"],
             event_id=row["event_id"],
             occurred_at=datetime.fromisoformat(row["occurred_at"]),
+            sequence=values.get("sequence"),
+            previous_hash=values.get("previous_hash"),
+            event_hash=values.get("event_hash"),
+            signature_key_id=values.get("signature_key_id")
+            or AuditEvent.__dataclass_fields__["signature_key_id"].default,
+            signature_version=values.get("signature_version")
+            or AuditEvent.__dataclass_fields__["signature_version"].default,
+            signature_alg=values.get("signature_alg")
+            or AuditEvent.__dataclass_fields__["signature_alg"].default,
+            worm_sink_id=values.get("worm_sink_id")
+            or AuditEvent.__dataclass_fields__["worm_sink_id"].default,
         )
+
+
+def _row_values(row) -> dict[str, Any]:
+    return {key: row[key] for key in row.keys()}
+
+
+def _audit_event_replay_key(event: AuditEvent) -> tuple[int, str, str]:
+    return (
+        event.sequence if event.sequence is not None else 2**63 - 1,
+        event.occurred_at.isoformat(),
+        event.event_id,
+    )
+
+
+def _event_sink_id(event: AuditEvent, worm_sink: AuditWormSink | None) -> str:
+    if event.event_hash is not None:
+        return event.worm_sink_id
+    if worm_sink is not None:
+        return worm_sink.sink_id
+    return event.worm_sink_id
 
 
 __all__ = ["DurableAuditLog"]

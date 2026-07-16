@@ -1,13 +1,20 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import { SearchWorkspace } from "../../../features/shell/SearchWorkspace.tsx";
+import { loadApiResource } from "../../../features/shell/resource.ts";
+import { getServerApiClient } from "../../lib/api/client.ts";
 
-export default function SearchPage() {
-  return (
-    <ModulePlaceholder
-      routeKey="search"
-      scope={[
-        "跨實體搜尋：門市、候選點、決策、模型版本、稽核紀錄",
-        "最近瀏覽與權限內快速動作（Command Palette 同源）",
-      ]}
-    />
-  );
+// Results are authorization-scoped per caller, so a shared cache entry could
+// serve one role's results to another.
+export const dynamic = "force-dynamic";
+
+export default async function SearchPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q = "" } = await searchParams;
+  const results = await loadApiResource({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.searchShell(q),
+  });
+  return <SearchWorkspace results={results} query={q} />;
 }

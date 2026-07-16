@@ -27,6 +27,12 @@ export default defineConfig({
     extraHTTPHeaders: {
       "x-subject-id": "product-e2e-test",
       "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
+      // Operator Console routes are tenant-isolated (OPERATOR_TENANT_ID in
+      // apps/api/oday_api/security/dependencies.py). Without this the guard
+      // denies at operator.tenant_isolation before RBAC runs, so every
+      // /operator read 403s — which is why the shell suite (ODP-PGAP-SHELL-001)
+      // needs it to reach the product surface at all.
+      "x-tenant-id": "tenant-a",
     },
   },
   projects: [

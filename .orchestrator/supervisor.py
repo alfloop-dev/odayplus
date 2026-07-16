@@ -1439,8 +1439,10 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "",
             ]
         )
-    return "\n".join(
-        [
+    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+    body = [
             f"# Task Brief: {task.get('id') or task_id}",
             "",
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
@@ -1455,8 +1457,15 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "## Summary",
             str(task.get("summary_zh") or "-"),
             "",
+            "## Source Documents",
         ]
-    )
+    body.extend([f"- {item}" for item in source_docs] or ["- none"])
+    body.extend(["", "## Acceptance"])
+    body.extend([f"- {item}" for item in acceptance] or ["- none"])
+    body.extend(["", "## Verification"])
+    body.extend([f"- `{item}`" for item in verification] or ["- none"])
+    body.append("")
+    return "\n".join(body)
 
 
 # Canonical worker context that lives in the supervisor root but is gitignored, so a

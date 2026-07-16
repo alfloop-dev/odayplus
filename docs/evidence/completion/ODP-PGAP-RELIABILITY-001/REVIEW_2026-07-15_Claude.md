@@ -57,7 +57,7 @@ after bootstrap:  [... , 'attempts', 'leased_until', 'max_retries']
 ENQUEUE OK / LEASE OK (attempts 1)
 ```
 
-`000002` is untouched, `000004_job_lease_columns.sql` is additive and registered in
+`000002` is untouched, `000006_job_lease_columns.sql` is additive and registered in
 `_SCHEMA_FILES`, and repeated bootstraps are idempotent (3× → stable at 10 columns).
 
 **R2-4 repro, re-run.** The stale-worker double-completion is now rejected *when a token is
@@ -272,7 +272,7 @@ directly contradicts the module's own stated purpose ("durable, restart-survivab
 migration file's own header, which says schema is owned by ordered migration files so
 "artifacts and the runtime engine can never drift".
 
-Fix: leave `000002` alone; add a new `000004_job_lease_columns.sql` with idempotent
+Fix: leave `000002` alone; add a new `000006_job_lease_columns.sql` with idempotent
 `ALTER TABLE durable_jobs ADD COLUMN ...`, register it in `_SCHEMA_FILES`, and add a test
 that boots against a pre-existing dev-era database.
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from modules.external_data.providers import ListingPartnerFeedProvider
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.observability import new_correlation_id
 
 
@@ -191,6 +192,70 @@ class InMemoryExternalFetchStateStore:
             return open_until
         if open_until is not None:
             self._circuit_open_until.pop(provider_id, None)
+        return None
+
+
+class DurableExternalFetchStateStore:
+    """Durable-state interface using SqliteDocumentStore (ODP-PV-009)."""
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+        self._runs_collection = "external_data.fetch_runs"
+        self._last_success_collection = "external_data.last_success"
+        self._consecutive_failures_collection = "external_data.consecutive_failures"
+        self._circuit_open_until_collection = "external_data.circuit_open_until"
+
+    def get_run(self, idempotency_key: str) -> ExternalFetchRun | None:
+        return self._store.get(self._runs_collection, idempotency_key)
+
+    def save_run(self, run: ExternalFetchRun) -> ExternalFetchRun:
+        existing = self.get_run(run.idempotency_key)
+        if existing is not None:
+            return existing
+        self._store.put(
+            self._runs_collection,
+            run.idempotency_key,
+            run,
+            group_key=run.provider_id,
+            correlation_id=run.correlation_id,
+        )
+        if run.status == "SUCCEEDED" and run.last_success_watermark_after is not None:
+            self._store.put(
+                self._last_success_collection,
+                run.provider_id,
+                run.last_success_watermark_after,
+            )
+            self._store.put(
+                self._consecutive_failures_collection,
+                run.provider_id,
+                0,
+            )
+        return run
+
+    def last_success_watermark(self, provider_id: str) -> datetime | None:
+        return self._store.get(self._last_success_collection, provider_id)
+
+    def record_failure(
+        self,
+        provider_id: str,
+        *,
+        at: datetime,
+        policy: ExternalFetchResiliencePolicy,
+    ) -> tuple[int, datetime | None]:
+        failures = (self._store.get(self._consecutive_failures_collection, provider_id) or 0) + 1
+        self._store.put(self._consecutive_failures_collection, provider_id, failures)
+        if failures >= policy.max_consecutive_failures:
+            open_until = at + policy.circuit_cooldown
+            self._store.put(self._circuit_open_until_collection, provider_id, open_until)
+            return failures, open_until
+        return failures, None
+
+    def circuit_open_until(self, provider_id: str, at: datetime) -> datetime | None:
+        open_until = self._store.get(self._circuit_open_until_collection, provider_id)
+        if open_until is not None and open_until > at:
+            return open_until
+        if open_until is not None:
+            self._store.put(self._circuit_open_until_collection, provider_id, None)
         return None
 
 
@@ -516,6 +581,7 @@ __all__ = [
     "ExternalFetchRun",
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
+    "DurableExternalFetchStateStore",
     "SourceFreshnessEvidence",
     "freshness_evidence_from_run",
     "run_external_fetch_backfill",
