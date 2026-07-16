@@ -280,6 +280,19 @@ export type ForecastOpsTimeseriesPayload = {
   observations?: Record<string, unknown>[];
 };
 
+/** Franchisee acknowledgement of a notification. */
+export type FranchiseeAcknowledgeRequest = {
+  notificationId: string;
+  storeId?: string | null;
+};
+
+/** Franchisee field report. */
+export type FranchiseeReportRequest = {
+  category: string;
+  message: string;
+  storeId?: string | null;
+};
+
 /** HeatZoneScoreJobPayload */
 export type HeatZoneScoreJobPayload = {
   features?: Record<string, unknown>[];
@@ -507,6 +520,13 @@ export type NetworkScoringComparePayload = {
   candidateIds: string[];
 };
 
+/** Per-role notification delivery preferences. */
+export type NotificationPreferencesRequest = {
+  channels: Record<string, boolean>;
+  digest?: string;
+  severityFloor?: string;
+};
+
 /** OpenCasePayload */
 export type OpenCasePayload = {
   action_spec?: Record<string, unknown>;
@@ -656,12 +676,22 @@ export type ReviewDecisionPayload = {
   requiredData?: string[];
 };
 
+/** Override a role's workspace grants (high-risk, audited). */
+export type RoleWorkspacesRequest = {
+  allowedWorkspaces: string[];
+};
+
 /** SegmentMetricPayload */
 export type SegmentMetricPayload = {
   metrics: Record<string, number>;
   record_count: number;
   segment_name: string;
   segment_value: string;
+};
+
+/** Workspace settings patch. */
+export type SettingsRequest = {
+  values: Record<string, unknown>;
 };
 
 /** SiteScoreScoreJobPayload */
@@ -696,6 +726,13 @@ export type StoreOpsTransitionPayload = {
   payload?: Record<string, unknown>;
   storeId?: string | null;
   storeName?: string | null;
+};
+
+/** Assign a Task Center task to a role/subject. */
+export type TaskAssignRequest = {
+  assigneeId: string;
+  assigneeName?: string | null;
+  slaDueAt?: string | null;
 };
 
 /** ThresholdPayload */
@@ -921,6 +958,19 @@ export const API_PATHS = {
   "/api/v1/operator/network-scoring/score": ["POST"],
   "/api/v1/operator/search": ["GET"],
   "/api/v1/operator/seed/reset": ["POST"],
+  "/api/v1/operator/shell/admin": ["GET"],
+  "/api/v1/operator/shell/admin/roles/{target_role_id}/workspaces": ["PUT"],
+  "/api/v1/operator/shell/franchisee": ["GET"],
+  "/api/v1/operator/shell/franchisee/acknowledgement": ["POST"],
+  "/api/v1/operator/shell/franchisee/reports": ["POST"],
+  "/api/v1/operator/shell/home": ["GET"],
+  "/api/v1/operator/shell/notifications": ["GET"],
+  "/api/v1/operator/shell/notifications/preferences": ["GET", "PUT"],
+  "/api/v1/operator/shell/notifications/{notification_id}/acknowledgement": ["POST"],
+  "/api/v1/operator/shell/search": ["GET"],
+  "/api/v1/operator/shell/settings": ["GET", "PUT"],
+  "/api/v1/operator/shell/tasks": ["GET"],
+  "/api/v1/operator/shell/tasks/{task_id}/assignment": ["POST"],
   "/api/v1/operator/store-ops/issues": ["GET"],
   "/api/v1/operator/store-ops/issues/{issue_id}": ["GET"],
   "/api/v1/operator/store-ops/issues/{issue_id}/camera-purpose": ["POST"],
