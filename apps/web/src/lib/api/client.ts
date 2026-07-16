@@ -11,6 +11,7 @@ export async function getServerApiClient(): Promise<OdpApiClient | null> {
   const defaultHeaders: Record<string, string> = {};
   try {
     const requestHeaders = await headers();
+
     const subject = requestHeaders.get("x-subject-id");
     const roles = requestHeaders.get("x-roles");
     const tenant = requestHeaders.get("x-tenant-id");

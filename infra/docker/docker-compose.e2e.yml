@@ -23,6 +23,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/web.Dockerfile
+      args:
+        ODP_API_BASE_URL: http://api:8000
     image: odayplus/web:e2e
     environment:
       NODE_ENV: production

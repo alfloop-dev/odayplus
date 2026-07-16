@@ -283,7 +283,9 @@ else:
             return job.to_dict()
 
         @platform_router.get("/audit/events", tags=["audit"])
-        def list_audit_events(correlation_id: str | None = None) -> dict[str, Any]:
+        def list_audit_events(
+            correlation_id: str | None = None,
+        ) -> dict[str, Any]:
             return {
                 "events": [
                     event.to_dict()

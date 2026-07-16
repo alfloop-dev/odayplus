@@ -903,6 +903,18 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
     });
   }
+
+  getAvmCase(caseId: string): Promise<AvmCase> {
+    return this.request<AvmCase>(`/avm/cases/${caseId}`);
+  }
+
+  getAvmCaseReport(caseId: string): Promise<any> {
+    return this.request<any>(`/avm/cases/${caseId}/report`);
+  }
+
+  getAvmCaseDataRoom(caseId: string): Promise<any> {
+    return this.request<any>(`/avm/cases/${caseId}/dataroom`);
+  }
 }
 
 // ---------------------------------------------------------------------------
