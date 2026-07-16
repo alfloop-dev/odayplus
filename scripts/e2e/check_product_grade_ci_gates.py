@@ -79,7 +79,7 @@ def main():
     features_dir = ROOT / "apps/web/features"
     if features_dir.exists():
         pattern = re.compile(r'data-screen-label=["\']([^"\']+)["\']')
-        for root, dirs, files in os.walk(features_dir):
+        for root, _, files in os.walk(features_dir):
             for file in files:
                 if file.endswith((".tsx", ".ts", ".js", ".jsx")):
                     try:
@@ -91,7 +91,7 @@ def main():
     # Check if there are any labels in HTML that are missing in React
     missing_in_react = html_labels - react_labels
     if missing_in_react:
-        report_lines.append(f"[FAIL] Screen labels defined in HTML but missing in React code:")
+        report_lines.append("[FAIL] Screen labels defined in HTML but missing in React code:")
         for label in sorted(missing_in_react):
             report_lines.append(f"  - {label}")
         success = False
@@ -99,7 +99,7 @@ def main():
         report_lines.append("[PASS] All 37 screen labels are implemented in React components.")
 
     if len(html_labels) == 37:
-        report_lines.append(f"[PASS] Total data-screen-label count is exactly 37.")
+        report_lines.append("[PASS] Total data-screen-label count is exactly 37.")
     else:
         report_lines.append(f"[FAIL] Total data-screen-label count is {len(html_labels)}, expected 37.")
         success = False
