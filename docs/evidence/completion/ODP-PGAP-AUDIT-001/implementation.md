@@ -51,5 +51,9 @@ Branch: task/ODP-PGAP-AUDIT-001
 
 - `1c56c1ef` - immutable evidence core anchor.
 - `f49b9b9a` - governance/replay/WORM sink anchor.
-- Pending remediation commit - runtime WORM writer, purge tombstones, governance
-  integrity, and reviewer-requested regression tests.
+- `aa1acde8` - runtime WORM writer, purge tombstones, governance integrity, and
+  reviewer-requested regression tests.
+- `8ee23fab` - remediation verification evidence.
+- `fa74e9c0` - closeout remediation for concurrent durable audit/evidence
+  hash-chain sequence allocation under product E2E traffic.
+- `7adb2edf` - merged latest `origin/dev` after the closeout remediation.
