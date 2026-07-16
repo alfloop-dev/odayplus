@@ -31,8 +31,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from shared.auth.identity import Principal
-
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.application.shell import (
     ShellConflict,
@@ -41,6 +39,7 @@ from modules.opsboard.application.shell import (
     ShellPolicyError,
     ShellService,
 )
+from shared.auth.identity import Principal
 
 # ----------------------------------------------------------------------
 # Request bodies
@@ -547,7 +546,7 @@ def create_shell_sub_router(
     def shell_franchisee(
         request: Request,
         store_id: str | None = Query(default=None, alias="storeId"),
-        principal: Principal = Depends(require_franchisee_view_fn),
+        principal: Principal = Depends(require_franchisee_view_fn),  # noqa: B008
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the franchisee-scoped view (no operator-only data)."""
@@ -564,7 +563,7 @@ def create_shell_sub_router(
         body: FranchiseeAcknowledgeRequest,
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        principal: Principal = Depends(require_franchisee_write_fn),
+        principal: Principal = Depends(require_franchisee_write_fn),  # noqa: B008
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Record a franchisee acknowledgement. Audited and idempotent."""
@@ -586,7 +585,7 @@ def create_shell_sub_router(
         body: FranchiseeReportRequest,
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        principal: Principal = Depends(require_franchisee_write_fn),
+        principal: Principal = Depends(require_franchisee_write_fn),  # noqa: B008
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Record a franchisee field report. Audited and idempotent."""

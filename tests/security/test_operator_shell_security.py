@@ -267,9 +267,10 @@ def test_cross_actor_idempotency_replay_is_blocked() -> None:
 
 
 def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch) -> None:
-    from modules.opsboard.auth import AuthBoundaryConfig, SigningKey, encode_compact_jwt
-    from apps.api.oday_api.security import dependencies as deps
     from datetime import UTC, datetime, timedelta
+
+    from apps.api.oday_api.security import dependencies as deps
+    from modules.opsboard.auth import SigningKey, encode_compact_jwt
 
     # 1. Setup live AuthenticationBoundary
     issuer = "https://idp.oday.test"
