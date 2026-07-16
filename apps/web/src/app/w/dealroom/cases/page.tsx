@@ -21,12 +21,17 @@ export default async function DealRoomCasesPage({ searchParams }: PageProps) {
     client: await getServerApiClient(),
     fetcher: (client) => client.listAvmCases().then((response) => response.items),
   });
+  const subjectId = reqHeaders.get("x-subject-id") || "product-ui-analyst";
+  const roles = reqHeaders.get("x-roles") || "analyst,finance";
+  const tenantId = reqHeaders.get("x-tenant-id") || undefined;
+
   return (
     <AvmWorkspace
       view="cases"
       searchParams={await searchParams}
       liveCases={liveCases}
       isProduction={isProduction}
+      currentUser={{ subjectId, roles, tenantId }}
     />
   );
 }

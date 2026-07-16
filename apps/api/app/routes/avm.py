@@ -141,14 +141,7 @@ else:
             return payload
 
         @router.get("/cases", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def list_cases(
-            x_test_mock_empty: str | None = Header(default=None, alias="x-test-mock-empty"),
-            x_test_mock_error: str | None = Header(default=None, alias="x-test-mock-error"),
-        ) -> dict[str, Any]:
-            if x_test_mock_error == "true":
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Mocked Server Error")
-            if x_test_mock_empty == "true":
-                return {"items": [], "count": 0}
+        def list_cases() -> dict[str, Any]:
             items = service.repository.list_cases()
             return {"items": [item.to_dict() for item in items], "count": len(items)}
 
@@ -158,6 +151,13 @@ else:
             if case is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
             return case.to_dict()
+
+        @router.get("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def get_dataroom(case_id: str) -> dict[str, Any]:
+            dataroom = service.dataroom(case_id)
+            if dataroom is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="dataroom not found")
+            return dataroom.to_dict()
 
         @router.post("/cases/{case_id}/normalize", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
         def normalize(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:

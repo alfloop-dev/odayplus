@@ -277,6 +277,18 @@ export class OdpApiClient {
       query: options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : undefined,
     });
   }
+
+  getAvmCase(caseId: string): Promise<AvmCase> {
+    return this.request<AvmCase>(`/avm/cases/${caseId}`);
+  }
+
+  getAvmCaseReport(caseId: string): Promise<any> {
+    return this.request<any>(`/avm/cases/${caseId}/report`);
+  }
+
+  getAvmCaseDataRoom(caseId: string): Promise<any> {
+    return this.request<any>(`/avm/cases/${caseId}/dataroom`);
+  }
 }
 
 /**

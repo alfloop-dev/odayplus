@@ -578,6 +578,9 @@ function ExportPanel({ decision }: { decision: AuditDecision }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [idempotencyKey] = useState(
+    () => `idem-evidence-${decision.decisionId}-${Math.random().toString(36).substring(2, 9)}`
+  );
 
   const handleExport = async () => {
     if (!reason || reason.trim().length === 0) {
@@ -599,6 +602,7 @@ function ExportPanel({ decision }: { decision: AuditDecision }) {
           headers: {
             "Content-Type": "application/json",
             "x-correlation-id": `corr-export-${decision.decisionId}-${Date.now()}`,
+            "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
             purpose: reason,
@@ -725,6 +729,9 @@ function BatchExportPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [idempotencyKey] = useState(
+    () => `idem-batch-${Math.random().toString(36).substring(2, 9)}`
+  );
 
   const handleBatchExport = async (type: string) => {
     if (!reason || reason.trim().length === 0) {
@@ -746,6 +753,7 @@ function BatchExportPanel() {
           headers: {
             "Content-Type": "application/json",
             "x-correlation-id": `corr-batch-export-${type}-${Date.now()}`,
+            "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
             purpose: `${type}: ${reason}`,

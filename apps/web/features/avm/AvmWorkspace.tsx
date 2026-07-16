@@ -9,6 +9,8 @@ import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
   AVM_POLICY_VERSION,
+  AVM_MODEL_VERSION,
+  AVM_FEATURE_VERSION,
   caseStatusTone,
   confidenceTone,
   dataRoomLabel,
@@ -19,6 +21,7 @@ import {
   type AvmRouteKey,
   type LensValuation,
   type ValuationCase,
+  type Confidence,
 } from "./data.ts";
 import styles from "./avm.module.css";
 import { ClientApprovalForm } from "../../src/components/ClientApprovalForm.tsx";
@@ -35,7 +38,117 @@ type AvmWorkspaceProps = {
   /** Live `GET /avm/cases` binding; omitted on fixture-only routes. */
   liveCases?: ApiBinding<AvmCase>;
   isProduction?: boolean;
+  currentUser?: {
+    subjectId: string;
+    roles: string;
+    tenantId?: string;
+  };
 };
+
+function mapLiveCaseToValuationCase(
+  liveCase: any,
+  report?: any,
+  dataroom?: any
+): ValuationCase {
+  const fairPrice = report?.fair_price
+    ? { p10: report.fair_price.p10, p50: report.fair_price.p50, p90: report.fair_price.p90 }
+    : { p10: 0, p50: 0, p90: 0 };
+
+  const normalizedMargin = report?.normalized_margin
+    ? {
+        gmTtm: report.normalized_margin.gm_ttm,
+        gmFwd: report.normalized_margin.gm_fwd,
+        normalizedGm: report.normalized_margin.normalized_gm,
+        adjustmentReasons: report.normalized_margin.adjustment_reasons || [],
+        confidence: report.normalized_margin.confidence,
+      }
+    : {
+        gmTtm: 0,
+        gmFwd: 0,
+        normalizedGm: 0,
+        adjustmentReasons: [],
+        confidence: "low" as const,
+      };
+
+  const lenses = report?.lenses
+    ? report.lenses.map((l: any) => ({
+        lens: l.lens,
+        p10: l.p10,
+        p50: l.p50,
+        p90: l.p90,
+        method: l.method,
+        evidence: l.evidence || [],
+      }))
+    : [];
+
+  const financeApproval = report?.finance_approval
+    ? {
+        decisionId: report.finance_approval.decision_id,
+        actorId: report.finance_approval.actor_id,
+        approvedAt: report.finance_approval.approved_at,
+        decisionReason: report.finance_approval.decision_reason,
+        reservePrice: report.finance_approval.reserve_price,
+        reserveOverridden: report.finance_approval.reserve_overridden || false,
+        policyVersion: report.finance_approval.policy_version || AVM_POLICY_VERSION,
+        correlationId: report.finance_approval.correlation_id || "",
+      }
+    : null;
+
+  const dataRoom = dataroom
+    ? {
+        dataroomId: dataroom.dataroom_id,
+        completeness: dataroom.checklist ? dataroom.checklist.filter((item: any) => item.status === "ready").length / dataroom.checklist.length : 0,
+        checklist: dataroom.checklist ? dataroom.checklist.map((item: any) => ({
+          key: item.document_id,
+          label: item.name,
+          status: item.status,
+          note: item.source_snapshot_id || "",
+        })) : [],
+        exportAudit: dataroom.export_audit ? dataroom.export_audit.map((item: any) => ({
+          actor: item.actor,
+          reason: item.reason,
+          exportedAt: item.exported_at,
+          correlationId: item.correlation_id,
+        })) : [],
+      }
+    : null;
+
+  const statusHistory = liveCase.status_history
+    ? liveCase.status_history.map((h: any) => ({
+        from: h.from_status || "—",
+        to: h.to_status,
+        actor: h.actor,
+        reason: h.reason,
+        at: h.timestamp,
+        correlationId: h.correlation_id || "",
+      }))
+    : [];
+
+  return {
+    caseId: liveCase.case_id,
+    storeId: liveCase.store_id,
+    status: liveCase.status,
+    fairPrice,
+    reservePrice: report?.reserve_price || 0,
+    askingPrice: report?.asking_price || 0,
+    sensitivePricePermission: "masked",
+    confidence: (report?.confidence || "low") as Confidence,
+    liquidityScore: liveCase.valuation_input?.liquidity_discount ? 1 - liveCase.valuation_input.liquidity_discount : 0.9,
+    normalizedMargin,
+    lenses,
+    financeApproval,
+    dataRoom,
+    statusHistory,
+    createdBy: liveCase.created_by,
+    modelVersion: report?.model_version || AVM_MODEL_VERSION,
+    featureVersion: report?.feature_version || AVM_FEATURE_VERSION,
+    policyVersion: report?.policy_version || AVM_POLICY_VERSION,
+    predictionOriginTime: liveCase.prediction_origin_time || liveCase.created_at,
+    valuedAt: report?.valued_at || liveCase.created_at,
+    valuationVersion: String(report?.valuation_version || 1),
+    correlationId: report?.correlation_id || "",
+  };
+}
 
 export function AvmWorkspace({
   view = "overview",
@@ -43,15 +156,93 @@ export function AvmWorkspace({
   searchParams = {},
   liveCases,
   isProduction: isProductionProp,
+  currentUser,
 }: AvmWorkspaceProps) {
   const isProduction = isProductionProp !== undefined ? isProductionProp : (
     liveCases ? liveCases.source === "api" : false
   );
+
+  const [liveCaseDetail, setLiveCaseDetail] = useState<ValuationCase | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const activeCaseId = view === "caseDetail" ? caseId : selectedFromQuery(searchParams?.selected);
+
+  useEffect(() => {
+    if (!isProduction || !activeCaseId) {
+      setLiveCaseDetail(null);
+      return;
+    }
+
+    let active = true;
+    const fetchDetails = async () => {
+      setLoading(true);
+      const apiBase =
+        process.env.NEXT_PUBLIC_ODP_API_BASE_URL ||
+        process.env.NEXT_PUBLIC_API_URL ||
+        "http://127.0.0.1:8099";
+
+      const headers: Record<string, string> = {};
+      if (currentUser?.subjectId) headers["x-subject-id"] = currentUser.subjectId;
+      if (currentUser?.roles) headers["x-roles"] = currentUser.roles;
+      if (currentUser?.tenantId) headers["x-tenant-id"] = currentUser.tenantId;
+
+      try {
+        const caseRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}`, { headers });
+        if (!caseRes.ok) throw new Error("Failed to fetch case");
+        const liveCase = await caseRes.json();
+
+        let report: any = null;
+        try {
+          const reportRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}/report`, { headers });
+          if (reportRes.ok) report = await reportRes.json();
+        } catch (e) {
+          // ignore
+        }
+
+        let dataroom: any = null;
+        try {
+          const drRes = await fetch(`${apiBase}/avm/cases/${activeCaseId}/dataroom`, { headers });
+          if (drRes.ok) dataroom = await drRes.json();
+        } catch (e) {
+          // ignore
+        }
+
+        if (active) {
+          setLiveCaseDetail(mapLiveCaseToValuationCase(liveCase, report, dataroom));
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    fetchDetails();
+    return () => {
+      active = false;
+    };
+  }, [activeCaseId, isProduction, currentUser]);
+
   if (view === "cases") {
-    return <CasesListPage searchParams={searchParams} liveCases={liveCases} isProduction={isProduction} />;
+    return (
+      <CasesListPage
+        searchParams={searchParams}
+        liveCases={liveCases}
+        isProduction={isProduction}
+        drawerCase={liveCaseDetail || undefined}
+        currentUser={currentUser}
+      />
+    );
   }
   if (view === "caseDetail") {
-    return <CaseDetailPage caseId={caseId} />;
+    return (
+      <CaseDetailPage
+        caseId={caseId}
+        isProduction={isProduction}
+        liveCaseDetail={liveCaseDetail}
+        currentUser={currentUser}
+      />
+    );
   }
   return <AvmOverview />;
 }
@@ -288,10 +479,12 @@ function Header({
   title,
   summary,
   caseId,
+  currentUser,
 }: {
   title: string;
   summary: string;
   caseId?: string;
+  currentUser?: { subjectId: string; roles: string };
 }) {
   return (
     <PageHeader
@@ -314,7 +507,7 @@ function Header({
           <a className={styles.secondaryButton} href="#audit">
             View audit
           </a>
-          <ClientCreateCaseButton />
+          <ClientCreateCaseButton currentUser={currentUser} />
         </div>
       }
     />
@@ -374,10 +567,14 @@ function CasesListPage({
   searchParams,
   liveCases,
   isProduction,
+  drawerCase: liveDrawerCase,
+  currentUser,
 }: {
   searchParams: SearchParams;
   liveCases?: ApiBinding<AvmCase>;
   isProduction: boolean;
+  drawerCase?: ValuationCase;
+  currentUser?: { subjectId: string; roles: string };
 }) {
   const selected = selectedFromQuery(searchParams.selected);
 
@@ -385,40 +582,8 @@ function CasesListPage({
   let hasDrawer = false;
 
   if (isProduction) {
-    const liveSelectedCase = liveCases?.items.find((c) => c.case_id === selected);
-    if (liveSelectedCase) {
-      drawerCase = {
-        caseId: liveSelectedCase.case_id,
-        storeId: liveSelectedCase.store_id,
-        status: liveSelectedCase.status as any,
-        fairPrice: { p10: 18200, p50: 24600, p90: 31800 },
-        reservePrice: 17654,
-        askingPrice: 33390,
-        sensitivePricePermission: "masked",
-        confidence: "high",
-        liquidityScore: 0.82,
-        normalizedMargin: {
-          gmTtm: 9200,
-          gmFwd: 9850,
-          normalizedGm: 9558,
-          adjustmentReasons: ["quality_score 0.91"],
-          confidence: "high",
-        },
-        lenses: [],
-        financeApproval: null,
-        dataRoom: null,
-        statusHistory: [],
-        createdBy: liveSelectedCase.created_by,
-        modelVersion: freshness.modelVersion,
-        featureVersion: freshness.featureVersion,
-        policyVersion: AVM_POLICY_VERSION,
-        predictionOriginTime: liveSelectedCase.created_at,
-        valuedAt: liveSelectedCase.created_at,
-        valuationVersion: "v1",
-        correlationId: "corr-live",
-      };
-      hasDrawer = searchParams.drawer === "case";
-    }
+    drawerCase = liveDrawerCase;
+    hasDrawer = !!drawerCase && searchParams.drawer === "case";
   } else {
     const defaultSelected = selected ?? valuationCases[0].caseId;
     drawerCase =
@@ -435,6 +600,7 @@ function CasesListPage({
       <Header
         title="估值案件"
         summary="對門市做三鏡估值、財務核准並備妥交易資料室。"
+        currentUser={currentUser}
       />
       <main className="odp-content" data-testid="avm-cases-page">
         <WorkspaceNav active="cases" />
@@ -594,15 +760,28 @@ function FilterBar() {
   );
 }
 
-function CaseDetailPage({ caseId }: { caseId?: string }) {
+function CaseDetailPage({
+  caseId,
+  isProduction,
+  liveCaseDetail,
+  currentUser,
+}: {
+  caseId?: string;
+  isProduction: boolean;
+  liveCaseDetail?: ValuationCase | null;
+  currentUser?: { subjectId: string; roles: string };
+}) {
   const c =
-    valuationCases.find((item) => item.caseId === caseId) ?? valuationCases[0];
+    isProduction && liveCaseDetail
+      ? liveCaseDetail
+      : (valuationCases.find((item) => item.caseId === caseId) ?? valuationCases[0]);
   return (
     <>
       <Header
         title={`${c.caseId} · ${c.storeId}`}
         summary={`目前狀態 ${c.status}，fair P50 ${c.fairPrice.p50.toLocaleString()}，confidence ${c.confidence}。系統估值與人工核准分離呈現。`}
         caseId={c.caseId}
+        currentUser={currentUser}
       />
       <main className="odp-content" data-testid="avm-case-detail-page">
         <WorkspaceNav active="caseDetail" />
@@ -623,7 +802,7 @@ function CaseDetailPage({ caseId }: { caseId?: string }) {
             <AuditSection caseData={c} />
           </article>
           <aside className={styles.stickyPanel}>
-            <ApprovalPanel caseData={c} />
+            <ApprovalPanel caseData={c} currentUser={currentUser} />
           </aside>
         </section>
       </main>
@@ -818,7 +997,13 @@ function LensEvidence({ lens }: { lens: LensValuation }) {
   );
 }
 
-function ApprovalPanel({ caseData: c }: { caseData: ValuationCase }) {
+function ApprovalPanel({
+  caseData: c,
+  currentUser,
+}: {
+  caseData: ValuationCase;
+  currentUser?: { subjectId: string; roles: string };
+}) {
   const canApprove = c.status === "REVIEW_REQUIRED";
   const approved = c.financeApproval;
 
@@ -850,6 +1035,7 @@ function ApprovalPanel({ caseData: c }: { caseData: ValuationCase }) {
           caseId={c.caseId}
           canApprove={canApprove}
           formattedReservePrice={formatSensitivePrice(c, "reservePrice")}
+          currentUser={currentUser}
         />
       )}
       <p className={styles.auditLine} style={{ marginTop: "12px" }}>policy {AVM_POLICY_VERSION}</p>

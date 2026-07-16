@@ -33,18 +33,9 @@ export async function loadApiBinding<T>(options: {
 }): Promise<ApiBinding<T>> {
   const fetchedAt = new Date().toISOString();
   const { client, fetcher } = options;
-  let isProduction =
+  const isProduction =
     process.env.NODE_ENV === "production" ||
     process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true";
-
-  try {
-    const reqHeaders = await headers();
-    if (reqHeaders.get("x-production-mode") === "true") {
-      isProduction = true;
-    }
-  } catch (e) {
-    // Ignore outside request context
-  }
 
   if (!client) {
     return {

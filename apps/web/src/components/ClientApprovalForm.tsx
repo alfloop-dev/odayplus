@@ -7,12 +7,14 @@ type ClientApprovalFormProps = {
   caseId: string;
   canApprove: boolean;
   formattedReservePrice: string;
+  currentUser?: { subjectId: string; roles: string };
 };
 
 export function ClientApprovalForm({
   caseId,
   canApprove,
   formattedReservePrice,
+  currentUser,
 }: ClientApprovalFormProps) {
   const router = useRouter();
   const [reason, setReason] = useState("");
@@ -20,6 +22,9 @@ export function ClientApprovalForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [idempotencyKey] = useState(
+    () => `idem-approval-${caseId}-${Math.random().toString(36).substring(2, 9)}`
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,12 +47,13 @@ export function ClientApprovalForm({
           headers: {
             "Content-Type": "application/json",
             "x-correlation-id": `corr-approval-${caseId}-${Date.now()}`,
+            "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
             status: "APPROVED",
             reason: `${reserveOverride ? "[Override] " : ""}${reason}`,
-            actorRoleId: "finance-lead",
-            actorName: "finance-lead-02",
+            actorRoleId: currentUser?.roles || "finance-lead",
+            actorName: currentUser?.subjectId || "finance-lead-02",
           }),
         }
       );

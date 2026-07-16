@@ -3,19 +3,25 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function ClientCreateCaseButton() {
+export function ClientCreateCaseButton({
+  currentUser,
+}: {
+  currentUser?: { subjectId: string; roles: string };
+}) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [storeId, setStoreId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [idempotencyKey, setIdempotencyKey] = useState("");
 
   const handleOpen = () => {
     setIsOpen(true);
     setStoreId("");
     setError(null);
     setSuccess(false);
+    setIdempotencyKey(`idem-create-case-${Math.random().toString(36).substring(2, 9)}`);
   };
 
   const handleClose = () => {
@@ -43,8 +49,9 @@ export function ClientCreateCaseButton() {
         headers: {
           "Content-Type": "application/json",
           "x-correlation-id": `corr-create-case-${Date.now()}`,
-          "x-subject-id": "product-ui-analyst",
-          "x-roles": "analyst,finance",
+          "x-subject-id": currentUser?.subjectId || "product-ui-analyst",
+          "x-roles": currentUser?.roles || "analyst,finance",
+          "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify({
           store_id: storeId,
@@ -55,7 +62,8 @@ export function ClientCreateCaseButton() {
           lease_liability: 600000,
           working_capital: 400000,
           comparable_multiples: [3.1, 3.5, 4.0],
-          created_by: "finance-analyst-01",
+          created_by: currentUser?.subjectId || "finance-analyst-01",
+          idempotency_key: idempotencyKey,
         }),
       });
 

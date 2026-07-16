@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { execSync } from "child_process";
+import http from "http";
 
 /**
  * E2E tests for ODP-PGAP-UX-001.
@@ -15,12 +17,14 @@ const HEADERS = {
 };
 
 test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates", () => {
+  test.describe.configure({ mode: "serial" });
+
   test("AVM workspace drawer allows keyboard closing and return focus working", async ({ page }) => {
     // Navigate to case cases page
     await page.goto("/w/dealroom/cases");
 
-    // Click case to open drawer
-    const caseLink = page.getByTestId("drawer-trigger-vc-5102");
+    // Click case to open drawer (dynamically locate the first case link)
+    const caseLink = page.locator('a[href*="drawer=case"]').first();
     await caseLink.focus();
     await expect(caseLink).toBeFocused();
     await page.keyboard.press("Enter");
@@ -42,11 +46,37 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
   });
 
   test("Production mode removes fixture tables when API returns empty or failed", async ({ page }) => {
-    // 1. Mock empty API response via headers
+    const project = process.env.ODP_E2E_PROJECT || "oday-plus-e2e";
+    const apiPort = process.env.ODP_E2E_API_PORT || "8099";
+
+    // Helper to check if API is up
+    const isApiReady = () => {
+      return new Promise<boolean>((resolve) => {
+        const req = http.get(`http://127.0.0.1:${apiPort}/platform/health`, (res) => {
+          resolve(res.statusCode === 200);
+        });
+        req.on("error", () => resolve(false));
+        req.end();
+      });
+    };
+
+    // Helper to wait for API readiness
+    const waitApi = async (timeoutMs = 15000) => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (await isApiReady()) return true;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return false;
+    };
+
+    // 1. Test empty API response by restarting API (wipes in-memory db)
+    execSync(`docker compose -p ${project} restart api`, { stdio: "ignore" });
+    await waitApi();
+
     await page.setExtraHTTPHeaders({
       ...HEADERS,
       "x-production-mode": "true",
-      "x-test-mock-empty": "true",
     });
 
     await page.goto("/w/dealroom/cases");
@@ -60,12 +90,9 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
     const fixtureCaption = page.getByText("估值案件列表（reserve / asking 為敏感欄位，依權限遮罩）");
     await expect(fixtureCaption).toHaveCount(0);
 
-    // 2. Mock failed API response via headers
-    await page.setExtraHTTPHeaders({
-      ...HEADERS,
-      "x-production-mode": "true",
-      "x-test-mock-error": "true",
-    });
+    // 2. Test failed API response by stopping API container
+    execSync(`docker compose -p ${project} stop api`, { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 1000));
 
     await page.goto("/w/dealroom/cases");
 
@@ -75,11 +102,30 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
 
     // Fixture table is still invisible
     await expect(fixtureCaption).toHaveCount(0);
+
+    // 3. Restore seeded state for subsequent tests
+    execSync(`docker compose -p ${project} start api`, { stdio: "ignore" });
+    await waitApi();
+    execSync("python3 scripts/e2e/seed_product_e2e_data.py --wait", { stdio: "ignore" });
   });
 
-  test("User inputs survive AVM approval errors during submission", async ({ page }) => {
+  test("User inputs survive AVM approval errors during submission", async ({ page, request }) => {
+    // Get the current live case ID from the API
+    const apiPort = process.env.ODP_E2E_API_PORT || "8099";
+    let caseId = "vc-5102"; // fallback
+    try {
+      const res = await request.get(`http://127.0.0.1:${apiPort}/avm/cases`, {
+        headers: HEADERS
+      });
+      if (res.ok()) {
+        const data = await res.json();
+        if (data.items && data.items.length > 0) {
+          caseId = data.items[0].case_id;
+        }
+      }
+    } catch (e) {}
+
     // Mock failing decision submission
-    const caseId = "vc-5102";
     await page.route(`**/api/v1/operator/approvals/${caseId}/decision`, async (route) => {
       await route.fulfill({
         status: 400,
