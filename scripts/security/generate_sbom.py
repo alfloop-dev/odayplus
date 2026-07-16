@@ -8,7 +8,7 @@ import json
 import subprocess
 import sys
 import tomllib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,7 +88,7 @@ def generate_sbom() -> dict:
         "serialNumber": f"urn:uuid:sha256-{sbom_hash[:32]}",
         "version": 1,
         "metadata": {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "component": {
                 "name": "oday-plus",
                 "version": "0.1.0",
