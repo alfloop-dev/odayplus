@@ -36,12 +36,9 @@ export function ClientApprovalForm({
     setSubmitting(true);
     setError(null);
 
-    const apiBase =
-      process.env.NEXT_PUBLIC_ODP_API_BASE_URL || "http://127.0.0.1:8099";
-
     try {
       const response = await fetch(
-        `${apiBase}/api/v1/operator/approvals/${caseId}/decision`,
+        `/api/v1/operator/approvals/${caseId}/decision`,
         {
           method: "POST",
           headers: {

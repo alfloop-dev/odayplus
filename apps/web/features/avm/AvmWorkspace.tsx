@@ -77,7 +77,15 @@ function mapLiveCaseToValuationCase(
         p50: l.p50,
         p90: l.p90,
         method: l.method,
-        evidence: l.evidence || [],
+        evidence: Array.isArray(l.evidence)
+          ? l.evidence
+          : typeof l.evidence === "object" && l.evidence !== null
+          ? Object.entries(l.evidence).map(([key, val]) => {
+              if (Array.isArray(val)) return `${key}: ${val.join(", ")}`;
+              if (typeof val === "object" && val !== null) return `${key}: ${JSON.stringify(val)}`;
+              return `${key}: ${val}`;
+            })
+          : [],
       }))
     : [];
 

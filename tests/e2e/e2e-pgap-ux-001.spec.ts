@@ -117,6 +117,14 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
   });
 
   test("User inputs survive AVM approval errors during submission", async ({ page, request }) => {
+    page.on("console", (msg) => console.log("BROWSER CONSOLE:", msg.text()));
+    page.on("pageerror", (err) => console.log("BROWSER ERROR:", err.message));
+
+    await page.setExtraHTTPHeaders({
+      ...HEADERS,
+      "x-production-mode": "true",
+    });
+
     // Get the current live case ID from the API
     const apiPort = process.env.ODP_E2E_API_PORT || "8099";
     let caseId = "vc-5102"; // fallback
