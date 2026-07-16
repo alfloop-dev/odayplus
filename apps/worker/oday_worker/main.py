@@ -56,13 +56,13 @@ class ODayWorker:
                 resource=f"job/{job.job_type}",
                 action="execute",
             )
-            
+
             start_time = time.monotonic()
             try:
                 self.execute_job(job)
                 duration = time.monotonic() - start_time
                 self.job_queue.update_status(job.job_id, JobStatus.SUCCEEDED)
-                
+
                 # Record metrics
                 self.telemetry.metrics.observe(
                     "job_duration_seconds",
@@ -80,7 +80,7 @@ class ODayWorker:
             except Exception as exc:
                 duration = time.monotonic() - start_time
                 self.job_queue.update_status(job.job_id, JobStatus.FAILED)
-                
+
                 # Record metrics
                 self.telemetry.metrics.observe(
                     "job_duration_seconds",
@@ -100,7 +100,7 @@ class ODayWorker:
                     result="error",
                     error_code=type(exc).__name__,
                 )
-                
+
                 # Retry behavior
                 payload = dict(job.payload)
                 retries = payload.get("_retry_count", 0)
@@ -137,4 +137,3 @@ class ODayWorker:
             executed = self.run_once()
             if not executed:
                 time.sleep(1.0)
-

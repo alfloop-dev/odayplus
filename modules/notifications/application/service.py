@@ -118,7 +118,7 @@ class NotificationService:
         if severity in ("danger", "high", "warning") and len(channels) > 1:
             secondary_channel = channels[1]
             logger.warning("Primary delivery failed on %s. Escalating to %s", primary_channel, secondary_channel)
-            
+
             # Update primary receipt to show it was escalated/failed
             receipt.status = "escalated"
             self.repository.save_receipt(receipt)

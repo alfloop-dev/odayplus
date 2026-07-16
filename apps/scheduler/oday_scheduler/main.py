@@ -74,4 +74,3 @@ class ODayScheduler:
         while stop_event is None or not stop_event.is_set():
             self.run_once()
             time.sleep(interval)
-

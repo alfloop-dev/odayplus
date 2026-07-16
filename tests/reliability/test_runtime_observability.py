@@ -511,4 +511,3 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     snapshot = telemetry.metrics.snapshot()
     assert "job_duration_seconds" in snapshot
     assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
-
