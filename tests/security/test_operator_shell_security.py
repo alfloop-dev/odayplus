@@ -264,4 +264,3 @@ def test_cross_actor_idempotency_replay_is_blocked() -> None:
         json={"notificationId": notification_id},
     )
     assert resp6.status_code == status.HTTP_403_FORBIDDEN
-
