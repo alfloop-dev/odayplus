@@ -130,6 +130,11 @@ test.describe("ODP-PGAP-UX-001: Accessibility, Resilient States, and Production 
           caseId = data.items[0].case_id;
         }
       }
+      // Transition case to REVIEW_REQUIRED so it can be approved
+      await request.post(`http://127.0.0.1:${apiPort}/avm/cases/${caseId}/value`, {
+        headers: HEADERS,
+        data: { actor: "product-e2e-test" }
+      });
     } catch (e) {}
 
     // Mock failing decision submission
