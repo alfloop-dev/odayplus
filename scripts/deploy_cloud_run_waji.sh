@@ -83,6 +83,15 @@ docker build \
 echo "Pushing API container image to Artifact Registry..."
 docker push "${API_IMAGE}"
 
+if command -v cosign &>/dev/null; then
+  echo "Signing API container image..."
+  cosign sign --yes "${API_IMAGE}"
+  echo "Verifying API container image signature..."
+  CI=true ./scripts/security/sign_images.sh verify "${API_IMAGE}"
+else
+  echo "Warning: Cosign is not installed. Skipping API image signing and verification."
+fi
+
 echo "Deploying API service to Cloud Run..."
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
@@ -118,6 +127,15 @@ docker build \
 
 echo "Pushing Web container image to Artifact Registry..."
 docker push "${WEB_IMAGE}"
+
+if command -v cosign &>/dev/null; then
+  echo "Signing Web container image..."
+  cosign sign --yes "${WEB_IMAGE}"
+  echo "Verifying Web container image signature..."
+  CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
+else
+  echo "Warning: Cosign is not installed. Skipping Web image signing and verification."
+fi
 
 echo "Deploying Web service to Cloud Run..."
 gcloud run deploy "${WEB_SERVICE}" \
