@@ -1,14 +1,15 @@
-import { ModulePlaceholder } from "@oday-plus/ui";
+import { AdminWorkspace } from "../../../features/shell/AdminWorkspace.tsx";
+import { loadApiResource } from "../../../features/shell/resource.ts";
+import { getServerApiClient } from "../../lib/api/client.ts";
 
-export default function AdminPage() {
-  return (
-    <ModulePlaceholder
-      routeKey="admin"
-      scope={[
-        "工作區、角色與權限管理",
-        "環境（dev/staging/production）與平台設定",
-        "權限變更為高風險動作，須觸發 Audit",
-      ]}
-    />
-  );
+// Grants and their audit trail change on every governance write, and the 403
+// for a non-admin caller must be re-evaluated per request rather than cached.
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  const admin = await loadApiResource({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.getShellAdmin(),
+  });
+  return <AdminWorkspace admin={admin} />;
 }
