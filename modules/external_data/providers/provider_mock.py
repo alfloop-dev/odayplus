@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-MOCK_PROVIDER_API_KEY = "approved-mock-provider-key"
+MOCK_PROVIDER_API_KEY = "approved-mock-provider-key"  # pragma: allowlist-secret
 
 
 def listing_provider_mock_payload(*, snapshot_id: str, observed_at: str) -> dict[str, Any]:
