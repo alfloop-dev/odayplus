@@ -9,7 +9,7 @@ from modules.notifications.application.service import NotificationService
 
 class AlertRouter:
     """Routes alerts defined in alerts.json to notification service destinations.
-    
+
     Handles severity mapping, receiver/channel routing, and triggers escalation
     if appropriate via NotificationService.
     """

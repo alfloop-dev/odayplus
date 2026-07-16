@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 class ConsoleNotificationAdapter:
     """A notification adapter that writes outputs directly to stdout.
-    
+
     This provides 'real delivery' output that is visible in execution logs and evidence files.
     """
     def __init__(self) -> None:
@@ -29,7 +29,7 @@ class ConsoleNotificationAdapter:
             "timestamp": datetime.now(UTC),
         }
         self.sent_messages.append(message)
-        
+
         # Output to stdout/stderr so it's captured in process stdout logs.
         print(
             f"\n[REAL DELIVERY] Sent {channel} notification to {user_id}\n"

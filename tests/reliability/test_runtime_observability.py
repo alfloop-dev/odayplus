@@ -576,4 +576,3 @@ def test_api_telemetry_export() -> None:
 
     snapshot = telemetry.metrics.snapshot()
     assert "api_latency_ms" in snapshot
-

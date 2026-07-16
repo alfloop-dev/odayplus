@@ -183,8 +183,22 @@ else:
                     db_ok = False
                     db_details = f"unhealthy: {exc}"
 
-            provider_ok = provider_validation.ok
-            provider_details = "healthy" if provider_ok else f"unhealthy: {provider_validation.errors}"
+            if hasattr(provider_validation, "ok"):
+                provider_ok = provider_validation.ok
+                provider_errors = getattr(provider_validation, "errors", ())
+            elif callable(provider_validation):
+                try:
+                    provider_validation()
+                    provider_ok = True
+                    provider_errors = ()
+                except Exception as exc:
+                    provider_ok = False
+                    provider_errors = (str(exc),)
+            else:
+                provider_ok = True
+                provider_errors = ()
+
+            provider_details = "healthy" if provider_ok else f"unhealthy: {provider_errors}"
 
             queue_ok = True
             queue_details = "healthy"
