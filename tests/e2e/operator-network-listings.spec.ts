@@ -139,7 +139,7 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.getByTestId("listing-merge-reason").fill("");
     await page.getByTestId("listing-merge-risk-ack").click();
     await page.getByTestId("listing-merge-submit").click();
-    await expect(page.getByTestId("listing-merge-error")).toContainText("合併原因必填");
+    await expect(page.getByTestId("listing-merge-error")).toContainText("標記重複原因必填");
     await expect(page.getByTestId("listing-merge-dialog")).toBeVisible();
 
     await page.getByTestId("listing-merge-close").click();
@@ -184,8 +184,8 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     // Entry point 2: the detail primary reads as terminal, not as an offer.
     await page.getByTestId("listing-row-L-2029").click();
     const detailPrimary = page.getByTestId("listing-detail-primary");
-    await expect(detailPrimary).toContainText("已合併至 L-2025");
-    await expect(detailPrimary).not.toContainText("合併重複");
+    await expect(detailPrimary).toContainText("已標記重複至 L-2025");
+    await expect(detailPrimary).not.toContainText("標記重複（保留目標物件）");
     await expect(detailPrimary).toBeDisabled();
     // Terminal is not a permission problem, so the denial note must not appear.
     await expect(page.getByTestId("listing-detail-merge-denied")).toHaveCount(0);
@@ -228,7 +228,7 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     // Entry point 2: the detail pane's primary action.
     await page.getByTestId("listing-row-L-2029").click();
     const detailPrimary = page.getByTestId("listing-detail-primary");
-    await expect(detailPrimary).not.toContainText("合併重複");
+    await expect(detailPrimary).not.toContainText("標記重複（保留目標物件）");
     await expect(detailPrimary).toBeDisabled();
     await expect(page.getByTestId("listing-detail-merge-denied")).toBeVisible();
 
