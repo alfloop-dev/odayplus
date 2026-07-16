@@ -26,7 +26,7 @@ All required verification gates have been successfully run and passed on the act
 The following files have been modified to close the UX gap:
 
 - [AvmWorkspace.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/apps/web/features/avm/AvmWorkspace.tsx)
-  - Coerced AVM lens evidence data from backend to string array if it is returned as an object. This prevents `TypeError: lens.evidence.map is not a function` React rendering crashes during detail page load.
+  - Added dual-layer safety coercion in `mapLiveCaseToValuationCase` and directly in the `LensEvidence` component's React rendering code. This prevents `TypeError: lens.evidence.map is not a function` client-side crashes, handling cases where API returns `evidence` as an object.
   - Changed API fetch URLs for single and batch evidence exports from absolute paths (with `apiBase`) to relative paths (`/api/v1/operator/evidence/...`). This prevents CORS preflight blocks and ensures robust E2E test mock interception.
 - [ClientApprovalForm.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/apps/web/src/components/ClientApprovalForm.tsx)
   - Changed AVM case decision API fetch URL to relative path (`/api/v1/operator/approvals/...`).
@@ -43,8 +43,8 @@ Running 4 tests using 1 worker
 
   ✓  1 [chromium] › tests/e2e/e2e-pgap-ux-001.spec.ts:22:3 › ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates › AVM workspace drawer allows keyboard closing and return focus working (1.1s)
   ✓  2 [chromium] › tests/e2e/e2e-pgap-ux-001.spec.ts:51:3 › ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates › Production mode removes fixture tables when API returns empty or failed (13.6s)
-  ✓  3 [chromium] › tests/e2e/e2e-pgap-ux-001.spec.ts:125:3 › ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates › User inputs survive AVM approval errors during submission (1.9s)
+  ✓  3 [chromium] › tests/e2e/e2e-pgap-ux-001.spec.ts:125:3 › ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates › User inputs survive AVM approval errors during submission (1.7s)
   ✓  4 [chromium] › tests/e2e/e2e-pgap-ux-001.spec.ts:181:3 › ODP-PGAP-UX-001: Accessibility, Resilient States, and Production Mode Gates › User inputs survive Evidence export errors during submission (1.1s)
 
-  4 passed (18.6s)
+  4 passed (18.1s)
 ```

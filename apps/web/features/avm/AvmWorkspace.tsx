@@ -986,13 +986,23 @@ function ValuationSection({ caseData: c }: { caseData: ValuationCase }) {
 }
 
 function LensEvidence({ lens }: { lens: LensValuation }) {
+  const evidenceArray = Array.isArray(lens.evidence)
+    ? lens.evidence
+    : typeof lens.evidence === "object" && lens.evidence !== null
+    ? Object.entries(lens.evidence).map(([key, val]) => {
+        if (Array.isArray(val)) return `${key}: ${val.join(", ")}`;
+        if (typeof val === "object" && val !== null) return `${key}: ${JSON.stringify(val)}`;
+        return `${key}: ${val}`;
+      })
+    : [];
+
   return (
     <details className={styles.softBlock}>
       <summary>
         {lens.lens} · method {lens.method}
       </summary>
       <ul>
-        {lens.evidence.map((e) => (
+        {evidenceArray.map((e) => (
           <li key={e}>{e}</li>
         ))}
       </ul>
