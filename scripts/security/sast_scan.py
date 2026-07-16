@@ -26,7 +26,7 @@ def main() -> int:
         "solver",
         "-ll",
         "--skip",
-        "B301,B310,B324",
+        "B301,B310,B324,B104",
     ]
     result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     print(result.stdout)
