@@ -1,0 +1,326 @@
+contract_id: ODP-SD-INTAKE-EVENTS-001
+version: 1.0.0
+status: proposed
+owner: System Design / Platform Engineering
+compatibility_policy:
+  mode: backward_compatible
+  rules:
+    - consumers must ignore unknown optional fields
+    - required fields cannot be removed within a major version
+    - enum expansion requires consumer readiness evidence
+    - incompatible change requires a new event major version and dual publication window
+transport:
+  internal_bus: Google Pub/Sub
+  publication: transactional_outbox
+  delivery: at_least_once
+  ordering: per_partition_key
+  schema_registry: repository_committed_json_schema_then_registry_on_release
+  outbox_retention_days: 30
+  published_event_retention_days: 14
+  dead_letter_retention_days: 30
+  replay_authority: PLATFORM_SRE_WITH_DOMAIN_OWNER_APPROVAL
+webhooks:
+  supported_in_release: false
+  decision: |
+    External webhooks are not part of Assisted Listing Intake v1. External
+    integrations use approved internal Pub/Sub consumers or polling APIs.
+    Adding webhooks requires a separate approved alignment/ADR covering endpoint
+    registration, HMAC signing, replay protection, rotation, suspension, and evidence.
+  fail_closed_behavior: webhook endpoint registration APIs do not exist and outbound HTTP delivery is disabled
+
+envelope:
+  type: object
+  required:
+    - event_id
+    - event_type
+    - event_version
+    - occurred_at
+    - producer
+    - tenant_id
+    - aggregate_type
+    - aggregate_id
+    - aggregate_version
+    - partition_key
+    - correlation_id
+    - payload
+  properties:
+    event_id: {type: string, format: uuid}
+    event_type: {type: string}
+    event_version: {type: integer, minimum: 1}
+    occurred_at: {type: string, format: date-time}
+    published_at: {type: [string, 'null'], format: date-time}
+    producer: {type: string}
+    tenant_id: {type: string, format: uuid}
+    aggregate_type: {type: string}
+    aggregate_id: {type: string, format: uuid}
+    aggregate_version: {type: integer, minimum: 1}
+    partition_key: {type: string}
+    correlation_id: {type: string, format: uuid}
+    causation_id: {type: [string, 'null'], format: uuid}
+    actor_ref: {type: [string, 'null']}
+    policy_version: {type: [string, 'null']}
+    schema_ref: {type: string}
+    sensitive_fields: {type: array, items: {type: string}}
+    payload: {type: object}
+
+delivery_contract:
+  outbox_transaction_owner: aggregate_write_transaction
+  publisher_claim:
+    mechanism: SELECT_FOR_UPDATE_SKIP_LOCKED
+    lease_seconds: 60
+    batch_size: 200
+  deduplication:
+    key: tenant_id:event_id
+    consumer_ttl_days: 30
+    aggregate_guard: aggregate_type:aggregate_id:aggregate_version:event_type
+  retry:
+    schedule_seconds: [10, 30, 120, 600, 1800]
+    max_attempts: 10
+    jitter: full
+  dead_letter:
+    topic_suffix: .dlq
+    alert_after_attempt: 5
+    alert_owner: Platform SRE and event domain owner
+    poison_isolation: one message per DLQ entry with original envelope and delivery evidence
+  acknowledgement:
+    publisher_marks_published_only_after_pubsub_message_id_is_returned
+  replay:
+    source: retained_outbox_or_audit_verified_archive
+    requires: incident_or_change_id, domain_owner_approval, time_range, event_filter, dry_run_count
+    preserves_event_id: true
+    adds_replay_metadata: true
+  sensitive_data:
+    default: no_raw_snapshot_content_no_credentials_no_personal_contact
+    masking: payload schemas expose opaque IDs and classification metadata
+
+catalog:
+  - event_type: intake.submitted
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: intake.intakes
+    aggregate_type: intake
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeSubmittedV1'
+    sensitive_fields: [payload.original_url]
+    consumers: [intake_orchestrator, task_projection, audit_projection, analytics_ingestion]
+    retention_days: 14
+  - event_type: intake.state_changed
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: intake.intake_stage_transitions
+    aggregate_type: intake
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeStateChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, task_projection, sla_service, analytics_ingestion]
+    retention_days: 14
+  - event_type: snapshot.created
+    event_version: 1
+    producer: retrieval_service
+    transaction_owner: intake.source_snapshots
+    aggregate_type: source_snapshot
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/SnapshotCreatedV1'
+    sensitive_fields: [payload.object_uri]
+    consumers: [parser_orchestrator, evidence_index, reconciliation_service]
+    retention_days: 14
+  - event_type: parser.run_completed
+    event_version: 1
+    producer: parser_service
+    transaction_owner: intake.parser_runs
+    aggregate_type: parser_run
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/ParserRunCompletedV1'
+    sensitive_fields: []
+    consumers: [matcher_service, operator_console_projection, data_quality_projection]
+    retention_days: 14
+  - event_type: match.review_required
+    event_version: 1
+    producer: matcher_service
+    transaction_owner: identity.match_cases
+    aggregate_type: match_case
+    partition_key: tenant_id:match_case_id
+    ordering_scope: one_match_case
+    schema_ref: '#/payloads/MatchReviewRequiredV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, operator_console_projection]
+    retention_days: 14
+  - event_type: match.decided
+    event_version: 1
+    producer: identity_resolution_service
+    transaction_owner: identity.match_decisions
+    aggregate_type: match_case
+    partition_key: tenant_id:match_case_id
+    ordering_scope: one_match_case
+    schema_ref: '#/payloads/MatchDecidedV1'
+    sensitive_fields: []
+    consumers: [listing_service, operator_console_projection, audit_projection, analytics_ingestion]
+    retention_days: 14
+  - event_type: identity.resolution_changed
+    event_version: 1
+    producer: identity_resolution_service
+    transaction_owner: identity.source_identity_edges
+    aggregate_type: property
+    partition_key: tenant_id:effective_property_id
+    ordering_scope: one_effective_property_graph
+    schema_ref: '#/payloads/IdentityResolutionChangedV1'
+    sensitive_fields: []
+    consumers: [listing_projection, candidate_projection, search_indexer, analytics_ingestion, reconciliation_service]
+    retention_days: 30
+  - event_type: listing.created
+    event_version: 1
+    producer: listing_service
+    transaction_owner: expansion.listings
+    aggregate_type: listing
+    partition_key: tenant_id:listing_id
+    ordering_scope: one_listing
+    schema_ref: '#/payloads/ListingChangedV1'
+    sensitive_fields: []
+    consumers: [listing_inbox_projection, search_indexer, analytics_ingestion]
+    retention_days: 14
+  - event_type: listing.revised
+    event_version: 1
+    producer: listing_service
+    transaction_owner: expansion.listing_revisions
+    aggregate_type: listing
+    partition_key: tenant_id:listing_id
+    ordering_scope: one_listing
+    schema_ref: '#/payloads/ListingChangedV1'
+    sensitive_fields: []
+    consumers: [listing_inbox_projection, candidate_projection, search_indexer, analytics_ingestion]
+    retention_days: 14
+  - event_type: listing.status_changed
+    event_version: 1
+    producer: listing_service
+    transaction_owner: expansion.listings
+    aggregate_type: listing
+    partition_key: tenant_id:listing_id
+    ordering_scope: one_listing
+    schema_ref: '#/payloads/ListingStatusChangedV1'
+    sensitive_fields: []
+    consumers: [listing_inbox_projection, candidate_projection, task_projection, analytics_ingestion]
+    retention_days: 14
+  - event_type: assignment.assigned
+    event_version: 1
+    producer: workflow_service
+    transaction_owner: workflow.assignments
+    aggregate_type: assignment
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_assignment
+    schema_ref: '#/payloads/AssignmentChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, sla_service]
+    retention_days: 14
+  - event_type: assignment.transferred
+    event_version: 1
+    producer: workflow_service
+    transaction_owner: workflow.assignments
+    aggregate_type: assignment
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_assignment
+    schema_ref: '#/payloads/AssignmentChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, sla_service]
+    retention_days: 14
+  - event_type: sla.breached
+    event_version: 1
+    producer: sla_service
+    transaction_owner: workflow.sla_instances
+    aggregate_type: sla_instance
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_sla
+    schema_ref: '#/payloads/SlaBreachedV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, operations_metrics]
+    retention_days: 14
+  - event_type: candidate.promotion_requested
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: expansion.promotion_decisions
+    aggregate_type: promotion_decision
+    partition_key: tenant_id:promotion_decision_id
+    ordering_scope: one_promotion
+    schema_ref: '#/payloads/PromotionChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, operator_console_projection]
+    retention_days: 14
+  - event_type: candidate.created
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: expansion.candidate_sites
+    aggregate_type: candidate_site
+    partition_key: tenant_id:candidate_site_id
+    ordering_scope: one_candidate
+    schema_ref: '#/payloads/CandidateCreatedV1'
+    sensitive_fields: []
+    consumers: [sitescore_orchestrator, candidate_projection, search_indexer, analytics_ingestion]
+    retention_days: 30
+  - event_type: candidate.promotion_completed
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: expansion.promotion_decisions
+    aggregate_type: promotion_decision
+    partition_key: tenant_id:promotion_decision_id
+    ordering_scope: one_promotion
+    schema_ref: '#/payloads/PromotionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, task_projection, audit_projection]
+    retention_days: 14
+  - event_type: job.dead_lettered
+    event_version: 1
+    producer: job_platform
+    transaction_owner: workflow.jobs
+    aggregate_type: job
+    partition_key: tenant_id:job_id
+    ordering_scope: one_job
+    schema_ref: '#/payloads/JobDeadLetteredV1'
+    sensitive_fields: [payload.last_error_details]
+    consumers: [operations_alerting, reconciliation_service, audit_projection]
+    retention_days: 30
+  - event_type: audit.event_recorded
+    event_version: 1
+    producer: audit_platform
+    transaction_owner: audit.audit_events
+    aggregate_type: audit_event
+    partition_key: tenant_id:resource_id
+    ordering_scope: one_resource_audit_chain
+    schema_ref: '#/payloads/AuditRecordedV1'
+    sensitive_fields: []
+    consumers: [audit_projection, evidence_verifier]
+    retention_days: 30
+
+payloads:
+  IntakeSubmittedV1:
+    required: [intake_id, intake_method, submitter_subject_id, submitted_at, scope]
+  IntakeStateChangedV1:
+    required: [intake_id, from_state, to_state, transition_id, reason_code, version]
+  SnapshotCreatedV1:
+    required: [source_snapshot_id, intake_id, source_id, content_sha256, captured_at, retention_class]
+  ParserRunCompletedV1:
+    required: [parser_run_id, intake_id, parser_release_id, status, quality_summary]
+  MatchReviewRequiredV1:
+    required: [match_case_id, intake_id, outcome, confidence, candidate_ids, contradictory_signals]
+  MatchDecidedV1:
+    required: [match_decision_id, match_case_id, decision_type, status, reviewer_subject_id]
+  IdentityResolutionChangedV1:
+    required: [decision_id, effective_property_id, closed_edge_ids, created_edge_ids, redirect_ids]
+  ListingChangedV1:
+    required: [listing_id, property_id, current_revision_id, lifecycle_state, version]
+  ListingStatusChangedV1:
+    required: [listing_id, from_state, to_state, observation_id, version]
+  AssignmentChangedV1:
+    required: [assignment_id, intake_id, status, owner_subject_id, due_at, version]
+  SlaBreachedV1:
+    required: [sla_instance_id, intake_id, due_at, breached_at, escalation_level]
+  PromotionChangedV1:
+    required: [promotion_decision_id, intake_id, listing_id, status, version]
+  CandidateCreatedV1:
+    required: [candidate_site_id, property_id, source_listing_id, target_format_code, version]
+  JobDeadLetteredV1:
+    required: [job_id, job_type, checkpoint, attempt, error_code, dead_lettered_at]
+  AuditRecordedV1:
+    required: [audit_event_id, action, resource_type, resource_id, result, event_sha256]
