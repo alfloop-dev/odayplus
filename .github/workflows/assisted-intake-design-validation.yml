@@ -1,0 +1,42 @@
+name: Assisted Listing Intake Design Contract Gate
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'scripts/validate_assisted_listing_intake_design.py'
+      - '.github/workflows/assisted-intake-design-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contract-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact review target
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compile validator
+        run: python -m py_compile scripts/validate_assisted_listing_intake_design.py
+
+      - name: Run commit-bound cross-contract validation
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python scripts/validate_assisted_listing_intake_design.py \
+            --reviewed-commit "$REVIEWED_COMMIT" \
+            --current-pr-head "$CURRENT_PR_HEAD" \
+            --base-commit "$BASE_COMMIT" \
+            --strict-review-target \
+            --json
