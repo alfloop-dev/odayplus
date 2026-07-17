@@ -1,0 +1,77 @@
+manifest_id: ODP-SD-INTAKE-REVIEW-MANIFEST-001
+response_id: ODP-SD-INTAKE-001
+effective_response_version: 0.2.1
+status: proposed
+base_branch: dev
+target_branch: agent/assisted-listing-intake-system-design
+updated_at: 2026-07-17
+
+review_target_policy:
+  rule: reviewer must record the exact current PR head SHA at review start
+  required_front_matter:
+    - reviewed_commit
+    - response_version
+    - base_branch
+    - base_commit
+    - artifact_manifest
+  stale_condition: reviewed_commit != current_pr_head
+  stale_result: STALE_REVIEW_TARGET
+  prohibited_results_for_stale_target: [APPROVED, CHANGES_REQUESTED]
+
+historical_reviews:
+  - review_id: ODP-SD-INTAKE-REVIEW-001
+    reviewed_commit: ffe14c77f7d4f1ae97d301db3a8177cd3effeed6
+    response_version: 0.1.0
+    status_for_current_head: HISTORICAL_ONLY
+
+normative_artifacts:
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md
+    role: alignment source
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md
+    role: v0.2.0 main response
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md
+    role: v0.2.1 normative corrections and precedence
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md
+    role: base state contracts
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
+    role: base relational schema
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
+    role: tenant/history/migration consistency patch
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+    role: base OpenAPI
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+    role: promotion/command/error correction overlay
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md
+    role: deny-by-default authorization and segregation
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
+    role: base domain-event catalog
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
+    role: event alignment and typed additions
+  - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md
+    role: reliability/privacy/evidence
+  - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
+    role: migration and rollout
+  - path: scripts/validate_assisted_listing_intake_design.py
+    role: pre-review consistency gate
+
+required_pre_review_checks:
+  - all normative_artifacts paths exist
+  - response and correction versions compose to effective_response_version
+  - all SDI-001 through SDI-024 appear in the decision matrix
+  - SLA and decision transition tables exist
+  - old final promotion route is removed by overlay
+  - promotion request and independent review endpoints exist
+  - assignment claim transfer complete and SLA pause resume endpoints exist
+  - authorization denial codes are present in the canonical API error registry
+  - state-referenced domain events exist in base catalog or addendum
+  - base event payloads are complete JSON Schemas before event rollout
+  - schema patch provides tenant-qualified foreign keys and RLS coverage
+  - LEGACY_RECONCILED is valid in schema and migration contract
+  - review reviewed_commit equals current PR head
+
+fail_closed_gates:
+  base_event_payload_schema_incomplete: assisted_intake_v1_events=false
+  openapi_overlay_not_bundled_or_invalid: assisted_intake_v1_write=false
+  tenant_fk_or_rls_validation_failed: assisted_intake_v1_write=false
+  promotion_contract_tests_failed: assisted_intake_v1_promotion=false
+  stale_review_target: no approval or changes-requested decision may be attributed to current head
