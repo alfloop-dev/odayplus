@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Pre-review consistency gate for ODP-SD-INTAKE-001.
 
-This validator intentionally uses only the Python standard library so it can run
-in a fresh checkout before the product dependency graph is installed. It checks
-cross-artifact invariants that previously allowed a design package to look
-complete while carrying contradictory state, API, schema, authorization, event,
-and review-target contracts.
+The gate uses only the Python standard library so it can run in a fresh checkout.
+It verifies the cross-artifact invariants that previously allowed a design
+package to appear complete while state, API, schema, authorization, event, and
+review-target contracts contradicted one another.
 
 Usage:
     python scripts/validate_assisted_listing_intake_design.py
@@ -36,8 +35,10 @@ REQUIRED_ARTIFACTS = (
     "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
     "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
     "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
     "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
     "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
     "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
     "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
     "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml",
@@ -86,6 +87,9 @@ CANONICAL_ERROR_CODES = {
     "RESIDENCY_DENIED",
     "EXPORT_APPROVAL_REQUIRED",
     "PURGE_APPROVAL_REQUIRED",
+    "QUARANTINE_RELEASE_DENIED",
+    "PROMOTION_APPROVAL_REQUIRED",
+    "RESTRICTED_EXPORT_DENIED",
     "BREAK_GLASS_DENIED",
     "DEPENDENCY_CONFLICT",
     "DUPLICATE_CANDIDATE",
@@ -149,19 +153,33 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def require_contains(findings: list[Finding], check: str, text: str, values: tuple[str, ...]) -> None:
+def require_contains(
+    findings: list[Finding], check: str, text: str, values: tuple[str, ...]
+) -> None:
     missing = [value for value in values if value not in text]
     findings.append(
-        Finding(check, not missing, "present" if not missing else f"missing: {', '.join(missing)}")
+        Finding(
+            check,
+            not missing,
+            "present" if not missing else f"missing: {', '.join(missing)}",
+        )
     )
 
 
 def extract_event_types(text: str) -> set[str]:
-    return set(re.findall(r"^\s*-?\s*event_type:\s*([a-z0-9_.-]+)\s*$", text, flags=re.MULTILINE))
+    return set(
+        re.findall(
+            r"^\s*-?\s*event_type:\s*([a-z0-9_.-]+)\s*$",
+            text,
+            flags=re.MULTILINE,
+        )
+    )
 
 
 def extract_schema_refs(text: str) -> set[str]:
-    return set(re.findall(r"schema_ref:\s*['\"]?#/payloads/([A-Za-z0-9_]+)", text))
+    return set(
+        re.findall(r"schema_ref:\s*['\"]?#/payloads/([A-Za-z0-9_]+)", text)
+    )
 
 
 def extract_payload_names(text: str) -> set[str]:
@@ -187,7 +205,9 @@ def main() -> int:
 
     findings: list[Finding] = []
 
-    missing_files = [path for path in REQUIRED_ARTIFACTS if not (ROOT / path).is_file()]
+    missing_files = [
+        path for path in REQUIRED_ARTIFACTS if not (ROOT / path).is_file()
+    ]
     empty_files = [
         path
         for path in REQUIRED_ARTIFACTS
@@ -197,50 +217,101 @@ def main() -> int:
         Finding(
             "required_artifacts",
             not missing_files and not empty_files,
-            f"missing={missing_files}; empty={empty_files}" if missing_files or empty_files else "all present",
+            f"missing={missing_files}; empty={empty_files}"
+            if missing_files or empty_files
+            else "all present",
         )
     )
     if missing_files:
         return report(findings, args.json_output)
 
-    response = read("docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md")
-    correction = read("docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md")
-    state_contracts = read("docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md")
-    auth = read("docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md")
+    response = read(
+        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md"
+    )
+    correction = read(
+        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md"
+    )
+    state_contracts = read(
+        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md"
+    )
+    auth = read(
+        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md"
+    )
     base_api = read("docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml")
-    overlay = read("docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml")
-    base_events = read("docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml")
-    event_addendum = read("docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml")
-    payload_registry = read("docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml")
+    command_overlay = read(
+        "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml"
+    )
+    consistency_overlay = read(
+        "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml"
+    )
+    overlay_stack = command_overlay + "\n" + consistency_overlay
+    base_events = read(
+        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml"
+    )
+    event_addendum = read(
+        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml"
+    )
+    payload_registry = read(
+        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml"
+    )
     base_schema = read("docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql")
-    schema_patch = read("docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql")
-    migration = read("docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md")
+    schema_patch_0002 = read(
+        "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql"
+    )
+    schema_patch_0003 = read(
+        "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql"
+    )
+    schema_stack = base_schema + "\n" + schema_patch_0002 + "\n" + schema_patch_0003
+    migration = read(
+        "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md"
+    )
 
     findings.append(
         Finding(
             "effective_version",
             "version: 0.2.1" in response and "version: 0.2.1" in correction,
-            "main response and correction pack must both identify 0.2.1",
+            "main response and correction pack identify 0.2.1",
         )
     )
 
-    missing_sdi = [f"SDI-{index:03d}" for index in range(1, 25) if f"SDI-{index:03d}" not in response]
-    findings.append(Finding("decision_coverage", not missing_sdi, "complete" if not missing_sdi else f"missing={missing_sdi}"))
+    missing_sdi = [
+        f"SDI-{index:03d}"
+        for index in range(1, 25)
+        if f"SDI-{index:03d}" not in response
+    ]
+    findings.append(
+        Finding(
+            "decision_coverage",
+            not missing_sdi,
+            "complete" if not missing_sdi else f"missing={missing_sdi}",
+        )
+    )
 
     require_contains(
         findings,
         "binding_transition_tables",
         correction,
-        ("## 3. Binding SLA state machine", "## 4. Binding decision review, execution, and reversal transitions"),
+        (
+            "## 3. Binding SLA state machine",
+            "## 4. Binding decision review, execution, and reversal transitions",
+        ),
     )
     require_contains(
         findings,
         "base_state_models",
         state_contracts,
-        ("## 2. Intake processing", "## 3. Listing lifecycle", "## 4. Identity graph", "## 5. Assignment and SLA", "## 7. Candidate promotion"),
+        (
+            "## 2. Intake processing",
+            "## 3. Listing lifecycle",
+            "## 4. Identity graph",
+            "## 5. Assignment and SLA",
+            "## 7. Candidate promotion",
+        ),
     )
 
-    overlay_missing = [path for path in REQUIRED_COMMAND_PATHS if path not in overlay]
+    overlay_missing = [
+        path for path in REQUIRED_COMMAND_PATHS if path not in command_overlay
+    ]
     findings.append(
         Finding(
             "command_api_coverage",
@@ -249,42 +320,76 @@ def main() -> int:
         )
     )
     old_promotion_removed = (
-        "$.paths['/v1/intakes/{intake_id}/promotion']" in overlay
-        and "remove: true" in overlay
-        and "/v1/intakes/{intake_id}/promotion-requests" in overlay
+        "$.paths['/v1/intakes/{intake_id}/promotion']" in command_overlay
+        and "remove: true" in command_overlay
+        and "/v1/intakes/{intake_id}/promotion-requests" in command_overlay
     )
-    findings.append(Finding("promotion_api_correction", old_promotion_removed, "old final receipt route removed; request/review flow present"))
+    findings.append(
+        Finding(
+            "promotion_api_correction",
+            old_promotion_removed,
+            "old final receipt route removed; request/review flow present",
+        )
+    )
+    findings.append(
+        Finding(
+            "review_action_state_consistency",
+            "enum: [APPROVE, REJECT]" in consistency_overlay
+            and "RETURN" not in consistency_overlay.split(
+                "$.components.schemas.ReviewDecisionRequest.properties.decision", 1
+            )[1].split("- target:", 1)[0],
+            "v1 review actions have complete state semantics",
+        )
+    )
 
-    missing_error_codes = sorted(code for code in CANONICAL_ERROR_CODES if code not in overlay)
+    missing_error_codes = sorted(
+        code for code in CANONICAL_ERROR_CODES if code not in overlay_stack
+    )
     auth_codes = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", auth))
-    missing_auth_codes = sorted(code for code in auth_codes if code.endswith(("DENIED", "REQUIRED", "CONFLICT")) and code not in CANONICAL_ERROR_CODES)
+    policy_like_codes = {
+        code
+        for code in auth_codes
+        if code.endswith(("DENIED", "REQUIRED", "CONFLICT"))
+    }
+    missing_auth_codes = sorted(policy_like_codes - CANONICAL_ERROR_CODES)
     findings.append(
         Finding(
             "canonical_error_registry",
             not missing_error_codes and not missing_auth_codes,
-            f"missing_from_overlay={missing_error_codes}; auth_not_registered={missing_auth_codes}",
+            f"missing_from_overlay_stack={missing_error_codes}; "
+            f"auth_not_registered={missing_auth_codes}",
         )
     )
 
     event_types = extract_event_types(base_events) | extract_event_types(event_addendum)
     missing_events = sorted(REQUIRED_EVENT_TYPES - event_types)
-    findings.append(Finding("event_catalog_coverage", not missing_events, "complete" if not missing_events else f"missing={missing_events}"))
+    findings.append(
+        Finding(
+            "event_catalog_coverage",
+            not missing_events,
+            "complete" if not missing_events else f"missing={missing_events}",
+        )
+    )
 
     schema_refs = extract_schema_refs(base_events) | extract_schema_refs(event_addendum)
-    payload_names = extract_payload_names(payload_registry) | extract_payload_names(event_addendum)
+    payload_names = extract_payload_names(payload_registry) | extract_payload_names(
+        event_addendum
+    )
     missing_payloads = sorted(schema_refs - payload_names)
     findings.append(
         Finding(
             "event_payload_schema_coverage",
             not missing_payloads,
-            "complete typed payload registry" if not missing_payloads else f"missing={missing_payloads}",
+            "complete typed payload registry"
+            if not missing_payloads
+            else f"missing={missing_payloads}",
         )
     )
 
     require_contains(
         findings,
         "tenant_isolation_patch",
-        schema_patch,
+        schema_patch_0002,
         (
             "fk_transition_intake_tenant",
             "fk_listing_property_tenant",
@@ -296,7 +401,7 @@ def main() -> int:
     require_contains(
         findings,
         "history_and_migration_schema",
-        schema_patch,
+        schema_stack,
         (
             "workflow.assignment_transitions",
             "workflow.sla_transitions",
@@ -304,54 +409,90 @@ def main() -> int:
             "LEGACY_RECONCILED",
             "migration_ref",
             "workflow.reconciliation_findings",
+            "PENDING_REVIEW",
         ),
     )
     findings.append(
         Finding(
+            "promotion_state_constraint",
+            "promotion_decisions_status_check" in schema_patch_0003
+            and "'PENDING_REVIEW'" in schema_patch_0003,
+            "SQL accepts the reviewed promotion lifecycle",
+        )
+    )
+    findings.append(
+        Finding(
             "legacy_reconciled_contract",
-            "LEGACY_RECONCILED" in schema_patch and "LEGACY_RECONCILED" in migration,
+            "LEGACY_RECONCILED" in schema_stack
+            and "LEGACY_RECONCILED" in migration,
             "schema and migration agree",
         )
     )
-
-    # Detect the two uniqueness contracts corrected by patch 0002.
     findings.append(
         Finding(
             "lineage_safe_uniqueness",
-            "DROP INDEX IF EXISTS intake.ux_intakes_exact_url_active" in schema_patch
-            and "uq_snapshot_per_intake_content" in schema_patch,
+            "DROP INDEX IF EXISTS intake.ux_intakes_exact_url_active"
+            in schema_patch_0002
+            and "uq_snapshot_per_intake_content" in schema_patch_0002,
             "URL history and per-intake snapshot evidence preserved",
         )
     )
 
-    if args.strict_review_target and (not args.reviewed_commit or not args.current_pr_head):
-        findings.append(Finding("review_target", False, "strict mode requires --reviewed-commit and --current-pr-head"))
+    if args.strict_review_target and (
+        not args.reviewed_commit or not args.current_pr_head
+    ):
+        findings.append(
+            Finding(
+                "review_target",
+                False,
+                "strict mode requires --reviewed-commit and --current-pr-head",
+            )
+        )
     elif args.reviewed_commit or args.current_pr_head:
         findings.append(
             Finding(
                 "review_target",
-                bool(args.reviewed_commit and args.current_pr_head and args.reviewed_commit == args.current_pr_head),
-                "commit-bound" if args.reviewed_commit == args.current_pr_head else "STALE_REVIEW_TARGET",
+                bool(
+                    args.reviewed_commit
+                    and args.current_pr_head
+                    and args.reviewed_commit == args.current_pr_head
+                ),
+                "commit-bound"
+                if args.reviewed_commit == args.current_pr_head
+                else "STALE_REVIEW_TARGET",
             )
         )
     else:
-        findings.append(Finding("review_target", True, "not evaluated; use --strict-review-target for formal review"))
+        findings.append(
+            Finding(
+                "review_target",
+                True,
+                "not evaluated; use --strict-review-target for formal review",
+            )
+        )
 
-    # The base files may contain superseded clauses only when the correction pack
-    # and overlays are present. This check prevents silently deleting the base
-    # lineage while still forbidding direct implementation from it.
     findings.append(
         Finding(
             "supersession_lineage",
             "ODP-SD-INTAKE-001-CORR-021" in correction
-            and "extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml" in overlay
-            and "Apply after ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql" in schema_patch,
-            "base artifacts retained with explicit correction precedence",
+            and "extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml"
+            in command_overlay
+            and "extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml"
+            in consistency_overlay
+            and "Apply after ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql"
+            in schema_patch_0002
+            and "Apply after schema baseline and 0002 consistency patch"
+            in schema_patch_0003,
+            "base artifacts retained with explicit patch order",
         )
     )
-
-    # Make sure the baseline still exists; this is useful in review output.
-    findings.append(Finding("base_contract_nonempty", len(base_api) > 1000 and len(base_schema) > 1000, "base OpenAPI and DDL present"))
+    findings.append(
+        Finding(
+            "base_contract_nonempty",
+            len(base_api) > 1000 and len(base_schema) > 1000,
+            "base OpenAPI and DDL present",
+        )
+    )
 
     return report(findings, args.json_output)
 
