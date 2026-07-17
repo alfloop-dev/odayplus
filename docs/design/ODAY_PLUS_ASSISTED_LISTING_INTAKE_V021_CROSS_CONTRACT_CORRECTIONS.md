@@ -14,30 +14,84 @@ change_class: C3-breaking-and-C4-high-risk
 
 # ODay Plus Assisted Listing Intake v0.2.1 Cross-Contract Corrections
 
-## 1. Purpose and precedence
+## 1. Purpose, normative register, and precedence
 
-A fresh cross-contract review of `ODP-SD-INTAKE-001` version `0.2.0` found real inconsistencies that are independent of the stale review artifact anchored to commit `ffe14c77...`.
+This document records explicit textual corrections to `ODP-SD-INTAKE-001`. It does not maintain an independent or partial artifact list. The review manifest is the sole authority for package membership and apply order, and the identical machine-readable register below is validated against both the manifest and the consolidated response.
 
-This document is normative and corrects conflicting clauses in the following artifacts until they are consolidated into a later single-file revision:
-
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md`
-- `ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md`
-
-Precedence for Assisted Listing Intake is:
-
-```text
-alignment request
-> v0.2.1 correction pack and machine-readable patches
-> v0.2.0 main response and original artifacts
-> current runtime implementation
+<!-- normative-register:start -->
+```json
+{
+  "manifest_path": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+  "normative_artifacts": [
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md",
+    "scripts/validate_assisted_listing_intake_design.py",
+    "scripts/build_validate_assisted_listing_intake_openapi.py",
+    "scripts/validate_assisted_listing_intake_schema.sql",
+    ".github/workflows/assisted-intake-design-validation.yml"
+  ],
+  "precedence": [
+    "alignment_request",
+    "consolidated_response",
+    "review_manifest_for_artifact_register_and_apply_order",
+    "correction_pack_for_explicit_textual_corrections",
+    "machine_readable_stacks_in_manifest_order_later_artifact_overrides_earlier",
+    "unchanged_base_artifact_clauses",
+    "runtime_implementation"
+  ],
+  "schema_apply_order": [
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql"
+  ],
+  "openapi_bundle_order": [
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml"
+  ],
+  "event_apply_order": [
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml"
+  ]
+}
 ```
+<!-- normative-register:end -->
 
-No runtime task may implement a contradictory v0.2.0 clause.
+Precedence semantics are identical to the consolidated response:
+
+1. alignment request;
+2. consolidated response;
+3. review manifest for artifact membership and apply order;
+4. this correction pack for clauses explicitly corrected here;
+5. machine-readable stacks in manifest order, with later artifacts overriding earlier conflicts;
+6. unchanged base-artifact clauses;
+7. runtime implementation.
+
+No runtime task may implement a contradictory earlier clause. A mismatch among the response, this correction pack, and the manifest fails the pre-review gate.
 
 ## 2. Confirmed blockers in v0.2.0
 
@@ -49,7 +103,7 @@ No runtime task may implement a contradictory v0.2.0 clause.
 | `CCR-004` | Assignment claim/transfer/complete, SLA pause/resume, intake cancel/reopen/quarantine, and decision review/reversal had no API operations. | Add command endpoints through the OpenAPI overlay. |
 | `CCR-005` | Authorization denial codes, reliability codes, and OpenAPI `ApiError.code` were inconsistent. | §6 defines the canonical error registry; the OpenAPI overlay replaces the enum. |
 | `CCR-006` | State tables named many emitted events absent from the event catalog. | §7 distinguishes audit action codes from domain events and adds the missing event catalog entries. |
-| `CCR-007` | SQL foreign keys did not consistently enforce tenant equality; RLS was enabled on only a subset of tenant tables. | Apply schema consistency patch `0002`; see §8. |
+| `CCR-007` | SQL foreign keys did not consistently enforce tenant equality; RLS was enabled on only a subset of tenant tables. | Apply the complete four-file schema stack through patch `0004`; see §8. |
 | `CCR-008` | URL uniqueness prevented later revision observations, and snapshot uniqueness collapsed evidence across separate intakes. | Replace both unique constraints with lineage-safe indexes in schema patch `0002`. |
 | `CCR-009` | Assignment/SLA history and pause intervals were not physically modeled. | Add transition and pause interval tables in schema patch `0002`. |
 | `CCR-010` | Runbook used `PromotionDecision(decision_type=LEGACY_RECONCILED)` although the schema had no `decision_type`. | Add `decision_type` and `migration_ref`; see §9. |
@@ -151,7 +205,7 @@ Required operations:
 
 Merge/split/unmerge endpoints create or update a decision proposal. They do not bypass independent review.
 
-The machine-readable overlay is `docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml` and must be bundled with the base OpenAPI before client generation or contract testing.
+The machine-readable API contract is the complete six-artifact OpenAPI bundle in the normative register. The v1.1 command overlay is only one member of that stack; all registered overlays must be applied before client generation, examples, lint, or contract testing.
 
 ## 6. Canonical error registry
 
@@ -225,23 +279,22 @@ Only event types present in the base event catalog plus the v1.1 addendum are do
 
 `event_version` is a separate integer. Event type strings do not include `.v1`.
 
-## 8. Persistence corrections
+## 8. Persistence corrections and canonical schema stack
 
-The canonical relational contract is the original schema plus:
+The canonical relational contract is the complete four-file schema stack, in this exact order:
 
-`docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql`
+1. `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql`
+2. `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql`
+3. `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql`
+4. `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql`
 
-The patch:
+Patch responsibilities:
 
-- enforces tenant-equal composite foreign keys and enables RLS on all tenant-bearing tables;
-- removes URL uniqueness that blocked subsequent observations/revisions;
-- scopes snapshot deduplication to an intake rather than collapsing evidence across intakes;
-- adds assignment, SLA and pause history;
-- adds promotion `decision_type` and migration lineage;
-- adds required event envelope, object-generation/residency and export-manifest fields;
-- adds a persisted reconciliation finding contract.
+- `0002` corrects URL/snapshot uniqueness, adds assignment/SLA/pause history, promotion migration lineage, reconciliation findings, and the first tenant-qualified composite constraints.
+- `0003` makes promotion `PENDING_REVIEW` schema-valid.
+- `0004` completes tenant-qualified current-pointer and lineage foreign keys and enforces `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and the fail-closed `tenant_isolation` policy on every tenant-bearing contract table.
 
-Production migration must validate existing rows before applying the constraints. Any cross-tenant or orphaned row becomes a blocking reconciliation finding; it is never silently rewritten.
+`0002` alone is not the canonical relational patch and must never be applied as the final schema. Production migration must apply all four artifacts, reconcile existing rows, validate every `NOT VALID` constraint, and pass PostgreSQL catalog checks before authoritative writes are enabled. Cross-tenant or orphaned rows become blocking reconciliation findings and are never silently rewritten.
 
 ## 9. Migration correction
 
@@ -283,8 +336,8 @@ A stale review must never be labeled `APPROVED` or `CHANGES_REQUESTED` for the c
 The correction pack does not change the response from `proposed` to `approved`. Re-review must verify:
 
 1. SLA and decision transition tables are accepted.
-2. Base OpenAPI plus overlay bundles and validates.
-3. Schema baseline plus patch parses and all tenant-isolation tests pass.
+2. The complete six-artifact OpenAPI stack in the normative register composes and validates with zero Redocly errors or warnings.
+3. The complete four-file schema stack in the normative register applies to PostgreSQL 16 and all FORCE RLS, tenant-policy, and tenant-lineage catalog tests pass.
 4. Every state-referenced domain event exists in the base catalog or addendum.
 5. Authorization denial codes are a subset of the canonical OpenAPI error registry.
 6. Promotion request/review/execution and assignment/SLA command paths have contract tests.

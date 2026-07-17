@@ -38,51 +38,84 @@ Binding target changes relative to current `dev` implementation:
 
 Unknown, prohibited, expired, unauthorized, unlicensed, or kill-switched sources fail closed. Product UI/API never accepts provider credentials, cookies, bearer tokens, passwords, or private endpoints. Scheduled third-party result-page crawling and automatic listing-ID enumeration are outside this release.
 
-## 2. Normative Artifact Register and Precedence
+## 2. Normative Artifact Register, Precedence, and Apply Order
 
-Engineering, Product Design, QA, and reviewers must use the committed package below. Runtime handlers, migrations, reducers, policies, events, or tests must not invent contracts outside it.
+The review manifest is the sole authority for package membership and machine-readable apply order. This response and the correction pack intentionally duplicate the same register so humans cannot follow a stale subset. The validator requires all three representations to be byte-for-byte equivalent after JSON/YAML parsing.
 
-| Contract group | Normative artifact | Purpose |
-|---|---|---|
-| Alignment source | `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md` | ODP-SD-INTAKE-ALIGN-001 |
-| Consolidated response | This document | SDI-001..024 |
-| Cross-contract corrections | `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md` | v0.2 defects, correction detail and precedence |
-| Base state contracts | `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md` | Intake/listing/identity/assignment/decision/promotion base contracts |
-| Base schema | `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql` | PostgreSQL/PostGIS baseline |
-| Schema patch 0002 | `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql` | Tenant FK/RLS, history, lineage and migration consistency |
-| Schema patch 0003 | `docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql` | Promotion `PENDING_REVIEW` state constraint |
-| Base OpenAPI | `docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml` | Query/intake/correction/identity baseline |
-| OpenAPI v1.1 overlay | `docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml` | Promotion request/review and missing commands |
-| OpenAPI v1.1.1 overlay | `docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml` | Complete error registry and review action consistency |
-| Authorization/segregation | `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md` | Deny-by-default role/action/field/scope/state/risk rules |
-| Base event catalog | `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml` | Envelope, outbox and base event catalog |
-| Event addendum | `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml` | State/event alignment and missing events |
-| Event payload registry | `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml` | Complete typed payload schemas |
-| Reliability/privacy/evidence | `docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md` | Storage/jobs/SLO/recovery/privacy/evidence |
-| Migration/cutover/rollback | `docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md` | Backfill/reconciliation/canary/cutover/rollback |
-| Review manifest | `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml` | Apply order and exact-head review gate |
-| Validator | `scripts/validate_assisted_listing_intake_design.py` | Executable cross-contract pre-review gate |
-| CI gate | `.github/workflows/assisted-intake-design-validation.yml` | Runs validator on PRs to `dev` |
-
-Apply order:
-
-```text
-Schema: base -> 0002 -> 0003
-OpenAPI: base -> v1.1 overlay -> v1.1.1 consistency overlay
-Events: base catalog + v1.1 addendum + payload registry
+<!-- normative-register:start -->
+```json
+{
+  "manifest_path": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+  "normative_artifacts": [
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md",
+    "scripts/validate_assisted_listing_intake_design.py",
+    "scripts/build_validate_assisted_listing_intake_openapi.py",
+    "scripts/validate_assisted_listing_intake_schema.sql",
+    ".github/workflows/assisted-intake-design-validation.yml"
+  ],
+  "precedence": [
+    "alignment_request",
+    "consolidated_response",
+    "review_manifest_for_artifact_register_and_apply_order",
+    "correction_pack_for_explicit_textual_corrections",
+    "machine_readable_stacks_in_manifest_order_later_artifact_overrides_earlier",
+    "unchanged_base_artifact_clauses",
+    "runtime_implementation"
+  ],
+  "schema_apply_order": [
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql"
+  ],
+  "openapi_bundle_order": [
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml"
+  ],
+  "event_apply_order": [
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml"
+  ]
+}
 ```
+<!-- normative-register:end -->
 
-Precedence:
+Precedence semantics:
 
-```text
-alignment request
-> this consolidated v0.2.1 response
-> v0.2.1 correction pack and machine-readable patches/addenda
-> unchanged clauses in v0.2.0 base artifacts
-> current runtime implementation
-```
+1. The alignment request defines the required product and governance boundary.
+2. This consolidated response defines the selected architecture and SDI-001 through SDI-024 decisions.
+3. The review manifest is authoritative for the complete artifact register and schema/OpenAPI/event apply order.
+4. The correction pack overrides only clauses it explicitly identifies as corrected.
+5. Within each machine-readable stack, artifacts are applied in manifest order and each later patch/overlay overrides earlier conflicting content.
+6. Unchanged base-artifact clauses remain effective.
+7. Runtime implementation is evidence only and has the lowest precedence.
 
-All artifacts remain `proposed` until approvals in section 12 are recorded. Fail-closed gates remain binding meanwhile.
+Any difference among this register, the correction-pack register, or the review manifest is a P0 validation failure. No review decision or engineering handoff is valid while they differ. All artifacts remain `proposed` until approvals in section 12 are recorded.
 
 ## 3. Canonical Domain, Identity, and Ownership
 
@@ -172,7 +205,7 @@ Corrections preserve parsed, normalized, corrected, before-effective, after-effe
 
 ## 6. API, Query, Concurrency, and Events
 
-The effective API is the three-file bundle listed in section 2. Client generation and contract tests must apply overlays in order.
+The effective API is the six-artifact OpenAPI bundle listed in section 2 and the review manifest. Client generation, examples, lint, and contract tests must apply all five overlays to the base in the exact registered order.
 
 The effective API includes:
 

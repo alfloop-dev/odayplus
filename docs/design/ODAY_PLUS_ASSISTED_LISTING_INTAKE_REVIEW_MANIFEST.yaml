@@ -30,70 +30,80 @@ historical_reviews:
     response_version: 0.2.1
     status_for_current_head: INVALID_REVIEW_LINEAGE
     invalid_reason: review commit was not a descendant of the reviewed commit; PR 320 closed
+  - review_id: ODP-SD-INTAKE-REVIEW-003
+    reviewed_commit: d75fe8ab13d69f039c2cabe237d2401face8418b
+    response_version: 0.2.1
+    status_for_current_head: CHANGES_REQUESTED
+    invalid_reason: normative response/correction/manifest register and apply order diverged; PR 322 closed
+
+normative_precedence:
+  - alignment_request
+  - consolidated_response
+  - review_manifest_for_artifact_register_and_apply_order
+  - correction_pack_for_explicit_textual_corrections
+  - machine_readable_stacks_in_manifest_order_later_artifact_overrides_earlier
+  - unchanged_base_artifact_clauses
+  - runtime_implementation
 
 normative_artifacts:
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md
-    role: alignment source
+    role: implementation-binding package member
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md
-    role: consolidated v0.2.1 response
+    role: implementation-binding package member
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md
-    role: v0.2.1 correction details and precedence
+    role: implementation-binding package member
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md
-    role: base state contracts
-  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
-    role: base relational schema
-  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
-    role: tenant/history/migration consistency patch
-  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
-    role: promotion pending-review state constraint patch
-  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
-    role: FORCE RLS policies and tenant-qualified lineage constraints
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
-    role: base OpenAPI source fragment
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
-    role: initialize overlay component containers
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
-    role: promotion/command/error correction overlay
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
-    role: review-action and complete error-registry overlay
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
-    role: response-description and ApiError shape overlay
-  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
-    role: operation summaries, tag metadata, valid examples and unused-component cleanup
+    role: implementation-binding package member
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md
-    role: deny-by-default authorization and segregation
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
+    role: implementation-binding package member
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
-    role: base domain-event catalog
+    role: implementation-binding package member
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
-    role: event alignment and typed additions
+    role: implementation-binding package member
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
-    role: complete typed payload schemas for base events
+    role: implementation-binding package member
   - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md
-    role: reliability/privacy/evidence
+    role: implementation-binding package member
   - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
-    role: migration and rollout
+    role: implementation-binding package member
   - path: scripts/validate_assisted_listing_intake_design.py
-    role: cross-contract textual and registry gate
+    role: implementation-binding package member
   - path: scripts/build_validate_assisted_listing_intake_openapi.py
-    role: overlay application and structural OpenAPI validation
+    role: implementation-binding package member
   - path: scripts/validate_assisted_listing_intake_schema.sql
-    role: PostgreSQL catalog validation for RLS and tenant lineage
+    role: implementation-binding package member
+  - path: .github/workflows/assisted-intake-design-validation.yml
+    role: implementation-binding package member
 
 required_pre_review_checks:
   - all normative_artifacts paths exist
-  - consolidated response and correction pack identify effective_response_version
+  - consolidated response correction pack and manifest have identical normative register precedence and apply order
   - all SDI-001 through SDI-024 appear in the decision matrix
   - SLA and decision transition tables exist
-  - old final promotion route is removed by command overlay
-  - promotion request and independent review endpoints exist
-  - promotion PENDING_REVIEW is valid in SQL
-  - v1 review actions have complete approve/reject state semantics
-  - assignment claim transfer complete and SLA pause resume endpoints exist
-  - authorization denial codes are present in the canonical API error registry
-  - state-referenced domain events exist in base catalog or addendum
-  - all event schema_ref values resolve to complete typed payload schemas
   - effective OpenAPI is built by applying every overlay in order
-  - effective OpenAPI passes openapi-spec-validator and Redocly lint with zero errors or warnings
+  - effective OpenAPI passes openapi-spec-validator and Redocly with zero errors or warnings
   - every effective Response Object has description
   - ApiError requires and defines occurred_at and next_action
   - all four schema artifacts apply successfully to PostgreSQL 16
@@ -101,8 +111,6 @@ required_pre_review_checks:
   - every tenant-bearing table has a fail-closed tenant_isolation policy
   - every tenant-scoped foreign-key relationship has a tenant-qualified composite counterpart
   - all required lineage constraints exist in PostgreSQL catalog
-  - URL and snapshot uniqueness preserve revision and evidence lineage
-  - LEGACY_RECONCILED is valid in schema and migration contract
   - reviewed_commit equals current PR head
   - formal review commit is a descendant of reviewed_commit
 
@@ -120,6 +128,11 @@ schema_apply_order:
   - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
   - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
 
+event_apply_order:
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
+
 formal_review_command: >-
   python scripts/validate_assisted_listing_intake_design.py
   --reviewed-commit <current-pr-head>
@@ -128,6 +141,7 @@ formal_review_command: >-
   --strict-review-target
 
 fail_closed_gates:
+  normative_register_or_order_mismatch: no review decision or engineering handoff is valid
   openapi_bundle_build_or_lint_failed: assisted_intake_v1_read=false, assisted_intake_v1_write=false
   event_payload_schema_incomplete: assisted_intake_v1_events=false
   tenant_fk_rls_or_policy_validation_failed: assisted_intake_v1_write=false

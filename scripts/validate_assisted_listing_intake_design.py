@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-review consistency gate for ODP-SD-INTAKE-001.
-
-The gate uses only the Python standard library so it can run in a fresh checkout.
-It verifies the cross-artifact invariants that previously allowed a design
-package to appear complete while state, API, schema, authorization, event, and
-review-target contracts contradicted one another.
-
-Usage:
-    python scripts/validate_assisted_listing_intake_design.py
-    python scripts/validate_assisted_listing_intake_design.py \
-        --reviewed-commit "$REVIEWED_COMMIT" \
-        --current-pr-head "$CURRENT_PR_HEAD" \
-        --base-commit "$BASE_COMMIT" \
-        --strict-review-target
-"""
-
+"""Commit-bound cross-contract gate for ODP-SD-INTAKE-001."""
 from __future__ import annotations
 
 import argparse
@@ -25,26 +10,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+RESPONSE = "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md"
+CORRECTION = "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md"
+MANIFEST = "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml"
 
-REQUIRED_ARTIFACTS = (
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md",
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md",
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md",
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md",
-    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
-    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
-    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql",
-    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
-    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
-    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
-    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
-    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
-    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml",
-    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml",
-    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md",
-    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md",
-)
+NORMATIVE_ARTIFACTS = ['docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md', 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md', 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md', 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md', 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md', 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml', 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml', 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml', 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml', 'docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md', 'docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md', 'scripts/validate_assisted_listing_intake_design.py', 'scripts/build_validate_assisted_listing_intake_openapi.py', 'scripts/validate_assisted_listing_intake_schema.sql', '.github/workflows/assisted-intake-design-validation.yml']
+SCHEMA_ORDER = ['docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql', 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql']
+OPENAPI_ORDER = ['docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml', 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml']
+EVENT_ORDER = ['docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml', 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml', 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml']
+PRECEDENCE = ['alignment_request', 'consolidated_response', 'review_manifest_for_artifact_register_and_apply_order', 'correction_pack_for_explicit_textual_corrections', 'machine_readable_stacks_in_manifest_order_later_artifact_overrides_earlier', 'unchanged_base_artifact_clauses', 'runtime_implementation']
+EXPECTED_REGISTER = {
+    "manifest_path": MANIFEST,
+    "normative_artifacts": NORMATIVE_ARTIFACTS,
+    "precedence": PRECEDENCE,
+    "schema_apply_order": SCHEMA_ORDER,
+    "openapi_bundle_order": OPENAPI_ORDER,
+    "event_apply_order": EVENT_ORDER,
+}
 
 REQUIRED_COMMAND_PATHS = (
     "/v1/intakes/{intake_id}/promotion-requests",
@@ -60,87 +42,30 @@ REQUIRED_COMMAND_PATHS = (
     "/v1/identity-decisions/{decision_id}/actions/review",
     "/v1/identity-decisions/{decision_id}/actions/reverse",
 )
-
 CANONICAL_ERROR_CODES = {
-    "AUTHENTICATION_REQUIRED",
-    "ROLE_DENIED",
-    "TENANT_SCOPE_DENIED",
-    "SCOPE_DENIED",
-    "OWNERSHIP_REQUIRED",
-    "ASSIGNMENT_SCOPE_DENIED",
-    "SOURCE_SCOPE_DENIED",
-    "FIELD_MASKED",
-    "DATA_CLASSIFICATION_DENIED",
-    "PURPOSE_REQUIRED",
-    "PRECONDITION_REQUIRED",
-    "VERSION_CONFLICT",
-    "WORKFLOW_STATE_DENIED",
-    "OWNER_CONFLICT",
-    "SECOND_ACTOR_REQUIRED",
-    "SELF_REVIEW_DENIED",
-    "RISK_ACKNOWLEDGEMENT_REQUIRED",
-    "SOURCE_POLICY_DENIED",
-    "SOURCE_POLICY_UNKNOWN",
-    "SOURCE_AUTH_REQUIRED",
-    "LEGAL_HOLD_CONFLICT",
-    "RETENTION_NOT_REACHED",
-    "RESIDENCY_DENIED",
-    "EXPORT_APPROVAL_REQUIRED",
-    "PURGE_APPROVAL_REQUIRED",
-    "QUARANTINE_RELEASE_DENIED",
-    "PROMOTION_APPROVAL_REQUIRED",
-    "RESTRICTED_EXPORT_DENIED",
-    "BREAK_GLASS_DENIED",
-    "DEPENDENCY_CONFLICT",
-    "DUPLICATE_CANDIDATE",
-    "IDEMPOTENCY_KEY_REUSED",
-    "RETRY_BUDGET_EXHAUSTED",
-    "CHECKPOINT_UNAVAILABLE",
-    "JOB_FENCE_REJECTED",
-    "SLA_PAUSE_DENIED",
-    "DECISION_INCOMPLETE",
-    "BACKPRESSURE_ACTIVE",
-    "RATE_LIMITED",
-    "RESOURCE_NOT_FOUND",
-    "VALIDATION_FAILED",
-    "FIELD_REQUIRED",
-    "CURSOR_INVALID",
-    "CURSOR_EXPIRED",
-    "INTERNAL_ERROR",
+    "AUTHENTICATION_REQUIRED", "ROLE_DENIED", "TENANT_SCOPE_DENIED", "SCOPE_DENIED",
+    "OWNERSHIP_REQUIRED", "ASSIGNMENT_SCOPE_DENIED", "SOURCE_SCOPE_DENIED", "FIELD_MASKED",
+    "DATA_CLASSIFICATION_DENIED", "PURPOSE_REQUIRED", "PRECONDITION_REQUIRED", "VERSION_CONFLICT",
+    "WORKFLOW_STATE_DENIED", "OWNER_CONFLICT", "SECOND_ACTOR_REQUIRED", "SELF_REVIEW_DENIED",
+    "RISK_ACKNOWLEDGEMENT_REQUIRED", "SOURCE_POLICY_DENIED", "SOURCE_POLICY_UNKNOWN",
+    "SOURCE_AUTH_REQUIRED", "LEGAL_HOLD_CONFLICT", "RETENTION_NOT_REACHED", "RESIDENCY_DENIED",
+    "EXPORT_APPROVAL_REQUIRED", "PURGE_APPROVAL_REQUIRED", "QUARANTINE_RELEASE_DENIED",
+    "PROMOTION_APPROVAL_REQUIRED", "RESTRICTED_EXPORT_DENIED", "BREAK_GLASS_DENIED",
+    "DEPENDENCY_CONFLICT", "DUPLICATE_CANDIDATE", "IDEMPOTENCY_KEY_REUSED",
+    "RETRY_BUDGET_EXHAUSTED", "CHECKPOINT_UNAVAILABLE", "JOB_FENCE_REJECTED", "SLA_PAUSE_DENIED",
+    "DECISION_INCOMPLETE", "BACKPRESSURE_ACTIVE", "RATE_LIMITED", "RESOURCE_NOT_FOUND",
+    "VALIDATION_FAILED", "FIELD_REQUIRED", "CURSOR_INVALID", "CURSOR_EXPIRED", "INTERNAL_ERROR",
 }
-
 REQUIRED_EVENT_TYPES = {
-    "intake.submitted",
-    "intake.state_changed",
-    "snapshot.created",
-    "parser.run_completed",
-    "match.review_required",
-    "match.decided",
-    "identity.resolution_changed",
-    "listing.created",
-    "listing.revised",
-    "listing.status_changed",
-    "assignment.assigned",
-    "assignment.transferred",
-    "assignment.claimed",
-    "assignment.completed",
-    "sla.state_changed",
-    "sla.breached",
-    "candidate.promotion_requested",
-    "candidate.promotion_reviewed",
-    "candidate.created",
-    "candidate.promotion_completed",
-    "candidate.promotion_failed",
-    "sitescore.requested",
-    "sitescore.failed",
-    "job.replay_requested",
-    "job.dead_lettered",
-    "legal_hold.placed",
-    "legal_hold.released",
-    "evidence.exported",
-    "audit.event_recorded",
+    "intake.submitted", "intake.state_changed", "snapshot.created", "parser.run_completed",
+    "match.review_required", "match.decided", "identity.resolution_changed", "listing.created",
+    "listing.revised", "listing.status_changed", "assignment.assigned", "assignment.transferred",
+    "assignment.claimed", "assignment.completed", "sla.state_changed", "sla.breached",
+    "candidate.promotion_requested", "candidate.promotion_reviewed", "candidate.created",
+    "candidate.promotion_completed", "candidate.promotion_failed", "sitescore.requested",
+    "sitescore.failed", "job.replay_requested", "job.dead_lettered", "legal_hold.placed",
+    "legal_hold.released", "evidence.exported", "audit.event_recorded",
 }
-
 
 @dataclass
 class Finding:
@@ -148,51 +73,74 @@ class Finding:
     ok: bool
     detail: str
 
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
 
-def read(relative: str) -> str:
-    return (ROOT / relative).read_text(encoding="utf-8")
+def add(findings: list[Finding], check: str, ok: bool, detail: str) -> None:
+    findings.append(Finding(check, ok, detail))
 
+def extract_register(text: str) -> dict:
+    start = "<!-- normative-register:start -->"
+    end = "<!-- normative-register:end -->"
+    if start not in text or end not in text:
+        raise ValueError("normative register markers missing")
+    segment = text.split(start, 1)[1].split(end, 1)[0]
+    match = re.search(r"```json\s*(\{.*\})\s*```", segment, flags=re.S)
+    if not match:
+        raise ValueError("normative register JSON fence missing")
+    return json.loads(match.group(1))
 
-def require_contains(
-    findings: list[Finding], check: str, text: str, values: tuple[str, ...]
-) -> None:
-    missing = [value for value in values if value not in text]
-    findings.append(
-        Finding(
-            check,
-            not missing,
-            "present" if not missing else f"missing: {', '.join(missing)}",
-        )
-    )
+def yaml_list(text: str, key: str) -> list[str]:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line == f"{key}:":
+            values: list[str] = []
+            for row in lines[i + 1:]:
+                if row.startswith("  - "):
+                    values.append(row[4:].strip())
+                elif row and not row.startswith(" "):
+                    break
+            return values
+    return []
 
+def manifest_artifacts(text: str) -> list[str]:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line == "normative_artifacts:":
+            values: list[str] = []
+            for row in lines[i + 1:]:
+                match = re.match(r"^  - path:\s*(\S+)\s*$", row)
+                if match:
+                    values.append(match.group(1))
+                elif row and not row.startswith(" "):
+                    break
+            return values
+    return []
 
 def extract_event_types(text: str) -> set[str]:
-    return set(
-        re.findall(
-            r"^\s*-?\s*event_type:\s*([a-z0-9_.-]+)\s*$",
-            text,
-            flags=re.MULTILINE,
-        )
-    )
-
+    return set(re.findall(r"^\s*-?\s*event_type:\s*([a-z0-9_.-]+)\s*$", text, flags=re.M))
 
 def extract_schema_refs(text: str) -> set[str]:
-    return set(
-        re.findall(r"schema_ref:\s*['\"]?#/payloads/([A-Za-z0-9_]+)", text)
-    )
-
+    return set(re.findall(r"schema_ref:\s*['\"]?#/payloads/([A-Za-z0-9_]+)", text))
 
 def extract_payload_names(text: str) -> set[str]:
-    payload_section = text.split("payloads:", 1)
-    if len(payload_section) != 2:
+    if "payloads:" not in text:
         return set()
     names: set[str] = set()
-    for line in payload_section[1].splitlines():
+    for line in text.split("payloads:", 1)[1].splitlines():
         match = re.match(r"^\s{2}([A-Za-z][A-Za-z0-9_]+):\s*$", line)
         if match:
             names.add(match.group(1))
     return names
 
+def report(findings: list[Finding], as_json: bool) -> int:
+    failed = [f for f in findings if not f.ok]
+    if as_json:
+        print(json.dumps({"status": "PASS" if not failed else "FAIL", "findings": [f.__dict__ for f in findings]}, indent=2))
+    else:
+        for finding in findings:
+            print(f"[{'PASS' if finding.ok else 'FAIL'}] {finding.check}: {finding.detail}")
+    return 0 if not failed else 1
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -202,322 +150,83 @@ def main() -> int:
     parser.add_argument("--strict-review-target", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args()
-
     findings: list[Finding] = []
 
-    missing_files = [
-        path for path in REQUIRED_ARTIFACTS if not (ROOT / path).is_file()
-    ]
-    empty_files = [
-        path
-        for path in REQUIRED_ARTIFACTS
-        if (ROOT / path).is_file() and (ROOT / path).stat().st_size == 0
-    ]
-    findings.append(
-        Finding(
-            "required_artifacts",
-            not missing_files and not empty_files,
-            f"missing={missing_files}; empty={empty_files}"
-            if missing_files or empty_files
-            else "all present",
-        )
-    )
-    if missing_files:
+    missing = [path for path in NORMATIVE_ARTIFACTS if not (ROOT / path).is_file()]
+    empty = [path for path in NORMATIVE_ARTIFACTS if (ROOT / path).is_file() and (ROOT / path).stat().st_size == 0]
+    add(findings, "required_artifacts", not missing and not empty, f"missing={missing}; empty={empty}" if missing or empty else "all present")
+    if missing:
         return report(findings, args.json_output)
 
-    response = read(
-        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md"
-    )
-    correction = read(
-        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md"
-    )
-    state_contracts = read(
-        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md"
-    )
-    auth = read(
-        "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md"
-    )
-    base_api = read("docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml")
-    command_overlay = read(
-        "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml"
-    )
-    consistency_overlay = read(
-        "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml"
-    )
-    overlay_stack = command_overlay + "\n" + consistency_overlay
-    base_events = read(
-        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml"
-    )
-    event_addendum = read(
-        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml"
-    )
-    payload_registry = read(
-        "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml"
-    )
-    base_schema = read("docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql")
-    schema_patch_0002 = read(
-        "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql"
-    )
-    schema_patch_0003 = read(
-        "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql"
-    )
-    schema_stack = base_schema + "\n" + schema_patch_0002 + "\n" + schema_patch_0003
-    migration = read(
-        "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md"
-    )
+    response = read(RESPONSE)
+    correction = read(CORRECTION)
+    manifest = read(MANIFEST)
+    try:
+        response_register = extract_register(response)
+        correction_register = extract_register(correction)
+        manifest_register = {
+            "manifest_path": MANIFEST,
+            "normative_artifacts": manifest_artifacts(manifest),
+            "precedence": yaml_list(manifest, "normative_precedence"),
+            "schema_apply_order": yaml_list(manifest, "schema_apply_order"),
+            "openapi_bundle_order": yaml_list(manifest, "openapi_bundle_order"),
+            "event_apply_order": yaml_list(manifest, "event_apply_order"),
+        }
+        registers_ok = response_register == correction_register == manifest_register == EXPECTED_REGISTER
+        detail = "response, correction pack and manifest are identical" if registers_ok else json.dumps({"expected": EXPECTED_REGISTER, "response": response_register, "correction": correction_register, "manifest": manifest_register}, ensure_ascii=False)
+        add(findings, "normative_register_precedence_apply_order", registers_ok, detail)
+    except Exception as exc:
+        add(findings, "normative_register_precedence_apply_order", False, str(exc))
 
-    findings.append(
-        Finding(
-            "effective_version",
-            "version: 0.2.1" in response and "version: 0.2.1" in correction,
-            "main response and correction pack identify 0.2.1",
-        )
-    )
+    add(findings, "effective_version", "version: 0.2.1" in response and "version: 0.2.1" in correction and "effective_response_version: 0.2.1" in manifest, "all normative narrative/control files identify 0.2.1")
+    add(findings, "effective_api_wording", "three-file bundle" not in response and "six-artifact OpenAPI bundle" in response, "main response names the complete bundle")
+    add(findings, "persistence_wording", "0002` alone is not the canonical relational patch" in correction and SCHEMA_ORDER[-1] in correction, "correction pack names the complete four-file schema stack")
 
-    missing_sdi = [
-        f"SDI-{index:03d}"
-        for index in range(1, 25)
-        if f"SDI-{index:03d}" not in response
-    ]
-    findings.append(
-        Finding(
-            "decision_coverage",
-            not missing_sdi,
-            "complete" if not missing_sdi else f"missing={missing_sdi}",
-        )
-    )
+    missing_sdi = [f"SDI-{i:03d}" for i in range(1, 25) if f"SDI-{i:03d}" not in response]
+    add(findings, "decision_coverage", not missing_sdi, "complete" if not missing_sdi else f"missing={missing_sdi}")
+    add(findings, "binding_transition_tables", "## 3. Binding SLA state machine" in correction and "## 4. Binding decision review, execution, and reversal transitions" in correction, "present")
 
-    require_contains(
-        findings,
-        "binding_transition_tables",
-        correction,
-        (
-            "## 3. Binding SLA state machine",
-            "## 4. Binding decision review, execution, and reversal transitions",
-        ),
-    )
-    require_contains(
-        findings,
-        "base_state_models",
-        state_contracts,
-        (
-            "## 2. Intake processing",
-            "## 3. Listing lifecycle",
-            "## 4. Identity graph",
-            "## 5. Assignment and SLA",
-            "## 7. Candidate promotion",
-        ),
-    )
+    overlays = "\n".join(read(path) for path in OPENAPI_ORDER[1:])
+    missing_commands = [path for path in REQUIRED_COMMAND_PATHS if path not in overlays]
+    add(findings, "command_api_coverage", not missing_commands, "complete" if not missing_commands else f"missing={missing_commands}")
+    missing_errors = sorted(code for code in CANONICAL_ERROR_CODES if code not in overlays)
+    add(findings, "canonical_error_registry", not missing_errors, "complete" if not missing_errors else f"missing={missing_errors}")
 
-    overlay_missing = [
-        path for path in REQUIRED_COMMAND_PATHS if path not in command_overlay
-    ]
-    findings.append(
-        Finding(
-            "command_api_coverage",
-            not overlay_missing,
-            "complete" if not overlay_missing else f"missing={overlay_missing}",
-        )
-    )
-    old_promotion_removed = (
-        "$.paths['/v1/intakes/{intake_id}/promotion']" in command_overlay
-        and "remove: true" in command_overlay
-        and "/v1/intakes/{intake_id}/promotion-requests" in command_overlay
-    )
-    findings.append(
-        Finding(
-            "promotion_api_correction",
-            old_promotion_removed,
-            "old final receipt route removed; request/review flow present",
-        )
-    )
-    findings.append(
-        Finding(
-            "review_action_state_consistency",
-            "enum: [APPROVE, REJECT]" in consistency_overlay
-            and "RETURN" not in consistency_overlay.split(
-                "$.components.schemas.ReviewDecisionRequest.properties.decision", 1
-            )[1].split("- target:", 1)[0],
-            "v1 review actions have complete state semantics",
-        )
-    )
-
-    missing_error_codes = sorted(
-        code for code in CANONICAL_ERROR_CODES if code not in overlay_stack
-    )
-    auth_codes = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", auth))
-    policy_like_codes = {
-        code
-        for code in auth_codes
-        if code.endswith(("DENIED", "REQUIRED", "CONFLICT"))
-    }
-    missing_auth_codes = sorted(policy_like_codes - CANONICAL_ERROR_CODES)
-    findings.append(
-        Finding(
-            "canonical_error_registry",
-            not missing_error_codes and not missing_auth_codes,
-            f"missing_from_overlay_stack={missing_error_codes}; "
-            f"auth_not_registered={missing_auth_codes}",
-        )
-    )
-
-    event_types = extract_event_types(base_events) | extract_event_types(event_addendum)
+    base_events = read(EVENT_ORDER[0])
+    addendum = read(EVENT_ORDER[1])
+    payloads = read(EVENT_ORDER[2])
+    event_types = extract_event_types(base_events) | extract_event_types(addendum)
     missing_events = sorted(REQUIRED_EVENT_TYPES - event_types)
-    findings.append(
-        Finding(
-            "event_catalog_coverage",
-            not missing_events,
-            "complete" if not missing_events else f"missing={missing_events}",
-        )
-    )
+    add(findings, "event_catalog_coverage", not missing_events, "complete" if not missing_events else f"missing={missing_events}")
+    refs = extract_schema_refs(base_events) | extract_schema_refs(addendum)
+    names = extract_payload_names(payloads) | extract_payload_names(addendum)
+    missing_payloads = sorted(refs - names)
+    add(findings, "event_payload_schema_coverage", not missing_payloads, "complete" if not missing_payloads else f"missing={missing_payloads}")
 
-    schema_refs = extract_schema_refs(base_events) | extract_schema_refs(event_addendum)
-    payload_names = extract_payload_names(payload_registry) | extract_payload_names(
-        event_addendum
-    )
-    missing_payloads = sorted(schema_refs - payload_names)
-    findings.append(
-        Finding(
-            "event_payload_schema_coverage",
-            not missing_payloads,
-            "complete typed payload registry"
-            if not missing_payloads
-            else f"missing={missing_payloads}",
-        )
-    )
+    schema_stack = "\n".join(read(path) for path in SCHEMA_ORDER)
+    patch_0004 = read(SCHEMA_ORDER[-1])
+    rls_tokens = ("FORCE ROW LEVEL SECURITY", "CREATE POLICY tenant_isolation", "fk_intake_resolved_listing_tenant", "fk_edge_supersedes_tenant", "fk_promotion_candidate_tenant")
+    missing_rls = [token for token in rls_tokens if token not in patch_0004]
+    add(findings, "tenant_rls_lineage_contract", not missing_rls, "complete" if not missing_rls else f"missing={missing_rls}")
+    history_tokens = ("workflow.assignment_transitions", "workflow.sla_transitions", "workflow.sla_pause_intervals", "LEGACY_RECONCILED", "migration_ref", "workflow.reconciliation_findings", "PENDING_REVIEW")
+    missing_history = [token for token in history_tokens if token not in schema_stack]
+    add(findings, "history_and_migration_schema", not missing_history, "complete" if not missing_history else f"missing={missing_history}")
 
-    require_contains(
-        findings,
-        "tenant_isolation_patch",
-        schema_patch_0002,
-        (
-            "fk_transition_intake_tenant",
-            "fk_listing_property_tenant",
-            "fk_candidate_promotion_tenant",
-            "ENABLE ROW LEVEL SECURITY",
-            "CROSS_TENANT_REFERENCE",
-        ),
-    )
-    require_contains(
-        findings,
-        "history_and_migration_schema",
-        schema_stack,
-        (
-            "workflow.assignment_transitions",
-            "workflow.sla_transitions",
-            "workflow.sla_pause_intervals",
-            "LEGACY_RECONCILED",
-            "migration_ref",
-            "workflow.reconciliation_findings",
-            "PENDING_REVIEW",
-        ),
-    )
-    findings.append(
-        Finding(
-            "promotion_state_constraint",
-            "promotion_decisions_status_check" in schema_patch_0003
-            and "'PENDING_REVIEW'" in schema_patch_0003,
-            "SQL accepts the reviewed promotion lifecycle",
-        )
-    )
-    findings.append(
-        Finding(
-            "legacy_reconciled_contract",
-            "LEGACY_RECONCILED" in schema_stack
-            and "LEGACY_RECONCILED" in migration,
-            "schema and migration agree",
-        )
-    )
-    findings.append(
-        Finding(
-            "lineage_safe_uniqueness",
-            "DROP INDEX IF EXISTS intake.ux_intakes_exact_url_active"
-            in schema_patch_0002
-            and "uq_snapshot_per_intake_content" in schema_patch_0002,
-            "URL history and per-intake snapshot evidence preserved",
-        )
-    )
+    builder = read("scripts/build_validate_assisted_listing_intake_openapi.py")
+    workflow = read(".github/workflows/assisted-intake-design-validation.yml")
+    builder_ok = "openapi_bundle_order" in builder and "MANIFEST_PATH" in builder
+    workflow_missing = [path for path in SCHEMA_ORDER + OPENAPI_ORDER if path not in workflow and path not in builder]
+    add(findings, "ci_uses_registered_stacks", builder_ok and not workflow_missing, "manifest-driven OpenAPI builder and complete CI schema/API stack" if builder_ok and not workflow_missing else f"builder_ok={builder_ok}; missing={workflow_missing}")
 
-    if args.strict_review_target and (
-        not args.reviewed_commit or not args.current_pr_head
-    ):
-        findings.append(
-            Finding(
-                "review_target",
-                False,
-                "strict mode requires --reviewed-commit and --current-pr-head",
-            )
-        )
+    if args.strict_review_target and (not args.reviewed_commit or not args.current_pr_head):
+        add(findings, "review_target", False, "strict mode requires reviewed and current SHA")
     elif args.reviewed_commit or args.current_pr_head:
-        findings.append(
-            Finding(
-                "review_target",
-                bool(
-                    args.reviewed_commit
-                    and args.current_pr_head
-                    and args.reviewed_commit == args.current_pr_head
-                ),
-                "commit-bound"
-                if args.reviewed_commit == args.current_pr_head
-                else "STALE_REVIEW_TARGET",
-            )
-        )
+        ok = bool(args.reviewed_commit and args.current_pr_head and args.reviewed_commit == args.current_pr_head)
+        add(findings, "review_target", ok, "commit-bound" if ok else "STALE_REVIEW_TARGET")
     else:
-        findings.append(
-            Finding(
-                "review_target",
-                True,
-                "not evaluated; use --strict-review-target for formal review",
-            )
-        )
-
-    findings.append(
-        Finding(
-            "supersession_lineage",
-            "ODP-SD-INTAKE-001-CORR-021" in correction
-            and "extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml"
-            in command_overlay
-            and "extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml"
-            in consistency_overlay
-            and "Apply after ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql"
-            in schema_patch_0002
-            and "Apply after schema baseline and 0002 consistency patch"
-            in schema_patch_0003,
-            "base artifacts retained with explicit patch order",
-        )
-    )
-    findings.append(
-        Finding(
-            "base_contract_nonempty",
-            len(base_api) > 1000 and len(base_schema) > 1000,
-            "base OpenAPI and DDL present",
-        )
-    )
+        add(findings, "review_target", True, "not evaluated outside formal review")
 
     return report(findings, args.json_output)
-
-
-def report(findings: list[Finding], json_output: bool) -> int:
-    failed = [finding for finding in findings if not finding.ok]
-    if json_output:
-        print(
-            json.dumps(
-                {
-                    "status": "PASS" if not failed else "FAIL",
-                    "root": str(ROOT),
-                    "findings": [finding.__dict__ for finding in findings],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-    else:
-        for finding in findings:
-            marker = "PASS" if finding.ok else "FAIL"
-            print(f"[{marker}] {finding.check}: {finding.detail}")
-        print(f"\nResult: {'PASS' if not failed else 'FAIL'} ({len(failed)} failed)")
-    return 0 if not failed else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -21,12 +21,18 @@ from jsonpath_ng.jsonpath import Fields, Index
 from openapi_spec_validator import validate_spec
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASE = ROOT / "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml"
-DEFAULT_OVERLAYS = [
-    ROOT / "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml",
-    ROOT / "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml",
-    ROOT / "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml",
-]
+MANIFEST_PATH = ROOT / "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml"
+
+def _manifest_openapi_order() -> list[Path]:
+    manifest = yaml.safe_load(MANIFEST_PATH.read_text(encoding="utf-8"))
+    order = manifest.get("openapi_bundle_order")
+    if not isinstance(order, list) or len(order) < 2 or not all(isinstance(item, str) for item in order):
+        raise ValueError("review manifest must define openapi_bundle_order with base plus overlays")
+    return [ROOT / item for item in order]
+
+_OPENAPI_ORDER = _manifest_openapi_order()
+DEFAULT_BASE = _OPENAPI_ORDER[0]
+DEFAULT_OVERLAYS = _OPENAPI_ORDER[1:]
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
 
