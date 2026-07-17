@@ -1,0 +1,63 @@
+overlay: 1.0.0
+info:
+  title: ODay Plus Assisted Listing Intake v1.1.1 consistency overlay
+  version: 1.1.1
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+
+# Apply after the base OpenAPI and v1.1 command overlay.
+
+actions:
+  - target: $.components.schemas.ReviewDecisionRequest.properties.decision
+    description: v1 supports a complete approve/reject lifecycle. Return-for-change is deferred until a changes-requested and resubmission state/API contract is approved.
+    update:
+      type: string
+      enum: [APPROVE, REJECT]
+
+  - target: $.components.schemas.ApiError.properties.code.enum
+    description: Complete cross-contract error registry, including all authorization workflow codes.
+    update:
+      - AUTHENTICATION_REQUIRED
+      - ROLE_DENIED
+      - TENANT_SCOPE_DENIED
+      - SCOPE_DENIED
+      - OWNERSHIP_REQUIRED
+      - ASSIGNMENT_SCOPE_DENIED
+      - SOURCE_SCOPE_DENIED
+      - FIELD_MASKED
+      - DATA_CLASSIFICATION_DENIED
+      - PURPOSE_REQUIRED
+      - PRECONDITION_REQUIRED
+      - VERSION_CONFLICT
+      - WORKFLOW_STATE_DENIED
+      - OWNER_CONFLICT
+      - SECOND_ACTOR_REQUIRED
+      - SELF_REVIEW_DENIED
+      - RISK_ACKNOWLEDGEMENT_REQUIRED
+      - SOURCE_POLICY_DENIED
+      - SOURCE_POLICY_UNKNOWN
+      - SOURCE_AUTH_REQUIRED
+      - LEGAL_HOLD_CONFLICT
+      - RETENTION_NOT_REACHED
+      - RESIDENCY_DENIED
+      - EXPORT_APPROVAL_REQUIRED
+      - PURGE_APPROVAL_REQUIRED
+      - QUARANTINE_RELEASE_DENIED
+      - PROMOTION_APPROVAL_REQUIRED
+      - RESTRICTED_EXPORT_DENIED
+      - BREAK_GLASS_DENIED
+      - DEPENDENCY_CONFLICT
+      - DUPLICATE_CANDIDATE
+      - IDEMPOTENCY_KEY_REUSED
+      - RETRY_BUDGET_EXHAUSTED
+      - CHECKPOINT_UNAVAILABLE
+      - JOB_FENCE_REJECTED
+      - SLA_PAUSE_DENIED
+      - DECISION_INCOMPLETE
+      - BACKPRESSURE_ACTIVE
+      - RATE_LIMITED
+      - RESOURCE_NOT_FOUND
+      - VALIDATION_FAILED
+      - FIELD_REQUIRED
+      - CURSOR_INVALID
+      - CURSOR_EXPIRED
+      - INTERNAL_ERROR
