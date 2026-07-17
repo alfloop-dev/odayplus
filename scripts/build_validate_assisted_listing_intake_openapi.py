@@ -16,9 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from jsonpath_ng import Index
 from jsonpath_ng.ext import parse as parse_jsonpath
-from jsonpath_ng.jsonpath import Fields
+from jsonpath_ng.jsonpath import Fields, Index
 from openapi_spec_validator import validate_spec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +95,6 @@ def apply_overlay(document: dict[str, Any], overlay_path: Path) -> dict[str, Any
                 f"({overlay_path.name} action {index})"
             )
         if action.get("remove") is True:
-            # Delete list entries from highest index first to preserve positions.
             for match in sorted(
                 matches,
                 key=lambda item: item.path.index if isinstance(item.path, Index) else -1,
@@ -219,7 +217,7 @@ def main() -> int:
     validation_errors: list[str] = []
     try:
         validate_spec(document)
-    except Exception as exc:  # validator exposes several exception subclasses
+    except Exception as exc:
         validation_errors.append(f"openapi-spec-validator: {exc}")
     validation_errors.extend(custom_validate(document))
 
