@@ -28,9 +28,9 @@ normative_artifacts:
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md
     role: alignment source
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md
-    role: v0.2.0 main response
+    role: consolidated v0.2.1 response
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md
-    role: v0.2.1 normative corrections and precedence
+    role: v0.2.1 correction details and precedence
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md
     role: base state contracts
   - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -47,16 +47,18 @@ normative_artifacts:
     role: base domain-event catalog
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
     role: event alignment and typed additions
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
+    role: complete typed payload schemas for base events
   - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md
     role: reliability/privacy/evidence
   - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
     role: migration and rollout
   - path: scripts/validate_assisted_listing_intake_design.py
-    role: pre-review consistency gate
+    role: executable pre-review consistency gate
 
 required_pre_review_checks:
   - all normative_artifacts paths exist
-  - response and correction versions compose to effective_response_version
+  - consolidated response and correction pack identify effective_response_version
   - all SDI-001 through SDI-024 appear in the decision matrix
   - SLA and decision transition tables exist
   - old final promotion route is removed by overlay
@@ -64,13 +66,21 @@ required_pre_review_checks:
   - assignment claim transfer complete and SLA pause resume endpoints exist
   - authorization denial codes are present in the canonical API error registry
   - state-referenced domain events exist in base catalog or addendum
-  - base event payloads are complete JSON Schemas before event rollout
+  - all event schema_ref values resolve to complete typed payload schemas
   - schema patch provides tenant-qualified foreign keys and RLS coverage
+  - URL and snapshot uniqueness preserve revision and evidence lineage
   - LEGACY_RECONCILED is valid in schema and migration contract
-  - review reviewed_commit equals current PR head
+  - reviewed_commit equals current PR head
+
+formal_review_command: >-
+  python scripts/validate_assisted_listing_intake_design.py
+  --reviewed-commit <current-pr-head>
+  --current-pr-head <current-pr-head>
+  --base-commit <current-dev-head>
+  --strict-review-target
 
 fail_closed_gates:
-  base_event_payload_schema_incomplete: assisted_intake_v1_events=false
+  event_payload_schema_incomplete: assisted_intake_v1_events=false
   openapi_overlay_not_bundled_or_invalid: assisted_intake_v1_write=false
   tenant_fk_or_rls_validation_failed: assisted_intake_v1_write=false
   promotion_contract_tests_failed: assisted_intake_v1_promotion=false
