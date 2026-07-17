@@ -287,6 +287,10 @@ ODP-UXD-003 Expansion workflow blueprint.
 
 ## 13. Engineering Reference
 
+- System Design alignment request, proposed response, and current review:
+  `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md`
+  `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md`
+  `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE_REVIEW.md`
 - R5 Fleet implementation addendum:
   `docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md`
 - Historical ingestion contract:
