@@ -37,10 +37,14 @@ normative_artifacts:
     role: base relational schema
   - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
     role: tenant/history/migration consistency patch
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
+    role: promotion pending-review state constraint patch
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
     role: base OpenAPI
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
     role: promotion/command/error correction overlay
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+    role: review-action and complete error-registry overlay
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md
     role: deny-by-default authorization and segregation
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
@@ -61,16 +65,28 @@ required_pre_review_checks:
   - consolidated response and correction pack identify effective_response_version
   - all SDI-001 through SDI-024 appear in the decision matrix
   - SLA and decision transition tables exist
-  - old final promotion route is removed by overlay
+  - old final promotion route is removed by command overlay
   - promotion request and independent review endpoints exist
+  - promotion PENDING_REVIEW is valid in SQL
+  - v1 review actions have complete approve/reject state semantics
   - assignment claim transfer complete and SLA pause resume endpoints exist
   - authorization denial codes are present in the canonical API error registry
   - state-referenced domain events exist in base catalog or addendum
   - all event schema_ref values resolve to complete typed payload schemas
-  - schema patch provides tenant-qualified foreign keys and RLS coverage
+  - schema patches provide tenant-qualified foreign keys and RLS coverage
   - URL and snapshot uniqueness preserve revision and evidence lineage
   - LEGACY_RECONCILED is valid in schema and migration contract
   - reviewed_commit equals current PR head
+
+openapi_bundle_order:
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+
+schema_apply_order:
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
 
 formal_review_command: >-
   python scripts/validate_assisted_listing_intake_design.py
