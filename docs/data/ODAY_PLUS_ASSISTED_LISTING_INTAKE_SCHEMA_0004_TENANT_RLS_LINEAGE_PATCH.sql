@@ -1,5 +1,5 @@
 -- ODay Plus Assisted Listing Intake tenant isolation and lineage hardening
--- Contract patch: 0004 / effective design version 0.2.2
+-- Contract patch: 0004 / effective design version 0.2.1
 -- Apply after schema baseline, 0002 consistency patch, and 0003 promotion patch.
 -- This patch is implementation-binding: tenant-bearing tables are FORCE RLS and
 -- every cross-table lineage relation receives a tenant-equal composite FK.
