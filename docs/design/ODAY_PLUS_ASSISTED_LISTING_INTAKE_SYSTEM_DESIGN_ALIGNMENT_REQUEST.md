@@ -1,15 +1,16 @@
 ---
 doc_id: ODP-SD-INTAKE-ALIGN-001
 title: ODay Plus Assisted Listing Intake System Design Alignment Request
-version: 0.1.0
-status: awaiting-system-design-response
+version: 0.2.0
+status: response-received-changes-requested
 owner: Product / Expansion Operations
 request_owner: Product Platform Engineering
 response_owner: System Design
 related_product_requirement: ODP-UXD-003-ADD-001
 related_engineering_task: ODP-EXT-002
 response_document: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md
-updated_at: 2026-07-16
+review_document: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE_REVIEW.md
+updated_at: 2026-07-17
 ---
 
 # ODay Plus Assisted Listing Intake System Design Alignment Request
