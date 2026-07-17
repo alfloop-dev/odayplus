@@ -69,26 +69,41 @@ jobs:
           CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          mkdir -p build
           python scripts/validate_assisted_listing_intake_design.py \
             --reviewed-commit "$REVIEWED_COMMIT" \
             --current-pr-head "$CURRENT_PR_HEAD" \
             --base-commit "$BASE_COMMIT" \
             --strict-review-target \
-            --json
+            --json | tee build/cross-contract-validation.json
 
       - name: Build and structurally validate effective OpenAPI
-        run: |
-          python scripts/build_validate_assisted_listing_intake_openapi.py --json
-
-      - name: Redocly lint effective OpenAPI with zero warnings
+        id: openapi
+        continue-on-error: true
         run: |
           mkdir -p build
           set +e
+          python scripts/build_validate_assisted_listing_intake_openapi.py --json \
+            > build/openapi-validation.stdout \
+            2> build/openapi-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/openapi-validation.stdout
+          cat build/openapi-validation.stderr >&2
+          exit "$STATUS"
+
+      - name: Redocly lint effective OpenAPI with zero warnings
+        id: redocly
+        if: always() && hashFiles('build/assisted-listing-intake-openapi-effective.yaml') != ''
+        continue-on-error: true
+        run: |
+          set +e
           npx --yes @redocly/cli@1.34.2 lint \
             build/assisted-listing-intake-openapi-effective.yaml \
-            --format=json > build/redocly-lint.json
+            --format=json > build/redocly-lint.json 2> build/redocly-lint.stderr
           REDOCLY_EXIT=$?
           set -e
+          cat build/redocly-lint.stderr >&2
           python - <<'PY'
           import json
           from pathlib import Path
@@ -114,19 +129,51 @@ jobs:
           test "$REDOCLY_EXIT" -eq 0
 
       - name: Apply normative PostgreSQL schema stack
+        id: schema_apply
+        continue-on-error: true
         run: |
-          psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
-          psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
-          psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
-          psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+          mkdir -p build
+          set +e
+          {
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+          } > build/schema-apply.stdout 2> build/schema-apply.stderr
+          STATUS=$?
+          set -e
+          cat build/schema-apply.stdout
+          cat build/schema-apply.stderr >&2
+          exit "$STATUS"
 
       - name: Validate PostgreSQL RLS policies and tenant lineage
-        run: psql -v ON_ERROR_STOP=1 -f scripts/validate_assisted_listing_intake_schema.sql
+        id: schema_validate
+        if: always() && steps.schema_apply.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          psql -v ON_ERROR_STOP=1 -f scripts/validate_assisted_listing_intake_schema.sql \
+            > build/schema-validation.stdout \
+            2> build/schema-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/schema-validation.stdout
+          cat build/schema-validation.stderr >&2
+          exit "$STATUS"
 
       - name: Upload effective validation outputs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: assisted-listing-intake-design-validation
+          if-no-files-found: warn
           path: |
-            build/assisted-listing-intake-openapi-effective.yaml
-            build/redocly-lint.json
+            build/**
+
+      - name: Enforce all structural gates
+        if: always()
+        run: |
+          test "${{ steps.openapi.outcome }}" = "success"
+          test "${{ steps.redocly.outcome }}" = "success"
+          test "${{ steps.schema_apply.outcome }}" = "success"
+          test "${{ steps.schema_validate.outcome }}" = "success"
