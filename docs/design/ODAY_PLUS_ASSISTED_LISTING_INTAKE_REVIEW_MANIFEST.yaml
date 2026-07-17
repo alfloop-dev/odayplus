@@ -50,12 +50,16 @@ normative_artifacts:
     role: FORCE RLS policies and tenant-qualified lineage constraints
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
     role: base OpenAPI source fragment
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
+    role: initialize overlay component containers
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
     role: promotion/command/error correction overlay
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
     role: review-action and complete error-registry overlay
   - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
     role: response-description and ApiError shape overlay
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
+    role: operation summaries, tag metadata, valid examples and unused-component cleanup
   - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md
     role: deny-by-default authorization and segregation
   - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
@@ -104,9 +108,11 @@ required_pre_review_checks:
 
 openapi_bundle_order:
   - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
   - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
   - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
   - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
 
 schema_apply_order:
   - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
