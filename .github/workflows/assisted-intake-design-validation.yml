@@ -84,10 +84,11 @@ jobs:
           mkdir -p build
           set +e
           python scripts/build_validate_assisted_listing_intake_openapi.py \
-            --overlay docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml \
-            --overlay docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml \
-            --overlay docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml \
-            --overlay docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml \
+            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml" \
+            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml" \
+            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml" \
+            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml" \
+            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml" \
             --json \
             > build/openapi-validation.stdout \
             2> build/openapi-validation.stderr
