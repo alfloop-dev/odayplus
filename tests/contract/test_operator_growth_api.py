@@ -170,9 +170,7 @@ def test_blocked_conflict_cannot_submit_and_returns_actionable_reason() -> None:
     client = _client()
     # First draft occupies a store + window and is submitted (becomes active).
     first = _create_draft(client, kind="offpeak", store="Oday 內湖店", window="平日 09:00-12:00")
-    submit_first = client.post(
-        f"{BASE}/actions/{first['id']}/submit", json={}, headers=_headers()
-    )
+    submit_first = client.post(f"{BASE}/actions/{first['id']}/submit", json={}, headers=_headers())
     assert submit_first.status_code == 200, submit_first.text
 
     # Second draft collides on the same store + window -> hard overlap.
@@ -201,7 +199,10 @@ def test_blocked_conflict_cannot_submit_and_returns_actionable_reason() -> None:
     assert first["id"] in detail
 
     # The blocked draft stays DRAFT — no approval item was created.
-    assert client.get(f"{BASE}/actions/{second['id']}", headers=WRITE_HEADERS).json()["status"] == "DRAFT"
+    assert (
+        client.get(f"{BASE}/actions/{second['id']}", headers=WRITE_HEADERS).json()["status"]
+        == "DRAFT"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +243,10 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
     )
     assert decided.status_code == 200, decided.text
     assert decided.json()["growthStatus"] == "APPROVED"
-    assert client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"] == "APPROVED"
+    assert (
+        client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"]
+        == "APPROVED"
+    )
     decisions = client.get(f"{BASE}/decisions", headers=WRITE_HEADERS).json()["items"]
     assert any(d["ref"] == draft["id"] and d["verdict"] == "核准" for d in decisions)
 
@@ -261,7 +265,10 @@ def test_rejected_approval_returns_action_to_draft() -> None:
     )
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["growthStatus"] == "DRAFT"
-    assert client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"] == "DRAFT"
+    assert (
+        client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()["status"]
+        == "DRAFT"
+    )
 
 
 def test_full_lifecycle_pending_to_outcome_ready() -> None:
@@ -312,8 +319,7 @@ def test_outcomes_persist_and_write_decision_log() -> None:
         assert body["decision"]["verdict"] == verdict
         # Outcome persists on the action record.
         assert (
-            client.get(f"{BASE}/actions/{action_id}", headers=WRITE_HEADERS)
-            .json()["growthOutcome"]
+            client.get(f"{BASE}/actions/{action_id}", headers=WRITE_HEADERS).json()["growthOutcome"]
             == outcome
         )
 

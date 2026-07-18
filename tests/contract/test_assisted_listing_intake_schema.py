@@ -16,6 +16,7 @@ or against an external server via ``INTAKE_TEST_DATABASE_URL``. The database tes
 are marked ``requires_live_env`` and are excluded from the default CI marker
 expression; they skip cleanly when no PostgreSQL 16 is reachable.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -78,6 +79,7 @@ def _constraint_names(cur, contype: str) -> set[str]:
 # This needs no database and always runs.
 # --------------------------------------------------------------------------- #
 
+
 def test_migration_reproduces_reviewed_contract_artifacts_byte_for_byte() -> None:
     steps = intake.migration_steps()
     assert [s.name for s in steps] == [
@@ -102,6 +104,7 @@ def test_ordered_migration_files_exist_and_are_nonempty() -> None:
 # --------------------------------------------------------------------------- #
 # Clean install on PostgreSQL 16.
 # --------------------------------------------------------------------------- #
+
 
 @live
 def test_clean_install_creates_every_contract_table(intake_db) -> None:
@@ -240,9 +243,18 @@ def test_enum_check_constraints_carry_approved_values(intake_db) -> None:
         cur = conn.cursor()
         processing = constraint_def(cur, "intake.intakes", "processing_state")
         for state in (
-            "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY",
-            "AWAITING_ASSISTED_ENTRY", "RETRIEVING", "PARSING", "MATCHING",
-            "NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "CANCELLED",
+            "SUBMITTED",
+            "CHECKING_IDENTITY",
+            "CHECKING_SOURCE_POLICY",
+            "AWAITING_ASSISTED_ENTRY",
+            "RETRIEVING",
+            "PARSING",
+            "MATCHING",
+            "NEEDS_REVIEW",
+            "READY",
+            "QUARANTINED",
+            "FAILED",
+            "CANCELLED",
         ):
             assert state in processing, f"processing_state missing {state}"
 
@@ -251,8 +263,13 @@ def test_enum_check_constraints_carry_approved_values(intake_db) -> None:
             assert value in method
 
         retrieval = constraint_def(cur, "intake.source_registry", "retrieval_mode")
-        for value in ("APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED",
-                      "SOURCE_BLOCKED", "POLICY_UNKNOWN"):
+        for value in (
+            "APPROVED_RETRIEVAL",
+            "ASSISTED_ENTRY_ONLY",
+            "AUTH_REQUIRED",
+            "SOURCE_BLOCKED",
+            "POLICY_UNKNOWN",
+        ):
             assert value in retrieval
 
         promotion = constraint_def(cur, "expansion.promotion_decisions", "PENDING_REVIEW")
@@ -262,6 +279,7 @@ def test_enum_check_constraints_carry_approved_values(intake_db) -> None:
 # --------------------------------------------------------------------------- #
 # Row level security catalog state.
 # --------------------------------------------------------------------------- #
+
 
 @live
 def test_force_rls_and_fail_closed_policy_on_every_tenant_table(intake_db) -> None:
@@ -305,7 +323,8 @@ def test_schema_validator_script_passes(intake_db) -> None:
     # missing tenant-qualified FK, or missing lineage constraint; a clean run is
     # the pass signal.
     body = "\n".join(
-        line for line in VALIDATOR_SQL.read_text(encoding="utf-8").splitlines()
+        line
+        for line in VALIDATOR_SQL.read_text(encoding="utf-8").splitlines()
         if not line.strip().startswith("\\set")
     )
     with intake_db.connect() as conn:
@@ -315,6 +334,7 @@ def test_schema_validator_script_passes(intake_db) -> None:
 # --------------------------------------------------------------------------- #
 # Downgrade boundary and repeatable clean install (rollback behaviour).
 # --------------------------------------------------------------------------- #
+
 
 @live
 def test_downgrade_boundary_then_reinstall(intake_db) -> None:

@@ -6,6 +6,7 @@ isolates tenants on a real PostgreSQL 16 server, exercised as a NON-superuser ro
 ``tests/conftest.py`` for provisioning; tests are marked ``requires_live_env`` and
 skip cleanly when no PostgreSQL 16 is reachable.
 """
+
 from __future__ import annotations
 
 import pytest

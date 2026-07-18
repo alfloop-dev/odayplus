@@ -383,9 +383,21 @@ def create_network_listings_sub_router(
         body: IntakeSubmitPayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        x_async_intake: str | None = Header(default=None, alias="X-Async-Intake"),
     ) -> dict[str, Any]:
         try:
             reject_sensitive_submission_material(body)
+
+            # Backpressure Check
+            job_queue = getattr(request.app.state, "job_queue", None)
+            if job_queue is not None:
+                if job_queue.count_active_jobs() >= 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="BACKPRESSURE_ACTIVE",
+                        headers={"Retry-After": "30"},
+                    )
+
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_name = body.actorName or principal.subject_id
@@ -399,6 +411,8 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
+            is_async = (x_async_intake == "true")
+
             result = service.submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
@@ -406,6 +420,8 @@ def create_network_listings_sub_router(
                 actor_name=actor_name,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                job_queue=job_queue,
+                async_intake=is_async,
             )
             return mask_intake(principal, result)
         except ValueError as exc:
@@ -622,11 +638,13 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
+            job_queue = getattr(request.app.state, "job_queue", None)
             result = service.retry_intake(
                 intake_id=intake_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=actor_name,
                 correlation_id=x_correlation_id,
+                job_queue=job_queue,
             )
             return mask_intake(principal, result)
         except NetworkListingNotFound as exc:

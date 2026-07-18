@@ -53,6 +53,7 @@ def sys_actor() -> Actor:
 
 # --- Unit Tests for Intake Stage Machine ---
 
+
 def test_intake_cannot_transition_from_terminal_ready(manager_actor: Actor) -> None:
     entity = IntakeAggregate(
         id="IN-1",
@@ -60,7 +61,7 @@ def test_intake_cannot_transition_from_terminal_ready(manager_actor: Actor) -> N
         stage=IntakeStage.READY,
         version=1,
         created_by="staff-1",
-        source_id="src-1"
+        source_id="src-1",
     )
     context = TransitionContext(actor=manager_actor)
     # READY is a terminal state, no further transitions allowed from it
@@ -76,7 +77,7 @@ def test_intake_cannot_transition_from_terminal_cancelled(manager_actor: Actor) 
         stage=IntakeStage.CANCELLED,
         version=1,
         created_by="staff-1",
-        source_id="src-1"
+        source_id="src-1",
     )
     context = TransitionContext(actor=manager_actor)
     # CANCELLED is a terminal state
@@ -101,7 +102,7 @@ def test_intake_staff_ownership_on_cancellation(staff_actor: Actor) -> None:
         version=1,
         created_by="staff-2",  # Submitted by staff-2
         source_id="src-1",
-        owner_id="staff-2"
+        owner_id="staff-2",
     )
     # staff-1 attempts to cancel staff-2's submission -> Denied!
     context = TransitionContext(actor=staff_actor)
@@ -112,8 +113,11 @@ def test_intake_staff_ownership_on_cancellation(staff_actor: Actor) -> None:
 
 # --- Unit Tests for Listing Lifecycle ---
 
+
 def test_listing_archived_is_terminal(steward_actor: Actor) -> None:
-    entity = ListingAggregate(id="L-1", tenant_id="tenant-a", status=ListingState.ARCHIVED, version=1)
+    entity = ListingAggregate(
+        id="L-1", tenant_id="tenant-a", status=ListingState.ARCHIVED, version=1
+    )
     context = TransitionContext(actor=steward_actor)
     with pytest.raises(DomainValidationError) as exc:
         ListingStateMachine.transition(entity, ListingState.ACTIVE, context)
@@ -131,8 +135,11 @@ def test_listing_steward_role_required_for_archive(staff_actor: Actor) -> None:
 
 # --- Unit Tests for Identity Resolution Decisions ---
 
+
 def test_identity_decision_rejected_is_terminal(steward_actor: Actor) -> None:
-    entity = IdentityDecisionAggregate(id="DEC-1", tenant_id="tenant-a", status=IdentityGraphState.REJECTED, version=1)
+    entity = IdentityDecisionAggregate(
+        id="DEC-1", tenant_id="tenant-a", status=IdentityGraphState.REJECTED, version=1
+    )
     context = TransitionContext(actor=steward_actor)
     with pytest.raises(DomainValidationError) as exc:
         IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED, context)
@@ -140,7 +147,9 @@ def test_identity_decision_rejected_is_terminal(steward_actor: Actor) -> None:
 
 
 def test_identity_decision_failed_to_pending_review(steward_actor: Actor) -> None:
-    entity = IdentityDecisionAggregate(id="DEC-1", tenant_id="tenant-a", status=IdentityGraphState.FAILED, version=1)
+    entity = IdentityDecisionAggregate(
+        id="DEC-1", tenant_id="tenant-a", status=IdentityGraphState.FAILED, version=1
+    )
     context = TransitionContext(actor=steward_actor)
     IdentityDecisionStateMachine.transition(entity, IdentityGraphState.PENDING_REVIEW, context)
     assert entity.status == IdentityGraphState.PENDING_REVIEW
@@ -148,8 +157,11 @@ def test_identity_decision_failed_to_pending_review(steward_actor: Actor) -> Non
 
 # --- Unit Tests for Assignments ---
 
+
 def test_assignment_completed_is_terminal(manager_actor: Actor) -> None:
-    entity = AssignmentAggregate(id="AS-1", tenant_id="tenant-a", status=AssignmentState.COMPLETED, version=1)
+    entity = AssignmentAggregate(
+        id="AS-1", tenant_id="tenant-a", status=AssignmentState.COMPLETED, version=1
+    )
     context = TransitionContext(actor=manager_actor)
     with pytest.raises(DomainValidationError) as exc:
         AssignmentStateMachine.transition(entity, AssignmentState.ASSIGNED, context)
@@ -158,8 +170,15 @@ def test_assignment_completed_is_terminal(manager_actor: Actor) -> None:
 
 # --- Unit Tests for SLA Tracker ---
 
+
 def test_sla_paused_requires_manager_role(staff_actor: Actor) -> None:
-    entity = SlaInstanceAggregate(id="SLA-1", tenant_id="tenant-a", status=SlaState.ON_TRACK, version=1, due_at=datetime.now(UTC))
+    entity = SlaInstanceAggregate(
+        id="SLA-1",
+        tenant_id="tenant-a",
+        status=SlaState.ON_TRACK,
+        version=1,
+        due_at=datetime.now(UTC),
+    )
     context = TransitionContext(actor=staff_actor)
     # Staff cannot pause SLA
     with pytest.raises(DomainValidationError) as exc:
@@ -169,8 +188,11 @@ def test_sla_paused_requires_manager_role(staff_actor: Actor) -> None:
 
 # --- Unit Tests for Candidate Promotion Saga ---
 
+
 def test_promotion_completed_is_terminal(sys_actor: Actor) -> None:
-    entity = PromotionAggregate(id="PROM-1", tenant_id="tenant-a", status=PromotionState.COMPLETED, version=1)
+    entity = PromotionAggregate(
+        id="PROM-1", tenant_id="tenant-a", status=PromotionState.COMPLETED, version=1
+    )
     context = TransitionContext(actor=sys_actor)
     with pytest.raises(DomainValidationError) as exc:
         PromotionStateMachine.transition(entity, PromotionState.VALIDATING, context)

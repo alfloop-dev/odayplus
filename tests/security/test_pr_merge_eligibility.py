@@ -28,7 +28,11 @@ def test_positive_merge_eligible(temp_env: dict[str, Path]) -> None:
                     "statusCheckRollup": [
                         {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
                         {"name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {
+                            "name": "product-e2e-gate",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
                     ]
                 }
             )
@@ -66,7 +70,11 @@ def test_negative_review_rejected_ci_green(temp_env: dict[str, Path]) -> None:
                     "statusCheckRollup": [
                         {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
                         {"name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {
+                            "name": "product-e2e-gate",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
                     ]
                 }
             )
@@ -104,7 +112,11 @@ def test_negative_review_approved_one_failed_check(temp_env: dict[str, Path]) ->
                     "statusCheckRollup": [
                         {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
                         {"name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "FAILURE"},
+                        {
+                            "name": "product-e2e-gate",
+                            "status": "COMPLETED",
+                            "conclusion": "FAILURE",
+                        },
                     ]
                 }
             )
@@ -142,7 +154,11 @@ def test_negative_review_approved_one_pending_check(temp_env: dict[str, Path]) -
                     "statusCheckRollup": [
                         {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
                         {"name": "product", "status": "IN_PROGRESS", "conclusion": None},
-                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {
+                            "name": "product-e2e-gate",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
                     ]
                 }
             )
@@ -309,7 +325,11 @@ def test_fallback_to_canonical_status_on_missing_github_review(temp_env: dict[st
                     "statusCheckRollup": [
                         {"name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
                         {"name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                        {"name": "product-e2e-gate", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {
+                            "name": "product-e2e-gate",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
                     ]
                 }
             )

@@ -15725,6 +15725,22 @@
               ],
               "title": "X-Correlation-Id"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Async-Intake",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Async-Intake"
+            }
           }
         ],
         "requestBody": {

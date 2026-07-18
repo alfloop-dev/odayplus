@@ -13,7 +13,9 @@ STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
 
 
 def load_checker_module():
-    spec = importlib.util.spec_from_file_location("check_external_proof_acceptance_readiness", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "check_external_proof_acceptance_readiness", CHECKER
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -36,8 +38,12 @@ def test_external_proof_acceptance_readiness_reports_pending_handbacks() -> None
     assert errors == []
     assert {row["task_id"] for row in rows} == {entry["task_id"] for entry in queue["queue"]}
     assert all(row["missing_evidence"] for row in rows)
-    assert all("generate_external_proof_handback_skeleton.py" in row["skeleton_command"] for row in rows)
-    assert all("check_external_proof_handback_artifact.py" in row["acceptance_command"] for row in rows)
+    assert all(
+        "generate_external_proof_handback_skeleton.py" in row["skeleton_command"] for row in rows
+    )
+    assert all(
+        "check_external_proof_handback_artifact.py" in row["acceptance_command"] for row in rows
+    )
 
 
 def test_external_proof_acceptance_readiness_strict_complete_fails_pending() -> None:

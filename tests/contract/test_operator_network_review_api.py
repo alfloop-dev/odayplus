@@ -74,7 +74,11 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
     client = _client()
     response = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
-        headers={**REVIEWER_HEADERS, "idempotency-key": "idem-r4-007-go", "x-correlation-id": "corr-go"},
+        headers={
+            **REVIEWER_HEADERS,
+            "idempotency-key": "idem-r4-007-go",
+            "x-correlation-id": "corr-go",
+        },
         json={
             "decision": "GO",
             "reason": "人流量體大且回本期可接受，核准進展店閘。",
@@ -196,7 +200,11 @@ def test_reason_and_override_policies_are_enforced() -> None:
     ret = client.post(
         "/api/v1/operator/network-reviews/RV-698/decide",
         headers=REVIEWER_HEADERS,
-        json={"decision": "RETURN", "reason": "need more data please help", "actorRoleId": "siteReviewer"},
+        json={
+            "decision": "RETURN",
+            "reason": "need more data please help",
+            "actorRoleId": "siteReviewer",
+        },
     )
     assert ret.status_code == 422
 
@@ -204,7 +212,11 @@ def test_reason_and_override_policies_are_enforced() -> None:
     override = client.post(
         "/api/v1/operator/network-reviews/RV-701/decide",
         headers=REVIEWER_HEADERS,
-        json={"decision": "GO", "reason": "override to approve despite wait", "actorRoleId": "siteReviewer"},
+        json={
+            "decision": "GO",
+            "reason": "override to approve despite wait",
+            "actorRoleId": "siteReviewer",
+        },
     )
     assert override.status_code == 422
 
@@ -217,9 +229,13 @@ def test_idempotent_replay_creates_no_duplicate_records() -> None:
         "actorRoleId": "siteReviewer",
     }
     headers = {**REVIEWER_HEADERS, "idempotency-key": "idem-r4-007-replay"}
-    first = client.post("/api/v1/operator/network-reviews/RV-702/decide", headers=headers, json=payload)
+    first = client.post(
+        "/api/v1/operator/network-reviews/RV-702/decide", headers=headers, json=payload
+    )
     assert first.status_code == 200, first.text
-    replay = client.post("/api/v1/operator/network-reviews/RV-702/decide", headers=headers, json=payload)
+    replay = client.post(
+        "/api/v1/operator/network-reviews/RV-702/decide", headers=headers, json=payload
+    )
     assert replay.status_code == 200, replay.text
     assert replay.json()["idempotentReplay"] is True
     assert replay.json()["decision"]["id"] == first.json()["decision"]["id"]
@@ -277,12 +293,21 @@ def test_second_decision_on_decided_review_conflicts() -> None:
     client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=REVIEWER_HEADERS,
-        json={"decision": "GO", "reason": "approve this strong site now.", "actorRoleId": "siteReviewer"},
+        json={
+            "decision": "GO",
+            "reason": "approve this strong site now.",
+            "actorRoleId": "siteReviewer",
+        },
     )
     conflict = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=REVIEWER_HEADERS,
-        json={"decision": "REJECT", "reason": "changed my mind entirely here.", "overrideAck": True, "actorRoleId": "siteReviewer"},
+        json={
+            "decision": "REJECT",
+            "reason": "changed my mind entirely here.",
+            "overrideAck": True,
+            "actorRoleId": "siteReviewer",
+        },
     )
     assert conflict.status_code == 409, conflict.text
 
@@ -292,7 +317,11 @@ def test_unknown_review_is_not_found() -> None:
     missing = client.post(
         "/api/v1/operator/network-reviews/RV-999/decide",
         headers=REVIEWER_HEADERS,
-        json={"decision": "GO", "reason": "approve this strong site now.", "actorRoleId": "siteReviewer"},
+        json={
+            "decision": "GO",
+            "reason": "approve this strong site now.",
+            "actorRoleId": "siteReviewer",
+        },
     )
     assert missing.status_code == 404, missing.text
 
@@ -300,12 +329,18 @@ def test_unknown_review_is_not_found() -> None:
 def test_expansion_role_may_submit_read_but_not_decide() -> None:
     client = _client()
     # Read is open to the Expansion viewer (they prepare/submit).
-    assert client.get("/api/v1/operator/network-reviews", headers=EXPANSION_HEADERS).status_code == 200
+    assert (
+        client.get("/api/v1/operator/network-reviews", headers=EXPANSION_HEADERS).status_code == 200
+    )
     # Decide fails closed with 403 for Expansion (no sitescore APPROVE).
     decide = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=EXPANSION_HEADERS,
-        json={"decision": "GO", "reason": "approve this strong site now.", "actorRoleId": "expansionManager"},
+        json={
+            "decision": "GO",
+            "reason": "approve this strong site now.",
+            "actorRoleId": "expansionManager",
+        },
     )
     assert decide.status_code == 403, decide.text
 

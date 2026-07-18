@@ -19,15 +19,17 @@ def test_auto_merge_green_prs_dry_run(temp_env, monkeypatch) -> None:
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 82,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": False,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 82,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": False,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -55,15 +57,17 @@ def test_auto_merge_green_prs_positive_not_draft(temp_env, monkeypatch) -> None:
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 82,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": False,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 82,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": False,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -95,15 +99,17 @@ def test_auto_merge_green_prs_positive_draft(temp_env, monkeypatch) -> None:
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 83,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": True,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 83,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": True,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -136,15 +142,17 @@ def test_auto_merge_green_prs_negative_not_eligible(temp_env, monkeypatch) -> No
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 82,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": False,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 82,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": False,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -173,15 +181,17 @@ def test_auto_merge_green_prs_negative_draft_not_eligible(temp_env, monkeypatch)
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 83,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": True,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 83,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": True,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -210,15 +220,17 @@ def test_auto_merge_green_prs_exception_handled(temp_env, monkeypatch) -> None:
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 83,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": True,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 83,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": True,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         return (0, "", "")
@@ -247,15 +259,17 @@ def test_auto_merge_green_prs_draft_ready_failure(temp_env, monkeypatch) -> None
         if args[0] == "pr" and args[1] == "list":
             return (
                 0,
-                json.dumps([
-                    {
-                        "number": 83,
-                        "headRefName": "task/ODP-OC-R5-012",
-                        "baseRefName": "dev",
-                        "isDraft": True,
-                        "mergeable": "MERGEABLE",
-                    }
-                ]),
+                json.dumps(
+                    [
+                        {
+                            "number": 83,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": True,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
                 "",
             )
         if args[0] == "pr" and args[1] == "ready":

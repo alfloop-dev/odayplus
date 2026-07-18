@@ -259,9 +259,7 @@ def test_notification_acknowledgement_is_scoped_per_user(client: TestClient) -> 
 
     # ...and neither has a colleague holding the *same* role.
     colleague = {**OPS_HEADERS, "x-subject-id": "operator-ops-lead-colleague"}
-    colleague_inbox = client.get(
-        "/api/v1/operator/shell/notifications", headers=colleague
-    ).json()
+    colleague_inbox = client.get("/api/v1/operator/shell/notifications", headers=colleague).json()
     mine = [i for i in colleague_inbox["items"] if i["notificationId"] == notification_id]
     assert mine and mine[0]["acknowledged"] is False, (
         "a colleague on the same role must not inherit someone else's acknowledgement"
