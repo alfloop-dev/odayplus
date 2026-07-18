@@ -79,7 +79,9 @@ def test_product_closeout_fleet_notification_rejects_missing_action_command() ->
     queue = queue_payload()
     release_sha = "b7b082d11a9fa2050de566382dd2392ea3ad1927"
     comment = syncer.render_comment(queue, rows_for_queue(queue), release_sha=release_sha)
-    comment = comment.replace("check_product_closeout_action.py --task", "missing_action_checker.py --task")
+    comment = comment.replace(
+        "check_product_closeout_action.py --task", "missing_action_checker.py --task"
+    )
     pr_payload = {"comments": [{"body": comment}]}
 
     errors = checker.validate_notification(queue, pr_payload, expected_sha=release_sha)
@@ -95,11 +97,36 @@ def test_product_closeout_fleet_comment_cli_writes_output(tmp_path: Path) -> Non
         json.dumps(
             {
                 "tasks": [
-                    {"id": "ODP-PV-008", "status": "review", "owner": "Codex", "reviewer": "Human/Ops"},
-                    {"id": "ODP-FE-XCUT-001", "status": "in_progress", "owner": "Claude2", "reviewer": "Codex"},
-                    {"id": "ODP-FE-R0-001", "status": "review_approved", "owner": "Claude", "reviewer": "Codex"},
-                    {"id": "ODP-FE-EXP-001", "status": "review", "owner": "Codex", "reviewer": "Claude"},
-                    {"id": "ODP-FE-ASSET-001", "status": "in_progress", "owner": "Claude", "reviewer": "Codex2"},
+                    {
+                        "id": "ODP-PV-008",
+                        "status": "review",
+                        "owner": "Codex",
+                        "reviewer": "Human/Ops",
+                    },
+                    {
+                        "id": "ODP-FE-XCUT-001",
+                        "status": "in_progress",
+                        "owner": "Claude2",
+                        "reviewer": "Codex",
+                    },
+                    {
+                        "id": "ODP-FE-R0-001",
+                        "status": "review_approved",
+                        "owner": "Claude",
+                        "reviewer": "Codex",
+                    },
+                    {
+                        "id": "ODP-FE-EXP-001",
+                        "status": "review",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                    {
+                        "id": "ODP-FE-ASSET-001",
+                        "status": "in_progress",
+                        "owner": "Claude",
+                        "reviewer": "Codex2",
+                    },
                     {
                         "id": "ODP-FE-XCUT-DOMAIN-001",
                         "status": "review_approved",

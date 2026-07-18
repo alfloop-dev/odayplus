@@ -109,7 +109,9 @@ def test_merge_l2029_into_l2025_retains_source_evidence() -> None:
     assert body["source"]["mergedIntoId"] == "L-2025"
     assert set(source_before["sourceEvidence"]).issubset(set(body["target"]["sourceEvidence"]))
     assert len(body["target"]["sourceEvidence"]) > len(target_before["sourceEvidence"])
-    assert body["auditEvent"]["metadata"]["sourceEvidenceRetained"] == len(source_before["sourceEvidence"])
+    assert body["auditEvent"]["metadata"]["sourceEvidenceRetained"] == len(
+        source_before["sourceEvidence"]
+    )
     # The caller-supplied reason and acknowledged disclosure are both auditable.
     assert body["auditEvent"]["metadata"]["reason"] == "Same address and broker evidence verified."
     assert body["auditEvent"]["metadata"]["riskSummary"] == (
@@ -155,7 +157,9 @@ def test_merge_is_terminal_and_rejects_a_second_request_for_the_same_source() ->
     assert "already merged into L-2025" in second.json()["detail"]
 
     snapshot = client.get("/api/v1/operator/network-listings", headers=NETWORK_HEADERS).json()
-    merge_events = [event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"]
+    merge_events = [
+        event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"
+    ]
     assert len(merge_events) == 1
     assert merge_events[0]["metadata"]["reason"] == "FIRST reason"
 
@@ -177,7 +181,9 @@ def test_merge_replay_of_the_same_idempotency_key_still_returns_the_cached_resul
     assert replay.json()["source"] == first.json()["source"]
 
     snapshot = client.get("/api/v1/operator/network-listings", headers=NETWORK_HEADERS).json()
-    merge_events = [event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"]
+    merge_events = [
+        event for event in snapshot["auditEvents"] if event["action"] == "listing.merge"
+    ]
     assert len(merge_events) == 1
 
 

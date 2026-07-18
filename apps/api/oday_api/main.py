@@ -428,17 +428,30 @@ else:
                 label_registry=label_registry,
             ),
         )
+        from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
+        from shared.infrastructure.persistence.operator_network_listings import (
+            DurableAssistedIntakeRepository,
+        )
+        operator_intake_repository = (
+            DurableAssistedIntakeRepository(operator_document_store)
+            if operator_document_store is not None
+            else InMemoryAssistedIntakeRepository()
+        )
+
         mount_versioned(
             api,
             create_operator_router(
                 audit_log=audit_log,
                 document_store=operator_document_store,
                 listing_repository=listing_repository,
+                evidence_store=evidence_store,
+                intake_repository=operator_intake_repository,
             ),
         )
 
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
+        api.state.operator_intake_repository = operator_intake_repository
         api.state.job_queue = job_queue
         api.state.heatzone_store = heatzone_store
         api.state.avm_repository = avm_repo

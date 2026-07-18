@@ -35,7 +35,9 @@ def issue_payload_from_rendered(queue: dict, syncer, *, release_sha: str) -> dic
             "number": int(issue_number),
             "state": "OPEN",
             "title": syncer.render_issue_title(entry),
-            "labels": [{"name": label} for label in entry["fleet_routing"]["required_issue_labels"]],
+            "labels": [
+                {"name": label} for label in entry["fleet_routing"]["required_issue_labels"]
+            ],
             "assignees": [{"login": "assigned-owner"}],
             "body": syncer.render_issue_body(entry),
             "comments": [
@@ -60,7 +62,9 @@ def test_rendered_issue_bodies_and_comments_pass_existing_checkers() -> None:
     issues = issue_payload_from_rendered(queue, syncer, release_sha=EXPECTED_SHA)
 
     assert issue_checker.validate_issue_sync(queue, issues, require_assignees=True) == []
-    assert notification_checker.validate_notifications(queue, issues, expected_sha=EXPECTED_SHA) == []
+    assert (
+        notification_checker.validate_notifications(queue, issues, expected_sha=EXPECTED_SHA) == []
+    )
 
 
 def test_rendered_handoff_includes_single_file_handback_output_flow() -> None:

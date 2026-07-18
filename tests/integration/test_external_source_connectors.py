@@ -65,9 +65,7 @@ def connectors() -> dict:
 def test_connector_matrix_covers_all_required_sources() -> None:
     external = build_external_connectors(geo_pipeline=_geo_pipeline())
     internal = build_internal_connectors()
-    targets = {c.target for c in external.values()} | {
-        c.target for c in internal.values()
-    }
+    targets = {c.target for c in external.values()} | {c.target for c in internal.values()}
     # store / transaction / machine / maintenance / customer service / pricing
     for canonical in (
         "store",
@@ -139,9 +137,7 @@ def test_competitor_and_listing_map_to_canonical(connectors: dict) -> None:
         "geocode_result_snapshot",
     ],
 )
-def test_invalid_records_quarantine_with_reasons(
-    connectors: dict, contract_id: str
-) -> None:
+def test_invalid_records_quarantine_with_reasons(connectors: dict, contract_id: str) -> None:
     cases = _load(contract_id, "invalid")["cases"]
     records = [case["record"] for case in cases]
     run = connectors[contract_id].ingest(records, ingestion_time=INGESTION_TIME)
@@ -175,6 +171,7 @@ def test_geocode_connector_emits_address_with_h3(connectors: dict) -> None:
     address = run.accepted[0].canonical
     assert isinstance(address, AddressLocation)
     import h3
+
     assert address.h3_res_9 and h3.is_valid_cell(address.h3_res_9)
     assert run.accepted[0].geocode.h3_resolution_map[9] == address.h3_res_9
 
@@ -195,6 +192,7 @@ def test_admin_boundary_canonicalizes_to_geo_cell(connectors: dict) -> None:
     assert isinstance(cell, GeoCell)
     assert cell.admin_district == "信義區"
     import h3
+
     assert h3.is_valid_cell(cell.h3_index)
 
 
@@ -203,9 +201,7 @@ def test_admin_boundary_canonicalizes_to_geo_cell(connectors: dict) -> None:
 
 def test_lineage_envelope_preserves_required_provenance(connectors: dict) -> None:
     records = _load("competitor_store_snapshot", "valid")["records"]
-    run = connectors["competitor_store_snapshot"].ingest(
-        records, ingestion_time=INGESTION_TIME
-    )
+    run = connectors["competitor_store_snapshot"].ingest(records, ingestion_time=INGESTION_TIME)
     lineage = run.accepted[0].lineage
 
     assert lineage.source_record_id == "CMP-001"  # source id preserved
@@ -270,7 +266,9 @@ def test_success_contract_test(tmp_path) -> None:
         quarantine_dir=str(tmp_path / "quarantine"),
     )
 
-    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+    valid_fixture = json.loads(
+        (FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8")
+    )
 
     # Test process feed with a simulated response payload
     result = adapter.process_feed(replay_payload=valid_fixture)
@@ -295,7 +293,9 @@ def test_duplicate_contract_test(tmp_path) -> None:
         quarantine_dir=str(tmp_path / "quarantine"),
     )
 
-    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+    valid_fixture = json.loads(
+        (FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8")
+    )
 
     first_result = adapter.process_feed(replay_payload=valid_fixture)
     assert first_result["status"] == "success"
@@ -318,7 +318,11 @@ def test_malformed_payload_contract_test(tmp_path) -> None:
         quarantine_dir=str(tmp_path / "quarantine"),
     )
 
-    invalid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.invalid.json").read_text(encoding="utf-8"))
+    invalid_fixture = json.loads(
+        (FIXTURES_ROOT / "external" / "listing_raw_snapshot.invalid.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     # We map the invalid fixture cases into a list of records
     records = [case["record"] for case in invalid_fixture["cases"]]
@@ -344,7 +348,9 @@ def test_malformed_payload_contract_test(tmp_path) -> None:
 def test_unauthorized_contract_test(tmp_path) -> None:
     pipeline = ListingPipeline()
     # Trigger client auth failure check
-    client = ListingFeedClient(api_url="mock://api", api_key="unauthorized_key")  # pragma: allowlist-secret
+    client = ListingFeedClient(
+        api_url="mock://api", api_key="unauthorized_key"  # pragma: allowlist-secret
+    )
     adapter = LiveListingFeedAdapter(
         client=client,
         pipeline=pipeline,
@@ -355,7 +361,10 @@ def test_unauthorized_contract_test(tmp_path) -> None:
     with pytest.raises(UnauthorizedError) as exc_info:
         adapter.process_feed()
 
-    assert "Authentication failed" in str(exc_info.value) or "access denied" in str(exc_info.value).lower()
+    assert (
+        "Authentication failed" in str(exc_info.value)
+        or "access denied" in str(exc_info.value).lower()
+    )
 
 
 def test_timeout_contract_test(tmp_path) -> None:
@@ -388,7 +397,9 @@ def test_fixture_compatible_replay(tmp_path) -> None:
         quarantine_dir=str(tmp_path / "quarantine"),
     )
 
-    valid_fixture = json.loads((FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+    valid_fixture = json.loads(
+        (FIXTURES_ROOT / "external" / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8")
+    )
     result = adapter.process_feed(replay_payload=valid_fixture)
 
     assert result["status"] == "success"

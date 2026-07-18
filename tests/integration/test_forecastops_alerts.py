@@ -177,7 +177,9 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
     assert handoffs.json()["count"] == 1
 
     audit = client.get("/audit/events", params={"correlation_id": "corr-forecast-1"})
-    assert any(event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"])
+    assert any(
+        event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"]
+    )
 
 
 def test_forecastops_prediction_run_replay() -> None:
@@ -376,4 +378,3 @@ def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
     event_types = {event["event_type"] for event in events}
     assert "forecastops.alert.acknowledged.v1" in event_types
     assert "forecastops.handoff.executed.v1" in event_types
-

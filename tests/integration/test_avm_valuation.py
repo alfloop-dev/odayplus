@@ -116,7 +116,9 @@ def test_finance_approval_state_gates_versions_and_dataroom_export() -> None:
         correlation_id="corr-avm-domain",
     )
     assert approved.finance_approval is not None
-    assert approved.finance_approval.decision_reason == "reserve price aligns with liquidation floor"
+    assert (
+        approved.finance_approval.decision_reason == "reserve price aligns with liquidation floor"
+    )
     assert approved.finance_approval.correlation_id == "corr-avm-domain"
     assert service.get_case(case.case_id).status is ValuationCaseStatus.APPROVED
 

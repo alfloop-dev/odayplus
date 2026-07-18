@@ -26,24 +26,40 @@ CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
 CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "scripts/e2e/check_product_closeout_pickup_board.py"
 CLOSEOUT_FLEET_COMMENT_SYNC = ROOT / "scripts/e2e/sync_product_closeout_fleet_comment.py"
-CLOSEOUT_FLEET_NOTIFICATION_CHECK = ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
+CLOSEOUT_FLEET_NOTIFICATION_CHECK = (
+    ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
+)
 RELEASE_FLEET_DISPATCH_STATUS_CHECK = ROOT / "scripts/e2e/check_release_fleet_dispatch_status.py"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
-PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
-PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
-PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+PRODUCT_GRADE_FLEET_DISPATCH_QUEUE = (
+    ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
+)
+PRODUCT_GRADE_FLEET_KICKOFF_RUNBOOK = (
+    ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
+)
+PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER = (
+    ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+)
 PRODUCT_GRADE_FLEET_BRIEF_DIR = ROOT / "docs/evidence/fleet_dispatch"
 EXTERNAL_PROOF_CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
-EXTERNAL_PROOF_HANDBACK_STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+EXTERNAL_PROOF_HANDBACK_STATUS_BOARD = (
+    ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+)
 EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_pickup_board.py"
-EXTERNAL_PROOF_STATUS_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+EXTERNAL_PROOF_STATUS_BOARD_CHECK = (
+    ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+)
 EXTERNAL_PROOF_LIVE_BLOCKERS_CHECK = ROOT / "scripts/e2e/check_external_proof_live_blockers.py"
-EXTERNAL_PROOF_NOTIFICATIONS_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+EXTERNAL_PROOF_NOTIFICATIONS_CHECK = (
+    ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+)
 EXTERNAL_PROOF_FOLLOWUP_WORKFLOW = ROOT / ".github/workflows/external-proof-followup.yml"
-EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK = ROOT / "scripts/e2e/check_external_proof_followup_workflow.py"
+EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK = (
+    ROOT / "scripts/e2e/check_external_proof_followup_workflow.py"
+)
 GO_NO_GO_CHECK = ROOT / "scripts/e2e/check_product_go_no_go.py"
 RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
 RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
@@ -242,7 +258,9 @@ def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -
         assert "attached checks" in text, evidence_doc
         assert not HARDCODED_DEV_RELEASE_REF.search(text), evidence_doc
         for stale_ref in STALE_RELEASE_REFS:
-            assert stale_ref not in text, f"{evidence_doc} still cites stale release ref {stale_ref}"
+            assert stale_ref not in text, (
+                f"{evidence_doc} still cites stale release ref {stale_ref}"
+            )
         for pr_ref in ("PR #87", "PR #88", "PR #89", "PR #90", "PR #91"):
             assert pr_ref in text, f"{evidence_doc} does not cite {pr_ref}"
 
@@ -255,9 +273,13 @@ def test_frontend_closeout_evidence_does_not_use_stale_dev_release_refs() -> Non
         text = closeout_doc.read_text(encoding="utf-8")
         assert not HARDCODED_DEV_RELEASE_REF.search(text), closeout_doc
         for stale_ref in STALE_RELEASE_REFS:
-            assert stale_ref not in text, f"{closeout_doc} still cites stale release ref {stale_ref}"
+            assert stale_ref not in text, (
+                f"{closeout_doc} still cites stale release ref {stale_ref}"
+            )
         assert "PR #82" in text, f"{closeout_doc} must point release authority back to PR #82"
-        assert "headRefOid" in text, f"{closeout_doc} must point release authority back to PR #82 headRefOid"
+        assert "headRefOid" in text, (
+            f"{closeout_doc} must point release authority back to PR #82 headRefOid"
+        )
 
 
 def test_closeout_manifest_names_remaining_workflow_gates() -> None:
@@ -613,17 +635,16 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert set(packet["scope_boundaries"]) == expected_boundaries
 
     task_ids = {task["id"] for task in packet["tasks"]}
-    lane_aliases = {
-        alias
-        for lane in packet["dispatch_lanes"]
-        for alias in lane["aliases"]
-    }
+    lane_aliases = {alias for lane in packet["dispatch_lanes"] for alias in lane["aliases"]}
     queue_ids = {entry["task_id"] for entry in queue["queue"]}
     assert task_ids == lane_aliases
     assert task_ids == queue_ids
     assert queue["status"] == "ready_for_fleet_pickup"
     assert queue["queue_role"] == "historical_initial_dispatch"
-    assert queue["current_remaining_queue"] == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+    assert (
+        queue["current_remaining_queue"]
+        == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+    )
     assert "Product-Grade E2E Fleet Kickoff Runbook" in runbook_text
     assert "historical_initial_dispatch" in runbook_text
     assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in runbook_text
@@ -639,7 +660,9 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assert "check_external_proof_fleet_notifications.py" in runbook_text
     assert "check_external_proof_issue_sync.py --require-assignees" in runbook_text
     assert "It is not completion evidence." in assignment_ledger_text
-    assert "Do not mark any dispatched task complete from this ledger alone." in assignment_ledger_text
+    assert (
+        "Do not mark any dispatched task complete from this ledger alone." in assignment_ledger_text
+    )
 
     for task in packet["tasks"]:
         assert task["status"] == "open"
@@ -758,7 +781,12 @@ def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
     assert "ODP-PV-STAGE-001" in report
 
     brief_result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--task", "ODP-MAP-E2E-003"],
+        [
+            sys.executable,
+            "scripts/e2e/check_product_grade_fleet_dispatch.py",
+            "--task",
+            "ODP-MAP-E2E-003",
+        ],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -774,7 +802,9 @@ def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
     assert "Handoff Artifacts" in brief
 
     generated_index = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "README.md").read_text(encoding="utf-8")
-    generated_brief = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "ODP-MAP-E2E-003.md").read_text(encoding="utf-8")
+    generated_brief = (PRODUCT_GRADE_FLEET_BRIEF_DIR / "ODP-MAP-E2E-003.md").read_text(
+        encoding="utf-8"
+    )
     assert report.strip() == generated_index.strip()
     assert brief.strip() == generated_brief.strip()
 
@@ -786,9 +816,10 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
 
     assert queue_payload["release_target"]["pr"] == 82
     assert queue_payload["release_target"]["must_not_hardcode_dev_hash"] is True
-    assert "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url" in queue_payload[
-        "global_preflight"
-    ]
+    assert (
+        "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url"
+        in queue_payload["global_preflight"]
+    )
 
     required_active_task_ids = {
         "ODP-PV-008",
@@ -825,7 +856,9 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
         assert entry["evidence_refs"]
         for evidence_ref in entry["evidence_refs"]:
             evidence_path = ROOT / evidence_ref
-            assert evidence_path.exists(), f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
+            assert evidence_path.exists(), (
+                f"{entry['task_id']} evidence ref is missing: {evidence_ref}"
+            )
 
     for completed_entry in completed_closeouts:
         assert completed_entry["status"] == "done"
@@ -851,7 +884,9 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
 
     asset_entries = [entry for entry in queue_entries if entry["task_id"] == "ODP-FE-ASSET-001"]
     assert len(asset_entries) == 2
-    asset_owner_entry = next(entry for entry in asset_entries if entry["action_type"] == "owner_handoff")
+    asset_owner_entry = next(
+        entry for entry in asset_entries if entry["action_type"] == "owner_handoff"
+    )
     asset_reviewer_entry = next(
         entry for entry in asset_entries if entry["action_type"] == "reviewer_approve_or_reopen"
     )
@@ -862,17 +897,22 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
     assert asset_reviewer_entry["actor"] == "Codex2"
     assert asset_reviewer_entry["blocking_type"] == "reviewer_status_closeout"
     assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_reviewer_entry["evidence_refs"]
-    assert "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts" in asset_reviewer_entry["evidence_refs"]
+    assert (
+        "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts"
+        in asset_reviewer_entry["evidence_refs"]
+    )
     assert "masking leakage" not in queue_text
     assert "masking leakage" not in manifest_text
     assert "non-leakage E2E assertions" in manifest_text
 
     avm_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan.spec.ts").read_text(encoding="utf-8")
-    avm_product_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts").read_text(encoding="utf-8")
+    avm_product_spec_text = (
+        ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts"
+    ).read_text(encoding="utf-8")
     for token in (
         "MASKED_BY_PERMISSION",
-        "not.toContainText(\"17,654\")",
-        "not.toContainText(\"33,390\")",
+        'not.toContainText("17,654")',
+        'not.toContainText("33,390")',
         "avm-reserve-marker",
         "avm-asking-marker",
     ):
@@ -938,6 +978,7 @@ def test_external_proof_followup_workflow_runs_live_handoff_guards() -> None:
 
 def test_closeout_queue_report_runs_without_live_ai_status() -> None:
     import os
+
     test_env = os.environ.copy()
     test_env["PANTHEON_STATUS_ROOT"] = "/tmp/nonexistent-status-path-for-test"
     result = subprocess.run(
@@ -953,7 +994,9 @@ def test_closeout_queue_report_runs_without_live_ai_status() -> None:
     assert "# Product Release Closeout Queue Report" in report
     assert "PR: #82" in report
     assert "ai-status.json loaded: false" in report
-    assert "| Task | Queue Status | Live Status | Actor | Action | Blocking Type | State |" in report
+    assert (
+        "| Task | Queue Status | Live Status | Actor | Action | Blocking Type | State |" in report
+    )
     assert "ODP-PV-008" in report
     assert "queued_no_live_status" in report
     assert "external_data_sources" in report
@@ -978,7 +1021,8 @@ def test_release_gate_static_check_tracks_same_product_e2e_specs() -> None:
     runner_specs = {
         line.strip().rstrip(" \\")
         for line in runner_text.splitlines()
-        if line.strip().startswith("tests/e2e/") and line.strip().endswith((".spec.ts", ".spec.ts \\"))
+        if line.strip().startswith("tests/e2e/")
+        and line.strip().endswith((".spec.ts", ".spec.ts \\"))
     }
 
     for spec in runner_specs:
