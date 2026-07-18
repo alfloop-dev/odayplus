@@ -44,8 +44,22 @@ def authorize_intake_action(
 
     # 4. Role mapping and matrix rules
     is_admin = principal.has_role(Role.PLATFORM_ADMIN) or operator_role_id == "platform-admin"
-    is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
-    is_staff = principal.has_role(Role.EXPANSION_USER) and not is_manager
+    is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+        "expansion-manager",
+        "expansionManager",
+        "site-reviewer",
+        "siteReviewer",
+        "executive",
+    )
+    is_staff = (
+        principal.has_role(Role.EXPANSION_USER)
+        or operator_role_id in (
+            "expansion-staff",
+            "expansionStaff",
+            "expansion-user",
+            "expansion_user",
+        )
+    ) and not is_manager
 
     is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in (
         "data-steward",
@@ -96,8 +110,10 @@ def authorize_intake_action(
     elif action == "correct":
         # Check risk acknowledgement for corrections
         if is_identity_affecting:
-            if not risk_acknowledged or not risk_summary or not risk_summary.strip():
-                raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED")
+            if not risk_summary or not risk_summary.strip():
+                raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            if not risk_acknowledged:
+                raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         # Staff can only correct own submissions
         if is_staff and resource is not None:
@@ -119,8 +135,10 @@ def authorize_intake_action(
 
     elif action == "decide":
         # Check risk acknowledgement for decide
-        if not risk_acknowledged or not risk_summary or not risk_summary.strip():
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED")
+        if not risk_summary or not risk_summary.strip():
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+        if not risk_acknowledged:
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         if is_staff:
             # Staff can only propose
@@ -133,14 +151,23 @@ def authorize_intake_action(
             raise HTTPException(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward):
             raise HTTPException(status_code=403, detail="ROLE_DENIED")
+
+        # Check risk acknowledgement for merge/split/unmerge
+        if not risk_summary or not risk_summary.strip():
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+        if not risk_acknowledged:
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+
         # Merge/split require independent second actor
         if first_actor_id and first_actor_id == principal.subject_id:
             raise HTTPException(status_code=409, detail="SECOND_ACTOR_REQUIRED")
 
     elif action == "promote":
         # Check risk acknowledgement for promote
-        if not risk_acknowledged or not risk_summary or not risk_summary.strip():
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED")
+        if not risk_summary or not risk_summary.strip():
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+        if not risk_acknowledged:
+            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         if not (is_staff or is_manager or is_steward):
             raise HTTPException(status_code=403, detail="ROLE_DENIED")
@@ -148,6 +175,10 @@ def authorize_intake_action(
         # Segregation of duties: proposer of promotion cannot approve own promotion request
         if first_actor_id and first_actor_id == principal.subject_id:
             raise HTTPException(status_code=403, detail="SELF_REVIEW_DENIED")
+
+    elif action == "convert":
+        if not (is_manager or is_steward):
+            raise HTTPException(status_code=403, detail="ROLE_DENIED")
 
     elif action == "purge":
         if not (is_manager or is_steward or is_privacy):

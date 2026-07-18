@@ -164,7 +164,7 @@ def create_network_listings_sub_router(
 
             authorize_intake_action(
                 principal,
-                "promote",
+                "convert",
                 resource=listing,
                 risk_acknowledged=body.model_extra.get("riskAcknowledged")
                 or getattr(body, "riskAcknowledged", False),

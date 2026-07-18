@@ -222,7 +222,7 @@ def test_risk_acknowledgement_required() -> None:
         headers=_write_headers("risk-ack-correct"),
     )
     assert bad_correct.status_code == 422
-    assert bad_correct.json()["detail"] == "RISK_ACKNOWLEDGEMENT_REQUIRED"
+    assert "RISK_ACKNOWLEDGEMENT_REQUIRED" in bad_correct.json()["detail"]
 
 
 def test_legal_hold_conflict() -> None:
