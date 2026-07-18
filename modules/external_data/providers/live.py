@@ -120,10 +120,12 @@ class GeocodeProviderError(RuntimeError):
         provider_id: str,
         correlation_id: str,
         code: str,
+        status_code: int | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.correlation_id = correlation_id
         self.code = code
+        self.status_code = status_code
         super().__init__(
             f"{message} (provider_id={provider_id}, correlation_id={correlation_id}, code={code})"
         )
@@ -139,6 +141,26 @@ class GeocodeProviderTimeoutError(GeocodeProviderError):
 
 class GeocodeProviderRateLimitError(GeocodeProviderError):
     """Raised when the live geocoder reports a retryable quota limit."""
+
+
+class GeocodeQuarantineError(GeocodeProviderError):
+    """Raised when a geocode provider fails repeatedly and is quarantined."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_id: str,
+        correlation_id: str,
+        code: str = "quarantined",
+    ) -> None:
+        super().__init__(
+            message,
+            provider_id=provider_id,
+            correlation_id=correlation_id,
+            code=code,
+        )
+
 
 
 @dataclass(frozen=True, repr=False)
@@ -409,6 +431,7 @@ class HttpGeocodeClient:
                 provider_id=provider.provider_id,
                 correlation_id=correlation_id,
                 code="http_error",
+                status_code=exc.code,
             ) from exc
         except (TimeoutError, urllib.error.URLError) as exc:
             raise GeocodeProviderTimeoutError(
@@ -432,7 +455,9 @@ class PrimaryGeocodeProvider:
         replay_fixture_path: Path | str = DEFAULT_GEOCODE_REPLAY_FIXTURE,
         retry_budget: int = 0,
         correlation_id: str | None = None,
+        metrics: Any | None = None,
     ) -> None:
+        from shared.observability import default_registry
         self.env = env or os.environ
         self.mode = (
             ExternalProviderMode(mode)
@@ -445,10 +470,58 @@ class PrimaryGeocodeProvider:
         self.retry_budget = retry_budget
         self.correlation_id = correlation_id or new_correlation_id()
         self.client = client or self._default_client(replay_fixture_path)
+        self.metrics = metrics or default_registry()
+
+
+    def _is_retryable_exception(self, exc: Exception) -> bool:
+        # Do not retry auth errors
+        if isinstance(exc, GeocodeProviderAuthError):
+            return False
+        # Do not retry configuration errors
+        if isinstance(exc, GeocodeProviderError):
+            if exc.code in ("unauthorized", "missing_credential", "credential_invalid", "missing_endpoint"):
+                return False
+            if exc.code == "http_error":
+                # Only retry 5xx HTTP errors, but if status_code is None (e.g. from tests), default to True.
+                if exc.status_code is not None:
+                    return 500 <= exc.status_code < 600
+                return True
+            # If it's a general GeocodeProviderError that is not rate limit or timeout, don't retry
+            if not isinstance(exc, (GeocodeProviderRateLimitError, GeocodeProviderTimeoutError)):
+                return False
+        # Retry rate limit, timeout, ConnectionError, TimeoutError, and ValueError (JSON decode failure)
+        if isinstance(
+            exc,
+            (
+                GeocodeProviderRateLimitError,
+                GeocodeProviderTimeoutError,
+                TimeoutError,
+                ConnectionError,
+                ValueError,
+            ),
+        ):
+            return True
+        return False
 
     def lookup(self, normalized_address: NormalizedAddress) -> GeocodeCandidate | None:
+        import time
+
         credential = self._credential_or_raise(self.correlation_id)
+
+        # If retry_budget is 0, we don't catch anything; let exceptions raise through directly.
+        if self.retry_budget <= 0:
+            payload = self.client.geocode(
+                provider=self.provider,
+                credential=credential,
+                normalized_address=normalized_address,
+                correlation_id=self.correlation_id,
+                retry_budget=self.retry_budget,
+            )
+            return _candidate_from_geocode_payload(payload, normalized_address, self.provider.provider_id)
+
         attempts_remaining = self.retry_budget
+        backoff = 0.001
+
         while True:
             try:
                 payload = self.client.geocode(
@@ -459,10 +532,21 @@ class PrimaryGeocodeProvider:
                     retry_budget=self.retry_budget,
                 )
                 return _candidate_from_geocode_payload(payload, normalized_address, self.provider.provider_id)
-            except GeocodeProviderRateLimitError:
+            except Exception as exc:
+                if not self._is_retryable_exception(exc):
+                    raise exc
                 if attempts_remaining <= 0:
-                    raise
+                    self.metrics.increment("external_connector_failure_count", labels={"source": "geo_provider"})
+                    raise GeocodeQuarantineError(
+                        "Quarantined: max retries exceeded",
+                        provider_id=self.provider.provider_id,
+                        correlation_id=self.correlation_id,
+                    ) from exc
                 attempts_remaining -= 1
+                time.sleep(backoff)
+                backoff *= 2
+
+
 
     def _default_client(self, replay_fixture_path: Path | str) -> GeocodeClient:
         if self.mode is ExternalProviderMode.FIXTURE:
@@ -882,6 +966,7 @@ __all__ = [
     "GeocodeProviderError",
     "GeocodeProviderRateLimitError",
     "GeocodeProviderTimeoutError",
+    "GeocodeQuarantineError",
     "HttpListingFeedClient",
     "HttpGeocodeClient",
     "ListingFeedClient",
