@@ -63,6 +63,7 @@ class PersistenceBundle:
     machine_cycle_repository: Any
     external_fetch_state_store: Any = None
     notification_repository: Any = None
+    outbox_repository: Any = None
     engine: Any = None
 
 
@@ -89,6 +90,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.notifications import InMemoryNotificationRepository
+    from shared.infrastructure.persistence.outbox import InMemoryOutboxRepository
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
@@ -137,6 +139,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         machine_cycle_repository=InMemoryMachineCycleRepository(),
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
         notification_repository=InMemoryNotificationRepository(),
+        outbox_repository=InMemoryOutboxRepository(),
     )
 
 
@@ -145,6 +148,7 @@ def _durable_bundle(
 ) -> PersistenceBundle:
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -212,6 +216,7 @@ def _durable_bundle(
         machine_cycle_repository=DurableMachineCycleRepository(engine),
         external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         engine=engine,
     )
 

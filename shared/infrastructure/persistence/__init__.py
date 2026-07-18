@@ -63,6 +63,10 @@ from shared.infrastructure.persistence.repositories import (
     InMemoryTenantRepository,
     InMemoryTransactionRepository,
 )
+from shared.infrastructure.persistence.outbox import (
+    DurableOutboxRepository,
+    InMemoryOutboxRepository,
+)
 
 __all__ = [
     "DEFAULT_DB_PATH",
@@ -107,6 +111,8 @@ __all__ = [
     "DurableTransactionRepository",
     "InMemoryMachineCycleRepository",
     "DurableMachineCycleRepository",
+    "DurableOutboxRepository",
+    "InMemoryOutboxRepository",
     "MigrationAsset",
     "MigrationStep",
     "MissingLiveInputError",
