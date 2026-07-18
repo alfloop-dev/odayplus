@@ -871,6 +871,8 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        job_queue: Any | None = None,
+        async_intake: bool = False,
     ) -> dict[str, Any]:
         cache_key = ("submit_intake", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
@@ -942,60 +944,79 @@ class NetworkListingService:
         elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         elif policy.policy == "APPROVED_RETRIEVAL":
-            intake["stage"] = "RETRIEVING"
-            retrieval = retrieve(canon_url, policy=policy)
-            if retrieval.ok:
-                retrieval = replace(
-                    retrieval,
-                    raw=redact_sensitive_snapshot(retrieval.raw),
+            if async_intake and job_queue is not None:
+                intake["stage"] = "SUBMITTED"
+                from shared.jobs.queue import JobRequest
+                payload_to_send = {
+                    "intake_id": intake_id,
+                    "url": url,
+                    "heat_zone_id": heat_zone_id,
+                    "actor_role_id": actor_role_id,
+                    "actor_name": actor_name,
+                }
+                job, created = job_queue.enqueue(
+                    JobRequest(
+                        job_type="assisted-listing-intake",
+                        payload=payload_to_send,
+                        idempotency_key=idempotency_key,
+                    ),
+                    correlation_id=correlation_id or "system",
                 )
-                intake["stage"] = "PARSING"
-                intake["rawSnapshot"] = retrieval.raw
-                intake["snapshotId"] = retrieval.snapshot_id
-                intake["capturedAt"] = retrieval.captured_at
-                intake["parsedFields"] = parse_snapshot(retrieval)
+            else:
+                intake["stage"] = "RETRIEVING"
+                retrieval = retrieve(canon_url, policy=policy)
+                if retrieval.ok:
+                    retrieval = replace(
+                        retrieval,
+                        raw=redact_sensitive_snapshot(retrieval.raw),
+                    )
+                    intake["stage"] = "PARSING"
+                    intake["rawSnapshot"] = retrieval.raw
+                    intake["snapshotId"] = retrieval.snapshot_id
+                    intake["capturedAt"] = retrieval.captured_at
+                    intake["parsedFields"] = parse_snapshot(retrieval)
 
-                effective_vals = effective_fields(intake["parsedFields"])
+                    effective_vals = effective_fields(intake["parsedFields"])
 
-                from modules.external_data.application.assisted_intake import (
-                    ASSISTED_ENTRY_REQUIRED_FIELDS,
-                )
-                has_all_required = True
-                for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-                    val = effective_vals.get(rf)
-                    if val in (None, ""):
-                        has_all_required = False
-                        break
-                    if rf in ("rent", "areaPing"):
-                        try:
-                            if float(val) <= 0:
-                                has_all_required = False
-                                break
-                        except (ValueError, TypeError):
+                    from modules.external_data.application.assisted_intake import (
+                        ASSISTED_ENTRY_REQUIRED_FIELDS,
+                    )
+                    has_all_required = True
+                    for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
+                        val = effective_vals.get(rf)
+                        if val in (None, ""):
                             has_all_required = False
                             break
+                        if rf in ("rent", "areaPing"):
+                            try:
+                                if float(val) <= 0:
+                                    has_all_required = False
+                                    break
+                            except (ValueError, TypeError):
+                                has_all_required = False
+                                break
 
-                if has_all_required:
-                    intake["stage"] = "MATCHING"
-                    fingerprint = content_fingerprint(effective_vals)
+                    if has_all_required:
+                        intake["stage"] = "MATCHING"
+                        fingerprint = content_fingerprint(effective_vals)
 
-                    match_res = match_listing(
-                        values=effective_vals,
-                        canonical_url=canon_url,
-                        source_id=policy.source_id,
-                        fingerprint=fingerprint,
-                        listings=self._get_match_listings(),
-                    )
-                    intake["matchResult"] = match_res.to_dict()
-                    if match_res.outcome == "POSSIBLE_MATCH":
-                        intake["stage"] = "NEEDS_REVIEW"
+                        match_res = match_listing(
+                            values=effective_vals,
+                            canonical_url=canon_url,
+                            source_id=policy.source_id,
+                            fingerprint=fingerprint,
+                            listings=self._get_match_listings(),
+                        )
+                        intake["matchResult"] = match_res.to_dict()
+                        if match_res.outcome == "POSSIBLE_MATCH":
+                            intake["stage"] = "NEEDS_REVIEW"
+                        else:
+                            intake["stage"] = "READY"
                     else:
-                        intake["stage"] = "READY"
+                        intake["stage"] = "AWAITING_ASSISTED_ENTRY"
                 else:
-                    intake["stage"] = "AWAITING_ASSISTED_ENTRY"
-            else:
-                intake["stage"] = "FAILED"
-                intake["failure"] = retrieval.failure.to_dict()
+                    intake["stage"] = "FAILED"
+                    intake["failure"] = retrieval.failure.to_dict()
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -1020,6 +1041,7 @@ class NetworkListingService:
         return _copy(intake)
 
     def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
+        self._load_intakes()
         self._state.setdefault("assistedIntakes", [])
         intakes = self._state["assistedIntakes"]
         if selected_heat_zone_id is not None:
@@ -1027,6 +1049,7 @@ class NetworkListingService:
         return _copy(intakes)
 
     def get_intake(self, intake_id: str) -> dict[str, Any]:
+        self._load_intakes()
         self._state.setdefault("assistedIntakes", [])
         for intake in self._state["assistedIntakes"]:
             if intake["id"] == intake_id:
@@ -1372,10 +1395,35 @@ class NetworkListingService:
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
+        job_queue: Any | None = None,
     ) -> dict[str, Any]:
         intake = self._listing_intake(intake_id)
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
+
+        if job_queue is not None and intake.get("idempotencyKey"):
+            job = job_queue.get_by_idempotency_key(intake["idempotencyKey"])
+            if job is not None:
+                intake["stage"] = "SUBMITTED"
+                job_queue.replay(job.job_id)
+                audit_evt = {
+                    "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+                    "occurredAt": _now(),
+                    "actorRoleId": actor_role_id,
+                    "actorName": actor_name or "Expansion Manager",
+                    "action": "intake.retry",
+                    "targetId": intake_id,
+                    "message": f"Replayed async intake job for {intake['originalUrl']}.",
+                    "correlationId": correlation_id,
+                    "metadata": {
+                        "job_id": job.job_id,
+                        "stage": intake["stage"],
+                    }
+                }
+                intake["auditEvents"].append(audit_evt)
+                self._save_intake(intake)
+                return _copy(intake)
+
 
         from modules.external_data.application.assisted_intake import (
             content_fingerprint,

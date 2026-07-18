@@ -266,7 +266,9 @@ def test_embedded_credentials_and_token_query_urls_are_rejected() -> None:
     assert token_query.status_code in {400, 422}
 
 
-def test_blocked_source_submit_and_retry_never_call_retrieve(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_blocked_source_submit_and_retry_never_call_retrieve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = TestClient(create_app())
 
     def fail_retrieve(*_args: Any, **_kwargs: Any) -> RetrievalResult:

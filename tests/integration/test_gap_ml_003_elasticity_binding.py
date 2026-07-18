@@ -31,8 +31,7 @@ def _client() -> TestClient:
 def _loglog_observations() -> list[dict[str, float]]:
     # log(q) = 5.0 - 1.5 * log(p)  =>  true elasticity = -1.5
     return [
-        {"price": p, "demand": math.exp(5.0) * (p**-1.5)}
-        for p in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
+        {"price": p, "demand": math.exp(5.0) * (p**-1.5)} for p in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
     ]
 
 
@@ -81,12 +80,8 @@ def test_plan_estimates_elasticity_from_observations() -> None:
     assert sim.status_code == 200, sim.text
 
     # the model binding is captured on the audit trail
-    audit = client.get(
-        "/audit/events", params={"correlation_id": "corr-ml3-est"}
-    )
-    created = [
-        e for e in audit.json()["events"] if e["event_type"] == "priceops.plan_created.v1"
-    ]
+    audit = client.get("/audit/events", params={"correlation_id": "corr-ml3-est"})
+    created = [e for e in audit.json()["events"] if e["event_type"] == "priceops.plan_created.v1"]
     assert created, "plan-created audit event missing"
     audited = created[0]["metadata"]["elasticity_bindings"][0]
     assert audited["elasticity_source"] == "estimated"
@@ -157,9 +152,7 @@ def test_optimizer_job_estimates_from_observations() -> None:
             "plans": [
                 {
                     "tenant_id": "tenant-ml3",
-                    "items": [
-                        _plan_item(price_demand_observations=_loglog_observations())
-                    ],
+                    "items": [_plan_item(price_demand_observations=_loglog_observations())],
                 }
             ]
         },

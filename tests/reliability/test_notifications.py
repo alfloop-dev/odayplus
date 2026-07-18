@@ -78,7 +78,7 @@ def test_notifications_retries_and_escalation() -> None:
     assert "sms" in receipts_by_channel
 
     assert receipts_by_channel["email"].status == "escalated"
-    assert receipts_by_channel["email"].retry_count == 2 # 0, 1, 2 = 3 attempts
+    assert receipts_by_channel["email"].retry_count == 2  # 0, 1, 2 = 3 attempts
     assert receipts_by_channel["sms"].status == "sent"
     assert receipts_by_channel["sms"].retry_count == 0
 

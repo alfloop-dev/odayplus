@@ -1,0 +1,61 @@
+# ODP-INTAKE-SCHEMA-001 verification run
+# Generated on branch task/ODP-INTAKE-SCHEMA-001
+# PostgreSQL engine: pgserver-bundled PostgreSQL 16.2 (or INTAKE_TEST_DATABASE_URL)
+
+## 1. Design cross-contract validator (strict review target)
+[PASS] required_artifacts: all present
+[PASS] normative_register_precedence_apply_order: response, correction pack and manifest are identical
+[PASS] effective_version: all normative narrative/control files identify 0.2.1
+[PASS] effective_api_wording: main response names the complete bundle
+[PASS] persistence_wording: correction pack names the complete four-file schema stack
+[PASS] decision_coverage: complete
+[PASS] binding_transition_tables: present
+[PASS] command_api_coverage: complete
+[PASS] canonical_error_registry: complete
+[PASS] event_catalog_coverage: complete
+[PASS] event_payload_schema_coverage: complete
+[PASS] tenant_rls_lineage_contract: complete
+[PASS] history_and_migration_schema: complete
+[PASS] ci_uses_registered_stacks: manifest-driven OpenAPI builder and complete ordered CI schema stack
+[PASS] ci_enforces_cross_contract_exit: validator exit is preserved, enforced, and covered by a negative mismatch test
+[PASS] review_target: commit-bound
+validator exit: 0
+
+## 2. Acceptance pytest — contract + RLS security suites on real PostgreSQL 16
+$ uv run --with pgserver --with 'psycopg[binary]' pytest tests/contract/test_assisted_listing_intake_schema.py tests/security/test_assisted_listing_intake_rls.py -v
+============================= 21 passed in 18.05s ==============================
+
+### Per-test results
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_migration_reproduces_reviewed_contract_artifacts_byte_for_byte
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_ordered_migration_files_exist_and_are_nonempty
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_clean_install_creates_every_contract_table
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_all_schema_namespaces_created
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_every_tenant_table_has_not_null_tenant_id
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_versioned_tables_carry_version_bigint
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_retention_and_legal_hold_fields_present
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_authoritative_timestamps_present
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_tenant_qualified_unique_constraints_present
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_lineage_foreign_keys_present
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_current_pointer_foreign_keys_are_deferrable
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_enum_check_constraints_carry_approved_values
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_force_rls_and_fail_closed_policy_on_every_tenant_table
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_schema_validator_script_passes
+PASSED tests/contract/test_assisted_listing_intake_schema.py::test_downgrade_boundary_then_reinstall
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_missing_tenant_context_is_fail_closed
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_empty_tenant_context_is_fail_closed
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_tenant_context_scopes_reads_to_that_tenant
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_with_check_blocks_cross_tenant_insert
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_updates_and_deletes_cannot_reach_other_tenants
+PASSED tests/security/test_assisted_listing_intake_rls.py::test_reference_tables_are_not_tenant_filtered
+
+## 3. Regression — canonical alembic chain integrity + minimal-env skip
+$ uv run pytest tests/ops/test_migration_backfill.py tests/ops/test_data_domain_migration.py -q
+.........                                                                [100%]
+$ uv run pytest <intake suites> -q   # minimal env, no pg deps -> live tests skip
+..sssssssssssssssssss                                                    [100%]
+
+## 4. Lint + whitespace
+$ uv run ruff check <new files>
+All checks passed!
+$ git diff --check origin/dev...HEAD
+clean

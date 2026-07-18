@@ -1,0 +1,458 @@
+{
+  "schema": "oday-plus.assisted-listing-intake-fleet-execution-tasks.v1",
+  "generated_at": "2026-07-18T03:31:30Z",
+  "status": "approved_for_dispatch",
+  "target_branch": "dev",
+  "baseline_ref": "origin/dev",
+  "baseline_sha": "15e20b5a81cdfa23a1d241eff85dac9a5d799b7a",
+  "approved_response_commit": "e644bd0e01a3f9134ee0230490577db4f67b0aa9",
+  "approval_review_commit": "f646afca88292cab2c5276ff39d97baf02866f3c",
+  "source_docs": [
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+    "docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md",
+    "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md"
+  ],
+  "global_rules": [
+    "Start from a freshly fetched origin/dev and work on task/<task-id>.",
+    "One auto worker owns one complete task at a time; dependent follow-up work is not claimable until the current task is terminal.",
+    "The approved schema, state, OpenAPI, authorization, event, privacy, reliability, and rollout artifacts are binding and must not be reinterpreted by handlers or UI code.",
+    "Contract-first tasks ODP-INTAKE-SCHEMA-001 through ODP-INTAKE-EVENTS-001 must pass before dependent product behavior is claimable.",
+    "Every task opens a PR to dev and requires a different reviewer; the owner may not self-finalize.",
+    "Documentation, fixtures, mocks, static token checks, or deterministic simulations do not prove runtime completion.",
+    "Production paths remain fail-closed. Missing credentials or external infrastructure produce an honest blocker after all locally implementable work is complete.",
+    "Evidence under docs/evidence/completion/<task-id>/ records exact commands, results, source SHA, limitations, and reviewer findings."
+  ],
+  "tasks": [
+    {
+      "id": "ODP-INTAKE-SCHEMA-001",
+      "title": "Implement assisted intake relational schema and tenant isolation",
+      "priority": "P0",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "owned_paths": [
+        "infra/db/migrations/",
+        "shared/infrastructure/persistence/assisted_listing_intake.py",
+        "tests/contract/test_assisted_listing_intake_schema.py",
+        "tests/security/test_assisted_listing_intake_rls.py",
+        "docs/evidence/completion/ODP-INTAKE-SCHEMA-001/"
+      ],
+      "acceptance": [
+        "Convert the approved four-artifact PostgreSQL DDL stack into an ordered production migration without dropping approved constraints.",
+        "Implement every approved type, enum, nullability rule, foreign key, tenant-qualified unique constraint, check, version column, index, retention field, legal-hold field, and authoritative timestamp.",
+        "Enable and FORCE RLS on every tenant-bearing table with fail-closed tenant isolation policies.",
+        "Prove clean install, upgrade, downgrade boundary, catalog constraints, tenant isolation, and rollback behavior on PostgreSQL 16."
+      ],
+      "verification": [
+        "python scripts/validate_assisted_listing_intake_design.py --reviewed-commit e644bd0e01a3f9134ee0230490577db4f67b0aa9 --current-pr-head e644bd0e01a3f9134ee0230490577db4f67b0aa9 --base-commit e2ef2156375c733747d968346fd85ca54cc751c1 --strict-review-target",
+        "uv run pytest tests/contract/test_assisted_listing_intake_schema.py tests/security/test_assisted_listing_intake_rls.py -q",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-STATES-001",
+      "title": "Implement binding intake, listing, decision, assignment, and SLA state engines",
+      "priority": "P0",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "owned_paths": [
+        "modules/listing/domain/intake_states.py",
+        "modules/listing/application/intake_workflow.py",
+        "modules/listing/application/assignment_sla.py",
+        "tests/unit/listing/",
+        "tests/contract/test_assisted_listing_intake_states.py",
+        "docs/evidence/completion/ODP-INTAKE-STATES-001/"
+      ],
+      "acceptance": [
+        "Implement every legal transition and reject every absent transition in the approved per-transition tables.",
+        "Enforce actor, permission, precondition, idempotency, concurrency token, persisted evidence, retry result, terminal, and reopen semantics.",
+        "Implement assignment claim, transfer, SLA due time, overdue, escalation, completion, and concurrent-owner behavior.",
+        "Provide exhaustive table-driven tests for intake, listing, decision, assignment/SLA, and promotion orchestration states."
+      ],
+      "verification": [
+        "uv run pytest tests/unit/listing tests/contract/test_assisted_listing_intake_states.py -q",
+        "python3 -m ruff check modules/listing tests/unit/listing tests/contract/test_assisted_listing_intake_states.py",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-IDENTITY-001",
+      "title": "Implement reversible listing identity graph",
+      "priority": "P0",
+      "owner": "Codex2",
+      "reviewer": "Claude2",
+      "depends_on": [],
+      "owned_paths": [
+        "modules/integration/application/identity_resolution.py",
+        "modules/listing/domain/identity_graph.py",
+        "modules/listing/application/identity_commands.py",
+        "tests/unit/listing/test_identity_graph.py",
+        "tests/integration/test_assisted_listing_identity.py",
+        "docs/evidence/completion/ODP-INTAKE-IDENTITY-001/"
+      ],
+      "acceptance": [
+        "Persist immutable identity edges with effective and superseded selection plus canonical property redirects.",
+        "Implement merge, split, unmerge, reversal, cycle prevention, concurrency conflict, and partial-operation rollback.",
+        "Keep source records immutable and resolve every listing and candidate reference without losing lineage.",
+        "Expose deterministic lineage and effective-identity queries with tenant isolation."
+      ],
+      "verification": [
+        "uv run pytest tests/unit/listing/test_identity_graph.py tests/integration/test_assisted_listing_identity.py -q",
+        "python3 -m ruff check modules/integration modules/listing tests/unit/listing/test_identity_graph.py tests/integration/test_assisted_listing_identity.py",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-API-001",
+      "title": "Implement assisted intake v1 API and generated client",
+      "priority": "P0",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "owned_paths": [
+        "apps/api/app/routes/listings.py",
+        "apps/api/app/routes/operator_modules/network_listings.py",
+        "packages/openapi-client/",
+        "packages/schemas/assisted_listing_intake/",
+        "tests/contract/test_operator_assisted_listing_api.py",
+        "tests/contract/test_assisted_listing_openapi.py",
+        "docs/evidence/completion/ODP-INTAKE-API-001/"
+      ],
+      "acceptance": [
+        "Build the effective OpenAPI by applying all five overlays in manifest order and generate client/types from that artifact.",
+        "Implement query, URL/batch intake, correction, decision, merge/split/unmerge, assignment, retry, and promotion endpoints without inventing payloads.",
+        "Enforce cursor, masking, idempotency, If-Match, replay, partial-success, conflict, authorization, and declared error schemas.",
+        "Add request/response and generated-client drift tests for every operation."
+      ],
+      "verification": [
+        "python scripts/build_validate_assisted_listing_intake_openapi.py",
+        "uv run pytest tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q",
+        "npm run typecheck --workspace=@oday-plus/openapi-client",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-AUTH-001",
+      "title": "Implement deny-by-default intake authorization and segregation",
+      "priority": "P0",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "depends_on": [],
+      "owned_paths": [
+        "shared/auth/",
+        "modules/opsboard/auth/",
+        "modules/listing/application/intake_authorization.py",
+        "tests/security/test_assisted_listing_intake_security.py",
+        "tests/security/test_assisted_listing_intake_authorization_matrix.py",
+        "docs/evidence/completion/ODP-INTAKE-AUTH-001/"
+      ],
+      "acceptance": [
+        "Enforce the approved role/action/resource/scope/state/field/risk matrix in backend policy with deny-by-default behavior.",
+        "Implement tenant, brand, region, area, HeatZone, workflow state, field classification, and ownership checks.",
+        "Enforce segregation of duties, self-review prohibition, emergency administration restrictions, masking, export, purge, and legal-hold permissions.",
+        "Return the exact approved denial or masking reason code and record attributable audit evidence."
+      ],
+      "verification": [
+        "uv run pytest tests/security/test_assisted_listing_intake_security.py tests/security/test_assisted_listing_intake_authorization_matrix.py -q",
+        "python3 -m ruff check shared/auth modules/opsboard/auth modules/listing/application/intake_authorization.py tests/security",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-EVENTS-001",
+      "title": "Implement typed intake events, outbox, deduplication, replay, and DLQ",
+      "priority": "P0",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "owned_paths": [
+        "shared/domain/events.py",
+        "shared/infrastructure/persistence/outbox.py",
+        "packages/schemas/events/assisted_listing_intake/",
+        "apps/worker/consumers/assisted_listing_intake.py",
+        "tests/contract/test_assisted_listing_intake_events.py",
+        "tests/integration/test_assisted_listing_intake_outbox.py",
+        "docs/evidence/completion/ODP-INTAKE-EVENTS-001/"
+      ],
+      "acceptance": [
+        "Implement the approved versioned envelope and every registered payload schema.",
+        "Bind producer, transaction owner, aggregate and partition key, ordering scope, consumers, sensitive-field policy, and compatibility behavior.",
+        "Implement transactional outbox, consumer deduplication lifetime, bounded retry, DLQ, retention, replay authority, and deprecation behavior.",
+        "External webhooks remain explicitly unsupported in v1 and no webhook delivery path is exposed."
+      ],
+      "verification": [
+        "uv run pytest tests/contract/test_assisted_listing_intake_events.py tests/integration/test_assisted_listing_intake_outbox.py -q",
+        "python3 -m ruff check shared/domain/events.py shared/infrastructure/persistence/outbox.py apps/worker/consumers tests",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-SNAPSHOT-001",
+      "title": "Implement source snapshot provenance, checksum, residency, and reconciliation",
+      "priority": "P0",
+      "owner": "Antigravity3",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-AUTH-001",
+        "ODP-INTAKE-EVENTS-001"
+      ],
+      "owned_paths": [
+        "modules/external_data/security/assisted_listing_retrieval.py",
+        "modules/external_data/application/source_snapshots.py",
+        "shared/infrastructure/object_store/",
+        "tests/integration/test_assisted_listing_snapshots.py",
+        "tests/security/test_assisted_listing_snapshot_residency.py",
+        "docs/evidence/completion/ODP-INTAKE-SNAPSHOT-001/"
+      ],
+      "acceptance": [
+        "Store raw or redacted immutable snapshots with generation, checksum, observed/captured times, parser input reference, and retention class.",
+        "Enforce source policy before retrieval and fail closed for unknown, blocked, authentication-required, or assisted-entry-only sources.",
+        "Enforce TW_ONLY residency, access/export restrictions, legal hold, and correction lineage.",
+        "Implement SQL/GCS consistency reconciliation, missing-object quarantine, and idempotent recovery."
+      ],
+      "verification": [
+        "uv run pytest tests/integration/test_assisted_listing_snapshots.py tests/security/test_assisted_listing_snapshot_residency.py -q",
+        "python3 -m ruff check modules/external_data shared/infrastructure/object_store tests",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-JOBS-001",
+      "title": "Implement durable intake jobs with fencing, timeout, backpressure, and cancellation",
+      "priority": "P0",
+      "owner": "Antigravity4",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-STATES-001",
+        "ODP-INTAKE-EVENTS-001"
+      ],
+      "owned_paths": [
+        "shared/jobs/",
+        "shared/infrastructure/persistence/job_queue.py",
+        "apps/worker/assisted_listing_intake/",
+        "tests/reliability/test_assisted_listing_intake_jobs.py",
+        "tests/integration/test_assisted_listing_intake_worker.py",
+        "docs/evidence/completion/ODP-INTAKE-JOBS-001/"
+      ],
+      "acceptance": [
+        "Implement durable job identity, lease and fencing tokens, heartbeat, stage timeout, retry/backoff, acknowledgement, and lost-response recovery.",
+        "Implement queue concurrency and rate limits, backpressure thresholds, poison isolation, DLQ retention, authorized replay, and cancellation checkpoints.",
+        "Prevent stale workers and duplicate delivery from producing duplicate outcomes.",
+        "Emit the approved metrics, alerts, audit events, and operator evidence for every failure path."
+      ],
+      "verification": [
+        "uv run pytest tests/reliability/test_assisted_listing_intake_jobs.py tests/integration/test_assisted_listing_intake_worker.py -q",
+        "python3 -m ruff check shared/jobs shared/infrastructure/persistence/job_queue.py apps/worker/assisted_listing_intake tests",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-PRIVACY-001",
+      "title": "Implement intake purge, legal hold, evidence export, and WORM integrity",
+      "priority": "P0",
+      "owner": "Antigravity5",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-AUTH-001",
+        "ODP-INTAKE-EVENTS-001"
+      ],
+      "owned_paths": [
+        "shared/audit/",
+        "modules/listing/application/intake_privacy.py",
+        "apps/api/app/routes/operator_modules/privacy.py",
+        "tests/security/test_assisted_listing_intake_privacy.py",
+        "tests/integration/test_assisted_listing_evidence_export.py",
+        "docs/evidence/completion/ODP-INTAKE-PRIVACY-001/"
+      ],
+      "acceptance": [
+        "Implement purge execution, legal-hold placement/release, residency enforcement, subject/export scope, and deletion-conflict fail-closed behavior.",
+        "Generate watermarked exports, manifests, checksums, signer/key versions, verification results, and download evidence.",
+        "Protect immutable decision and source evidence with the approved WORM boundary and audit-failure behavior.",
+        "Prove unauthorized purge/export denial, hold protection, manifest verification, and retention execution."
+      ],
+      "verification": [
+        "uv run pytest tests/security/test_assisted_listing_intake_privacy.py tests/integration/test_assisted_listing_evidence_export.py -q",
+        "python3 -m ruff check shared/audit modules/listing/application/intake_privacy.py apps/api/app/routes/operator_modules/privacy.py tests",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-PROMOTION-001",
+      "title": "Implement reviewed listing-to-candidate promotion saga",
+      "priority": "P0",
+      "owner": "Antigravity6",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-STATES-001",
+        "ODP-INTAKE-IDENTITY-001",
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-AUTH-001",
+        "ODP-INTAKE-EVENTS-001"
+      ],
+      "owned_paths": [
+        "modules/opsboard/application/network_listings.py",
+        "modules/listing/application/promotion.py",
+        "apps/api/app/routes/operator_modules/network_listings.py",
+        "tests/integration/test_assisted_listing_promotion.py",
+        "tests/contract/test_assisted_listing_promotion_api.py",
+        "docs/evidence/completion/ODP-INTAKE-PROMOTION-001/"
+      ],
+      "acceptance": [
+        "Remove automatic candidate creation and require explicit request plus independent review before execution.",
+        "Implement idempotent Intake to Listing to Candidate Site to SiteScore orchestration with duplicate-candidate prevention.",
+        "Define authoritative success, partial failure, compensation, retry, scoring-failure, reversal, and audit outcomes.",
+        "High-impact actions remain non-optimistic and enforce If-Match plus segregation of duties."
+      ],
+      "verification": [
+        "uv run pytest tests/integration/test_assisted_listing_promotion.py tests/contract/test_assisted_listing_promotion_api.py -q",
+        "python3 -m ruff check modules/opsboard/application/network_listings.py modules/listing/application/promotion.py apps/api/app/routes/operator_modules/network_listings.py tests",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-001",
+      "title": "Implement assisted listing intake workflow UI",
+      "priority": "P0",
+      "owner": "Antigravity7",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-STATES-001",
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-AUTH-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/",
+        "apps/web/features/operator/network/ListingRadarPanel.tsx",
+        "apps/web/features/operator/network/listingsClient.ts",
+        "apps/web/src/app/w/expansion/listings/",
+        "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "docs/evidence/completion/ODP-INTAKE-UX-001/"
+      ],
+      "acceptance": [
+        "Implement URL submission, durable processing detail, parsed-field correction, duplicate/revision comparison, assisted entry, and Listing Inbox integration.",
+        "Render only approved stages, outcomes, permissions, conflicts, masking, timestamps, freshness, error codes, and next actions.",
+        "Implement all required empty, loading, partial, failure, retry, blocked, read-only, stale, and quarantined states without silent fixture fallback.",
+        "Prove keyboard, focus, screen-reader change summary, desktop comparison, tablet confirmation, and mobile tracking behavior."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm run build --workspace=@oday-plus/web",
+        "npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-MIGRATION-001",
+      "title": "Implement staging backfill, reconciliation, and rollback",
+      "priority": "P0",
+      "owner": "Antigravity3",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-IDENTITY-001",
+        "ODP-INTAKE-SNAPSHOT-001"
+      ],
+      "owned_paths": [
+        "scripts/migrations/assisted_listing_intake/",
+        "tests/ops/test_assisted_listing_intake_migration.py",
+        "docs/runbooks/assisted-listing-intake-migration.md",
+        "docs/evidence/completion/ODP-INTAKE-MIGRATION-001/"
+      ],
+      "acceptance": [
+        "Implement versioned mapping, tenant/source/month backfill, dry run, resume, reconciliation, and irreconcilable-record ownership.",
+        "Preserve source, parser, correction, decision, identity, listing revision, candidate, and audit lineage without fabrication.",
+        "Produce count/checksum proof and shadow comparison before cutover.",
+        "Implement rollback and forward-recovery runbooks with executable staging evidence."
+      ],
+      "verification": [
+        "uv run pytest tests/ops/test_assisted_listing_intake_migration.py -q",
+        "python3 -m ruff check scripts/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-LOAD-001",
+      "title": "Validate assisted intake capacity, SLO, recovery, and error budget",
+      "priority": "P0",
+      "owner": "Antigravity4",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-EVENTS-001",
+        "ODP-INTAKE-JOBS-001",
+        "ODP-INTAKE-PROMOTION-001"
+      ],
+      "owned_paths": [
+        "tests/performance/assisted_listing_intake/",
+        "tests/reliability/assisted_listing_intake/",
+        "scripts/load/assisted_listing_intake/",
+        "scripts/chaos/assisted_listing_intake/",
+        "docs/evidence/completion/ODP-INTAKE-LOAD-001/"
+      ],
+      "acceptance": [
+        "Measure approved intake volume, batch size, concurrency, queue age, latency, parser completion, review SLA, and availability targets.",
+        "Exercise provider latency, duplicate delivery, worker loss, SQL failover, GCS inconsistency, queue backlog, retry budget, and DLQ recovery.",
+        "Drive SLO and error-budget evidence from measured runtime data rather than static checks.",
+        "Record measured RPO/RTO and identify every missed target without weakening acceptance."
+      ],
+      "verification": [
+        "uv run pytest tests/performance/assisted_listing_intake tests/reliability/assisted_listing_intake -q",
+        "python3 -m ruff check tests/performance/assisted_listing_intake tests/reliability/assisted_listing_intake scripts/load/assisted_listing_intake scripts/chaos/assisted_listing_intake",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-RELEASE-001",
+      "title": "Execute tenant and source canary, UAT, restore, rollback, and governed cutover",
+      "priority": "P0",
+      "owner": "Antigravity6",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-SCHEMA-001",
+        "ODP-INTAKE-STATES-001",
+        "ODP-INTAKE-IDENTITY-001",
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-AUTH-001",
+        "ODP-INTAKE-EVENTS-001",
+        "ODP-INTAKE-SNAPSHOT-001",
+        "ODP-INTAKE-JOBS-001",
+        "ODP-INTAKE-PRIVACY-001",
+        "ODP-INTAKE-MIGRATION-001",
+        "ODP-INTAKE-PROMOTION-001",
+        "ODP-INTAKE-UX-001",
+        "ODP-INTAKE-LOAD-001"
+      ],
+      "owned_paths": [
+        "infra/assisted-listing-intake/",
+        "scripts/release/assisted_listing_intake/",
+        "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "docs/runbooks/assisted-listing-intake-release.md",
+        "docs/evidence/completion/ODP-INTAKE-RELEASE-001/"
+      ],
+      "acceptance": [
+        "Run shadow processing, tenant/source canary, UAT, migration reconciliation, kill switch, rollback trigger, and release-authority gates.",
+        "Verify no legacy, SQLite, memory, fixture, or silent fallback path is presented as production-ready.",
+        "Execute restore and rollback drills in the required order and reconcile SQL, GCS, queues, events, and audit evidence.",
+        "Keep every production flag disabled until all section 12 owner approvals and exact runtime evidence are recorded."
+      ],
+      "verification": [
+        "npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "python3 scripts/e2e/check_product_release_gate.py",
+        "python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report",
+        "git diff --check origin/dev...HEAD"
+      ]
+    }
+  ]
+}

@@ -44,9 +44,7 @@ class JobRegistry:
     def __init__(self) -> None:
         self._handlers: dict[str, JobHandler] = {}
 
-    def register(
-        self, job_type: str, handler: JobHandler, *, replace: bool = False
-    ) -> JobHandler:
+    def register(self, job_type: str, handler: JobHandler, *, replace: bool = False) -> JobHandler:
         """Register ``handler`` for ``job_type``.
 
         Duplicate registration is rejected unless ``replace=True`` so two

@@ -282,9 +282,7 @@ def test_export_writes_audit_event_and_bundle_to_worm_sink() -> None:
         "retained-evidence",
     }
     assert bundle.export_id in {
-        write["record_id"]
-        for write in sink.writes
-        if write["record_type"] == "retained-evidence"
+        write["record_id"] for write in sink.writes if write["record_type"] == "retained-evidence"
     }
 
 
@@ -377,9 +375,7 @@ def test_purge_expired_respects_legal_hold(db_path) -> None:
 
         # As-of well beyond every retention window: standard record is expired.
         as_of = NOW + timedelta(days=4000)
-        assert standard_bundle.export_id in [
-            r.export_id for r in store.list_expired(as_of)
-        ]
+        assert standard_bundle.export_id in [r.export_id for r in store.list_expired(as_of)]
         with pytest.raises(EvidenceGovernanceError):
             store.purge_expired(as_of)
         with pytest.raises(EvidenceGovernanceError):
@@ -405,15 +401,18 @@ def test_purge_expired_respects_legal_hold(db_path) -> None:
         )
         assert held.is_expired(as_of) is False
         assert held.governance_log[0]["operation"] == "legal_hold"
-        assert store.purge_expired(
-            as_of,
-            context=GovernedEvidenceOperation(
-                actor="records-a",
-                role="retention_manager",
-                reason="scheduled retention sweep",
-                correlation_id="corr-retention-sweep",
-            ),
-        ) == []
+        assert (
+            store.purge_expired(
+                as_of,
+                context=GovernedEvidenceOperation(
+                    actor="records-a",
+                    role="retention_manager",
+                    reason="scheduled retention sweep",
+                    correlation_id="corr-retention-sweep",
+                ),
+            )
+            == []
+        )
         assert store.get(standard_bundle.export_id) is not None
     finally:
         bundle_persistence.engine.close()
@@ -827,9 +826,9 @@ def test_restore_replay_preserves_audit_and_retention_metadata(db_path, tmp_path
                 decision_cards=(_ready_card(event.event_id),),
                 generated_at=NOW + timedelta(minutes=index),
             )
-        first_export_id = source.evidence_store.list_for_program(
-            "subsidy-program-2026-q2"
-        )[0].export_id
+        first_export_id = source.evidence_store.list_for_program("subsidy-program-2026-q2")[
+            0
+        ].export_id
         source.evidence_store.apply_legal_hold(
             first_export_id,
             context=GovernedEvidenceOperation(
@@ -859,7 +858,9 @@ def test_restore_replay_preserves_audit_and_retention_metadata(db_path, tmp_path
             "analyst-0",
             "analyst-1",
         ]
-        assert [event.correlation_id for event in replayed_events if event.event_id in event_ids] == [
+        assert [
+            event.correlation_id for event in replayed_events if event.event_id in event_ids
+        ] == [
             "corr-replay-0",
             "corr-replay-1",
         ]
@@ -932,9 +933,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         assert payload["audit_chain"]["end"]
 
         # Retrieve the persisted bundle through the read endpoint.
-        fetched = client.get(
-            f"/audit/evidence/exports/{export_id}", headers=AUDIT_HEADERS
-        )
+        fetched = client.get(f"/audit/evidence/exports/{export_id}", headers=AUDIT_HEADERS)
         assert fetched.status_code == 200
         fetched_payload = fetched.json()
         assert fetched_payload["bundle_checksum"] == payload["bundle_checksum"]
@@ -953,9 +952,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         assert [item["export_id"] for item in exports] == [export_id]
         assert exports[0]["bundle_checksum"] == payload["bundle_checksum"]
 
-        unknown = client.get(
-            "/audit/evidence/exports/audit-export-missing", headers=AUDIT_HEADERS
-        )
+        unknown = client.get("/audit/evidence/exports/audit-export-missing", headers=AUDIT_HEADERS)
         assert unknown.status_code == 404
     finally:
         bundle_persistence.engine.close()

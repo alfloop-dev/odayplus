@@ -1,0 +1,436 @@
+overlay: 1.0.0
+info:
+  title: ODay Plus Assisted Listing Intake v1.1 command and error corrections
+  version: 1.1.0
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+
+# Normative under ODP-SD-INTAKE-001-CORR-021. CI must apply this overlay to
+# the base OpenAPI before linting, client generation, examples, or contract tests.
+
+actions:
+  - target: $.paths['/v1/intakes/{intake_id}/promotion']
+    description: Remove the v0.2.0 route that returned a final candidate receipt before human review.
+    remove: true
+
+  - target: $.paths
+    description: Add explicit intake, assignment, SLA, identity-decision, and promotion command resources.
+    update:
+      /v1/intakes/{intake_id}/promotion-requests:
+        post:
+          tags: [Promotion]
+          operationId: requestCandidatePromotion
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema: {$ref: '#/components/schemas/PromotionRequest'}
+          responses:
+            '202': {$ref: '#/components/responses/PromotionRequestAccepted'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+            '429': {$ref: '#/components/responses/RateLimited'}
+            '503': {$ref: '#/components/responses/Backpressure'}
+
+      /v1/promotion-decisions/{promotion_decision_id}:
+        get:
+          tags: [Promotion]
+          operationId: getPromotionDecision
+          parameters:
+            - $ref: '#/components/parameters/PromotionDecisionId'
+          responses:
+            '200': {$ref: '#/components/responses/PromotionDecisionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '404': {$ref: '#/components/responses/NotFound'}
+
+      /v1/promotion-decisions/{promotion_decision_id}/actions/review:
+        post:
+          tags: [Promotion]
+          operationId: reviewPromotionDecision
+          parameters:
+            - $ref: '#/components/parameters/PromotionDecisionId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema: {$ref: '#/components/schemas/ReviewDecisionRequest'}
+          responses:
+            '200': {$ref: '#/components/responses/PromotionDecisionOk'}
+            '202': {$ref: '#/components/responses/PromotionExecutionAccepted'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/intakes/{intake_id}/actions/cancel:
+        post:
+          tags: [Intake]
+          operationId: cancelIntake
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/ReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/TransitionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/intakes/{intake_id}/actions/quarantine:
+        post:
+          tags: [Intake]
+          operationId: quarantineIntake
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/RiskReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/TransitionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/intakes/{intake_id}/actions/reopen:
+        post:
+          tags: [Intake]
+          operationId: reopenIntake
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/RiskReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/TransitionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/assignments/{assignment_id}/actions/claim:
+        post:
+          tags: [Assignment]
+          operationId: claimAssignment
+          parameters:
+            - $ref: '#/components/parameters/AssignmentId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/ReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/AssignmentOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/assignments/{assignment_id}/actions/transfer:
+        post:
+          tags: [Assignment]
+          operationId: transferAssignment
+          parameters:
+            - $ref: '#/components/parameters/AssignmentId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema: {$ref: '#/components/schemas/AssignmentTransferRequest'}
+          responses:
+            '200': {$ref: '#/components/responses/AssignmentOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/assignments/{assignment_id}/actions/complete:
+        post:
+          tags: [Assignment]
+          operationId: completeAssignment
+          parameters:
+            - $ref: '#/components/parameters/AssignmentId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/ReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/AssignmentOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/sla-instances/{sla_instance_id}/actions/pause:
+        post:
+          tags: [Assignment]
+          operationId: pauseSla
+          parameters:
+            - $ref: '#/components/parameters/SlaInstanceId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema: {$ref: '#/components/schemas/SlaPauseRequest'}
+          responses:
+            '200': {$ref: '#/components/responses/SlaOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/sla-instances/{sla_instance_id}/actions/resume:
+        post:
+          tags: [Assignment]
+          operationId: resumeSla
+          parameters:
+            - $ref: '#/components/parameters/SlaInstanceId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/ReasonCommand'}
+          responses:
+            '200': {$ref: '#/components/responses/SlaOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/identity-decisions/{decision_id}:
+        get:
+          tags: [Identity]
+          operationId: getIdentityDecision
+          parameters:
+            - $ref: '#/components/parameters/DecisionId'
+          responses:
+            '200': {$ref: '#/components/responses/DecisionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '404': {$ref: '#/components/responses/NotFound'}
+
+      /v1/identity-decisions/{decision_id}/actions/review:
+        post:
+          tags: [Identity]
+          operationId: reviewIdentityDecision
+          parameters:
+            - $ref: '#/components/parameters/DecisionId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema: {$ref: '#/components/schemas/ReviewDecisionRequest'}
+          responses:
+            '200': {$ref: '#/components/responses/DecisionOk'}
+            '202': {$ref: '#/components/responses/DecisionExecutionAccepted'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+      /v1/identity-decisions/{decision_id}/actions/reverse:
+        post:
+          tags: [Identity]
+          operationId: requestIdentityDecisionReversal
+          parameters:
+            - $ref: '#/components/parameters/DecisionId'
+            - $ref: '#/components/parameters/IdempotencyKey'
+            - $ref: '#/components/parameters/IfMatch'
+          requestBody: {$ref: '#/components/requestBodies/RiskReasonCommand'}
+          responses:
+            '202': {$ref: '#/components/responses/DecisionExecutionAccepted'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '409': {$ref: '#/components/responses/VersionConflict'}
+            '422': {$ref: '#/components/responses/ValidationError'}
+            '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+  - target: $.components.parameters
+    update:
+      PromotionDecisionId: {name: promotion_decision_id, in: path, required: true, schema: {type: string, format: uuid}}
+      AssignmentId: {name: assignment_id, in: path, required: true, schema: {type: string, format: uuid}}
+      SlaInstanceId: {name: sla_instance_id, in: path, required: true, schema: {type: string, format: uuid}}
+      DecisionId: {name: decision_id, in: path, required: true, schema: {type: string, format: uuid}}
+
+  - target: $.components.requestBodies
+    update:
+      ReasonCommand:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReasonCommand'}
+      RiskReasonCommand:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RiskReasonCommand'}
+
+  - target: $.components.responses
+    update:
+      PromotionRequestAccepted:
+        description: Promotion request persisted and routed for validation or independent review; no candidate is implied.
+        headers:
+          ETag: {$ref: '#/components/headers/ETag'}
+          Idempotency-Replayed: {$ref: '#/components/headers/IdempotencyReplayed'}
+        content: {application/json: {schema: {$ref: '#/components/schemas/PromotionDecisionReceipt'}}}
+      PromotionDecisionOk:
+        description: Current promotion decision state.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/PromotionDecisionReceipt'}}}
+      PromotionExecutionAccepted:
+        description: Approved review committed and candidate creation execution queued.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/PromotionDecisionReceipt'}}}
+      TransitionOk:
+        description: State transition committed.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/TransitionReceipt'}}}
+      AssignmentOk:
+        description: Assignment command committed.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/AssignmentReceipt'}}}
+      SlaOk:
+        description: SLA command committed.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/SlaReceipt'}}}
+      DecisionOk:
+        description: Current decision state or synchronously committed review result.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionReceipt'}}}
+      DecisionExecutionAccepted:
+        description: Approved decision execution or reversal queued.
+        headers: {ETag: {$ref: '#/components/headers/ETag'}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionReceipt'}}}
+      RateLimited:
+        description: Tenant, actor, source, or endpoint rate limit exceeded.
+        headers: {Retry-After: {schema: {type: integer, minimum: 1}}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/ApiError'}}}
+      Backpressure:
+        description: Durable write or queue capacity is under protection; no request was accepted without a receipt.
+        headers: {Retry-After: {schema: {type: integer, minimum: 1}}}
+        content: {application/json: {schema: {$ref: '#/components/schemas/ApiError'}}}
+
+  - target: $.components.schemas
+    update:
+      ReasonCommand:
+        type: object
+        required: [reason]
+        additionalProperties: false
+        properties:
+          reason: {type: string, minLength: 3, maxLength: 4000}
+      RiskReasonCommand:
+        allOf:
+          - $ref: '#/components/schemas/ReasonCommand'
+          - type: object
+            required: [risk_acknowledged]
+            properties:
+              risk_acknowledged: {const: true}
+              incident_or_change_id: {type: [string, 'null'], maxLength: 200}
+      ReviewDecisionRequest:
+        type: object
+        required: [decision, reason]
+        additionalProperties: false
+        properties:
+          decision: {type: string, enum: [APPROVE, REJECT, RETURN]}
+          reason: {type: string, minLength: 3, maxLength: 4000}
+          risk_acknowledged: {type: boolean, default: false}
+          requested_changes: {type: array, items: {type: string}}
+      PromotionDecisionReceipt:
+        type: object
+        required: [promotion_decision_id, intake_id, listing_id, status, decision_type, version, audit_event_id, correlation_id]
+        properties:
+          promotion_decision_id: {type: string, format: uuid}
+          intake_id: {type: string, format: uuid}
+          listing_id: {type: string, format: uuid}
+          status: {type: string, enum: [REQUESTED, VALIDATING, PENDING_REVIEW, REJECTED, APPROVED, CANDIDATE_CREATING, CANDIDATE_CREATED, SCORE_QUEUED, COMPLETED, FAILED, SCORE_FAILED]}
+          decision_type: {type: string, enum: [STANDARD, LEGACY_RECONCILED]}
+          reviewer_subject_id: {type: [string, 'null'], format: uuid}
+          candidate_site_id: {type: [string, 'null'], format: uuid}
+          site_score_job_id: {type: [string, 'null'], format: uuid}
+          version: {type: integer, minimum: 1}
+          audit_event_id: {type: string, format: uuid}
+          correlation_id: {type: string, format: uuid}
+      AssignmentTransferRequest:
+        type: object
+        required: [target_owner_subject_id, target_owner_role, reason, handoff_note]
+        additionalProperties: false
+        properties:
+          target_owner_subject_id: {type: string, format: uuid}
+          target_owner_role: {type: string}
+          reason: {type: string, minLength: 3, maxLength: 4000}
+          handoff_note: {type: string, minLength: 3, maxLength: 4000}
+          due_at: {type: [string, 'null'], format: date-time}
+      SlaPauseRequest:
+        type: object
+        required: [reason, expected_resume_at]
+        additionalProperties: false
+        properties:
+          reason: {type: string, minLength: 3, maxLength: 4000}
+          expected_resume_at: {type: string, format: date-time}
+      SlaReceipt:
+        type: object
+        required: [sla_instance_id, state, due_at, paused_duration_seconds, version, audit_event_id, correlation_id]
+        properties:
+          sla_instance_id: {type: string, format: uuid}
+          state: {type: string, enum: [ON_TRACK, DUE_SOON, OVERDUE, BREACHED, PAUSED, COMPLETED]}
+          due_at: {type: string, format: date-time}
+          due_soon_at: {type: [string, 'null'], format: date-time}
+          paused_duration_seconds: {type: integer, minimum: 0}
+          active_pause_interval_id: {type: [string, 'null'], format: uuid}
+          version: {type: integer, minimum: 1}
+          audit_event_id: {type: string, format: uuid}
+          correlation_id: {type: string, format: uuid}
+
+  - target: $.components.schemas.ApiError.properties.code.enum
+    description: Replace the inconsistent v0.2.0 error enum with the canonical registry.
+    update:
+      - AUTHENTICATION_REQUIRED
+      - ROLE_DENIED
+      - TENANT_SCOPE_DENIED
+      - SCOPE_DENIED
+      - OWNERSHIP_REQUIRED
+      - ASSIGNMENT_SCOPE_DENIED
+      - SOURCE_SCOPE_DENIED
+      - FIELD_MASKED
+      - DATA_CLASSIFICATION_DENIED
+      - PURPOSE_REQUIRED
+      - PRECONDITION_REQUIRED
+      - VERSION_CONFLICT
+      - WORKFLOW_STATE_DENIED
+      - OWNER_CONFLICT
+      - SECOND_ACTOR_REQUIRED
+      - SELF_REVIEW_DENIED
+      - RISK_ACKNOWLEDGEMENT_REQUIRED
+      - SOURCE_POLICY_DENIED
+      - SOURCE_POLICY_UNKNOWN
+      - SOURCE_AUTH_REQUIRED
+      - LEGAL_HOLD_CONFLICT
+      - RETENTION_NOT_REACHED
+      - RESIDENCY_DENIED
+      - EXPORT_APPROVAL_REQUIRED
+      - PURGE_APPROVAL_REQUIRED
+      - BREAK_GLASS_DENIED
+      - DEPENDENCY_CONFLICT
+      - DUPLICATE_CANDIDATE
+      - IDEMPOTENCY_KEY_REUSED
+      - RETRY_BUDGET_EXHAUSTED
+      - CHECKPOINT_UNAVAILABLE
+      - JOB_FENCE_REJECTED
+      - SLA_PAUSE_DENIED
+      - DECISION_INCOMPLETE
+      - BACKPRESSURE_ACTIVE
+      - RATE_LIMITED
+      - RESOURCE_NOT_FOUND
+      - VALIDATION_FAILED
+      - FIELD_REQUIRED
+      - CURSOR_INVALID
+      - CURSOR_EXPIRED
+      - INTERNAL_ERROR

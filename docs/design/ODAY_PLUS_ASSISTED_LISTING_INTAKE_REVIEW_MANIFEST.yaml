@@ -1,0 +1,155 @@
+manifest_id: ODP-SD-INTAKE-REVIEW-MANIFEST-001
+response_id: ODP-SD-INTAKE-001
+effective_response_version: 0.2.1
+status: proposed
+base_branch: dev
+target_branch: agent/assisted-listing-intake-system-design
+updated_at: 2026-07-17
+
+review_target_policy:
+  rule: reviewer must record the exact current PR head SHA at review start
+  required_front_matter:
+    - reviewed_commit
+    - response_version
+    - base_branch
+    - base_commit
+    - artifact_manifest
+  ancestry_rule: formal review commit must be a descendant of reviewed_commit
+  merge_safety_rule: a review artifact must not be mergeable to dev without the reviewed artifacts
+  stale_condition: reviewed_commit != current_pr_head
+  stale_result: STALE_REVIEW_TARGET
+  prohibited_results_for_stale_target: [APPROVED, APPROVED_WITH_CONDITIONS, CHANGES_REQUESTED]
+
+historical_reviews:
+  - review_id: ODP-SD-INTAKE-REVIEW-001
+    reviewed_commit: ffe14c77f7d4f1ae97d301db3a8177cd3effeed6
+    response_version: 0.1.0
+    status_for_current_head: HISTORICAL_ONLY
+  - review_id: ODP-SD-INTAKE-REVIEW-002
+    reviewed_commit: a5a9a2be88e20ffff8719eaaba3c7eba263abc31
+    response_version: 0.2.1
+    status_for_current_head: INVALID_REVIEW_LINEAGE
+    invalid_reason: review commit was not a descendant of the reviewed commit; PR 320 closed
+  - review_id: ODP-SD-INTAKE-REVIEW-003
+    reviewed_commit: d75fe8ab13d69f039c2cabe237d2401face8418b
+    response_version: 0.2.1
+    status_for_current_head: CHANGES_REQUESTED
+    invalid_reason: normative response/correction/manifest register and apply order diverged; PR 322 closed
+
+normative_precedence:
+  - alignment_request
+  - consolidated_response
+  - review_manifest_for_artifact_register_and_apply_order
+  - correction_pack_for_explicit_textual_corrections
+  - machine_readable_stacks_in_manifest_order_later_artifact_overrides_earlier
+  - unchanged_base_artifact_clauses
+  - runtime_implementation
+
+normative_artifacts:
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_ALIGNMENT_REQUEST.md
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V021_CROSS_CONTRACT_CORRECTIONS.md
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md
+    role: implementation-binding package member
+  - path: docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
+    role: implementation-binding package member
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
+    role: implementation-binding package member
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
+    role: implementation-binding package member
+  - path: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
+    role: implementation-binding package member
+  - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md
+    role: implementation-binding package member
+  - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
+    role: implementation-binding package member
+  - path: scripts/validate_assisted_listing_intake_design.py
+    role: implementation-binding package member
+  - path: scripts/build_validate_assisted_listing_intake_openapi.py
+    role: implementation-binding package member
+  - path: scripts/validate_assisted_listing_intake_schema.sql
+    role: implementation-binding package member
+  - path: .github/workflows/assisted-intake-design-validation.yml
+    role: implementation-binding package member
+
+required_pre_review_checks:
+  - all normative_artifacts paths exist
+  - consolidated response correction pack and manifest have identical normative register precedence and apply order
+  - all SDI-001 through SDI-024 appear in the decision matrix
+  - SLA and decision transition tables exist
+  - OpenAPI builder obtains its default base and overlay order from this manifest
+  - effective OpenAPI is built by applying every overlay in order
+  - effective OpenAPI passes openapi-spec-validator and Redocly with zero errors or warnings
+  - every effective Response Object has description
+  - ApiError requires and defines occurred_at and next_action
+  - all four schema artifacts apply successfully to PostgreSQL 16
+  - every tenant-bearing table has ENABLE and FORCE ROW LEVEL SECURITY
+  - every tenant-bearing table has a fail-closed tenant_isolation policy
+  - every tenant-scoped foreign-key relationship has a tenant-qualified composite counterpart
+  - all required lineage constraints exist in PostgreSQL catalog
+  - cross-contract validator process exit and JSON status both report PASS
+  - a temporary register or order mismatch makes the validator exit nonzero
+  - final workflow enforcement includes the cross-contract validation outcome
+  - reviewed_commit equals current PR head
+  - formal review commit is a descendant of reviewed_commit
+
+openapi_bundle_order:
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
+  - docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml
+
+schema_apply_order:
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql
+  - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+
+event_apply_order:
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1_1_ADDENDUM.yaml
+  - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
+
+formal_review_command: >-
+  python scripts/validate_assisted_listing_intake_design.py
+  --reviewed-commit <current-pr-head>
+  --current-pr-head <current-pr-head>
+  --base-commit <current-dev-head>
+  --strict-review-target
+
+fail_closed_gates:
+  normative_register_or_order_mismatch: no review decision or engineering handoff is valid
+  cross_contract_validator_failed: design contract workflow must fail regardless of diagnostic piping
+  openapi_bundle_build_or_lint_failed: assisted_intake_v1_read=false, assisted_intake_v1_write=false
+  event_payload_schema_incomplete: assisted_intake_v1_events=false
+  tenant_fk_rls_or_policy_validation_failed: assisted_intake_v1_write=false
+  promotion_contract_tests_failed: assisted_intake_v1_promotion=false
+  stale_review_target: no approval or changes-requested decision may be attributed to current head
+  invalid_review_lineage: review artifact cannot merge independently of reviewed artifacts

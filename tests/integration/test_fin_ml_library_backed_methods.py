@@ -76,8 +76,9 @@ def _panel(rows: dict[str, tuple[float, float]]) -> list[StoreDayMetric]:
     return metrics
 
 
-def _campaign(rows: dict[str, tuple[float, float]], treatment: tuple[str, ...],
-              control: tuple[str, ...]) -> AdCampaign:
+def _campaign(
+    rows: dict[str, tuple[float, float]], treatment: tuple[str, ...], control: tuple[str, ...]
+) -> AdCampaign:
     return AdCampaign(
         campaign_id="camp-se",
         name="SE Campaign",
