@@ -332,7 +332,7 @@ def test_promote_intake_contract_test() -> None:
     resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={"url": url, "heatZoneId": "HZ-01"},
-        headers=HEADERS,
+        headers={**HEADERS, "x-subject-id": "operator-expansion-staff", "x-operator-role": "expansion-staff"},
     )
     data = resp.json()
     intake_id = data["id"]
@@ -373,7 +373,7 @@ def _ready_intake_id(client) -> str:
     resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
-        headers=HEADERS,
+        headers={**HEADERS, "x-subject-id": "operator-expansion-staff", "x-operator-role": "expansion-staff"},
     )
     assert resp.status_code == 200
     return resp.json()["id"]
