@@ -1,0 +1,3463 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ODay Plus Assisted Listing Intake API",
+    "version": "1.1.3",
+    "description": "Normative API contract for ODP-SD-INTAKE-001. High-impact mutations are\nnon-optimistic, require Idempotency-Key and If-Match where stated, and\nreturn durable decision/job/audit receipts.\n",
+    "license": {
+      "name": "Proprietary",
+      "identifier": "LicenseRef-Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Intake",
+      "description": "Submit, inspect, cancel, quarantine, and reopen assisted listing intakes."
+    },
+    {
+      "name": "ListingInbox",
+      "description": "Query the tenant-scoped assisted listing intake inbox."
+    },
+    {
+      "name": "Corrections",
+      "description": "Propose and apply attributable field corrections."
+    },
+    {
+      "name": "Identity",
+      "description": "Review and execute reversible property identity decisions."
+    },
+    {
+      "name": "Assignment",
+      "description": "Assign, claim, transfer, complete, pause, and resume workflow ownership and SLA."
+    },
+    {
+      "name": "Jobs",
+      "description": "Inspect and retry durable asynchronous jobs from valid checkpoints."
+    },
+    {
+      "name": "Promotion",
+      "description": "Request, independently review, and execute candidate-site promotion."
+    },
+    {
+      "name": "SavedViews",
+      "description": "Store and retrieve actor- or tenant-scoped inbox views."
+    }
+  ],
+  "paths": {
+    "/v1/intakes": {
+      "get": {
+        "tags": [
+          "ListingInbox"
+        ],
+        "operationId": "listIntakes",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "submitted_at_desc",
+                "updated_at_desc",
+                "due_at_asc",
+                "status_asc"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/IntakeState"
+              }
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "match_outcome",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/MatchOutcome"
+              }
+            }
+          },
+          {
+            "name": "submitted_by",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "needs_review",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "assigned_area_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "heat_zone_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stable, tenant-scoped page. Cursor is opaque base64url JSON signed by the server and expires after 24 hours.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidCursor"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "summary": "List assisted listing intakes"
+      }
+    },
+    "/v1/intakes/url": {
+      "post": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "submitUrlIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UrlIntakeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Intake accepted; processing is asynchronous.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSubmissionReceipt"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Idempotent replay of a prior accepted response.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSubmissionReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "summary": "Submit a URL intake"
+      }
+    },
+    "/v1/intake-batches": {
+      "post": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "submitIntakeBatch",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchIntakeRequest"
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "207": {
+            "description": "Per-row partial-success receipt. A row is an independent intake and may be accepted or rejected without rolling back other rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchIntakeReceipt"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Entire batch accepted for asynchronous validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchIntakeReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "413": {
+            "description": "Batch exceeds 1000 rows or configured byte limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        },
+        "summary": "Submit a manual CSV or approved-feed batch"
+      }
+    },
+    "/v1/intakes/{intake_id}": {
+      "get": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "getIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeDetail"
+                }
+              }
+            },
+            "description": "Authorized intake detail with authoritative version, effective values, processing history, and audit references."
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Get intake detail"
+      }
+    },
+    "/v1/intakes/{intake_id}/corrections": {
+      "post": {
+        "tags": [
+          "Corrections"
+        ],
+        "operationId": "proposeCorrection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionReceipt"
+                }
+              }
+            },
+            "description": "Correction proposal or application was durably committed and an auditable receipt is returned."
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Propose an intake correction"
+      }
+    },
+    "/v1/match-cases/{match_case_id}/decisions": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "decideMatchCase",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MatchCaseId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionReceipt"
+                }
+              }
+            },
+            "description": "Match decision proposal was durably created and routed according to the independent-review policy."
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Create a match decision proposal"
+      }
+    },
+    "/v1/identity/merge": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "mergeProperties",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Approved decision accepted for serializable execution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Propose or execute a property merge"
+      }
+    },
+    "/v1/identity/split": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "splitProperty",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Split decision accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Propose or execute a property split"
+      }
+    },
+    "/v1/identity/unmerge": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "unmergeProperty",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnmergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Reversal accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Propose or execute an identity unmerge"
+      }
+    },
+    "/v1/intakes/{intake_id}/assignment": {
+      "put": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "assignIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentReceipt"
+                }
+              }
+            },
+            "description": "Assignment was committed with a new aggregate version and authoritative due time."
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Assign an intake"
+      }
+    },
+    "/v1/jobs/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "operationId": "retryJob",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Replay queued from a durable checkpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Retry a job from a durable checkpoint"
+      }
+    },
+    "/v1/saved-views": {
+      "get": {
+        "tags": [
+          "SavedViews"
+        ],
+        "operationId": "listSavedViews",
+        "responses": {
+          "200": {
+            "description": "Views owned by the actor or shared to the actor's tenant/role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "summary": "List saved intake views"
+      },
+      "post": {
+        "tags": [
+          "SavedViews"
+        ],
+        "operationId": "createSavedView",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedViewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedView"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          }
+        },
+        "summary": "Create a saved intake view"
+      }
+    },
+    "/v1/intakes/{intake_id}/promotion-requests": {
+      "post": {
+        "tags": [
+          "Promotion"
+        ],
+        "operationId": "requestCandidatePromotion",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromotionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/PromotionRequestAccepted"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Backpressure"
+          }
+        },
+        "summary": "Request candidate-site promotion"
+      }
+    },
+    "/v1/promotion-decisions/{promotion_decision_id}": {
+      "get": {
+        "tags": [
+          "Promotion"
+        ],
+        "operationId": "getPromotionDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PromotionDecisionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PromotionDecisionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Get a promotion decision"
+      }
+    },
+    "/v1/promotion-decisions/{promotion_decision_id}/actions/review": {
+      "post": {
+        "tags": [
+          "Promotion"
+        ],
+        "operationId": "reviewPromotionDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PromotionDecisionId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PromotionDecisionOk"
+          },
+          "202": {
+            "$ref": "#/components/responses/PromotionExecutionAccepted"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Review a promotion decision"
+      }
+    },
+    "/v1/intakes/{intake_id}/actions/cancel": {
+      "post": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "cancelIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TransitionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Cancel an intake"
+      }
+    },
+    "/v1/intakes/{intake_id}/actions/quarantine": {
+      "post": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "quarantineIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/RiskReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TransitionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Quarantine an intake"
+      }
+    },
+    "/v1/intakes/{intake_id}/actions/reopen": {
+      "post": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "reopenIntake",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/RiskReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TransitionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Reopen a quarantined intake"
+      }
+    },
+    "/v1/assignments/{assignment_id}/actions/claim": {
+      "post": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "claimAssignment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AssignmentId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AssignmentOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Claim an assignment"
+      }
+    },
+    "/v1/assignments/{assignment_id}/actions/transfer": {
+      "post": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "transferAssignment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AssignmentId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AssignmentOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Transfer an assignment"
+      }
+    },
+    "/v1/assignments/{assignment_id}/actions/complete": {
+      "post": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "completeAssignment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AssignmentId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AssignmentOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Complete an assignment"
+      }
+    },
+    "/v1/sla-instances/{sla_instance_id}/actions/pause": {
+      "post": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "pauseSla",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SlaInstanceId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlaPauseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SlaOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Pause an SLA instance"
+      }
+    },
+    "/v1/sla-instances/{sla_instance_id}/actions/resume": {
+      "post": {
+        "tags": [
+          "Assignment"
+        ],
+        "operationId": "resumeSla",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SlaInstanceId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ReasonCommand"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SlaOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Resume an SLA instance"
+      }
+    },
+    "/v1/identity-decisions/{decision_id}": {
+      "get": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "getIdentityDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DecisionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Get an identity decision"
+      }
+    },
+    "/v1/identity-decisions/{decision_id}/actions/review": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "reviewIdentityDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DecisionId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionOk"
+          },
+          "202": {
+            "$ref": "#/components/responses/DecisionExecutionAccepted"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Review an identity decision"
+      }
+    },
+    "/v1/identity-decisions/{decision_id}/actions/reverse": {
+      "post": {
+        "tags": [
+          "Identity"
+        ],
+        "operationId": "requestIdentityDecisionReversal",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DecisionId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/RiskReasonCommand"
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/DecisionExecutionAccepted"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/VersionConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "summary": "Request identity decision reversal"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "IntakeId": {
+        "name": "intake_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "MatchCaseId": {
+        "name": "match_case_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "JobId": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "description": "Opaque signed base64url token containing contract version, tenant, sort tuple, last resource ID, and expiry. Clients must not construct or modify it."
+      },
+      "PageSize": {
+        "name": "page_size",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "description": "Scoped to tenant, actor, operation; retained 72 hours for normal mutations and 30 days for identity/promotion decisions."
+      },
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^W/\"[1-9][0-9]*\"$"
+        }
+      },
+      "PromotionDecisionId": {
+        "name": "promotion_decision_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "AssignmentId": {
+        "name": "assignment_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "SlaInstanceId": {
+        "name": "sla_instance_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "DecisionId": {
+        "name": "decision_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "headers": {
+      "ETag": {
+        "description": "Weak aggregate version ETag",
+        "schema": {
+          "type": "string",
+          "example": "W/\"7\""
+        }
+      },
+      "IdempotencyReplayed": {
+        "description": "true when the response was replayed from a prior durable receipt",
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    },
+    "responses": {
+      "InvalidCursor": {
+        "description": "Cursor invalid, expired, wrong tenant, or wrong query fingerprint.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "CURSOR_INVALID",
+              "message": "Cursor is invalid or expired",
+              "retryable": false,
+              "correlation_id": "018f4d7c-6bf0-7a63-a4d1-8994f644d690",
+              "occurred_at": "2026-07-17T00:00:00Z",
+              "next_action": "CORRECT_INPUT"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Backend policy denied the action or masked all required fields.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found within authorized scope.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "VersionConflict": {
+        "description": "Aggregate version, workflow state, assignment owner, or dependent identity version changed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConflictError"
+            }
+          }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "Idempotency key already exists with a different request fingerprint.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "IDEMPOTENCY_KEY_REUSED",
+              "message": "Key was already used for a different request",
+              "retryable": false,
+              "correlation_id": "018f4d7c-6bf0-7a63-a4d1-8994f644d690",
+              "occurred_at": "2026-07-17T00:00:00Z",
+              "next_action": "CORRECT_INPUT"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Request, row, field, state, or policy validation failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "PreconditionRequired": {
+        "description": "If-Match is required for this mutation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "PRECONDITION_REQUIRED",
+              "message": "If-Match header is required",
+              "retryable": false,
+              "correlation_id": "018f4d7c-6bf0-7a63-a4d1-8994f644d690",
+              "occurred_at": "2026-07-17T00:00:00Z",
+              "next_action": "REFRESH"
+            }
+          }
+        }
+      },
+      "PromotionRequestAccepted": {
+        "description": "Promotion request persisted and routed for validation or independent review; no candidate is implied.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          },
+          "Idempotency-Replayed": {
+            "$ref": "#/components/headers/IdempotencyReplayed"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PromotionDecisionReceipt"
+            }
+          }
+        }
+      },
+      "PromotionDecisionOk": {
+        "description": "Current promotion decision state.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PromotionDecisionReceipt"
+            }
+          }
+        }
+      },
+      "PromotionExecutionAccepted": {
+        "description": "Approved review committed and candidate creation execution queued.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PromotionDecisionReceipt"
+            }
+          }
+        }
+      },
+      "TransitionOk": {
+        "description": "State transition committed.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TransitionReceipt"
+            }
+          }
+        }
+      },
+      "AssignmentOk": {
+        "description": "Assignment command committed.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AssignmentReceipt"
+            }
+          }
+        }
+      },
+      "SlaOk": {
+        "description": "SLA command committed.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SlaReceipt"
+            }
+          }
+        }
+      },
+      "DecisionOk": {
+        "description": "Current decision state or synchronously committed review result.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DecisionReceipt"
+            }
+          }
+        }
+      },
+      "DecisionExecutionAccepted": {
+        "description": "Approved decision execution or reversal queued.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DecisionReceipt"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Tenant, actor, source, or endpoint rate limit exceeded.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Backpressure": {
+        "description": "Durable write or queue capacity is under protection; no request was accepted without a receipt.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "IntakeState": {
+        "type": "string",
+        "enum": [
+          "SUBMITTED",
+          "CHECKING_IDENTITY",
+          "CHECKING_SOURCE_POLICY",
+          "AWAITING_ASSISTED_ENTRY",
+          "RETRIEVING",
+          "PARSING",
+          "MATCHING",
+          "NEEDS_REVIEW",
+          "READY",
+          "QUARANTINED",
+          "FAILED",
+          "CANCELLED"
+        ]
+      },
+      "MatchOutcome": {
+        "type": "string",
+        "enum": [
+          "NEW",
+          "EXACT_DUPLICATE",
+          "REVISION",
+          "POSSIBLE_MATCH",
+          "QUARANTINED"
+        ]
+      },
+      "SourcePolicyState": {
+        "type": "string",
+        "enum": [
+          "APPROVED_RETRIEVAL",
+          "ASSISTED_ENTRY_ONLY",
+          "AUTH_REQUIRED",
+          "SOURCE_BLOCKED",
+          "POLICY_UNKNOWN"
+        ]
+      },
+      "FieldClassification": {
+        "type": "string",
+        "enum": [
+          "PUBLIC",
+          "INTERNAL",
+          "CONFIDENTIAL",
+          "RESTRICTED"
+        ]
+      },
+      "ScopeContext": {
+        "type": "object",
+        "required": [
+          "tenant_id"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "brand_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "region_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "assigned_area_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "heat_zone_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "UrlIntakeRequest": {
+        "type": "object",
+        "required": [
+          "original_url",
+          "scope"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "original_url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 4096
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          },
+          "owner_subject_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "ManualIntakeRow": {
+        "type": "object",
+        "required": [
+          "address_raw"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "default": "manual.operator"
+          },
+          "source_listing_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address_raw": {
+            "type": "string"
+          },
+          "rent_amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "default": "TWD"
+          },
+          "area_ping": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "floor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "original_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          }
+        }
+      },
+      "BatchIntakeRequest": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "method",
+          "scope",
+          "rows"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          },
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/ManualIntakeRow"
+            }
+          }
+        }
+      },
+      "BatchRowReceipt": {
+        "type": "object",
+        "required": [
+          "row_index",
+          "status"
+        ],
+        "properties": {
+          "row_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_row_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACCEPTED",
+              "REJECTED",
+              "REPLAYED"
+            ]
+          },
+          "intake_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BatchIntakeReceipt": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "submitted_at",
+          "accepted_count",
+          "rejected_count",
+          "rows",
+          "correlation_id"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "accepted_count": {
+            "type": "integer"
+          },
+          "rejected_count": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchRowReceipt"
+            }
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "IntakeSubmissionReceipt": {
+        "type": "object",
+        "required": [
+          "intake_id",
+          "state",
+          "version",
+          "job_id",
+          "correlation_id",
+          "submitted_at"
+        ],
+        "properties": {
+          "intake_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IntakeState"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "duplicate_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FieldValue": {
+        "type": "object",
+        "required": [
+          "field_path",
+          "classification",
+          "masked"
+        ],
+        "properties": {
+          "field_path": {
+            "type": "string"
+          },
+          "parsed": {},
+          "normalized": {},
+          "corrected": {},
+          "effective": {},
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "classification": {
+            "$ref": "#/components/schemas/FieldClassification"
+          },
+          "masked": {
+            "type": "boolean"
+          },
+          "mask_reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "IntakeSummary": {
+        "type": "object",
+        "required": [
+          "intake_id",
+          "state",
+          "intake_method",
+          "submitted_at",
+          "updated_at",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "intake_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IntakeState"
+          },
+          "intake_method": {
+            "type": "string",
+            "enum": [
+              "URL",
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED",
+              "OPERATOR_SNAPSHOT"
+            ]
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "match_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "submitted_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "assigned_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          },
+          "masked_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "IntakePage": {
+        "type": "object",
+        "required": [
+          "items",
+          "page_size",
+          "total_count",
+          "snapshot_time",
+          "query_fingerprint"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_count_accuracy": {
+            "type": "string",
+            "enum": [
+              "EXACT",
+              "ESTIMATED"
+            ]
+          },
+          "snapshot_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "query_fingerprint": {
+            "type": "string"
+          }
+        }
+      },
+      "IntakeDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IntakeSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "original_url",
+              "canonical_url",
+              "policy_state",
+              "processing_history",
+              "fields",
+              "audit"
+            ],
+            "properties": {
+              "original_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "canonical_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "policy_state": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcePolicyState"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_snapshot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "parser_run_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "match_case_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "processing_history": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TransitionReceipt"
+                }
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FieldValue"
+                }
+              },
+              "audit": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AuditReference"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "CorrectionRequest": {
+        "type": "object",
+        "required": [
+          "field_path",
+          "corrected_value",
+          "reason"
+        ],
+        "properties": {
+          "field_path": {
+            "type": "string"
+          },
+          "corrected_value": {},
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 2000
+          },
+          "expected_effective_value_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "CorrectionReceipt": {
+        "type": "object",
+        "required": [
+          "correction_id",
+          "status",
+          "intake_id",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "properties": {
+          "correction_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PROPOSED",
+              "APPLIED",
+              "PENDING_REVIEW"
+            ]
+          },
+          "intake_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "listing_revision_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MatchDecisionRequest": {
+        "type": "object",
+        "required": [
+          "decision_type",
+          "reason"
+        ],
+        "properties": {
+          "decision_type": {
+            "type": "string",
+            "enum": [
+              "CREATE",
+              "REVISE",
+              "DUPLICATE",
+              "QUARANTINE",
+              "REJECT",
+              "REOPEN",
+              "MERGE",
+              "SPLIT",
+              "UNMERGE"
+            ]
+          },
+          "target_property_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "target_listing_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "default": false
+          },
+          "requested_second_reviewer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "MergeRequest": {
+        "type": "object",
+        "required": [
+          "source_property_ids",
+          "target_property_id",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "properties": {
+          "source_property_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "target_property_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_property_versions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "candidate_reassignment_plan": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateReassignment"
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 20
+          },
+          "risk_acknowledged": {
+            "const": true
+          }
+        }
+      },
+      "SplitRequest": {
+        "type": "object",
+        "required": [
+          "source_property_id",
+          "partitions",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "properties": {
+          "source_property_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_property_version": {
+            "type": "integer"
+          },
+          "partitions": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/IdentityPartition"
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 20
+          },
+          "risk_acknowledged": {
+            "const": true
+          }
+        }
+      },
+      "UnmergeRequest": {
+        "type": "object",
+        "required": [
+          "original_decision_id",
+          "replacement_edges",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "properties": {
+          "original_decision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replacement_edges": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/IdentityPartition"
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 20
+          },
+          "risk_acknowledged": {
+            "const": true
+          }
+        }
+      },
+      "CandidateReassignment": {
+        "type": "object",
+        "required": [
+          "candidate_site_id",
+          "disposition"
+        ],
+        "properties": {
+          "candidate_site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "KEEP_HISTORICAL",
+              "REASSIGN",
+              "REQUIRE_REVIEW"
+            ]
+          },
+          "target_property_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "IdentityPartition": {
+        "type": "object",
+        "required": [
+          "target_property_id",
+          "source_identity_edge_ids"
+        ],
+        "properties": {
+          "target_property_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_identity_edge_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "DecisionReceipt": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "status",
+          "resource_versions",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED",
+              "REVERSAL_PENDING",
+              "REVERSED"
+            ]
+          },
+          "resource_versions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AssignmentRequest": {
+        "type": "object",
+        "required": [
+          "owner_subject_id",
+          "owner_role",
+          "due_at",
+          "reason"
+        ],
+        "properties": {
+          "owner_subject_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_role": {
+            "type": "string"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3
+          },
+          "handoff_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AssignmentReceipt": {
+        "type": "object",
+        "required": [
+          "assignment_id",
+          "status",
+          "owner_subject_id",
+          "due_at",
+          "version",
+          "audit_event_id"
+        ],
+        "properties": {
+          "assignment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSIGNED",
+              "CLAIMED",
+              "TRANSFERRED",
+              "ESCALATED",
+              "COMPLETED"
+            ]
+          },
+          "owner_subject_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RetryRequest": {
+        "type": "object",
+        "required": [
+          "checkpoint",
+          "reason"
+        ],
+        "properties": {
+          "checkpoint": {
+            "type": "string",
+            "enum": [
+              "RETRIEVING",
+              "PARSING",
+              "MATCHING",
+              "CANDIDATE_CREATING",
+              "SCORE_QUEUED"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3
+          },
+          "override_retry_budget": {
+            "type": "boolean",
+            "default": false
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "JobReceipt": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "checkpoint",
+          "attempt",
+          "version",
+          "correlation_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "RETRYING",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED",
+              "DEAD_LETTER"
+            ]
+          },
+          "checkpoint": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PromotionRequest": {
+        "type": "object",
+        "required": [
+          "target_format_code",
+          "reason",
+          "gate_snapshot_sha256"
+        ],
+        "properties": {
+          "target_format_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "gate_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "default": false
+          },
+          "requested_reviewer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SavedViewRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "resource",
+          "query"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "resource": {
+            "const": "intake"
+          },
+          "query": {
+            "type": "object"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "PRIVATE",
+              "ROLE",
+              "TENANT"
+            ],
+            "default": "PRIVATE"
+          },
+          "shared_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SavedView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SavedViewRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "saved_view_id",
+              "owner_subject_id",
+              "created_at",
+              "version"
+            ],
+            "properties": {
+              "saved_view_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "owner_subject_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "version": {
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      },
+      "TransitionReceipt": {
+        "type": "object",
+        "required": [
+          "transition_id",
+          "from_state",
+          "to_state",
+          "occurred_at",
+          "actor",
+          "version_after"
+        ],
+        "properties": {
+          "transition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from_state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_state": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_after": {
+            "type": "integer"
+          }
+        }
+      },
+      "AuditReference": {
+        "type": "object",
+        "required": [
+          "audit_event_id",
+          "action",
+          "occurred_at",
+          "result"
+        ],
+        "properties": {
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "ALLOWED",
+              "DENIED",
+              "SUCCEEDED",
+              "FAILED",
+              "MASKED"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConflictError": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiError"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "current_version": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "current_state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "current_owner_subject_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "retry_with_etag": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "correlation_id",
+          "occurred_at",
+          "next_action"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "AUTHENTICATION_REQUIRED",
+              "ROLE_DENIED",
+              "TENANT_SCOPE_DENIED",
+              "SCOPE_DENIED",
+              "OWNERSHIP_REQUIRED",
+              "ASSIGNMENT_SCOPE_DENIED",
+              "SOURCE_SCOPE_DENIED",
+              "FIELD_MASKED",
+              "DATA_CLASSIFICATION_DENIED",
+              "PURPOSE_REQUIRED",
+              "PRECONDITION_REQUIRED",
+              "VERSION_CONFLICT",
+              "WORKFLOW_STATE_DENIED",
+              "OWNER_CONFLICT",
+              "SECOND_ACTOR_REQUIRED",
+              "SELF_REVIEW_DENIED",
+              "RISK_ACKNOWLEDGEMENT_REQUIRED",
+              "SOURCE_POLICY_DENIED",
+              "SOURCE_POLICY_UNKNOWN",
+              "SOURCE_AUTH_REQUIRED",
+              "LEGAL_HOLD_CONFLICT",
+              "RETENTION_NOT_REACHED",
+              "RESIDENCY_DENIED",
+              "EXPORT_APPROVAL_REQUIRED",
+              "PURGE_APPROVAL_REQUIRED",
+              "QUARANTINE_RELEASE_DENIED",
+              "PROMOTION_APPROVAL_REQUIRED",
+              "RESTRICTED_EXPORT_DENIED",
+              "BREAK_GLASS_DENIED",
+              "DEPENDENCY_CONFLICT",
+              "DUPLICATE_CANDIDATE",
+              "IDEMPOTENCY_KEY_REUSED",
+              "RETRY_BUDGET_EXHAUSTED",
+              "CHECKPOINT_UNAVAILABLE",
+              "JOB_FENCE_REJECTED",
+              "SLA_PAUSE_DENIED",
+              "DECISION_INCOMPLETE",
+              "BACKPRESSURE_ACTIVE",
+              "RATE_LIMITED",
+              "RESOURCE_NOT_FOUND",
+              "VALIDATION_FAILED",
+              "FIELD_REQUIRED",
+              "CURSOR_INVALID",
+              "CURSOR_EXPIRED",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field_errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "field",
+                "code",
+                "message"
+              ],
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "current_version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "retry_after_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Authoritative server timestamp for the error response."
+          },
+          "next_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "RETRY",
+              "REFRESH",
+              "CORRECT_INPUT",
+              "REQUEST_ACCESS",
+              "CONTACT_SUPPORT",
+              "WAIT",
+              null
+            ],
+            "description": "Machine-readable client guidance; null when no safe automated action exists."
+          }
+        }
+      },
+      "ReasonCommand": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          }
+        }
+      },
+      "RiskReasonCommand": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReasonCommand"
+          },
+          {
+            "type": "object",
+            "required": [
+              "risk_acknowledged"
+            ],
+            "properties": {
+              "risk_acknowledged": {
+                "const": true
+              },
+              "incident_or_change_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 200
+              }
+            }
+          }
+        ]
+      },
+      "ReviewDecisionRequest": {
+        "type": "object",
+        "required": [
+          "decision",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "REJECT"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "default": false
+          },
+          "requested_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PromotionDecisionReceipt": {
+        "type": "object",
+        "required": [
+          "promotion_decision_id",
+          "intake_id",
+          "listing_id",
+          "status",
+          "decision_type",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "properties": {
+          "promotion_decision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "intake_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "listing_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "REQUESTED",
+              "VALIDATING",
+              "PENDING_REVIEW",
+              "REJECTED",
+              "APPROVED",
+              "CANDIDATE_CREATING",
+              "CANDIDATE_CREATED",
+              "SCORE_QUEUED",
+              "COMPLETED",
+              "FAILED",
+              "SCORE_FAILED"
+            ]
+          },
+          "decision_type": {
+            "type": "string",
+            "enum": [
+              "STANDARD",
+              "LEGACY_RECONCILED"
+            ]
+          },
+          "reviewer_subject_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "candidate_site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "site_score_job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AssignmentTransferRequest": {
+        "type": "object",
+        "required": [
+          "target_owner_subject_id",
+          "target_owner_role",
+          "reason",
+          "handoff_note"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target_owner_subject_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_owner_role": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "handoff_note": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "SlaPauseRequest": {
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_resume_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "expected_resume_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SlaReceipt": {
+        "type": "object",
+        "required": [
+          "sla_instance_id",
+          "state",
+          "due_at",
+          "paused_duration_seconds",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "properties": {
+          "sla_instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ON_TRACK",
+              "DUE_SOON",
+              "OVERDUE",
+              "BREACHED",
+              "PAUSED",
+              "COMPLETED"
+            ]
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "due_soon_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "paused_duration_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "active_pause_interval_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "audit_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "requestBodies": {
+      "ReasonCommand": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReasonCommand"
+            }
+          }
+        }
+      },
+      "RiskReasonCommand": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RiskReasonCommand"
+            }
+          }
+        }
+      }
+    }
+  }
+}
