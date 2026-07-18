@@ -305,7 +305,7 @@ def test_audit_event_recorded_on_deny() -> None:
             "view",
             resource={"tenantId": "tenant-a"},
             audit_log=audit_log,
-            correlation_id="corr-deny-123"
+            correlation_id="corr-deny-123",
         )
 
     events = audit_log.list_events(correlation_id="corr-deny-123")

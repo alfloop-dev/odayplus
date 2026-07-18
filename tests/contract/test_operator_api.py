@@ -310,7 +310,9 @@ def test_store_ops_four_light_filter_returns_deterministic_queue() -> None:
     assert body["filters"]["light"] == "operations"
     assert body["filters"]["lightStatus"] == "red"
     assert [issue["id"] for issue in body["issues"]] == ["ISS-1024"]
-    operations = next(item for item in body["fourLightSummary"] if item["dimension"] == "operations")
+    operations = next(
+        item for item in body["fourLightSummary"] if item["dimension"] == "operations"
+    )
     assert operations["counts"]["red"] == 1
     assert operations["issueCounts"]["red"] == 1
 
@@ -387,7 +389,11 @@ def test_store_ops_issue_1024_lifecycle_and_camera_purpose_survive_restart(tmp_p
         assert "lockedReason" not in allowed.json()["evidenceItem"]
 
         steps = [
-            ("triage", {"severity": "critical", "decision": "accept", "notes": "Accepted."}, "triaged"),
+            (
+                "triage",
+                {"severity": "critical", "decision": "accept", "notes": "Accepted."},
+                "triaged",
+            ),
             (
                 "assign",
                 {

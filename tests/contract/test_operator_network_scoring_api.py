@@ -139,7 +139,9 @@ def test_compare_recommends_primary_alternate_avoid_consistently() -> None:
     assert recommendation["avoid"]["recommendation"] == "REJECT"
 
     # SiteScore row for every compared candidate reads "<score> <rec>".
-    sitescore_row = next(metric for metric in body["compare"]["metrics"] if metric["key"] == "sitescore")
+    sitescore_row = next(
+        metric for metric in body["compare"]["metrics"] if metric["key"] == "sitescore"
+    )
     by_id = {value["id"]: value["text"] for value in sitescore_row["values"]}
     assert by_id["CS-1001"] == "82 GO"
     assert by_id["CS-1004"] == "49 REJECT"

@@ -235,10 +235,14 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
 )
 
 
+_cached_registry = None
+
+
 def default_registry() -> MetricsRegistry:
     """Return a registry seeded with the full platform metric catalog."""
-
-    registry = MetricsRegistry()
-    for definition in PLATFORM_METRICS:
-        registry.register(definition)
-    return registry
+    global _cached_registry
+    if _cached_registry is None:
+        _cached_registry = MetricsRegistry()
+        for definition in PLATFORM_METRICS:
+            _cached_registry.register(definition)
+    return _cached_registry

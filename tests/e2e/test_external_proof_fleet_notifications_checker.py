@@ -9,7 +9,9 @@ EXPECTED_SHA = "b54ac63b1d04c47597f1114e28962ce77ec5c952"
 
 
 def load_checker_module():
-    spec = importlib.util.spec_from_file_location("check_external_proof_fleet_notifications", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "check_external_proof_fleet_notifications", CHECKER
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -29,11 +31,11 @@ def queue_payload() -> dict:
                 ],
                 "allowed_commands": [
                     "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
-                    "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+                    'PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',
                 ],
                 "handback_commands": [
                     "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
-                    "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+                    'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
                 ],
                 "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
             }
@@ -91,7 +93,9 @@ def issue_payload(comment_body: str) -> dict:
 def test_validate_notifications_accepts_current_sha_pickup_comment() -> None:
     checker = load_checker_module()
 
-    errors = checker.validate_notifications(queue_payload(), issue_payload(pickup_comment()), expected_sha=EXPECTED_SHA)
+    errors = checker.validate_notifications(
+        queue_payload(), issue_payload(pickup_comment()), expected_sha=EXPECTED_SHA
+    )
 
     assert errors == []
 
@@ -112,12 +116,29 @@ def test_validate_notifications_rejects_missing_required_evidence_or_command() -
     checker = load_checker_module()
     broken = pickup_comment().replace("- [ ] provider attribution and terms URL visible\n", "")
     broken = broken.replace("- `PLAYWRIGHT_BASE_URL=", "- `PLAYWRIGHT_BASE_URL_REMOVED=")
-    broken = broken.replace("generate_external_proof_handback_skeleton.py --task", "generate_external_proof_handback_skeleton.py")
-    broken = broken.replace("python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report\n", "")
+    broken = broken.replace(
+        "generate_external_proof_handback_skeleton.py --task",
+        "generate_external_proof_handback_skeleton.py",
+    )
+    broken = broken.replace(
+        "python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report\n", ""
+    )
 
-    errors = checker.validate_notifications(queue_payload(), issue_payload(broken), expected_sha=EXPECTED_SHA)
+    errors = checker.validate_notifications(
+        queue_payload(), issue_payload(broken), expected_sha=EXPECTED_SHA
+    )
 
-    assert any("missing required evidence: provider attribution and terms URL visible" in error for error in errors)
+    assert any(
+        "missing required evidence: provider attribution and terms URL visible" in error
+        for error in errors
+    )
     assert any("missing command fragment: PLAYWRIGHT_BASE_URL=" in error for error in errors)
-    assert any("missing handback command fragment: python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task" in error for error in errors)
-    assert any("missing token: check_external_proof_acceptance_readiness.py --report" in error for error in errors)
+    assert any(
+        "missing handback command fragment: python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task"
+        in error
+        for error in errors
+    )
+    assert any(
+        "missing token: check_external_proof_acceptance_readiness.py --report" in error
+        for error in errors
+    )

@@ -262,7 +262,9 @@ def test_process_restart_survival(db_path) -> None:
         client2 = TestClient(app2)
 
         # Retrieve the intake record after restart
-        get_resp = client2.get(f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS)
+        get_resp = client2.get(
+            f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS
+        )
         assert get_resp.status_code == 200
         assert get_resp.json()["originalUrl"] == url
         assert get_resp.json()["stage"] == "READY"
@@ -279,7 +281,9 @@ def test_durable_intake_repository_round_trips_through_public_contract(db_path) 
     bundle = _durable_bundle(db_path)
     try:
         repo = DurableAssistedIntakeRepository(SqliteDocumentStore(bundle.engine))
-        repo.save_intake({"id": "IN-CONTRACT-1", "stage": "READY", "originalUrl": "https://a.invalid"})
+        repo.save_intake(
+            {"id": "IN-CONTRACT-1", "stage": "READY", "originalUrl": "https://a.invalid"}
+        )
         repo.save_idempotency_record(
             IntakeIdempotencyRecord(action="submit", key="k-1", response={"id": "IN-CONTRACT-1"})
         )
@@ -363,7 +367,9 @@ def test_merge_terminal_state_survives_restart(db_path) -> None:
         assert source["mergedIntoId"] == "L-2025"
         assert source["mergeReason"] == "FIRST reason"
 
-        second = _merge_l2029(client2, idempotency_key="idem-merge-durable-2", reason="SECOND reason")
+        second = _merge_l2029(
+            client2, idempotency_key="idem-merge-durable-2", reason="SECOND reason"
+        )
         assert second.status_code == 409, second.text
         assert "already merged into L-2025" in second.json()["detail"]
 
@@ -410,9 +416,7 @@ def test_service_replays_idempotent_write_through_repository_after_restart(db_pa
 
         snapshot = client2.get("/api/v1/operator/network-listings", headers=HEADERS)
         assert snapshot.status_code == 200
-        matching = [
-            item for item in snapshot.json()["assistedIntakes"] if item["id"] == intake_id
-        ]
+        matching = [item for item in snapshot.json()["assistedIntakes"] if item["id"] == intake_id]
         assert len(matching) == 1
     finally:
         reopened.engine.close()

@@ -116,7 +116,9 @@ def valid_handback(task_id: str = "ODP-MAP-STAGE-001") -> dict[str, Any]:
     }
 
 
-def run_checker(path: Path, *, expected_sha: str = EXPECTED_SHA) -> subprocess.CompletedProcess[str]:
+def run_checker(
+    path: Path, *, expected_sha: str = EXPECTED_SHA
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -142,7 +144,9 @@ def test_external_proof_handback_artifact_checker_accepts_valid_handback(tmp_pat
     assert "External proof handback artifact checks passed." in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_accepts_valid_map_geocoder_handback(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_accepts_valid_map_geocoder_handback(
+    tmp_path,
+) -> None:
     handback = tmp_path / "handback.json"
     handback.write_text(json.dumps(valid_handback("ODP-MAP-STAGE-002"), indent=2), encoding="utf-8")
 
@@ -152,12 +156,16 @@ def test_external_proof_handback_artifact_checker_accepts_valid_map_geocoder_han
     assert "External proof handback artifact checks passed." in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_accepts_valid_handback_for_every_task(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_accepts_valid_handback_for_every_task(
+    tmp_path,
+) -> None:
     queue_entries = load_json(QUEUE)["queue"]
 
     for entry in queue_entries:
         handback = tmp_path / f"{entry['task_id']}.json"
-        handback.write_text(json.dumps(valid_handback(entry["task_id"]), indent=2), encoding="utf-8")
+        handback.write_text(
+            json.dumps(valid_handback(entry["task_id"]), indent=2), encoding="utf-8"
+        )
 
         result = run_checker(handback)
 
@@ -204,7 +212,9 @@ def test_external_proof_handback_artifact_checker_rejects_unredacted_artifact(tm
     assert "artifacts[0].contains_secret_values must be false" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_missing_required_evidence(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_missing_required_evidence(
+    tmp_path,
+) -> None:
     payload = valid_handback()
     payload["required_evidence_results"] = payload["required_evidence_results"][:-1]
     handback = tmp_path / "handback.json"
@@ -216,7 +226,9 @@ def test_external_proof_handback_artifact_checker_rejects_missing_required_evide
     assert "missing required evidence results" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_missing_queue_command_fragment(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_missing_queue_command_fragment(
+    tmp_path,
+) -> None:
     payload = valid_handback("ODP-PV-STAGE-002")
     payload["commands_run"] = payload["commands_run"][:1]
     handback = tmp_path / "handback.json"
@@ -229,7 +241,9 @@ def test_external_proof_handback_artifact_checker_rejects_missing_queue_command_
     assert "check_remote_staging_proof.py" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_map_handback_without_live_boundary_notes(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_map_handback_without_live_boundary_notes(
+    tmp_path,
+) -> None:
     payload = valid_handback("ODP-MAP-STAGE-001")
     for artifact in payload["artifacts"]:
         artifact["notes"] = "Redacted screenshot and report were reviewed."
@@ -237,7 +251,9 @@ def test_external_proof_handback_artifact_checker_rejects_map_handback_without_l
         command["notes"] = "Command completed."
     for result_item in payload["required_evidence_results"]:
         result_item["notes"] = "Evidence accepted."
-    payload["redaction_summary"] = "Secret values and provider tokens were redacted before attachment."
+    payload["redaction_summary"] = (
+        "Secret values and provider tokens were redacted before attachment."
+    )
     payload["completion_attestation"]["notes"] = "Accepted after redacted artifact review."
 
     handback = tmp_path / "handback.json"
@@ -250,7 +266,9 @@ def test_external_proof_handback_artifact_checker_rejects_map_handback_without_l
     assert "handback evidence notes must mention 'tile outage'" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_provider_handback_without_task_notes(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_provider_handback_without_task_notes(
+    tmp_path,
+) -> None:
     payload = valid_handback("ODP-EXT-PROD-001")
     for artifact in payload["artifacts"]:
         artifact["notes"] = "Redacted provider evidence was reviewed."
@@ -258,7 +276,9 @@ def test_external_proof_handback_artifact_checker_rejects_provider_handback_with
         command["notes"] = "Command completed."
     for result_item in payload["required_evidence_results"]:
         result_item["notes"] = "Evidence accepted."
-    payload["redaction_summary"] = "Secret values and provider tokens were redacted before attachment."
+    payload["redaction_summary"] = (
+        "Secret values and provider tokens were redacted before attachment."
+    )
     payload["completion_attestation"]["notes"] = "Accepted after redacted artifact review."
 
     handback = tmp_path / "handback.json"
@@ -272,7 +292,9 @@ def test_external_proof_handback_artifact_checker_rejects_provider_handback_with
     assert "handback evidence notes must mention 'fail closed'" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_map_handback_that_uses_mock_endpoint(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_map_handback_that_uses_mock_endpoint(
+    tmp_path,
+) -> None:
     payload = valid_handback("ODP-MAP-STAGE-001")
     payload["artifacts"][0]["notes"] += " Captured endpoint mock://tiles/{z}/{x}/{y}.png."
 
@@ -285,9 +307,13 @@ def test_external_proof_handback_artifact_checker_rejects_map_handback_that_uses
     assert "must not rely on local/mock endpoint token 'mock://'" in result.stdout
 
 
-def test_external_proof_handback_artifact_checker_rejects_staging_handback_that_uses_fixture_proof(tmp_path) -> None:
+def test_external_proof_handback_artifact_checker_rejects_staging_handback_that_uses_fixture_proof(
+    tmp_path,
+) -> None:
     payload = valid_handback("ODP-PV-STAGE-002")
-    payload["required_evidence_results"][0]["notes"] += " This was verified from deterministic fixture output."
+    payload["required_evidence_results"][0]["notes"] += (
+        " This was verified from deterministic fixture output."
+    )
 
     handback = tmp_path / "handback.json"
     handback.write_text(json.dumps(payload, indent=2), encoding="utf-8")

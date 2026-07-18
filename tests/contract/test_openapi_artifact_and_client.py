@@ -114,8 +114,13 @@ def test_new_optional_request_field_is_not_breaking() -> None:
     base = _operation("/api/v1/things")
     head = _operation(
         "/api/v1/things",
-        schema={"properties": {"name": {"type": "string"}, "size": {"type": "integer"},
-                               "note": {"type": "string"}}},
+        schema={
+            "properties": {
+                "name": {"type": "string"},
+                "size": {"type": "integer"},
+                "note": {"type": "string"},
+            }
+        },
     )
     assert not any(c.is_breaking for c in diff_openapi(base, head))
 
@@ -159,8 +164,12 @@ def test_description_only_change_is_not_reported() -> None:
     base = _operation("/api/v1/things")
     head = _operation(
         "/api/v1/things",
-        schema={"properties": {"name": {"type": "string", "description": "The name."},
-                               "size": {"type": "integer"}}},
+        schema={
+            "properties": {
+                "name": {"type": "string", "description": "The name."},
+                "size": {"type": "integer"},
+            }
+        },
     )
     assert diff_openapi(base, head) == []
 
@@ -170,14 +179,21 @@ def test_self_referential_schema_does_not_recurse_forever() -> None:
     artifact = {
         "openapi": "3.1.0",
         "components": {
-            "schemas": {"Node": {"type": "object", "properties": {
-                "child": {"$ref": "#/components/schemas/Node"}}}}
+            "schemas": {
+                "Node": {
+                    "type": "object",
+                    "properties": {"child": {"$ref": "#/components/schemas/Node"}},
+                }
+            }
         },
         "paths": {
             "/api/v1/tree": {
                 "post": {
-                    "requestBody": {"content": {"application/json": {
-                        "schema": {"$ref": "#/components/schemas/Node"}}}},
+                    "requestBody": {
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/Node"}}
+                        }
+                    },
                     "responses": {"200": {}},
                 }
             }
