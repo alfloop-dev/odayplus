@@ -6,7 +6,7 @@ status: draft
 document_class: ux-blueprint
 project: ODay Plus
 language: zh-TW
-updated_at: 2026-06-28
+updated_at: 2026-07-18
 owner: "Product Design / Frontend"
 approvers: "Product Lead / Frontend Lead"
 content_format: markdown
@@ -18,6 +18,8 @@ source_documents:
 related_documents:
   - docs/design/ODAY_PLUS_HEATZONE_MAP_VISUAL_SPEC.md
   - docs/design/ODAY_PLUS_SITESCORE_REPORT_UI_SPEC.md
+  - docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS.md
+  - docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_HANDOFF_REQUIREMENTS.md
   - docs/data/ODAY_PLUS_CANONICAL_SCHEMA_BASELINE.md
 ---
 
@@ -130,7 +132,8 @@ Mobile `sm`：地圖改為只讀預覽 + 排名列表為主；完整地圖審查
 - Title：`Listing 收件匣`
 - Summary：`處理外部房源匯入、解析、去重、硬規則與候選點轉換。`
 - Status：最近匯入 `imported_at`、source system、accepted/duplicate/rejected count。
-- Primary action：`匯入 Listing`，走 `/listings/import-jobs`；匯入結果以 job/inline summary 顯示。
+- Primary action：`從網址新增物件`，走 Assisted Listing Intake；成功後導向 durable intake detail。
+- Secondary action：`匯入 Listing`，承載 CSV／approved feed import job；匯入結果以 job/inline summary 顯示。
 
 ### 6.2 Table Columns
 
@@ -157,6 +160,17 @@ Drawer 分區：
 5. Audit：source snapshot、import job、actor、correlation id。
 
 高風險或資料修正不可 optimistic；成功回傳 job_id 或 decision_id 後再更新列表。
+
+### 6.4 Assisted Listing Intake Extension
+
+`ODP-UXD-003-ADD-001` 與 `ODP-UXD-003-ADD-002` 定義 Listing Inbox 內 URL submission、
+source policy、assisted entry、parsed-field review、duplicate/revision comparison、assignment/SLA、
+human decision、Candidate promotion 與 SiteScore receipt 的完整設計要求。
+
+Assisted Intake row/detail 使用核准的 canonical intake、match、assignment、decision 與 promotion
+states，不得把它們壓回本節 legacy `RAW|PARSED|GEOCODED|DUPLICATE|FAILED_HARD_RULE|CANDIDATE`
+狀態。完整視覺設計交付以
+`ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_HANDOFF_REQUIREMENTS.md` 為準。
 
 ## 7. Candidate Sites Page
 
