@@ -52,8 +52,19 @@ def test_external_proof_handback_template_requires_redaction_and_attestation() -
     attestation_fields = set(template["completion_attestation_contract"])
     global_rules = "\n".join(template["global_rules"])
 
-    assert {"release_head_ref_oid", "correlation_ids", "redaction_summary", "completion_attestation"} <= common_fields
-    assert {"artifact_id", "artifact_type", "redacted", "contains_secret_values", "observed_at"} <= artifact_fields
+    assert {
+        "release_head_ref_oid",
+        "correlation_ids",
+        "redaction_summary",
+        "completion_attestation",
+    } <= common_fields
+    assert {
+        "artifact_id",
+        "artifact_type",
+        "redacted",
+        "contains_secret_values",
+        "observed_at",
+    } <= artifact_fields
     assert {"accepted_by", "accepted_at", "decision", "notes"} <= attestation_fields
     assert "Do not include secret values" in global_rules
     assert "deterministic/mock-live proof separate" in global_rules

@@ -85,6 +85,8 @@ def create_operator_router(
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
+    evidence_store: Any | None = None,
+    intake_repository: Any | None = None,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -191,16 +193,22 @@ def create_operator_router(
         )
     )
 
+    from modules.opsboard.application.network_listings import (
+        InMemoryAssistedIntakeRepository,
+    )
+
+    shared_intake_repo = intake_repository or (
+        DurableAssistedIntakeRepository(document_store)
+        if document_store is not None
+        else InMemoryAssistedIntakeRepository()
+    )
+
     # Network listing intake — read/write paths for R4 Listing Radar.
     router.include_router(
         create_network_listings_sub_router(
             NetworkListingService(
                 listing_repository=listing_repository,
-                intake_repository=(
-                    DurableAssistedIntakeRepository(document_store)
-                    if document_store is not None
-                    else None
-                ),
+                intake_repository=shared_intake_repo,
             ),
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
@@ -208,6 +216,7 @@ def create_operator_router(
             require_write_permission_fn=require_operator_permission(
                 "listing", Action.UPDATE, engine=authz_engine
             ),
+            audit_log=active_audit_log,
         )
     )
 
@@ -331,6 +340,26 @@ def create_operator_router(
             require_export_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
             ),
+        )
+    )
+
+    # Privacy — purge, legal hold, evidence export and WORM integrity
+    from apps.api.app.routes.operator_modules.privacy import (
+        create_privacy_sub_router,
+    )
+    from modules.listing.application.intake_privacy import IntakePrivacyService
+
+    privacy_service = IntakePrivacyService(
+        audit_log=active_audit_log,
+        evidence_store=evidence_store,
+        document_store=document_store,
+        intake_repository=shared_intake_repo,
+    )
+    router.include_router(
+        create_privacy_sub_router(
+            privacy_service,
+            require_view_permission_fn=operator_view_guard,
+            require_write_permission_fn=operator_write_guard,
         )
     )
 

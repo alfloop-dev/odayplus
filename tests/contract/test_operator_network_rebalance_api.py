@@ -92,7 +92,9 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
     solved_store = solve.json()["store"]
     assert solved_store["status"] == "netplanreview"
     assert [item["id"] for item in solved_store["netPlanScenarios"]] == ["keep", "move", "exit"]
-    assert {item["snapshotId"] for item in solved_store["netPlanScenarios"]} == {"NP-SNAP-20260714-0615"}
+    assert {item["snapshotId"] for item in solved_store["netPlanScenarios"]} == {
+        "NP-SNAP-20260714-0615"
+    }
 
     selected = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/scenarios/move/select",
@@ -110,12 +112,16 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
     reloaded_store = reloaded.json()["stores"][0]
     assert reloaded_store["selectedScenarioId"] == "move"
     assert reloaded_store["selectedScenarioOwner"]["actorRoleId"] == "expansionManager"
-    assert reloaded_store["selectedScenarioEvidenceId"] == selected_store["selectedScenarioEvidenceId"]
+    assert (
+        reloaded_store["selectedScenarioEvidenceId"] == selected_store["selectedScenarioEvidenceId"]
+    )
 
     submitted = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/submit-review",
         headers={**NETWORK_HEADERS, "idempotency-key": "idem-r4-008-submit-review"},
-        json=_actor("Move is recommended by NetPlan and requires Govern approval before execution."),
+        json=_actor(
+            "Move is recommended by NetPlan and requires Govern approval before execution."
+        ),
     )
     assert submitted.status_code == 200, submitted.text
     submitted_body = submitted.json()

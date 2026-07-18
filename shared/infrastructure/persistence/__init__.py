@@ -33,6 +33,10 @@ from shared.infrastructure.persistence.model_ready import (
     SnapshotSink,
     build_lineage_manifest,
 )
+from shared.infrastructure.persistence.outbox import (
+    DurableOutboxRepository,
+    InMemoryOutboxRepository,
+)
 from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableAdLiftRepository,
@@ -107,6 +111,8 @@ __all__ = [
     "DurableTransactionRepository",
     "InMemoryMachineCycleRepository",
     "DurableMachineCycleRepository",
+    "DurableOutboxRepository",
+    "InMemoryOutboxRepository",
     "MigrationAsset",
     "MigrationStep",
     "MissingLiveInputError",

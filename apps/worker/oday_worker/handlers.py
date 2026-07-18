@@ -101,9 +101,15 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
 
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
+    from apps.worker.assisted_listing_intake.worker import (
+        INTAKE_JOB_TYPE,
+        handle_assisted_listing_intake,
+    )
+
     registry = JobRegistry()
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
+    registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
     return registry
 
 

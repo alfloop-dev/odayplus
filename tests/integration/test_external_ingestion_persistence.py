@@ -68,9 +68,7 @@ def test_manual_ingestion_persists_and_is_readable_via_api() -> None:
     run_id = body["run_id"]
 
     # Persisted run is retrievable by id, with lineage preserved.
-    detail = client.get(
-        f"/external-data/ingestion-runs/{run_id}", headers=EXTERNAL_DATA_HEADERS
-    )
+    detail = client.get(f"/external-data/ingestion-runs/{run_id}", headers=EXTERNAL_DATA_HEADERS)
     assert detail.status_code == 200
     detail_body = detail.json()
     assert detail_body["run_id"] == run_id
@@ -174,9 +172,7 @@ def test_scheduled_ingestion_persists_with_scheduled_trigger() -> None:
         interval=timedelta(hours=1),
         freshness_sla=timedelta(hours=24),
     )
-    outcome = service.run_scheduled(
-        spec, scheduled_at=datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
-    )
+    outcome = service.run_scheduled(spec, scheduled_at=datetime(2026, 6, 28, 9, 0, tzinfo=UTC))
 
     assert outcome.created is True
     assert outcome.record.trigger == "scheduled"

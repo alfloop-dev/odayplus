@@ -30,7 +30,8 @@ _SCHEMA_FILES = (
     "000003_durable_audit_evidence.sql",
     "000004_durable_product_domain.sql",
     "000005_durable_notifications.sql",
-    "000006_job_lease_columns.sql",
+    "000006_durable_outbox.sql",
+    "000007_job_lease_columns.sql",
 )
 
 

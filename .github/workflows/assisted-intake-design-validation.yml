@@ -1,0 +1,238 @@
+name: Assisted Listing Intake Design Contract Gate
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_*'
+      - 'scripts/validate_assisted_listing_intake_*'
+      - 'scripts/build_validate_assisted_listing_intake_openapi.py'
+      - '.github/workflows/assisted-intake-design-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contract-package:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: assisted_intake_contract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGPASSWORD: postgres
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: assisted_intake_contract
+    steps:
+      - name: Checkout exact review target
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install structural validators
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            PyYAML==6.0.2 \
+            jsonpath-ng==1.7.0 \
+            openapi-spec-validator==0.7.1
+
+      - name: Compile Python validators
+        run: |
+          python -m py_compile scripts/validate_assisted_listing_intake_design.py
+          python -m py_compile scripts/build_validate_assisted_listing_intake_openapi.py
+
+      - name: Run commit-bound cross-contract validation
+        id: cross_contract
+        continue-on-error: true
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          mkdir -p build
+          set +e
+          python scripts/validate_assisted_listing_intake_design.py \
+            --reviewed-commit "$REVIEWED_COMMIT" \
+            --current-pr-head "$CURRENT_PR_HEAD" \
+            --base-commit "$BASE_COMMIT" \
+            --strict-review-target \
+            --json > build/cross-contract-validation.json \
+            2> build/cross-contract-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/cross-contract-validation.json
+          cat build/cross-contract-validation.stderr >&2
+          exit "$STATUS"
+
+      - name: Verify cross-contract gate fails closed
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          cp docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml \
+            build/review-manifest.backup.yaml
+          restore_manifest() {
+            cp build/review-manifest.backup.yaml \
+              docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml
+          }
+          trap restore_manifest EXIT
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('openapi_bundle_order:')
+          end = text.index('\nschema_apply_order:', start)
+          section = text[start:end]
+          artifact = (
+              '  - docs/api/openapi/'
+              'ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml\n'
+          )
+          if artifact not in section:
+              raise SystemExit('negative-test artifact not found in OpenAPI order')
+          path.write_text(
+              text[:start] + section.replace(artifact, '', 1) + text[end:],
+              encoding='utf-8',
+          )
+          PY
+          set +e
+          python scripts/validate_assisted_listing_intake_design.py \
+            --reviewed-commit "$REVIEWED_COMMIT" \
+            --current-pr-head "$CURRENT_PR_HEAD" \
+            --base-commit "$BASE_COMMIT" \
+            --strict-review-target \
+            --json > build/cross-contract-negative-validation.json \
+            2> build/cross-contract-negative-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/cross-contract-negative-validation.json
+          cat build/cross-contract-negative-validation.stderr >&2
+          test "$STATUS" -ne 0
+          grep -q '"status": "FAIL"' \
+            build/cross-contract-negative-validation.json
+
+      - name: Build and structurally validate effective OpenAPI
+        id: openapi
+        continue-on-error: true
+        run: |
+          mkdir -p build
+          set +e
+          python scripts/build_validate_assisted_listing_intake_openapi.py \
+            --json \
+            > build/openapi-validation.stdout \
+            2> build/openapi-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/openapi-validation.stdout
+          cat build/openapi-validation.stderr >&2
+          exit "$STATUS"
+
+      - name: Redocly lint effective OpenAPI with zero warnings
+        id: redocly
+        if: always() && hashFiles('build/assisted-listing-intake-openapi-effective.yaml') != ''
+        continue-on-error: true
+        run: |
+          set +e
+          npx --yes @redocly/cli@1.34.2 lint \
+            build/assisted-listing-intake-openapi-effective.yaml \
+            --format=json > build/redocly-lint.json 2> build/redocly-lint.stderr
+          REDOCLY_EXIT=$?
+          set -e
+          cat build/redocly-lint.stderr >&2
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/redocly-lint.json')
+          data = json.loads(path.read_text(encoding='utf-8') or '[]')
+          if isinstance(data, dict):
+              problems = data.get('problems') or data.get('issues') or []
+          elif isinstance(data, list):
+              problems = data
+          else:
+              problems = []
+          blocking = [
+              item for item in problems
+              if str(item.get('severity', '')).lower() in {'error', 'warn', 'warning'}
+          ]
+          if blocking:
+              for item in blocking:
+                  print(json.dumps(item, ensure_ascii=False))
+              raise SystemExit(f'Redocly reported {len(blocking)} error/warning findings')
+          print('Redocly lint: zero errors and zero warnings')
+          PY
+          test "$REDOCLY_EXIT" -eq 0
+
+      - name: Apply normative PostgreSQL schema stack
+        id: schema_apply
+        continue-on-error: true
+        run: |
+          mkdir -p build
+          set +e
+          {
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql &&
+            psql -v ON_ERROR_STOP=1 -f docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
+          } > build/schema-apply.stdout 2> build/schema-apply.stderr
+          STATUS=$?
+          set -e
+          cat build/schema-apply.stdout
+          cat build/schema-apply.stderr >&2
+          exit "$STATUS"
+
+      - name: Validate PostgreSQL RLS policies and tenant lineage
+        id: schema_validate
+        if: always() && steps.schema_apply.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          psql -v ON_ERROR_STOP=1 -f scripts/validate_assisted_listing_intake_schema.sql \
+            > build/schema-validation.stdout \
+            2> build/schema-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/schema-validation.stdout
+          cat build/schema-validation.stderr >&2
+          exit "$STATUS"
+
+      - name: Upload effective validation outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assisted-listing-intake-design-validation
+          if-no-files-found: warn
+          path: |
+            build/**
+
+      - name: Enforce all structural gates
+        if: always()
+        run: |
+          test "${{ steps.cross_contract.outcome }}" = "success"
+          test "${{ steps.openapi.outcome }}" = "success"
+          test "${{ steps.redocly.outcome }}" = "success"
+          test "${{ steps.schema_apply.outcome }}" = "success"
+          test "${{ steps.schema_validate.outcome }}" = "success"

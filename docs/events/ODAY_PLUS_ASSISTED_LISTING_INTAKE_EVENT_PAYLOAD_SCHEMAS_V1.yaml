@@ -1,0 +1,225 @@
+contract_id: ODP-SD-INTAKE-EVENT-PAYLOADS-001
+version: 1.1.0
+status: proposed
+owner: Platform Engineering / System Design
+
+# The event catalog and v1.1 addendum resolve schema_ref values against this
+# payload registry. All payloads are JSON Schema 2020-12 compatible fragments.
+
+payloads:
+  IntakeSubmittedV1:
+    type: object
+    additionalProperties: false
+    required: [intake_id, intake_method, submitter_subject_id, submitted_at, scope]
+    properties:
+      intake_id: {type: string, format: uuid}
+      intake_method: {type: string, enum: [URL, MANUAL, CSV, APPROVED_FEED, OPERATOR_SNAPSHOT]}
+      submitter_subject_id: {type: string, format: uuid}
+      submitted_at: {type: string, format: date-time}
+      original_url: {type: [string, 'null'], format: uri}
+      source_id: {type: [string, 'null']}
+      scope: {$ref: '#/definitions/ScopeContext'}
+
+  IntakeStateChangedV1:
+    type: object
+    additionalProperties: false
+    required: [intake_id, from_state, to_state, transition_id, version, occurred_at]
+    properties:
+      intake_id: {type: string, format: uuid}
+      from_state: {type: [string, 'null']}
+      to_state: {$ref: '#/definitions/IntakeState'}
+      transition_id: {type: string, format: uuid}
+      reason_code: {type: [string, 'null']}
+      version: {type: integer, minimum: 1}
+      occurred_at: {type: string, format: date-time}
+
+  SnapshotCreatedV1:
+    type: object
+    additionalProperties: false
+    required: [source_snapshot_id, intake_id, source_id, content_sha256, captured_at, retention_class, residency_mode]
+    properties:
+      source_snapshot_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      source_id: {type: string}
+      content_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      object_generation: {type: [integer, 'null'], minimum: 0}
+      captured_at: {type: string, format: date-time}
+      retention_class: {type: string}
+      residency_mode: {type: string, enum: [TW_ONLY, APPROVED_APAC_DR]}
+
+  ParserRunCompletedV1:
+    type: object
+    additionalProperties: false
+    required: [parser_run_id, intake_id, parser_release_id, status, quality_summary]
+    properties:
+      parser_run_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      parser_release_id: {type: string, format: uuid}
+      status: {type: string, enum: [SUCCEEDED, PARTIAL, FAILED, CANCELLED]}
+      quality_summary: {type: object}
+      output_schema_version: {type: string}
+
+  MatchReviewRequiredV1:
+    type: object
+    additionalProperties: false
+    required: [match_case_id, intake_id, outcome, confidence, candidate_ids, contradictory_signals]
+    properties:
+      match_case_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      outcome: {type: string, enum: [POSSIBLE_MATCH, QUARANTINED]}
+      confidence: {type: number, minimum: 0, maximum: 1}
+      candidate_ids: {type: array, items: {type: string, format: uuid}}
+      contradictory_signals: {type: array, items: {type: object}}
+
+  MatchDecidedV1:
+    type: object
+    additionalProperties: false
+    required: [match_decision_id, match_case_id, decision_type, status, proposer_subject_id]
+    properties:
+      match_decision_id: {type: string, format: uuid}
+      match_case_id: {type: string, format: uuid}
+      decision_type: {type: string, enum: [CREATE, REVISE, DUPLICATE, QUARANTINE, REJECT, REOPEN, MERGE, SPLIT, UNMERGE]}
+      status: {type: string, enum: [PENDING_REVIEW, APPROVED, REJECTED, EXECUTING, EXECUTED, FAILED, REVERSAL_PENDING, REVERSED, SUPERSEDED]}
+      proposer_subject_id: {type: string, format: uuid}
+      reviewer_subject_id: {type: [string, 'null'], format: uuid}
+      reason_code: {type: [string, 'null']}
+
+  IdentityResolutionChangedV1:
+    type: object
+    additionalProperties: false
+    required: [decision_id, effective_property_id, closed_edge_ids, created_edge_ids, redirect_ids]
+    properties:
+      decision_id: {type: string, format: uuid}
+      effective_property_id: {type: string, format: uuid}
+      closed_edge_ids: {type: array, items: {type: string, format: uuid}}
+      created_edge_ids: {type: array, items: {type: string, format: uuid}}
+      redirect_ids: {type: array, items: {type: string, format: uuid}}
+      reversed_decision_id: {type: [string, 'null'], format: uuid}
+
+  ListingChangedV1:
+    type: object
+    additionalProperties: false
+    required: [listing_id, property_id, current_revision_id, lifecycle_state, version]
+    properties:
+      listing_id: {type: string, format: uuid}
+      property_id: {type: [string, 'null'], format: uuid}
+      current_revision_id: {type: string, format: uuid}
+      lifecycle_state: {$ref: '#/definitions/ListingState'}
+      revision_kind: {type: [string, 'null'], enum: [CREATED, CONTENT_CHANGED, STATUS_CHANGED, CORRECTED, RELISTED, IDENTITY_REBOUND, null]}
+      version: {type: integer, minimum: 1}
+
+  ListingStatusChangedV1:
+    type: object
+    additionalProperties: false
+    required: [listing_id, from_state, to_state, observation_id, version]
+    properties:
+      listing_id: {type: string, format: uuid}
+      from_state: {$ref: '#/definitions/ListingState'}
+      to_state: {$ref: '#/definitions/ListingState'}
+      observation_id: {type: string, format: uuid}
+      version: {type: integer, minimum: 1}
+
+  AssignmentChangedV1:
+    type: object
+    additionalProperties: false
+    required: [assignment_id, intake_id, status, due_at, version]
+    properties:
+      assignment_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      status: {$ref: '#/definitions/AssignmentState'}
+      owner_subject_id: {type: [string, 'null'], format: uuid}
+      previous_owner_subject_id: {type: [string, 'null'], format: uuid}
+      due_at: {type: [string, 'null'], format: date-time}
+      version: {type: integer, minimum: 1}
+
+  SlaBreachedV1:
+    type: object
+    additionalProperties: false
+    required: [sla_instance_id, intake_id, due_at, breached_at, escalation_level]
+    properties:
+      sla_instance_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      due_at: {type: string, format: date-time}
+      breached_at: {type: string, format: date-time}
+      escalation_level: {type: integer, minimum: 1}
+
+  PromotionChangedV1:
+    type: object
+    additionalProperties: false
+    required: [promotion_decision_id, intake_id, listing_id, status, decision_type, version]
+    properties:
+      promotion_decision_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      listing_id: {type: string, format: uuid}
+      status: {$ref: '#/definitions/PromotionState'}
+      decision_type: {type: string, enum: [STANDARD, LEGACY_RECONCILED]}
+      candidate_site_id: {type: [string, 'null'], format: uuid}
+      site_score_job_id: {type: [string, 'null'], format: uuid}
+      version: {type: integer, minimum: 1}
+
+  CandidateCreatedV1:
+    type: object
+    additionalProperties: false
+    required: [candidate_site_id, property_id, listing_id, promotion_decision_id, target_format_code, status, version]
+    properties:
+      candidate_site_id: {type: string, format: uuid}
+      property_id: {type: string, format: uuid}
+      listing_id: {type: string, format: uuid}
+      promotion_decision_id: {type: string, format: uuid}
+      target_format_code: {type: string}
+      status: {type: string, enum: [NEW, SCREENED, SCORING, SCORED, VISITED, REJECTED, APPROVED, OPENED, SCORING_FAILED]}
+      version: {type: integer, minimum: 1}
+
+  JobDeadLetteredV1:
+    type: object
+    additionalProperties: false
+    required: [job_id, job_type, checkpoint, attempt, error_code, dead_lettered_at]
+    properties:
+      job_id: {type: string, format: uuid}
+      job_type: {type: string}
+      checkpoint: {type: string}
+      attempt: {type: integer, minimum: 1}
+      error_code: {type: string}
+      last_error_details: {type: object}
+      dead_lettered_at: {type: string, format: date-time}
+
+  AuditRecordedV1:
+    type: object
+    additionalProperties: false
+    required: [audit_event_id, sequence_no, action, resource_type, resource_id, result, event_sha256, occurred_at]
+    properties:
+      audit_event_id: {type: string, format: uuid}
+      sequence_no: {type: integer, minimum: 1}
+      action: {type: string}
+      resource_type: {type: string}
+      resource_id: {type: string, format: uuid}
+      result: {type: string, enum: [ALLOWED, DENIED, SUCCEEDED, FAILED, MASKED]}
+      reason_code: {type: [string, 'null']}
+      previous_event_sha256: {type: [string, 'null'], pattern: '^[a-f0-9]{64}$'}
+      event_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      worm_object_uri: {type: [string, 'null']}
+      occurred_at: {type: string, format: date-time}
+
+definitions:
+  ScopeContext:
+    type: object
+    additionalProperties: false
+    required: [tenant_id]
+    properties:
+      tenant_id: {type: string, format: uuid}
+      brand_id: {type: [string, 'null'], format: uuid}
+      region_id: {type: [string, 'null'], format: uuid}
+      assigned_area_id: {type: [string, 'null'], format: uuid}
+      heat_zone_id: {type: [string, 'null'], format: uuid}
+  IntakeState:
+    type: string
+    enum: [SUBMITTED, CHECKING_IDENTITY, CHECKING_SOURCE_POLICY, AWAITING_ASSISTED_ENTRY, RETRIEVING, PARSING, MATCHING, NEEDS_REVIEW, READY, QUARANTINED, FAILED, CANCELLED]
+  ListingState:
+    type: string
+    enum: [ACTIVE, REMOVED, EXPIRED, STALE, QUARANTINED, ARCHIVED]
+  AssignmentState:
+    type: string
+    enum: [UNASSIGNED, ASSIGNED, CLAIMED, TRANSFERRED, ESCALATED, COMPLETED]
+  PromotionState:
+    type: string
+    enum: [REQUESTED, VALIDATING, PENDING_REVIEW, REJECTED, APPROVED, CANDIDATE_CREATING, CANDIDATE_CREATED, SCORE_QUEUED, COMPLETED, FAILED, SCORE_FAILED]

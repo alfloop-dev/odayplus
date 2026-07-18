@@ -86,7 +86,9 @@ def test_live_provider_mode_product_e2e_with_approved_mock_persists_lineage(tmp_
             correlation_id="corr-ext-008-live-product",
         )
         evidence = freshness_evidence_from_run(run, freshness_sla=timedelta(hours=6))
-        lineage_path = write_external_fetch_lineage_evidence(run, tmp_path / "external-lineage.json")
+        lineage_path = write_external_fetch_lineage_evidence(
+            run, tmp_path / "external-lineage.json"
+        )
 
     assert run.status == "SUCCEEDED"
     assert run.data_status == "FRESH"
@@ -152,7 +154,9 @@ def test_scheduled_fetch_is_idempotent_and_uses_source_specific_freshness_sla() 
     assert first.last_success_watermark_after == scheduled_at
     assert stale_for_stricter_source.status == "SUCCEEDED"
     assert stale_for_stricter_source.data_status == "STALE"
-    assert stale_for_stricter_source.provider_observed_at == datetime(2026, 6, 28, 9, 30, tzinfo=UTC)
+    assert stale_for_stricter_source.provider_observed_at == datetime(
+        2026, 6, 28, 9, 30, tzinfo=UTC
+    )
     assert len(mock.requests) == 2
 
 
@@ -162,19 +166,27 @@ def test_provider_mock_auth_quota_and_freshness_scenarios_are_product_visible() 
         unauthorized = _scheduler_for_live_listing(
             _live_listing_env(mock.listing_feed_url("fresh"), api_key="wrong-key")
         ).run_once(
-            ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing-auth"),
+            ExternalFetchJobSpec(
+                provider_id="listing.partner_feed", schedule_id="hourly-listing-auth"
+            ),
             scheduled_at=scheduled_at,
             correlation_id="corr-ext-008-auth",
         )
         quota = _scheduler_for_live_listing(
             _live_listing_env(mock.listing_feed_url("quota")),
-            policy=ExternalFetchResiliencePolicy(max_consecutive_failures=3, backoff_base=timedelta(minutes=2)),
+            policy=ExternalFetchResiliencePolicy(
+                max_consecutive_failures=3, backoff_base=timedelta(minutes=2)
+            ),
         ).run_once(
-            ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing-quota"),
+            ExternalFetchJobSpec(
+                provider_id="listing.partner_feed", schedule_id="hourly-listing-quota"
+            ),
             scheduled_at=scheduled_at,
             correlation_id="corr-ext-008-quota",
         )
-        stale = _scheduler_for_live_listing(_live_listing_env(mock.listing_feed_url("stale"))).run_once(
+        stale = _scheduler_for_live_listing(
+            _live_listing_env(mock.listing_feed_url("stale"))
+        ).run_once(
             ExternalFetchJobSpec(
                 provider_id="listing.partner_feed",
                 schedule_id="hourly-listing-stale",
@@ -197,7 +209,9 @@ def test_provider_mock_auth_quota_and_freshness_scenarios_are_product_visible() 
 
     assert stale.status == "SUCCEEDED"
     assert stale.data_status == "STALE"
-    assert freshness_evidence_from_run(stale, freshness_sla=timedelta(hours=6)).quality_flags == ("stale",)
+    assert freshness_evidence_from_run(stale, freshness_sla=timedelta(hours=6)).quality_flags == (
+        "stale",
+    )
 
 
 def test_rate_limit_opens_circuit_and_preserves_blocked_freshness_state() -> None:
@@ -217,12 +231,16 @@ def test_rate_limit_opens_circuit_and_preserves_blocked_freshness_state() -> Non
     )
 
     first = scheduler.run_once(
-        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing-rate-limit"),
+        ExternalFetchJobSpec(
+            provider_id="listing.partner_feed", schedule_id="hourly-listing-rate-limit"
+        ),
         scheduled_at=datetime(2026, 6, 29, 8, 0, tzinfo=UTC),
         correlation_id="corr-ext-005-rate-limit",
     )
     blocked = scheduler.run_once(
-        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing-rate-limit"),
+        ExternalFetchJobSpec(
+            provider_id="listing.partner_feed", schedule_id="hourly-listing-rate-limit"
+        ),
         scheduled_at=datetime(2026, 6, 29, 8, 5, tzinfo=UTC),
         correlation_id="corr-ext-005-circuit",
     )
@@ -255,7 +273,10 @@ def test_license_gate_and_fixture_default_are_proven_without_live_secrets() -> N
     } == {("competitor.manual_source", "license_blocked")}
     inventory = result.secret_inventory()
     assert inventory["listing.partner_feed"]["license"]["export_allowed"] is False
-    assert "internal_decisioning" in inventory["listing.partner_feed"]["license"]["downstream_use_flags"]
+    assert (
+        "internal_decisioning"
+        in inventory["listing.partner_feed"]["license"]["downstream_use_flags"]
+    )
     assert provider_export_allowed("listing.partner_feed") is False
     assert provider_export_allowed("admin_boundary.official_dataset") is True
     assert provider_downstream_use_flags("competitor.manual_source") == ("manual_review",)
@@ -269,9 +290,7 @@ def test_provider_registry_live_startup_fails_closed_without_secrets() -> None:
 
     assert result.mode is ExternalProviderMode.LIVE
     assert result.ok is False
-    assert {
-        error.env_var for error in result.errors if error.code == "missing_credential"
-    } == {
+    assert {error.env_var for error in result.errors if error.code == "missing_credential"} == {
         "ODP_LISTING_PROVIDER_API_KEY",
         "ODP_POI_PROVIDER_API_KEY",
         "ODP_GEOCODE_PROVIDER_API_KEY",
@@ -326,7 +345,9 @@ def test_live_listing_adapter_quarantines_duplicates_and_malformed_records() -> 
 
     assert result.raw_snapshot.snapshot_id == "listing-contract-20260629"
     assert result.raw_snapshot.record_count == 3
-    assert result.raw_snapshot.idempotency_keys[0].endswith(":listing-contract-20260629:LST-CONTRACT-001")
+    assert result.raw_snapshot.idempotency_keys[0].endswith(
+        ":listing-contract-20260629:LST-CONTRACT-001"
+    )
     assert len(result.canonical_snapshot.canonical_records) == 1
     quarantine_codes = {
         issue.code
@@ -349,7 +370,9 @@ def test_live_listing_timeout_is_product_visible_blocked_state() -> None:
     )
 
     run = scheduler.run_once(
-        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="hourly-listing-timeout"),
+        ExternalFetchJobSpec(
+            provider_id="listing.partner_feed", schedule_id="hourly-listing-timeout"
+        ),
         scheduled_at=datetime(2026, 6, 29, 8, 0, tzinfo=UTC),
         correlation_id="corr-ext-002-timeout",
     )
@@ -475,7 +498,11 @@ class _RateLimitListingClient:
 
 
 class MockGeocodeClient:
-    def __init__(self, responses: dict[str, Mapping[str, Any]] | None = None, exceptions: list[Exception | None] | None = None) -> None:
+    def __init__(
+        self,
+        responses: dict[str, Mapping[str, Any]] | None = None,
+        exceptions: list[Exception | None] | None = None,
+    ) -> None:
         self.responses = responses or {}
         self.exceptions = exceptions or []
         self.calls: list[dict[str, Any]] = []
@@ -489,13 +516,15 @@ class MockGeocodeClient:
         correlation_id: str,
         retry_budget: int,
     ) -> Mapping[str, Any]:
-        self.calls.append({
-            "provider": provider,
-            "credential": credential,
-            "normalized_address": normalized_address,
-            "correlation_id": correlation_id,
-            "retry_budget": retry_budget,
-        })
+        self.calls.append(
+            {
+                "provider": provider,
+                "credential": credential,
+                "normalized_address": normalized_address,
+                "correlation_id": correlation_id,
+                "retry_budget": retry_budget,
+            }
+        )
         if self.exceptions:
             exc = self.exceptions.pop(0)
             if exc is not None:
@@ -508,7 +537,7 @@ def test_geocode_provider_success() -> None:
     # 1. recorded response success test
     raw_address = "台北市信義區信義路五段7號"
     norm = normalize_address(raw_address)
-    
+
     mock_response = {
         "provider_request_id": "geo-req-123",
         "provider_observed_at": "2026-07-11T12:00:00Z",
@@ -520,16 +549,16 @@ def test_geocode_provider_success() -> None:
         "district": "信義區",
         "provider_id": "geocode.primary_api",
     }
-    
+
     client = MockGeocodeClient(responses={norm.normalized_address: mock_response})
     env = {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
         "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
     }
     provider = PrimaryGeocodeProvider(client=client, env=env)
-    
+
     candidate = provider.lookup(norm)
-    
+
     assert candidate is not None
     assert candidate.latitude == 25.0339
     assert candidate.longitude == 121.5644
@@ -540,7 +569,7 @@ def test_geocode_provider_success() -> None:
     assert candidate.provider_observed_at.hour == 12
     assert candidate.admin_city == "台北市"
     assert candidate.admin_district == "信義區"
-    
+
     # Also verify integration with GeoPipeline
     pipeline = GeoPipeline(provider)
     result = pipeline.geocode_record({"address_raw": raw_address})
@@ -557,29 +586,29 @@ def test_geocode_provider_low_confidence() -> None:
     # 2. low confidence test
     raw_address = "台北市信義區信義路五段7號"
     norm = normalize_address(raw_address)
-    
+
     mock_response = {
         "provider_request_id": "geo-req-low",
         "provider_observed_at": "2026-07-11T12:00:00Z",
         "latitude": 25.0339,
         "longitude": 121.5644,
         "precision": "street",
-        "confidence": 0.50, # low confidence (< 0.7)
+        "confidence": 0.50,  # low confidence (< 0.7)
         "city": "台北市",
         "district": "信義區",
         "provider_id": "geocode.primary_api",
     }
-    
+
     client = MockGeocodeClient(responses={norm.normalized_address: mock_response})
     env = {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
         "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
     }
     provider = PrimaryGeocodeProvider(client=client, env=env)
-    
+
     pipeline = GeoPipeline(provider)
     result = pipeline.geocode_record({"address_raw": raw_address})
-    
+
     assert result.address.geocode_confidence == 0.50
     assert "low_geocode_confidence" in result.quality_flags
 
@@ -588,7 +617,7 @@ def test_geocode_provider_rate_limit_retry() -> None:
     # 3. rate-limit retry test
     raw_address = "台北市信義區信義路五段7號"
     norm = normalize_address(raw_address)
-    
+
     mock_response = {
         "latitude": 25.0339,
         "longitude": 121.5644,
@@ -597,14 +626,19 @@ def test_geocode_provider_rate_limit_retry() -> None:
         "city": "台北市",
         "district": "信義區",
     }
-    
+
     # 1st try: rate limit, 2nd try: success
     client = MockGeocodeClient(
         responses={norm.normalized_address: mock_response},
         exceptions=[
-            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c1", code="rate_limited"),
+            GeocodeProviderRateLimitError(
+                "rate limit",
+                provider_id="geocode.primary_api",
+                correlation_id="c1",
+                code="rate_limited",
+            ),
             None,
-        ]
+        ],
     )
     env = {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
@@ -612,19 +646,29 @@ def test_geocode_provider_rate_limit_retry() -> None:
     }
     # Set retry_budget to 1 to allow 1 retry
     provider = PrimaryGeocodeProvider(client=client, env=env, retry_budget=1)
-    
+
     candidate = provider.lookup(norm)
     assert candidate is not None
     assert candidate.latitude == 25.0339
     assert len(client.calls) == 2
-    
+
     # Exhaust budget: 1st try rate limit, 2nd try rate limit, budget 1 -> raises exception
     client_fail = MockGeocodeClient(
         responses={norm.normalized_address: mock_response},
         exceptions=[
-            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c1", code="rate_limited"),
-            GeocodeProviderRateLimitError("rate limit", provider_id="geocode.primary_api", correlation_id="c2", code="rate_limited"),
-        ]
+            GeocodeProviderRateLimitError(
+                "rate limit",
+                provider_id="geocode.primary_api",
+                correlation_id="c1",
+                code="rate_limited",
+            ),
+            GeocodeProviderRateLimitError(
+                "rate limit",
+                provider_id="geocode.primary_api",
+                correlation_id="c2",
+                code="rate_limited",
+            ),
+        ],
     )
     provider_fail = PrimaryGeocodeProvider(client=client_fail, env=env, retry_budget=1)
     with pytest.raises(GeocodeQuarantineError):
@@ -636,10 +680,12 @@ def test_geocode_provider_timeout_fails_closed() -> None:
     # 4. timeout test
     raw_address = "台北市信義區信義路五段7號"
     norm = normalize_address(raw_address)
-    
+
     client = MockGeocodeClient(
         exceptions=[
-            GeocodeProviderTimeoutError("timeout", provider_id="geocode.primary_api", correlation_id="c1", code="timeout")
+            GeocodeProviderTimeoutError(
+                "timeout", provider_id="geocode.primary_api", correlation_id="c1", code="timeout"
+            )
         ]
     )
     env = {
@@ -647,7 +693,7 @@ def test_geocode_provider_timeout_fails_closed() -> None:
         "ODP_GEOCODE_PROVIDER_API_KEY": "test-key",
     }
     provider = PrimaryGeocodeProvider(client=client, env=env)
-    
+
     with pytest.raises(GeocodeProviderTimeoutError):
         provider.lookup(norm)
 
@@ -656,7 +702,7 @@ def test_geocode_provider_unauthorized_fails_closed() -> None:
     # 5. unauthorized test
     raw_address = "台北市信義區信義路五段7號"
     norm = normalize_address(raw_address)
-    
+
     # Case A: Missing credentials env var
     env_missing = {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
@@ -665,7 +711,7 @@ def test_geocode_provider_unauthorized_fails_closed() -> None:
     with pytest.raises(ExternalProviderConfigError) as exc_info:
         provider_missing.lookup(norm)
     assert exc_info.value.result.errors[0].code == "missing_credential"
-    
+
     # Case B: Expired status
     env_expired = {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
@@ -676,11 +722,16 @@ def test_geocode_provider_unauthorized_fails_closed() -> None:
     with pytest.raises(ExternalProviderConfigError) as exc_info:
         provider_expired.lookup(norm)
     assert exc_info.value.result.errors[0].code == "credential_expired"
-    
+
     # Case C: Auth error from client
     client_auth_err = MockGeocodeClient(
         exceptions=[
-            GeocodeProviderAuthError("unauthorized", provider_id="geocode.primary_api", correlation_id="c1", code="unauthorized")
+            GeocodeProviderAuthError(
+                "unauthorized",
+                provider_id="geocode.primary_api",
+                correlation_id="c1",
+                code="unauthorized",
+            )
         ]
     )
     env_ok = {
@@ -713,7 +764,9 @@ def test_external_source_product_e2e_flow(tmp_path) -> None:
         quarantine_dir=str(tmp_path / "quarantine"),
     )
 
-    valid_fixture = json.loads((FIXTURES_ROOT / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8"))
+    valid_fixture = json.loads(
+        (FIXTURES_ROOT / "listing_raw_snapshot.valid.json").read_text(encoding="utf-8")
+    )
 
     # Step 1 & 2: Ingest live listing feed and process to CandidateSite
     result = adapter.process_feed(replay_payload=valid_fixture)
@@ -792,4 +845,7 @@ def test_external_source_product_e2e_flow(tmp_path) -> None:
     # Audit log validation
     approve_events = [e for e in audit_log.list_events() if e.action == "approve"]
     assert len(approve_events) == 1
-    assert approve_events[0].metadata["reason"] == "Excellent SiteScore metrics and reasonable rent per ping."
+    assert (
+        approve_events[0].metadata["reason"]
+        == "Excellent SiteScore metrics and reasonable rent per ping."
+    )

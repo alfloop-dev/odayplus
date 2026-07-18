@@ -36,7 +36,7 @@ from shared.observability import (
     redact,
 )
 from shared.observability.audit import AuditValidationError
-from shared.observability.metrics import PLATFORM_METRICS
+from shared.observability.metrics import PLATFORM_METRICS, MetricsRegistry
 from shared.observability.tracing import SpanKind, SpanStatus
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -157,9 +157,13 @@ def test_metric_type_mismatch_is_rejected() -> None:
 def test_e2e_trace_links_all_stages_under_one_correlation_id() -> None:
     # Deterministic monotonic clock so durations are stable.
     ticks = iter(float(i) for i in range(100))
+    metrics = MetricsRegistry()
+    for definition in PLATFORM_METRICS:
+        metrics.register(definition)
     telemetry = Telemetry(
         "oday-platform",
         logger=StructuredLogger("oday-platform", sink=ListSink()),
+        metrics=metrics,
     )
     telemetry.tracer._clock = lambda: next(ticks)  # noqa: SLF001 - deterministic test clock
 
@@ -499,7 +503,7 @@ def test_worker_and_scheduler_export_telemetry() -> None:
 
     # 1. Run scheduler once to enqueue a job
     scheduler.run_once()
-    assert len(logger_sink.dicts) >= 2 # start + ok
+    assert len(logger_sink.dicts) >= 2  # start + ok
     assert logger_sink.dicts[0]["service"] == "test-telemetry"
     assert logger_sink.dicts[1]["action"] == "enqueue"
 
