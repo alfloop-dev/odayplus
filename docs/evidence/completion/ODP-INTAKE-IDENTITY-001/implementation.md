@@ -27,3 +27,15 @@ All checks passed!
 ```
 
 The package exports were changed to lazy loading because eager `modules.listing` initialization caused a pre-existing circular import through `modules.external_data.application.listing_feed_adapter`. Public names remain unchanged.
+
+## Closeout
+
+Claude2 approved commit `c8a4e125` on 2026-07-18 after verifying all four
+acceptance groups, including rollback, tenant isolation, and `as_of` lineage.
+The task branch was then refreshed from `origin/dev`, and the focused closeout
+verification was repeated with the exact commands above plus:
+
+```text
+git diff --check origin/dev...HEAD
+clean
+```
