@@ -90,12 +90,12 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.notifications import InMemoryNotificationRepository
-    from shared.infrastructure.persistence.outbox import InMemoryOutboxRepository
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.infrastructure.persistence.outbox import InMemoryOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         InMemoryAddressLocationRepository,
         InMemoryBrandRepository,
@@ -148,7 +148,6 @@ def _durable_bundle(
 ) -> PersistenceBundle:
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
-    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -156,6 +155,7 @@ def _durable_bundle(
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
