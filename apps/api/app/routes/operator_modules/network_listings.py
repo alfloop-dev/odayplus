@@ -30,8 +30,8 @@ from modules.opsboard.application.network_listings import (
     NetworkListingPolicyError,
     NetworkListingService,
 )
-from shared.auth import Principal, Role
 from shared.audit import InMemoryAuditLog
+from shared.auth import Principal, Role
 
 
 def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:

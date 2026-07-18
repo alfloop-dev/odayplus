@@ -298,7 +298,7 @@ def test_audit_event_recorded_on_deny() -> None:
     from shared.auth import ANONYMOUS
 
     audit_log = InMemoryAuditLog()
-    
+
     with pytest.raises(HTTPException):
         authorize_intake_action(
             ANONYMOUS,
@@ -307,7 +307,7 @@ def test_audit_event_recorded_on_deny() -> None:
             audit_log=audit_log,
             correlation_id="corr-deny-123"
         )
-    
+
     events = audit_log.list_events(correlation_id="corr-deny-123")
     assert len(events) == 1
     assert events[0].outcome == "deny"

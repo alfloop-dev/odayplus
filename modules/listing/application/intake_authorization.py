@@ -67,7 +67,7 @@ def authorize_intake_action(
                 if "url" in resource or "parsedFields" in resource:
                     res_type = "intake"
                 tenant_id = resource.get("tenantId") or resource.get("tenant_id")
-            
+
             action_enum = map_action_to_enum(action)
             desc = ResourceDescriptor(
                 type=res_type,
