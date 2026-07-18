@@ -102,6 +102,7 @@ required_pre_review_checks:
   - consolidated response correction pack and manifest have identical normative register precedence and apply order
   - all SDI-001 through SDI-024 appear in the decision matrix
   - SLA and decision transition tables exist
+  - OpenAPI builder obtains its default base and overlay order from this manifest
   - effective OpenAPI is built by applying every overlay in order
   - effective OpenAPI passes openapi-spec-validator and Redocly with zero errors or warnings
   - every effective Response Object has description
@@ -111,6 +112,9 @@ required_pre_review_checks:
   - every tenant-bearing table has a fail-closed tenant_isolation policy
   - every tenant-scoped foreign-key relationship has a tenant-qualified composite counterpart
   - all required lineage constraints exist in PostgreSQL catalog
+  - cross-contract validator process exit and JSON status both report PASS
+  - a temporary register or order mismatch makes the validator exit nonzero
+  - final workflow enforcement includes the cross-contract validation outcome
   - reviewed_commit equals current PR head
   - formal review commit is a descendant of reviewed_commit
 
@@ -142,6 +146,7 @@ formal_review_command: >-
 
 fail_closed_gates:
   normative_register_or_order_mismatch: no review decision or engineering handoff is valid
+  cross_contract_validator_failed: design contract workflow must fail regardless of diagnostic piping
   openapi_bundle_build_or_lint_failed: assisted_intake_v1_read=false, assisted_intake_v1_write=false
   event_payload_schema_incomplete: assisted_intake_v1_events=false
   tenant_fk_rls_or_policy_validation_failed: assisted_intake_v1_write=false

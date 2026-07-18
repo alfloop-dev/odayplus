@@ -64,18 +64,75 @@ jobs:
           python -m py_compile scripts/build_validate_assisted_listing_intake_openapi.py
 
       - name: Run commit-bound cross-contract validation
+        id: cross_contract
+        continue-on-error: true
         env:
           REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           mkdir -p build
+          set +e
           python scripts/validate_assisted_listing_intake_design.py \
             --reviewed-commit "$REVIEWED_COMMIT" \
             --current-pr-head "$CURRENT_PR_HEAD" \
             --base-commit "$BASE_COMMIT" \
             --strict-review-target \
-            --json | tee build/cross-contract-validation.json
+            --json > build/cross-contract-validation.json \
+            2> build/cross-contract-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/cross-contract-validation.json
+          cat build/cross-contract-validation.stderr >&2
+          exit "$STATUS"
+
+      - name: Verify cross-contract gate fails closed
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CURRENT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          cp docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml \
+            build/review-manifest.backup.yaml
+          restore_manifest() {
+            cp build/review-manifest.backup.yaml \
+              docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml
+          }
+          trap restore_manifest EXIT
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('openapi_bundle_order:')
+          end = text.index('\nschema_apply_order:', start)
+          section = text[start:end]
+          artifact = (
+              '  - docs/api/openapi/'
+              'ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml\n'
+          )
+          if artifact not in section:
+              raise SystemExit('negative-test artifact not found in OpenAPI order')
+          path.write_text(
+              text[:start] + section.replace(artifact, '', 1) + text[end:],
+              encoding='utf-8',
+          )
+          PY
+          set +e
+          python scripts/validate_assisted_listing_intake_design.py \
+            --reviewed-commit "$REVIEWED_COMMIT" \
+            --current-pr-head "$CURRENT_PR_HEAD" \
+            --base-commit "$BASE_COMMIT" \
+            --strict-review-target \
+            --json > build/cross-contract-negative-validation.json \
+            2> build/cross-contract-negative-validation.stderr
+          STATUS=$?
+          set -e
+          cat build/cross-contract-negative-validation.json
+          cat build/cross-contract-negative-validation.stderr >&2
+          test "$STATUS" -ne 0
+          grep -q '"status": "FAIL"' \
+            build/cross-contract-negative-validation.json
 
       - name: Build and structurally validate effective OpenAPI
         id: openapi
@@ -84,11 +141,6 @@ jobs:
           mkdir -p build
           set +e
           python scripts/build_validate_assisted_listing_intake_openapi.py \
-            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_0_1_PRELUDE_OVERLAY.yaml" \
-            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_OVERLAY.yaml" \
-            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml" \
-            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml" \
-            --overlay "$GITHUB_WORKSPACE/docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_3_REDOCLY_OVERLAY.yaml" \
             --json \
             > build/openapi-validation.stdout \
             2> build/openapi-validation.stderr
@@ -179,6 +231,7 @@ jobs:
       - name: Enforce all structural gates
         if: always()
         run: |
+          test "${{ steps.cross_contract.outcome }}" = "success"
           test "${{ steps.openapi.outcome }}" = "success"
           test "${{ steps.redocly.outcome }}" = "success"
           test "${{ steps.schema_apply.outcome }}" = "success"

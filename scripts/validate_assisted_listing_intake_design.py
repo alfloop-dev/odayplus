@@ -214,9 +214,60 @@ def main() -> int:
 
     builder = read("scripts/build_validate_assisted_listing_intake_openapi.py")
     workflow = read(".github/workflows/assisted-intake-design-validation.yml")
-    builder_ok = "openapi_bundle_order" in builder and "MANIFEST_PATH" in builder
-    workflow_missing = [path for path in SCHEMA_ORDER + OPENAPI_ORDER if path not in workflow and path not in builder]
-    add(findings, "ci_uses_registered_stacks", builder_ok and not workflow_missing, "manifest-driven OpenAPI builder and complete CI schema/API stack" if builder_ok and not workflow_missing else f"builder_ok={builder_ok}; missing={workflow_missing}")
+    builder_ok = (
+        "MANIFEST_PATH" in builder
+        and "_manifest_openapi_order" in builder
+        and 'manifest.get("openapi_bundle_order")' in builder
+    )
+    openapi_step = workflow.split(
+        "- name: Build and structurally validate effective OpenAPI", 1
+    )[-1].split("- name: Redocly lint effective OpenAPI", 1)[0]
+    workflow_uses_manifest_openapi = (
+        "scripts/build_validate_assisted_listing_intake_openapi.py" in openapi_step
+        and "--base" not in openapi_step
+        and "--overlay" not in openapi_step
+    )
+    schema_positions = [workflow.find(path) for path in SCHEMA_ORDER]
+    workflow_uses_schema_order = (
+        all(position >= 0 for position in schema_positions)
+        and schema_positions == sorted(schema_positions)
+    )
+    registered_stacks_ok = (
+        builder_ok and workflow_uses_manifest_openapi and workflow_uses_schema_order
+    )
+    stack_detail = (
+        "manifest-driven OpenAPI builder and complete ordered CI schema stack"
+        if registered_stacks_ok
+        else json.dumps(
+            {
+                "builder_ok": builder_ok,
+                "workflow_uses_manifest_openapi": workflow_uses_manifest_openapi,
+                "workflow_schema_positions": schema_positions,
+            }
+        )
+    )
+    add(findings, "ci_uses_registered_stacks", registered_stacks_ok, stack_detail)
+
+    cross_contract_step = workflow.split(
+        "- name: Run commit-bound cross-contract validation", 1
+    )[-1].split("- name: Verify cross-contract gate fails closed", 1)[0]
+    enforcement_step = workflow.split("- name: Enforce all structural gates", 1)[-1]
+    fail_closed_ci_ok = (
+        "id: cross_contract" in cross_contract_step
+        and "continue-on-error: true" in cross_contract_step
+        and "| tee" not in cross_contract_step
+        and 'exit "$STATUS"' in cross_contract_step
+        and "steps.cross_contract.outcome" in enforcement_step
+        and "cross-contract-negative-validation.json" in workflow
+    )
+    add(
+        findings,
+        "ci_enforces_cross_contract_exit",
+        fail_closed_ci_ok,
+        "validator exit is preserved, enforced, and covered by a negative mismatch test"
+        if fail_closed_ci_ok
+        else "cross-contract validator can still produce a false-green workflow",
+    )
 
     if args.strict_review_target and (not args.reviewed_commit or not args.current_pr_head):
         add(findings, "review_target", False, "strict mode requires reviewed and current SHA")
