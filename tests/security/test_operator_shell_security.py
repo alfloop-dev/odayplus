@@ -323,6 +323,7 @@ def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch
         headers_b["X-Operator-Role"] = "ops-lead"
 
         from uuid import uuid4
+
         idem_key = f"same-role-idemp-{uuid4().hex[:8]}"
 
         # A calls settings with key=idem_key
@@ -340,7 +341,9 @@ def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch
             json={"values": {"density": "comfortable"}},
         )
         assert resp_b.status_code == status.HTTP_200_OK
-        assert resp_b.json().get("idempotentReplay") is False  # B must NOT get a replay of A's cached response
+        assert (
+            resp_b.json().get("idempotentReplay") is False
+        )  # B must NOT get a replay of A's cached response
 
         # A retries settings with the SAME key
         resp_a2 = client.put(
@@ -349,7 +352,9 @@ def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch
             json={"values": {"density": "comfortable"}},
         )
         assert resp_a2.status_code == status.HTTP_200_OK
-        assert resp_a2.json().get("idempotentReplay") is True  # A gets their own cached response replayed!
+        assert (
+            resp_a2.json().get("idempotentReplay") is True
+        )  # A gets their own cached response replayed!
 
     finally:
         deps.reset_default_boundary()

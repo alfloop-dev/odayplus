@@ -113,7 +113,12 @@ def test_scenario_builder_and_solver_return_optimal_plan_with_alternatives() -> 
     assert all(action.action in set(NetworkAction) for action in result.selected_actions)
     summary = result.to_dict()
     assert summary["alternative_plan_available"] is True
-    assert {"objective_value", "budget_usage", "binding_constraints", "solver_status"} <= summary.keys()
+    assert {
+        "objective_value",
+        "budget_usage",
+        "binding_constraints",
+        "solver_status",
+    } <= summary.keys()
 
 
 def test_infeasible_scenario_reports_structured_diagnosis_without_relaxing() -> None:

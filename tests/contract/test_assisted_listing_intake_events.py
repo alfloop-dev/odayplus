@@ -23,7 +23,7 @@ def test_valid_event_contract() -> None:
                 "tenant_id": str(uuid4()),
                 "brand_id": str(uuid4()),
                 "region_id": str(uuid4()),
-            }
+            },
         },
         tenant_id=str(uuid4()),
         aggregate_type="intake",
@@ -33,9 +33,9 @@ def test_valid_event_contract() -> None:
         correlation_id=str(uuid4()),
         producer="listing_intake_service",
         schema_ref="#/payloads/IntakeSubmittedV1",
-        sensitive_fields=["payload.original_url"]
+        sensitive_fields=["payload.original_url"],
     )
-    
+
     errors = validate_event(event)
     assert not errors, f"Event should be valid: {errors}"
 
@@ -54,9 +54,9 @@ def test_invalid_envelope_missing_fields() -> None:
         "aggregate_version": 1,
         "partition_key": "tenant:intake",
         "correlation_id": str(uuid4()),
-        "payload": {}
+        "payload": {},
     }
-    
+
     errors = validate_event(event_dict)
     assert any("Envelope missing required field" in err for err in errors)
 
@@ -73,9 +73,9 @@ def test_invalid_envelope_bad_format() -> None:
         partition_key="tenant:intake",
         correlation_id=str(uuid4()),
         producer="listing_intake_service",
-        schema_ref="#/payloads/IntakeSubmittedV1"
+        schema_ref="#/payloads/IntakeSubmittedV1",
     )
-    
+
     errors = validate_event(event)
     assert any("must be a valid UUID" in err for err in errors)
 
@@ -97,9 +97,9 @@ def test_invalid_payload_schema() -> None:
         partition_key="tenant:intake",
         correlation_id=str(uuid4()),
         producer="listing_intake_service",
-        schema_ref="#/payloads/IntakeSubmittedV1"
+        schema_ref="#/payloads/IntakeSubmittedV1",
     )
-    
+
     errors = validate_event(event)
     assert any("Missing required field: scope" in err for err in errors)
 
@@ -113,9 +113,7 @@ def test_invalid_payload_type() -> None:
             "intake_method": "INVALID_METHOD",
             "submitter_subject_id": str(uuid4()),
             "submitted_at": datetime.now(UTC).isoformat(),
-            "scope": {
-                "tenant_id": str(uuid4())
-            }
+            "scope": {"tenant_id": str(uuid4())},
         },
         tenant_id=str(uuid4()),
         aggregate_type="intake",
@@ -125,9 +123,9 @@ def test_invalid_payload_type() -> None:
         correlation_id=str(uuid4()),
         producer="listing_intake_service",
         schema_ref="#/payloads/IntakeSubmittedV1",
-        sensitive_fields=["payload.original_url"]
+        sensitive_fields=["payload.original_url"],
     )
-    
+
     errors = validate_event(event)
     assert any("is not in enum" in err for err in errors)
 
@@ -143,9 +141,7 @@ def test_missing_sensitive_fields_declaration() -> None:
             "submitter_subject_id": str(uuid4()),
             "submitted_at": datetime.now(UTC).isoformat(),
             "original_url": "https://example.com/listings/123",
-            "scope": {
-                "tenant_id": str(uuid4())
-            }
+            "scope": {"tenant_id": str(uuid4())},
         },
         tenant_id=str(uuid4()),
         aggregate_type="intake",
@@ -155,9 +151,9 @@ def test_missing_sensitive_fields_declaration() -> None:
         correlation_id=str(uuid4()),
         producer="listing_intake_service",
         schema_ref="#/payloads/IntakeSubmittedV1",
-        sensitive_fields=[] # Empty sensitive fields list
+        sensitive_fields=[],  # Empty sensitive fields list
     )
-    
+
     errors = validate_event(event)
     assert any("Expected sensitive field" in err for err in errors)
 
@@ -173,7 +169,7 @@ def test_assignment_claimed_addendum_event() -> None:
             "to_status": "CLAIMED",
             "owner_subject_id": str(uuid4()),
             "version": 1,
-            "occurred_at": datetime.now(UTC).isoformat()
+            "occurred_at": datetime.now(UTC).isoformat(),
         },
         tenant_id=str(uuid4()),
         aggregate_type="assignment",
@@ -182,9 +178,9 @@ def test_assignment_claimed_addendum_event() -> None:
         partition_key="tenant:intake",
         correlation_id=str(uuid4()),
         producer="workflow_service",
-        schema_ref="#/payloads/AssignmentStateChangedV1"
+        schema_ref="#/payloads/AssignmentStateChangedV1",
     )
-    
+
     errors = validate_event(event)
     assert not errors, f"Addendum event should be valid: {errors}"
 
@@ -197,6 +193,7 @@ def test_consumer_processing() -> None:
     consumer = AssistedListingIntakeConsumer(persistence, max_attempts=3)
 
     received_events = []
+
     def dummy_handler(event: DomainEvent) -> None:
         received_events.append(event)
 
@@ -211,7 +208,7 @@ def test_consumer_processing() -> None:
             "to_status": "CLAIMED",
             "owner_subject_id": str(uuid4()),
             "version": 1,
-            "occurred_at": datetime.now(UTC).isoformat()
+            "occurred_at": datetime.now(UTC).isoformat(),
         },
         tenant_id=str(uuid4()),
         aggregate_type="assignment",
@@ -220,7 +217,7 @@ def test_consumer_processing() -> None:
         partition_key="tenant:intake",
         correlation_id=str(uuid4()),
         producer="workflow_service",
-        schema_ref="#/payloads/AssignmentStateChangedV1"
+        schema_ref="#/payloads/AssignmentStateChangedV1",
     )
 
     consumer.consume(event)
@@ -239,6 +236,7 @@ def test_consumer_retry_and_dlq() -> None:
     consumer = AssistedListingIntakeConsumer(persistence, max_attempts=3)
 
     call_count = 0
+
     def failing_handler(event: DomainEvent) -> None:
         nonlocal call_count
         call_count += 1
@@ -255,7 +253,7 @@ def test_consumer_retry_and_dlq() -> None:
             "to_status": "CLAIMED",
             "owner_subject_id": str(uuid4()),
             "version": 1,
-            "occurred_at": datetime.now(UTC).isoformat()
+            "occurred_at": datetime.now(UTC).isoformat(),
         },
         tenant_id=str(uuid4()),
         aggregate_type="assignment",
@@ -264,7 +262,7 @@ def test_consumer_retry_and_dlq() -> None:
         partition_key="tenant:intake",
         correlation_id=str(uuid4()),
         producer="workflow_service",
-        schema_ref="#/payloads/AssignmentStateChangedV1"
+        schema_ref="#/payloads/AssignmentStateChangedV1",
     )
 
     with pytest.raises(RuntimeError, match="continuous failure"):

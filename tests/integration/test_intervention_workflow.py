@@ -74,9 +74,7 @@ def _drive_to_approved(workflow: InterventionWorkflow, intervention_id: str) -> 
     )
     workflow.check_conflict(intervention_id, actor="pricing-a")
     workflow.submit_for_approval(intervention_id, actor="pricing-a")
-    workflow.approve(
-        intervention_id, actor="ops-manager", reason="margin recovery within band"
-    )
+    workflow.approve(intervention_id, actor="ops-manager", reason="margin recovery within band")
 
 
 def _drive_to_completed(workflow: InterventionWorkflow, intervention_id: str) -> None:
@@ -108,9 +106,7 @@ def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> No
     assert approved.approval is not None and approved.approval.approved
 
     # Execution opens the observation window (approval and execution are separate).
-    observing = workflow.execute(
-        case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME
-    )
+    observing = workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
     assert observing.status is InterventionStatus.OBSERVING
     assert observing.execution is not None
     assert observing.observation_window is not None
@@ -128,9 +124,7 @@ def test_full_lifecycle_reaches_completed_with_causal_evidence_and_label() -> No
         evaluation_method=EvaluationMethod.DID,
     )
 
-    outcome = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=MATURE_TIME
-    )
+    outcome = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=MATURE_TIME)
     assert outcome.intervention.status is InterventionStatus.COMPLETED
     assert outcome.effect.evidence_level is EvidenceLevel.L3_DID_VALIDATED
     assert outcome.effect.can_claim_effect is True
@@ -306,9 +300,7 @@ def test_observation_window_cannot_mature_before_execution() -> None:
     workflow, _ = _new_workflow()
     case = _open_case(workflow)
     _drive_to_approved(workflow, case.intervention_id)
-    observing = workflow.execute(
-        case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME
-    )
+    observing = workflow.execute(case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
     window = observing.observation_window
     assert window is not None
     # The maturity time is strictly after execution.
@@ -335,9 +327,7 @@ def test_immature_window_cannot_claim_effect() -> None:
         evaluation_method=EvaluationMethod.DID,
     )
 
-    outcome = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
-    )
+    outcome = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=IMMATURE_TIME)
     assert outcome.effect.evidence_level is EvidenceLevel.L0_ANECDOTAL
     assert outcome.effect.can_claim_effect is False
     assert outcome.effect.can_claim_causal is False
@@ -383,9 +373,7 @@ def test_immature_evaluate_then_close_is_rejected() -> None:
     )
 
     # Immature evaluation: window has not settled.
-    outcome = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
-    )
+    outcome = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=IMMATURE_TIME)
     assert outcome.effect.observation_mature is False
     # Must stay in EVALUATING — NOT COMPLETED.
     assert outcome.intervention.status is InterventionStatus.EVALUATING
@@ -463,16 +451,12 @@ def test_immature_evaluate_then_mature_retry_reaches_completed() -> None:
     )
 
     # Step 2: immature first evaluate — case stays in EVALUATING.
-    first = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=IMMATURE_TIME
-    )
+    first = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=IMMATURE_TIME)
     assert first.effect.observation_mature is False
     assert first.intervention.status is InterventionStatus.EVALUATING
 
     # Step 3: mature retry — must NOT raise, must advance to COMPLETED.
-    second = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=MATURE_TIME
-    )
+    second = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=MATURE_TIME)
     assert second.effect.observation_mature is True
     assert second.intervention.status is InterventionStatus.COMPLETED
 
@@ -502,9 +486,7 @@ def test_mature_without_control_is_before_after_not_causal() -> None:
         control_store_count=0,
         evaluation_method=EvaluationMethod.BEFORE_AFTER,
     )
-    outcome = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=MATURE_TIME
-    )
+    outcome = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=MATURE_TIME)
     assert outcome.effect.evidence_level is EvidenceLevel.L1_BEFORE_AFTER
     assert outcome.effect.can_claim_effect is True
     assert outcome.effect.can_claim_causal is False
@@ -527,9 +509,7 @@ def test_pretrend_failure_caps_evidence_at_matched_descriptive() -> None:
         control_store_count=4,
         evaluation_method=EvaluationMethod.DID,
     )
-    outcome = workflow.evaluate_effect(
-        case.intervention_id, actor="analyst-a", now=MATURE_TIME
-    )
+    outcome = workflow.evaluate_effect(case.intervention_id, actor="analyst-a", now=MATURE_TIME)
     assert outcome.effect.evidence_level is EvidenceLevel.L2_MATCHED_DESCRIPTIVE
     assert outcome.effect.can_claim_causal is False
     assert "pretrend_fail" in outcome.effect.limitations
@@ -583,9 +563,7 @@ def test_observation_sweep_matures_and_auto_evaluates() -> None:
 
     mature_case = _open_case(workflow, store_id="store-mature")
     _drive_to_approved(workflow, mature_case.intervention_id)
-    workflow.execute(
-        mature_case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME
-    )
+    workflow.execute(mature_case.intervention_id, executor="ops-runner", executed_at=EXEC_TIME)
     workflow.collect_outcome(
         mature_case.intervention_id,
         actor="analyst-a",
@@ -601,13 +579,9 @@ def test_observation_sweep_matures_and_auto_evaluates() -> None:
     # Executed only just before the sweep, so its window is still open.
     pending_case = _open_case(workflow, store_id="store-pending")
     _drive_to_approved(workflow, pending_case.intervention_id)
-    workflow.execute(
-        pending_case.intervention_id, executor="ops-runner", executed_at=MATURE_TIME
-    )
+    workflow.execute(pending_case.intervention_id, executor="ops-runner", executed_at=MATURE_TIME)
 
-    result = run_observation_sweep(
-        workflow, job_id="sweep-1", now=MATURE_TIME, auto_evaluate=True
-    )
+    result = run_observation_sweep(workflow, job_id="sweep-1", now=MATURE_TIME, auto_evaluate=True)
     assert mature_case.intervention_id in result.matured_ids
     assert pending_case.intervention_id not in result.matured_ids
     assert pending_case.intervention_id in result.pending_ids
@@ -659,9 +633,7 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
     client.post(f"/interventions/{iid}/conflict-check", json={"actor": "p"})
 
     # Approval without a reason is rejected (high risk).
-    no_reason = client.post(
-        f"/interventions/{iid}/submit", json={"actor": "p"}
-    )
+    no_reason = client.post(f"/interventions/{iid}/submit", json={"actor": "p"})
     assert no_reason.status_code == 200
     bad = client.post(
         f"/interventions/{iid}/approve", json={"action": "APPROVE", "actor": "m", "reason": ""}

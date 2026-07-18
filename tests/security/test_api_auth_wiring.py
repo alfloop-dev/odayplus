@@ -308,13 +308,9 @@ def test_route_distinguishes_401_403_200():
     assert client.get("/guarded").status_code == 401
 
     # Verified token but role lacks heatzone:view -> 403 authorization.
-    forbidden = client.get(
-        "/guarded", headers=_bearer(_token(roles=[Role.AUDITOR.value]))
-    )
+    forbidden = client.get("/guarded", headers=_bearer(_token(roles=[Role.AUDITOR.value])))
     assert forbidden.status_code == 403
 
     # Verified token with the granting role -> 200.
-    ok = client.get(
-        "/guarded", headers=_bearer(_token(roles=[Role.EXPANSION_USER.value]))
-    )
+    ok = client.get("/guarded", headers=_bearer(_token(roles=[Role.EXPANSION_USER.value])))
     assert ok.status_code == 200

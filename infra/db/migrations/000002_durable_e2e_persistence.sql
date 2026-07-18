@@ -48,13 +48,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_audit_sequence
 -- replay the original job after a restart instead of duplicating work.
 -- ---------------------------------------------------------
 CREATE TABLE IF NOT EXISTS durable_jobs (
-    job_id          TEXT PRIMARY KEY,
-    job_type        TEXT NOT NULL,
-    status          TEXT NOT NULL,
-    correlation_id  TEXT NOT NULL,
-    idempotency_key TEXT,
-    payload_json    TEXT NOT NULL DEFAULT '{}',
-    created_at      TEXT NOT NULL
+    job_id           TEXT PRIMARY KEY,
+    job_type         TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    correlation_id   TEXT NOT NULL,
+    idempotency_key  TEXT,
+    payload_json     TEXT NOT NULL DEFAULT '{}',
+    created_at       TEXT NOT NULL,
+    fence_token      INTEGER NOT NULL DEFAULT 0,
+    version          INTEGER NOT NULL DEFAULT 1,
+    locked_by        TEXT,
+    heartbeat_at     TEXT,
+    lease_expires_at TEXT,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    error_message    TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_jobs_idempotency
     ON durable_jobs(idempotency_key)

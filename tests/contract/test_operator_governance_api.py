@@ -220,7 +220,9 @@ def test_evidence_package_export_records_full_metadata() -> None:
 
     # The export is recorded in the audit trail and the history list.
     snap = client.get(f"{BASE}/snapshot", headers=WRITE_HEADERS).json()
-    assert any(row["category"] == "export" and row["entityRef"] == pkg["id"] for row in snap["auditRows"])
+    assert any(
+        row["category"] == "export" and row["entityRef"] == pkg["id"] for row in snap["auditRows"]
+    )
     assert any(item["id"] == pkg["id"] for item in snap["evidencePackages"])
 
 

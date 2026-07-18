@@ -29,12 +29,23 @@ def test_commands_resolve_listing_candidate_and_source_without_rewriting_lineage
 
     merge = commands.merge(
         MergeIdentityCommand(
-            "tenant-a", ("p-original",), "p-canonical", "duplicate property", graph.version("tenant-a")
+            "tenant-a",
+            ("p-original",),
+            "p-canonical",
+            "duplicate property",
+            graph.version("tenant-a"),
         )
     )
-    assert resolver.resolve_source(IdentityKey("listing", "approved-feed", "source-17", "tenant-a")).effective_property_id == "p-canonical"
+    assert (
+        resolver.resolve_source(
+            IdentityKey("listing", "approved-feed", "source-17", "tenant-a")
+        ).effective_property_id
+        == "p-canonical"
+    )
     assert resolver.resolve_listing("tenant-a", "listing-17").effective_property_id == "p-canonical"
-    assert resolver.resolve_candidate("tenant-a", "candidate-9").effective_property_id == "p-canonical"
+    assert (
+        resolver.resolve_candidate("tenant-a", "candidate-9").effective_property_id == "p-canonical"
+    )
     assert listing.property_id_at_creation == candidate.property_id_at_creation == "p-original"
 
     split = commands.split(
@@ -42,16 +53,27 @@ def test_commands_resolve_listing_candidate_and_source_without_rewriting_lineage
             "tenant-a", {source: "p-split"}, "separate unit", graph.version("tenant-a")
         )
     )
-    assert resolver.resolve_source(IdentityKey("listing", "approved-feed", "source-17", "tenant-a")).effective_property_id == "p-split"
+    assert (
+        resolver.resolve_source(
+            IdentityKey("listing", "approved-feed", "source-17", "tenant-a")
+        ).effective_property_id
+        == "p-split"
+    )
 
     commands.unmerge(
-        UnmergeIdentityCommand("tenant-a", split.decision_id, "reverse split", graph.version("tenant-a"))
+        UnmergeIdentityCommand(
+            "tenant-a", split.decision_id, "reverse split", graph.version("tenant-a")
+        )
     )
     commands.unmerge(
-        UnmergeIdentityCommand("tenant-a", merge.decision_id, "reverse merge", graph.version("tenant-a"))
+        UnmergeIdentityCommand(
+            "tenant-a", merge.decision_id, "reverse merge", graph.version("tenant-a")
+        )
     )
     assert resolver.resolve_listing("tenant-a", "listing-17").effective_property_id == "p-original"
-    assert resolver.resolve_candidate("tenant-a", "candidate-9").effective_property_id == "p-original"
+    assert (
+        resolver.resolve_candidate("tenant-a", "candidate-9").effective_property_id == "p-original"
+    )
     assert len(graph.edge_history(source)) == 5
 
 

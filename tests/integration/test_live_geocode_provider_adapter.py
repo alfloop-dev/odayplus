@@ -210,6 +210,7 @@ def test_rate_limit_retry_budget_retries_then_preserves_success_lineage() -> Non
     )
 
     import h3
+
     assert len(client.calls) == 2
     assert result.provider_request_id == "geo-live-req-retry"
     assert result.address.h3_res_9 and h3.is_valid_cell(result.address.h3_res_9)
@@ -302,6 +303,7 @@ def test_low_confidence_live_geocoder_response_preserves_admin_match_and_precisi
     )
 
     import h3
+
     assert result.admin_match_flag is True
     assert result.address.geocode_precision == "street"
     assert result.address.geocode_confidence == 0.42

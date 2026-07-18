@@ -88,9 +88,7 @@ def test_point_in_time_validation_rejects_future_feature_snapshot() -> None:
         ]
     )
 
-    assert [issue.check_name for issue in issues] == [
-        "feature_snapshot_after_prediction_origin"
-    ]
+    assert [issue.check_name for issue in issues] == ["feature_snapshot_after_prediction_origin"]
 
 
 def test_build_dataset_snapshot_blocks_unmatured_training_label() -> None:

@@ -55,9 +55,7 @@ def test_domain_route_denies_anonymous_and_writes_security_audit() -> None:
 
 def test_domain_route_denies_wrong_role() -> None:
     # MARKETING_MANAGER is only granted the adlift resource, never forecastops.
-    client = TestClient(
-        create_app(), headers=auth_headers(Role.MARKETING_MANAGER)
-    )
+    client = TestClient(create_app(), headers=auth_headers(Role.MARKETING_MANAGER))
 
     response = client.get("/forecastops/timeseries")
 
