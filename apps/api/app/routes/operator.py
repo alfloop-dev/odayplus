@@ -208,6 +208,7 @@ def create_operator_router(
             require_write_permission_fn=require_operator_permission(
                 "listing", Action.UPDATE, engine=authz_engine
             ),
+            audit_log=active_audit_log,
         )
     )
 

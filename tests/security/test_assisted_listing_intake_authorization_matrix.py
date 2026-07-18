@@ -288,3 +288,86 @@ def test_data_classification_masking() -> None:
     assert masked["parsedFields"]["contactPhone"]["correctedValue"] is None
     assert masked["parsedFields"]["contactPhone"]["masked"] is True
     assert masked["parsedFields"]["contactPhone"]["mask_reason_code"] == "FIELD_MASKED"
+
+
+def test_audit_event_recorded_on_deny() -> None:
+    from fastapi import HTTPException
+
+    from modules.listing.application.intake_authorization import authorize_intake_action
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import ANONYMOUS
+
+    audit_log = InMemoryAuditLog()
+    
+    with pytest.raises(HTTPException):
+        authorize_intake_action(
+            ANONYMOUS,
+            "view",
+            resource={"tenantId": "tenant-a"},
+            audit_log=audit_log,
+            correlation_id="corr-deny-123"
+        )
+    
+    events = audit_log.list_events(correlation_id="corr-deny-123")
+    assert len(events) == 1
+    assert events[0].outcome == "deny"
+    assert events[0].correlation_id == "corr-deny-123"
+
+
+def test_staff_view_own_only_filtering() -> None:
+    client = TestClient(create_app())
+
+    # Submit intake as user-a (Staff)
+    headers_user_a = _write_headers(
+        "filter-staff-a",
+        {
+            "x-subject-id": "user-a",
+            "x-roles": "expansion_user",
+            "x-operator-role": "expansion-staff",
+        },
+    )
+    submit_a = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={"url": "https://www.synthetic.example/detail-filter-a.html", "heatZoneId": "HZ-01"},
+        headers=headers_user_a,
+    )
+    assert submit_a.status_code == 200
+    intake_a_id = submit_a.json()["id"]
+
+    # Submit intake as user-b (Staff)
+    headers_user_b = _write_headers(
+        "filter-staff-b",
+        {
+            "x-subject-id": "user-b",
+            "x-roles": "expansion_user",
+            "x-operator-role": "expansion-staff",
+        },
+    )
+    submit_b = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={"url": "https://www.synthetic.example/detail-filter-b.html", "heatZoneId": "HZ-01"},
+        headers=headers_user_b,
+    )
+    assert submit_b.status_code == 200
+    intake_b_id = submit_b.json()["id"]
+
+    # Now get all network listings as user-a -> should only see intake_a, not intake_b
+    get_a = client.get(
+        "/api/v1/operator/network-listings",
+        headers=headers_user_a,
+    )
+    assert get_a.status_code == 200
+    assisted_intakes_a = get_a.json().get("assistedIntakes", [])
+    intake_ids_a = [i["id"] for i in assisted_intakes_a]
+    assert intake_a_id in intake_ids_a
+    assert intake_b_id not in intake_ids_a
+
+    # Now list intakes as user-a -> should only see intake_a, not intake_b
+    list_intakes_a = client.get(
+        "/api/v1/operator/network-listings/intake",
+        headers=headers_user_a,
+    )
+    assert list_intakes_a.status_code == 200
+    list_ids_a = [i["id"] for i in list_intakes_a.json()]
+    assert intake_a_id in list_ids_a
+    assert intake_b_id not in list_ids_a

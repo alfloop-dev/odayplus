@@ -9,7 +9,17 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from shared.auth import DataClassification, Principal, Role
+from shared.audit import build_security_event
+from shared.auth import (
+    AccessRequest,
+    Action,
+    DataClassification,
+    Decision,
+    Environment,
+    Principal,
+    ResourceDescriptor,
+    Role,
+)
 
 
 def authorize_intake_action(
@@ -24,23 +34,78 @@ def authorize_intake_action(
     has_legal_hold: bool = False,
     is_residency_compliant: bool = True,
     operator_role_id: str | None = None,
+    audit_log: Any = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation."""
+    def map_action_to_enum(action_str: str) -> Action:
+        mapping = {
+            "view": Action.VIEW,
+            "submit_url": Action.CREATE,
+            "submit_csv": Action.CREATE,
+            "cancel": Action.UPDATE,
+            "correct": Action.UPDATE,
+            "decide": Action.UPDATE,
+            "merge": Action.UPDATE,
+            "split": Action.UPDATE,
+            "promote": Action.UPDATE,
+            "convert": Action.UPDATE,
+            "reopen_failed": Action.UPDATE,
+            "reopen_quarantine": Action.UPDATE,
+            "purge": Action.DELETE,
+            "export": Action.EXPORT,
+        }
+        return mapping.get(action_str, Action.UPDATE)
+
+    def _raise_and_audit(status_code: int, detail: str) -> None:
+        if audit_log is not None:
+            resource_id = None
+            res_type = "listing"
+            tenant_id = None
+            if resource is not None:
+                resource_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
+                if "url" in resource or "parsedFields" in resource:
+                    res_type = "intake"
+                tenant_id = resource.get("tenantId") or resource.get("tenant_id")
+            
+            action_enum = map_action_to_enum(action)
+            desc = ResourceDescriptor(
+                type=res_type,
+                resource_id=resource_id,
+                tenant_id=tenant_id or principal.tenant_id,
+            )
+            access = AccessRequest(
+                principal=principal,
+                action=action_enum,
+                resource=desc,
+                environment=Environment(
+                    source_ip=None,
+                    attributes={"correlation_id": correlation_id or "unknown"}
+                ),
+            )
+            decision = Decision.deny(
+                reason=detail,
+                policy_id="intake_authorization",
+            )
+            event = build_security_event(access, decision)
+            audit_log.record(event)
+        raise HTTPException(status_code=status_code, detail=detail)
+
     # 1. Authenticated check
     if not principal.authenticated:
-        raise HTTPException(status_code=401, detail="AUTHENTICATION_REQUIRED")
+        _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
 
     # 2. Tenant Isolation
     if resource is not None:
         resource_tenant = resource.get("tenantId") or resource.get("tenant_id")
         if resource_tenant and principal.tenant_id and principal.tenant_id != resource_tenant:
-            raise HTTPException(status_code=403, detail="TENANT_SCOPE_DENIED")
+            _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
 
     # 3. Brand/Region/Area/HeatZone scope
     if resource is not None:
         zone_id = resource.get("heatZoneId") or resource.get("heat_zone_id")
         if zone_id and not principal.scope.permits_region(zone_id):
-            raise HTTPException(status_code=403, detail="SCOPE_DENIED")
+            _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
     is_admin = principal.has_role(Role.PLATFORM_ADMIN) or operator_role_id == "platform-admin"
@@ -75,10 +140,11 @@ def authorize_intake_action(
 
     # Deny platform admin from accessing business data
     if is_admin and not (is_manager or is_staff or is_steward):
-        raise HTTPException(status_code=403, detail="ROLE_DENIED")
+        _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     def _is_owner(owner: Any, submitter: Any) -> bool:
-        if owner in ("林曉青", "林曉青（展店）") or submitter in ("林曉青", "林曉青（展店）"):
+        sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
+        if owner in sentinels or submitter in sentinels:
             return True
         return principal.subject_id in (owner, submitter)
 
@@ -88,42 +154,42 @@ def authorize_intake_action(
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
-            if owner and submitter and not _is_owner(owner, submitter):
-                raise HTTPException(status_code=403, detail="OWNERSHIP_REQUIRED")
+            if not _is_owner(owner, submitter):
+                _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         # Ensure allowed roles
         if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):
         if not (is_staff or is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "cancel":
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
-            if owner and submitter and not _is_owner(owner, submitter):
-                raise HTTPException(status_code=403, detail="OWNERSHIP_REQUIRED")
+            if not _is_owner(owner, submitter):
+                _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         if not (is_staff or is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "correct":
         # Check risk acknowledgement for corrections
         if is_identity_affecting:
             if not risk_summary or not risk_summary.strip():
-                raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+                _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
             if not risk_acknowledged:
-                raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+                _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         # Staff can only correct own submissions
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
-            if owner and submitter and not _is_owner(owner, submitter):
-                raise HTTPException(status_code=403, detail="OWNERSHIP_REQUIRED")
+            if not _is_owner(owner, submitter):
+                _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
 
         if not (is_staff or is_manager or is_steward or is_privacy):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
         # Identity-affecting corrections proposer reviewer check (segregation)
         if is_identity_affecting:
@@ -131,89 +197,92 @@ def authorize_intake_action(
             if is_steward and resource is not None:
                 proposer = resource.get("submitter") or resource.get("proposed_by")
                 if proposer == principal.subject_id:
-                    raise HTTPException(status_code=403, detail="SELF_REVIEW_DENIED")
+                    _raise_and_audit(status_code=403, detail="SELF_REVIEW_DENIED")
 
     elif action == "decide":
         # Check risk acknowledgement for decide
         if not risk_summary or not risk_summary.strip():
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
         if not risk_acknowledged:
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         if is_staff:
             # Staff can only propose
             pass
         elif not (is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("merge", "split", "unmerge"):
         if is_staff:
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
         # Check risk acknowledgement for merge/split/unmerge
         if not risk_summary or not risk_summary.strip():
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
         if not risk_acknowledged:
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         # Merge/split require independent second actor
         if first_actor_id and first_actor_id == principal.subject_id:
-            raise HTTPException(status_code=409, detail="SECOND_ACTOR_REQUIRED")
+            _raise_and_audit(status_code=409, detail="SECOND_ACTOR_REQUIRED")
 
     elif action == "promote":
         # Check risk acknowledgement for promote
         if not risk_summary or not risk_summary.strip():
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
         if not risk_acknowledged:
-            raise HTTPException(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+            _raise_and_audit(status_code=422, detail="RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
         if not (is_staff or is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
         # Segregation of duties: proposer of promotion cannot approve own promotion request
         if first_actor_id and first_actor_id == principal.subject_id:
-            raise HTTPException(status_code=403, detail="SELF_REVIEW_DENIED")
+            _raise_and_audit(status_code=403, detail="SELF_REVIEW_DENIED")
 
     elif action == "convert":
         if not (is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "purge":
         if not (is_manager or is_steward or is_privacy):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if has_legal_hold:
-            raise HTTPException(status_code=409, detail="LEGAL_HOLD_CONFLICT")
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
         if first_actor_id and first_actor_id == principal.subject_id:
-            raise HTTPException(status_code=409, detail="SECOND_ACTOR_REQUIRED")
+            _raise_and_audit(status_code=409, detail="SECOND_ACTOR_REQUIRED")
 
     elif action == "export":
         if not is_residency_compliant:
-            raise HTTPException(status_code=403, detail="RESIDENCY_DENIED")
+            _raise_and_audit(status_code=403, detail="RESIDENCY_DENIED")
         if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "reopen_failed":
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
-            if owner and submitter and not _is_owner(owner, submitter):
-                raise HTTPException(status_code=403, detail="OWNERSHIP_REQUIRED")
+            if not _is_owner(owner, submitter):
+                _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         if not (is_staff or is_manager or is_steward):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "reopen_quarantine":
         if is_staff:
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward or is_privacy):
-            raise HTTPException(status_code=403, detail="ROLE_DENIED")
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if first_actor_id and first_actor_id == principal.subject_id:
-            raise HTTPException(status_code=409, detail="SECOND_ACTOR_REQUIRED")
+            _raise_and_audit(status_code=409, detail="SECOND_ACTOR_REQUIRED")
 
     else:
         # Default deny-by-default for unknown actions
-        raise HTTPException(status_code=403, detail="ROLE_DENIED")
+        _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+
+
 
 
 def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any]:

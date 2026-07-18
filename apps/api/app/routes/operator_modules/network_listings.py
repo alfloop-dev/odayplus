@@ -30,6 +30,17 @@ from modules.opsboard.application.network_listings import (
     NetworkListingPolicyError,
     NetworkListingService,
 )
+from shared.auth import Principal, Role
+from shared.audit import InMemoryAuditLog
+
+
+def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
+    owner = record.get("owner")
+    submitter = record.get("submitter")
+    sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
+    if owner in sentinels or submitter in sentinels:
+        return True
+    return principal.subject_id in (owner, submitter)
 
 
 class NetworkListingActorPayload(BaseModel):
@@ -81,6 +92,7 @@ def create_network_listings_sub_router(
     *,
     require_view_permission_fn: Callable[..., Any],
     require_write_permission_fn: Callable[..., Any],
+    audit_log: InMemoryAuditLog | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
 
@@ -122,12 +134,48 @@ def create_network_listings_sub_router(
     ) -> dict[str, Any]:
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
-        authorize_intake_action(principal, "view", operator_role_id=operator_role_id)
+        authorize_intake_action(
+            principal,
+            "view",
+            operator_role_id=operator_role_id,
+            audit_log=audit_log,
+            correlation_id=x_correlation_id,
+        )
         snap = service.snapshot(
             selected_heat_zone_id=selected_heat_zone_id,
             lens=lens,
             correlation_id=x_correlation_id,
         )
+
+        is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+            "expansion-manager",
+            "expansionManager",
+            "site-reviewer",
+            "siteReviewer",
+            "executive",
+        )
+        is_staff = (
+            principal.has_role(Role.EXPANSION_USER)
+            or operator_role_id in (
+                "expansion-staff",
+                "expansionStaff",
+                "expansion-user",
+                "expansion_user",
+            )
+        ) and not is_manager
+
+        if is_staff:
+            if "listings" in snap:
+                snap["listings"] = [
+                    lst for lst in snap["listings"]
+                    if is_record_owner(principal, lst)
+                ]
+            if "assistedIntakes" in snap:
+                snap["assistedIntakes"] = [
+                    intake for intake in snap["assistedIntakes"]
+                    if is_record_owner(principal, intake)
+                ]
+
         if "listings" in snap:
             snap["listings"] = [mask_listing(principal, lst) for lst in snap["listings"]]
         if "assistedIntakes" in snap:
@@ -173,6 +221,8 @@ def create_network_listings_sub_router(
                 first_actor_id=first_actor_id,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.convert_listing(
@@ -235,6 +285,8 @@ def create_network_listings_sub_router(
                 first_actor_id=first_actor_id,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
             authorize_intake_action(
                 principal,
@@ -245,6 +297,8 @@ def create_network_listings_sub_router(
                 first_actor_id=first_actor_id,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.merge_listing(
@@ -295,6 +349,8 @@ def create_network_listings_sub_router(
                 resource=listing,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.archive_listing(
@@ -339,6 +395,8 @@ def create_network_listings_sub_router(
                 "submit_url",
                 resource={"heatZoneId": body.heatZoneId},
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.submit_intake(
@@ -369,13 +427,40 @@ def create_network_listings_sub_router(
     ) -> list[dict[str, Any]]:
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
+        correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
         authorize_intake_action(
             principal,
             "view",
             resource={"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else None,
             operator_role_id=operator_role_id,
+            audit_log=audit_log,
+            correlation_id=correlation_id,
         )
         intakes = service.list_intakes(selected_heat_zone_id=selected_heat_zone_id)
+
+        is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+            "expansion-manager",
+            "expansionManager",
+            "site-reviewer",
+            "siteReviewer",
+            "executive",
+        )
+        is_staff = (
+            principal.has_role(Role.EXPANSION_USER)
+            or operator_role_id in (
+                "expansion-staff",
+                "expansionStaff",
+                "expansion-user",
+                "expansion_user",
+            )
+        ) and not is_manager
+
+        if is_staff:
+            intakes = [
+                intake for intake in intakes
+                if is_record_owner(principal, intake)
+            ]
+
         return [mask_intake(principal, intake) for intake in intakes]
 
     @router.get(
@@ -387,8 +472,14 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = service.get_intake(intake_id)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             authorize_intake_action(
-                principal, "view", resource=intake, operator_role_id=operator_role_id
+                principal,
+                "view",
+                resource=intake,
+                operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=correlation_id,
             )
             return mask_intake(principal, intake)
         except NetworkListingNotFound as exc:
@@ -427,6 +518,8 @@ def create_network_listings_sub_router(
                 is_identity_affecting=is_identity_affecting,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.correct_intake(
@@ -476,6 +569,8 @@ def create_network_listings_sub_router(
                 first_actor_id=first_actor_id,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.decide_intake(
@@ -523,6 +618,8 @@ def create_network_listings_sub_router(
                 action,
                 resource=intake,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.retry_intake(
@@ -567,6 +664,8 @@ def create_network_listings_sub_router(
                 first_actor_id=first_actor_id,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
+                audit_log=audit_log,
+                correlation_id=x_correlation_id,
             )
 
             result = service.promote_intake(
