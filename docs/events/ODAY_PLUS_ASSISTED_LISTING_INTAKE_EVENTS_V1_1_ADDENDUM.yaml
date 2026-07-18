@@ -1,0 +1,286 @@
+contract_id: ODP-SD-INTAKE-EVENTS-001-ADDENDUM
+version: 1.1.0
+status: proposed
+owner: System Design / Platform Engineering
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml
+
+rules:
+  event_type_versioning: event_type omits version suffix; event_version carries the integer version
+  state_contract_labels:
+    audit_action_codes:
+      - intake.identity_check_started.v1
+      - intake.source_policy_started.v1
+      - intake.retrieval_approved.v1
+      - intake.assisted_entry_required.v1
+      - intake.parsing_started.v1
+      - intake.processing_failed.v1
+      - intake.assisted_entry_completed.v1
+      - intake.matching_started.v1
+      - intake.review_required.v1
+      - intake.resolved.v1
+      - intake.reopened.v1
+      - intake.cancelled.v1
+      - listing.quarantined.v1
+      - listing.relisted.v1
+      - listing.reopened.v1
+      - listing.archived.v1
+      - match.case_created.v1
+      - match.rejected.v1
+      - identity.execution_started.v1
+      - identity.execution_failed.v1
+      - identity.reversal_requested.v1
+      - identity.execution_retry_requested.v1
+      - candidate.promotion_validating.v1
+      - candidate.creation_started.v1
+      - candidate.creation_failed.v1
+    rule: These strings are audit action codes unless an event_type with the same semantic phase is explicitly cataloged below.
+
+catalog_additions:
+  - event_type: assignment.claimed
+    event_version: 1
+    producer: workflow_service
+    transaction_owner: workflow.assignment_transitions
+    aggregate_type: assignment
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_assignment
+    schema_ref: '#/payloads/AssignmentStateChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, operator_console_projection, analytics_ingestion]
+    retention_days: 14
+
+  - event_type: assignment.completed
+    event_version: 1
+    producer: workflow_service
+    transaction_owner: workflow.assignment_transitions
+    aggregate_type: assignment
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_assignment
+    schema_ref: '#/payloads/AssignmentStateChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, sla_service, operator_console_projection, analytics_ingestion]
+    retention_days: 14
+
+  - event_type: sla.state_changed
+    event_version: 1
+    producer: sla_service
+    transaction_owner: workflow.sla_transitions
+    aggregate_type: sla_instance
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake_sla
+    schema_ref: '#/payloads/SlaStateChangedV1'
+    sensitive_fields: []
+    consumers: [task_projection, notification_service, operator_console_projection, operations_metrics]
+    retention_days: 14
+
+  - event_type: candidate.promotion_reviewed
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: expansion.promotion_decisions
+    aggregate_type: promotion_decision
+    partition_key: tenant_id:promotion_decision_id
+    ordering_scope: one_promotion
+    schema_ref: '#/payloads/PromotionReviewedV1'
+    sensitive_fields: []
+    consumers: [task_projection, operator_console_projection, audit_projection]
+    retention_days: 14
+
+  - event_type: candidate.promotion_failed
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: expansion.promotion_decisions
+    aggregate_type: promotion_decision
+    partition_key: tenant_id:promotion_decision_id
+    ordering_scope: one_promotion
+    schema_ref: '#/payloads/PromotionFailedV1'
+    sensitive_fields: [payload.error_details]
+    consumers: [task_projection, operator_console_projection, operations_alerting]
+    retention_days: 30
+
+  - event_type: sitescore.requested
+    event_version: 1
+    producer: candidate_promotion_service
+    transaction_owner: workflow.jobs
+    aggregate_type: candidate_site
+    partition_key: tenant_id:candidate_site_id
+    ordering_scope: one_candidate
+    schema_ref: '#/payloads/SiteScoreRequestedV1'
+    sensitive_fields: []
+    consumers: [sitescore_orchestrator, candidate_projection, analytics_ingestion]
+    retention_days: 14
+
+  - event_type: sitescore.failed
+    event_version: 1
+    producer: sitescore_worker
+    transaction_owner: workflow.jobs
+    aggregate_type: candidate_site
+    partition_key: tenant_id:candidate_site_id
+    ordering_scope: one_candidate
+    schema_ref: '#/payloads/SiteScoreFailedV1'
+    sensitive_fields: [payload.error_details]
+    consumers: [candidate_projection, task_projection, operations_alerting]
+    retention_days: 30
+
+  - event_type: job.replay_requested
+    event_version: 1
+    producer: job_platform
+    transaction_owner: workflow.jobs
+    aggregate_type: job
+    partition_key: tenant_id:job_id
+    ordering_scope: one_job
+    schema_ref: '#/payloads/JobReplayRequestedV1'
+    sensitive_fields: []
+    consumers: [operations_alerting, audit_projection]
+    retention_days: 30
+
+  - event_type: legal_hold.placed
+    event_version: 1
+    producer: privacy_governance_service
+    transaction_owner: audit.legal_holds
+    aggregate_type: legal_hold
+    partition_key: tenant_id:subject_type:subject_id
+    ordering_scope: one_held_subject
+    schema_ref: '#/payloads/LegalHoldChangedV1'
+    sensitive_fields: []
+    consumers: [purge_service, evidence_index, audit_projection]
+    retention_days: 30
+
+  - event_type: legal_hold.released
+    event_version: 1
+    producer: privacy_governance_service
+    transaction_owner: audit.legal_holds
+    aggregate_type: legal_hold
+    partition_key: tenant_id:subject_type:subject_id
+    ordering_scope: one_held_subject
+    schema_ref: '#/payloads/LegalHoldChangedV1'
+    sensitive_fields: []
+    consumers: [purge_service, evidence_index, audit_projection]
+    retention_days: 30
+
+  - event_type: evidence.exported
+    event_version: 1
+    producer: evidence_export_service
+    transaction_owner: audit.export_manifests
+    aggregate_type: export_manifest
+    partition_key: tenant_id:export_manifest_id
+    ordering_scope: one_export
+    schema_ref: '#/payloads/EvidenceExportedV1'
+    sensitive_fields: [payload.object_uri]
+    consumers: [audit_projection, evidence_verifier, export_notification]
+    retention_days: 30
+
+payloads:
+  AssignmentStateChangedV1:
+    type: object
+    additionalProperties: false
+    required: [assignment_id, intake_id, from_status, to_status, owner_subject_id, version, occurred_at]
+    properties:
+      assignment_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      from_status: {type: [string, 'null']}
+      to_status: {type: string, enum: [UNASSIGNED, ASSIGNED, CLAIMED, TRANSFERRED, ESCALATED, COMPLETED]}
+      owner_subject_id: {type: [string, 'null'], format: uuid}
+      version: {type: integer, minimum: 1}
+      occurred_at: {type: string, format: date-time}
+
+  SlaStateChangedV1:
+    type: object
+    additionalProperties: false
+    required: [sla_instance_id, intake_id, from_state, to_state, due_at, version, occurred_at]
+    properties:
+      sla_instance_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      from_state: {type: [string, 'null']}
+      to_state: {type: string, enum: [ON_TRACK, DUE_SOON, OVERDUE, BREACHED, PAUSED, COMPLETED]}
+      due_at: {type: string, format: date-time}
+      paused_duration_seconds: {type: integer, minimum: 0}
+      version: {type: integer, minimum: 1}
+      occurred_at: {type: string, format: date-time}
+
+  PromotionReviewedV1:
+    type: object
+    additionalProperties: false
+    required: [promotion_decision_id, intake_id, listing_id, review_decision, reviewer_subject_id, version]
+    properties:
+      promotion_decision_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      listing_id: {type: string, format: uuid}
+      review_decision: {type: string, enum: [APPROVE, REJECT, RETURN]}
+      reviewer_subject_id: {type: string, format: uuid}
+      version: {type: integer, minimum: 1}
+
+  PromotionFailedV1:
+    type: object
+    additionalProperties: false
+    required: [promotion_decision_id, status, error_code, retryable, attempt]
+    properties:
+      promotion_decision_id: {type: string, format: uuid}
+      status: {type: string, enum: [FAILED, SCORE_FAILED]}
+      error_code: {type: string}
+      error_details: {type: object}
+      retryable: {type: boolean}
+      attempt: {type: integer, minimum: 1}
+
+  SiteScoreRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [candidate_site_id, promotion_decision_id, site_score_job_id, gate_snapshot_sha256]
+    properties:
+      candidate_site_id: {type: string, format: uuid}
+      promotion_decision_id: {type: string, format: uuid}
+      site_score_job_id: {type: string, format: uuid}
+      gate_snapshot_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+
+  SiteScoreFailedV1:
+    type: object
+    additionalProperties: false
+    required: [candidate_site_id, site_score_job_id, error_code, retryable, attempt]
+    properties:
+      candidate_site_id: {type: string, format: uuid}
+      site_score_job_id: {type: string, format: uuid}
+      error_code: {type: string}
+      error_details: {type: object}
+      retryable: {type: boolean}
+      attempt: {type: integer, minimum: 1}
+
+  JobReplayRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [job_id, checkpoint, requested_by, reason, override_retry_budget]
+    properties:
+      job_id: {type: string, format: uuid}
+      checkpoint: {type: string}
+      requested_by: {type: string, format: uuid}
+      reason: {type: string}
+      override_retry_budget: {type: boolean}
+
+  LegalHoldChangedV1:
+    type: object
+    additionalProperties: false
+    required: [legal_hold_id, subject_type, subject_id, action, actor_subject_id, occurred_at]
+    properties:
+      legal_hold_id: {type: string, format: uuid}
+      subject_type: {type: string}
+      subject_id: {type: string, format: uuid}
+      action: {type: string, enum: [PLACED, RELEASED]}
+      actor_subject_id: {type: string, format: uuid}
+      occurred_at: {type: string, format: date-time}
+
+  EvidenceExportedV1:
+    type: object
+    additionalProperties: false
+    required: [export_manifest_id, requested_by, approved_by, row_count, file_count, content_sha256, watermark, expires_at]
+    properties:
+      export_manifest_id: {type: string, format: uuid}
+      requested_by: {type: string, format: uuid}
+      approved_by: {type: string, format: uuid}
+      row_count: {type: integer, minimum: 0}
+      file_count: {type: integer, minimum: 1}
+      object_uri: {type: string}
+      content_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      watermark: {type: string}
+      expires_at: {type: string, format: date-time}
+
+base_payload_completion_gate:
+  rule: Every payload entry in the base v1 catalog must be expanded to a complete JSON Schema with type, additionalProperties, required, and properties before implementation approval.
+  owner: Platform Engineering / domain event owner
+  fail_closed: event publication feature flag remains off
