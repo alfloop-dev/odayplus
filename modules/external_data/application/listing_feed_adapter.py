@@ -8,7 +8,10 @@ from typing import Any
 
 import httpx
 
-from modules.listing.application.pipeline import ListingPipeline
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from modules.listing.application.pipeline import ListingPipeline
 
 
 class ListingFeedClientError(Exception):
