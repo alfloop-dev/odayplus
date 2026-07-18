@@ -55,8 +55,9 @@ class DurableJobQueue:
             "INSERT INTO durable_jobs("
             "  job_id, job_type, status, correlation_id, idempotency_key, "
             "  payload_json, created_at, fence_token, version, locked_by, "
-            "  heartbeat_at, lease_expires_at, attempts, error_message"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  heartbeat_at, lease_expires_at, attempts, error_message, "
+            "  leased_until, max_retries"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.job_id,
                 record.job_type,
@@ -72,6 +73,8 @@ class DurableJobQueue:
                 record.lease_expires_at.isoformat() if record.lease_expires_at else None,
                 record.attempts,
                 record.error_message,
+                record.leased_until.isoformat() if record.leased_until else None,
+                record.max_retries,
             ),
         )
         return record, True
@@ -79,6 +82,86 @@ class DurableJobQueue:
     def get(self, job_id: str) -> JobRecord | None:
         row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
         return None if row is None else self._row_to_record(row)
+
+    def lease(self, lease_duration_seconds: float) -> JobRecord | None:
+        from datetime import UTC, timedelta
+        with self._engine.lock:
+            now = datetime.now(UTC)
+            now_str = now.isoformat()
+
+            while True:
+                # Find the oldest eligible job
+                row = self._engine.query_one(
+                    "SELECT * FROM durable_jobs WHERE status = ? OR (status = ? AND leased_until < ?) ORDER BY created_at ASC LIMIT 1",
+                    (JobStatus.QUEUED.value, JobStatus.RUNNING.value, now_str)
+                )
+                if row is None:
+                    return None
+
+                job_id = row["job_id"]
+                current_attempts = row["attempts"]
+                max_retries = row["max_retries"]
+
+                # Check if it has exceeded max_retries
+                if current_attempts >= max_retries:
+                    self._engine.execute(
+                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, job_id)
+                    )
+                    continue
+
+                new_attempts = current_attempts + 1
+                leased_until_dt = now + timedelta(seconds=lease_duration_seconds)
+                leased_until_str = leased_until_dt.isoformat()
+
+                self._engine.execute(
+                    "UPDATE durable_jobs SET status = ?, attempts = ?, leased_until = ? WHERE job_id = ?",
+                    (JobStatus.RUNNING.value, new_attempts, leased_until_str, job_id)
+                )
+
+                updated_row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
+                return self._row_to_record(updated_row)
+
+    def complete(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
+        with self._engine.lock:
+            if lease_token is not None:
+                row = self._engine.query_one("SELECT status, leased_until FROM durable_jobs WHERE job_id = ?", (job_id,))
+                if row is None:
+                    return False
+                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                if row["status"] != JobStatus.RUNNING.value or row["leased_until"] != token_str:
+                    return False
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                (JobStatus.SUCCEEDED.value, job_id)
+            )
+            return True
+
+    def fail(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
+        with self._engine.lock:
+            if lease_token is not None:
+                row = self._engine.query_one("SELECT status, leased_until FROM durable_jobs WHERE job_id = ?", (job_id,))
+                if row is None:
+                    return False
+                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                if row["status"] != JobStatus.RUNNING.value or row["leased_until"] != token_str:
+                    return False
+
+            row = self._engine.query_one("SELECT max_retries, attempts FROM durable_jobs WHERE job_id = ?", (job_id,))
+            if row is not None:
+                attempts = row["attempts"]
+                max_retries = row["max_retries"]
+                if attempts < max_retries:
+                    self._engine.execute(
+                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.QUEUED.value, job_id)
+                    )
+                else:
+                    self._engine.execute(
+                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, job_id)
+                    )
+            return True
 
     def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
         with self._engine.lock:
@@ -234,6 +317,10 @@ class DurableJobQueue:
     @staticmethod
     def _row_to_record(row) -> JobRecord:
         keys = row.keys()
+        attempts = row["attempts"] if "attempts" in keys else 0
+        leased_until_str = row["leased_until"] if "leased_until" in keys else None
+        leased_until = datetime.fromisoformat(leased_until_str) if leased_until_str else None
+        max_retries = row["max_retries"] if "max_retries" in keys else 3
 
         heartbeat_val = None
         if "heartbeat_at" in keys and row["heartbeat_at"] is not None:
@@ -251,12 +338,14 @@ class DurableJobQueue:
             status=JobStatus(row["status"]),
             job_id=row["job_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
+            attempts=attempts,
+            leased_until=leased_until,
+            max_retries=max_retries,
             fence_token=row["fence_token"] if "fence_token" in keys else 0,
             version=row["version"] if "version" in keys else 1,
             locked_by=row["locked_by"] if "locked_by" in keys else None,
             heartbeat_at=heartbeat_val,
             lease_expires_at=lease_val,
-            attempts=row["attempts"] if "attempts" in keys else 0,
             error_message=row["error_message"] if "error_message" in keys else None,
         )
 

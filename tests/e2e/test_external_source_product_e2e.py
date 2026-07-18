@@ -39,6 +39,7 @@ from modules.external_data.providers.live import (
     GeocodeProviderAuthError,
     GeocodeProviderRateLimitError,
     GeocodeProviderTimeoutError,
+    GeocodeQuarantineError,
     ListingProviderRateLimitError,
     ListingProviderTimeoutError,
     PrimaryGeocodeProvider,
@@ -670,7 +671,7 @@ def test_geocode_provider_rate_limit_retry() -> None:
         ],
     )
     provider_fail = PrimaryGeocodeProvider(client=client_fail, env=env, retry_budget=1)
-    with pytest.raises(GeocodeProviderRateLimitError):
+    with pytest.raises(GeocodeQuarantineError):
         provider_fail.lookup(norm)
     assert len(client_fail.calls) == 2
 
