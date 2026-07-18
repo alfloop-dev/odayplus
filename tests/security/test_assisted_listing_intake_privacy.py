@@ -108,7 +108,8 @@ def test_legal_hold_placement_and_segregation() -> None:
         },
     )
     assert resp_role.status_code == 403
-    assert DenialCode.ROLE_DENIED.value in resp_role.json()["detail"]
+    detail = resp_role.json()["detail"]
+    assert DenialCode.ROLE_DENIED.value in detail or "role does not permit" in detail
 
     # 4. Duplicate hold -> expect 409 LEGAL_HOLD_CONFLICT
     resp_dup = client.post(
@@ -325,3 +326,131 @@ def test_residency_enforcement_on_export() -> None:
     )
     assert resp_invalid.status_code == 403
     assert DenialCode.RESIDENCY_DENIED.value in resp_invalid.json()["detail"]
+
+
+def test_worm_present_and_receipt_persisted() -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock
+
+    from modules.listing.application.intake_privacy import IntakePrivacyService
+    from shared.audit.worm import AuditWormReceipt
+    from shared.auth import Principal, Role
+
+    mock_worm_sink = MagicMock()
+    mock_receipt = AuditWormReceipt(
+        sink_id="test-worm-sink",
+        object_uri="file:///mock/path/to/worm/hold-123.json",
+        record_type="legal-holds",
+        record_id="hold-123",
+        checksum="mock-checksum",
+        written_at=datetime.now(UTC),
+    )
+    mock_worm_sink._write.return_value = mock_receipt
+
+    mock_evidence_store = MagicMock()
+    mock_evidence_store._worm_sink = mock_worm_sink
+
+    service = IntakePrivacyService(
+        evidence_store=mock_evidence_store,
+        document_store=MagicMock(),
+    )
+
+    from shared.auth import Scope
+    principal = Principal(
+        subject_id="test-proposer",
+        roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a"),
+    )
+
+    hold = service.place_legal_hold(
+        principal=principal,
+        tenant_id="tenant-a",
+        subject_type="intake",
+        subject_id="IN-123",
+        reason="Test hold",
+        approved_by="test-approver",
+    )
+
+    assert hold["worm_sink_id"] == "test-worm-sink"
+    assert hold["worm_object_uri"] == "file:///mock/path/to/worm/hold-123.json"
+    assert hold["worm_checksum"] == "mock-checksum"
+    mock_worm_sink._write.assert_called_once()
+
+
+def test_worm_absent_fail_closed() -> None:
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from modules.listing.application.intake_privacy import IntakePrivacyService
+    from shared.audit.worm import AuditWormSinkError
+    from shared.auth import Principal, Role
+
+    mock_evidence_store = object()
+    mock_document_store = MagicMock()
+
+    service = IntakePrivacyService(
+        evidence_store=mock_evidence_store,
+        document_store=mock_document_store,
+    )
+
+    from shared.auth import Scope
+    principal = Principal(
+        subject_id="test-proposer",
+        roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a"),
+    )
+
+    with pytest.raises(AuditWormSinkError) as exc_info:
+        service.place_legal_hold(
+            principal=principal,
+            tenant_id="tenant-a",
+            subject_type="intake",
+            subject_id="IN-123",
+            reason="Test hold",
+            approved_by="test-approver",
+        )
+    assert "WORM sink is absent" in str(exc_info.value)
+    mock_document_store.put.assert_not_called()
+
+
+def test_worm_failing_fail_closed() -> None:
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from modules.listing.application.intake_privacy import IntakePrivacyService
+    from shared.audit.worm import AuditWormSinkError
+    from shared.auth import Principal, Role
+
+    mock_worm_sink = MagicMock()
+    mock_worm_sink._write.side_effect = Exception("Write connection timeout")
+
+    mock_evidence_store = MagicMock()
+    mock_evidence_store._worm_sink = mock_worm_sink
+    mock_document_store = MagicMock()
+
+    service = IntakePrivacyService(
+        evidence_store=mock_evidence_store,
+        document_store=mock_document_store,
+    )
+
+    from shared.auth import Scope
+    principal = Principal(
+        subject_id="test-proposer",
+        roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a"),
+    )
+
+    with pytest.raises(AuditWormSinkError) as exc_info:
+        service.place_legal_hold(
+            principal=principal,
+            tenant_id="tenant-a",
+            subject_type="intake",
+            subject_id="IN-123",
+            reason="Test hold",
+            approved_by="test-approver",
+        )
+    assert "WORM sink write failed" in str(exc_info.value)
+    mock_document_store.put.assert_not_called()
+

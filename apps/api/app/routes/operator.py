@@ -359,7 +359,7 @@ def create_operator_router(
         create_privacy_sub_router(
             privacy_service,
             require_view_permission_fn=operator_view_guard,
-            require_write_permission_fn=operator_view_guard,
+            require_write_permission_fn=operator_write_guard,
         )
     )
 

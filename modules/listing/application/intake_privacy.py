@@ -37,6 +37,9 @@ class LegalHoldRecord:
     released_by: str | None = None
     released_at: datetime | None = None
     version: int = 1
+    worm_sink_id: str | None = None
+    worm_object_uri: str | None = None
+    worm_checksum: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +54,9 @@ class LegalHoldRecord:
             "released_by": self.released_by,
             "released_at": self.released_at.isoformat() if self.released_at else None,
             "version": self.version,
+            "worm_sink_id": self.worm_sink_id,
+            "worm_object_uri": self.worm_object_uri,
+            "worm_checksum": self.worm_checksum,
         }
 
 
@@ -72,6 +78,9 @@ class ExportManifestRecord:
     created_at: datetime
     deleted_at: datetime | None = None
     download_evidence_id: str | None = None
+    signer_key_version: str = "2026-07-15.v1"
+    worm_sink_id: str | None = None
+    worm_checksum: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +100,9 @@ class ExportManifestRecord:
             "created_at": self.created_at.isoformat(),
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "download_evidence_id": self.download_evidence_id,
+            "signer_key_version": self.signer_key_version,
+            "worm_sink_id": self.worm_sink_id,
+            "worm_checksum": self.worm_checksum,
         }
 
 
@@ -577,7 +589,7 @@ class IntakePrivacyService:
             "manifest_checksum": manifest.content_sha256,
             "actual_checksum": current_hash,
             "reason": "Integrity verified successfully" if ok else "Checksum mismatch",
-            "signer_key_version": "v1",
+            "signer_key_version": manifest.signer_key_version,
         }
 
     def download_evidence(self, download_evidence_id: str) -> dict[str, Any]:
@@ -674,16 +686,41 @@ class IntakePrivacyService:
         return self._in_memory_holds
 
     def _save_hold(self, hold: LegalHoldRecord) -> None:
+        # Resolve WORM sink
+        worm_sink = None
+        if self.evidence_store and hasattr(self.evidence_store, "_worm_sink"):
+            worm_sink = self.evidence_store._worm_sink
+            
+        if not worm_sink:
+            from shared.audit.worm import AuditWormSinkError
+            raise AuditWormSinkError("WORM sink is absent")
+            
+        # Always write to WORM sink first (fail-closed if it fails)
+        try:
+            receipt = worm_sink._write(
+                record_type="legal-holds",
+                record_id=hold.legal_hold_id,
+                sequence=None,
+                payload=hold.to_dict(),
+            )
+        except Exception as exc:
+            from shared.audit.worm import AuditWormSinkError
+            if isinstance(exc, AuditWormSinkError):
+                raise exc
+            raise AuditWormSinkError(f"WORM sink write failed: {exc}") from exc
+
+        # Verify receipt
+        if not receipt or not receipt.object_uri or not receipt.checksum:
+            from shared.audit.worm import AuditWormSinkError
+            raise AuditWormSinkError("WORM sink write returned an invalid receipt")
+
+        # Persist receipt info into record
+        hold.worm_sink_id = receipt.sink_id
+        hold.worm_object_uri = receipt.object_uri
+        hold.worm_checksum = receipt.checksum
+
         if self.document_store:
             self.document_store.put(self._get_holds_collection(), hold.legal_hold_id, hold)
-            # Write to SQL if WORM sink configured
-            if hasattr(self.evidence_store, "_worm_sink") and self.evidence_store._worm_sink:
-                self.evidence_store._worm_sink._write(
-                    record_type="legal-holds",
-                    record_id=hold.legal_hold_id,
-                    sequence=None,
-                    payload=hold.to_dict(),
-                )
         else:
             if not hasattr(self, "_in_memory_holds"):
                 self._in_memory_holds = []
@@ -710,17 +747,42 @@ class IntakePrivacyService:
         return None
 
     def _save_manifest(self, manifest: ExportManifestRecord, bundle: dict[str, Any]) -> None:
+        # Resolve WORM sink
+        worm_sink = None
+        if self.evidence_store and hasattr(self.evidence_store, "_worm_sink"):
+            worm_sink = self.evidence_store._worm_sink
+            
+        if not worm_sink:
+            from shared.audit.worm import AuditWormSinkError
+            raise AuditWormSinkError("WORM sink is absent")
+            
+        # Always write to WORM sink (fail-closed if it fails)
+        try:
+            receipt = worm_sink._write(
+                record_type="export-manifests",
+                record_id=manifest.export_manifest_id,
+                sequence=None,
+                payload={"manifest": manifest.to_dict(), "bundle": bundle},
+            )
+        except Exception as exc:
+            from shared.audit.worm import AuditWormSinkError
+            if isinstance(exc, AuditWormSinkError):
+                raise exc
+            raise AuditWormSinkError(f"WORM sink write failed: {exc}") from exc
+
+        # Verify receipt
+        if not receipt or not receipt.object_uri or not receipt.checksum:
+            from shared.audit.worm import AuditWormSinkError
+            raise AuditWormSinkError("WORM sink write returned an invalid receipt")
+
+        # Update manifest with real receipt details
+        manifest.object_uri = receipt.object_uri
+        manifest.worm_sink_id = receipt.sink_id
+        manifest.worm_checksum = receipt.checksum
+
         if self.document_store:
             self.document_store.put(self._get_manifests_collection(), manifest.export_manifest_id, manifest)
             self.document_store.put(f"{self._get_manifests_collection()}_bundles", manifest.export_manifest_id, bundle)
-            # Write manifest & bundle to WORM sink if configured
-            if hasattr(self.evidence_store, "_worm_sink") and self.evidence_store._worm_sink:
-                self.evidence_store._worm_sink._write(
-                    record_type="export-manifests",
-                    record_id=manifest.export_manifest_id,
-                    sequence=None,
-                    payload={"manifest": manifest.to_dict(), "bundle": bundle},
-                )
         else:
             if not hasattr(self, "_in_memory_manifests"):
                 self._in_memory_manifests = []
