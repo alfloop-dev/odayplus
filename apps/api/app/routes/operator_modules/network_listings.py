@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from modules.external_data.security import contains_sensitive_submission_material
@@ -201,11 +201,25 @@ def create_network_listings_sub_router(
     )
     def submit_intake(
         body: IntakeSubmitPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        x_async_intake: str | None = Header(default=None, alias="X-Async-Intake"),
     ) -> dict[str, Any]:
         try:
             reject_sensitive_submission_material(body)
+            
+            job_queue = getattr(request.app.state, "job_queue", None)
+            if job_queue is not None:
+                if job_queue.count_active_jobs() >= 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="BACKPRESSURE_ACTIVE",
+                        headers={"Retry-After": "30"},
+                    )
+            
+            is_async = (x_async_intake == "true")
+            
             return service.submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
@@ -213,6 +227,8 @@ def create_network_listings_sub_router(
                 actor_name=body.actorName,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                job_queue=job_queue,
+                async_intake=is_async,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
