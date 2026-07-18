@@ -690,11 +690,11 @@ class IntakePrivacyService:
         worm_sink = None
         if self.evidence_store and hasattr(self.evidence_store, "_worm_sink"):
             worm_sink = self.evidence_store._worm_sink
-            
+
         if not worm_sink:
             from shared.audit.worm import AuditWormSinkError
             raise AuditWormSinkError("WORM sink is absent")
-            
+
         # Always write to WORM sink first (fail-closed if it fails)
         try:
             receipt = worm_sink._write(
@@ -751,11 +751,11 @@ class IntakePrivacyService:
         worm_sink = None
         if self.evidence_store and hasattr(self.evidence_store, "_worm_sink"):
             worm_sink = self.evidence_store._worm_sink
-            
+
         if not worm_sink:
             from shared.audit.worm import AuditWormSinkError
             raise AuditWormSinkError("WORM sink is absent")
-            
+
         # Always write to WORM sink (fail-closed if it fails)
         try:
             receipt = worm_sink._write(

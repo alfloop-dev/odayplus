@@ -453,4 +453,3 @@ def test_worm_failing_fail_closed() -> None:
         )
     assert "WORM sink write failed" in str(exc_info.value)
     mock_document_store.put.assert_not_called()
-
