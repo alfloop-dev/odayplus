@@ -302,7 +302,7 @@ else:
         from apps.api.app.routes.forecastops import create_forecastops_router
         from apps.api.app.routes.interventions import create_interventions_router
         from apps.api.app.routes.learninghub import create_learninghub_router
-        from apps.api.app.routes.listings import create_listings_router
+        from apps.api.app.routes.listings import create_assisted_intake_router, create_listings_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.operator import create_operator_router
         from apps.api.app.routes.operator_modules import create_operator_store_ops_router
@@ -383,6 +383,7 @@ else:
         mount_versioned(
             api, create_listings_router(audit_log=audit_log, repository=listing_repository)
         )
+        api.include_router(create_assisted_intake_router())
         mount_versioned(api, create_avm_router(repository=avm_repo, audit_log=audit_log))
         mount_versioned(
             api,
