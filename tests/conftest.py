@@ -156,3 +156,10 @@ def intake_db(intake_blank_db) -> IntakeDatabase:
     """A fresh PostgreSQL 16 database with the ordered intake migration applied."""
     intake_blank_db.apply_migration()
     return intake_blank_db
+
+
+@pytest.fixture(autouse=True)
+def reset_platform_metrics():
+    """Reset the global default metrics registry before each test to prevent cross-test contamination."""
+    from shared.observability.metrics import default_registry
+    default_registry().clear()
