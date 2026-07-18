@@ -15,20 +15,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from modules.external_data.security import contains_sensitive_submission_material
+from modules.listing.application.intake_authorization import (
+    authorize_intake_action,
+    mask_intake,
+    mask_listing,
+)
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingNotFound,
     NetworkListingPolicyError,
     NetworkListingService,
-)
-from modules.listing.application.intake_authorization import (
-    authorize_intake_action,
-    mask_listing,
-    mask_intake,
 )
 
 
