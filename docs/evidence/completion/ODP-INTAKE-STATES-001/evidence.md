@@ -2,7 +2,7 @@
 
 ## Scope
 
-Under task ODP-INTAKE-STATES-001, we implemented the formal binding state engines for intake processing, listing lifecycle, identity graph resolution decisions, task assignments, SLAs, and candidate promotion.
+Under task ODP-INTAKE-STATES-001, we implemented the formal binding state engines for intake processing, listing lifecycle, identity graph resolution decisions, task assignments, SLAs, and candidate promotion. Additionally, we addressed the non-blocking review nit by tightening the `IdentityGraphState.EXECUTING` and `IdentityGraphState.EXECUTED` role checks.
 
 Key implementation components:
 1. **Intake States Domain Module** (`modules/listing/domain/intake_states.py`):
@@ -10,6 +10,7 @@ Key implementation components:
    - Implements aggregate classes representing the domain structures.
    - Enforces specific state machine rules (`IntakeStateMachine`, `ListingStateMachine`, `IdentityDecisionStateMachine`, `AssignmentStateMachine`, `SlaStateMachine`, and `PromotionStateMachine`) via a `.transition(...)` method.
    - Enforces actor role authorizations, tenant isolation (ABAC/RLS boundary), and proposer-reviewer segregation policies (e.g. self-review denied).
+   - Enforces strict role restrictions on `IdentityGraphState` execution stages (`EXECUTING` and `EXECUTED`), allowing only system services or emergency admin.
 2. **Intake Workflow Application Service** (`modules/listing/application/intake_workflow.py`):
    - Implements `IntakeWorkflowService` orchestrating intake state transitions.
    - Triggers state machine checks and records audit-trail events (e.g. `intake.submitted.v1`, `intake.quarantined.v1`, etc.).

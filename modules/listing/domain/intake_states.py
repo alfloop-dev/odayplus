@@ -557,12 +557,17 @@ class IdentityDecisionStateMachine(BaseStateMachine):
 
         elif target == IdentityGraphState.EXECUTING:
             if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.SVC_PROMOTION, PrincipalRole.SVC_RECONCILER, PrincipalRole.EMERGENCY_ADMIN}:
-                # SVC_INTAKE or similar service executor
-                pass
+                raise DomainValidationError(
+                    DenialCode.ROLE_DENIED,
+                    "Only intake, promotion, reconciler services or emergency admin can execute."
+                )
 
         elif target == IdentityGraphState.EXECUTED:
-            # Automatically completed by identity service
-            pass
+            if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.SVC_PROMOTION, PrincipalRole.SVC_RECONCILER, PrincipalRole.EMERGENCY_ADMIN}:
+                raise DomainValidationError(
+                    DenialCode.ROLE_DENIED,
+                    "Only intake, promotion, reconciler services or emergency admin can complete execution."
+                )
 
         elif target == IdentityGraphState.REVERSAL_PENDING:
             if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:

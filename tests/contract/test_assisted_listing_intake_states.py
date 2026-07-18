@@ -324,6 +324,30 @@ def test_identity_decision_flow(base_context: TransitionContext) -> None:
     IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED, manager_2_context)
     assert entity.status == IdentityGraphState.APPROVED
 
+    # APPROVED -> EXECUTING (fails with staff role)
+    staff_context = TransitionContext(
+        actor=Actor(actor_id="staff-1", role=PrincipalRole.EXPANSION_STAFF, tenant_id="tenant-a")
+    )
+    with pytest.raises(DomainValidationError) as exc:
+        IdentityDecisionStateMachine.transition(entity, IdentityGraphState.EXECUTING, staff_context)
+    assert exc.value.code == DenialCode.ROLE_DENIED
+
+    # APPROVED -> EXECUTING (succeeds with SVC_INTAKE)
+    system_context = TransitionContext(
+        actor=Actor(actor_id="sys", role=PrincipalRole.SVC_INTAKE, tenant_id="tenant-a")
+    )
+    IdentityDecisionStateMachine.transition(entity, IdentityGraphState.EXECUTING, system_context)
+    assert entity.status == IdentityGraphState.EXECUTING
+
+    # EXECUTING -> EXECUTED (fails with staff role)
+    with pytest.raises(DomainValidationError) as exc:
+        IdentityDecisionStateMachine.transition(entity, IdentityGraphState.EXECUTED, staff_context)
+    assert exc.value.code == DenialCode.ROLE_DENIED
+
+    # EXECUTING -> EXECUTED (succeeds with SVC_INTAKE)
+    IdentityDecisionStateMachine.transition(entity, IdentityGraphState.EXECUTED, system_context)
+    assert entity.status == IdentityGraphState.EXECUTED
+
 
 # --- 4. ASSIGNMENT & SLA TESTS ---
 
