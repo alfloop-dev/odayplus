@@ -1,5 +1,5 @@
 {
-  "timestamp": 1784120771.280246,
+  "timestamp": 1784354482.3950555,
   "concurrency_levels": [
     10,
     20,
@@ -8,11 +8,11 @@
   "total_volume": 150,
   "success_count": 150,
   "failure_count": 0,
-  "total_duration_seconds": 10.647553452989087,
-  "throughput_req_per_sec": 14.087743317023735,
-  "latency_p50_seconds": 1.1343439619522542,
-  "latency_p95_seconds": 2.7241231778170913,
-  "latency_p99_seconds": 3.0961821088567376,
+  "total_duration_seconds": 8.205365841044113,
+  "throughput_req_per_sec": 18.280720556015194,
+  "latency_p50_seconds": 0.8874020411167294,
+  "latency_p95_seconds": 2.6975595699623227,
+  "latency_p99_seconds": 2.787663302849978,
   "budget_p95_seconds_target": 3.0,
   "passed": true
 }
