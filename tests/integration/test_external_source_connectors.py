@@ -349,8 +349,8 @@ def test_unauthorized_contract_test(tmp_path) -> None:
     pipeline = ListingPipeline()
     # Trigger client auth failure check
     client = ListingFeedClient(
-        api_url="mock://api", api_key="unauthorized_key"
-    )  # pragma: allowlist-secret
+        api_url="mock://api", api_key="unauthorized_key"  # pragma: allowlist-secret
+    )
     adapter = LiveListingFeedAdapter(
         client=client,
         pipeline=pipeline,

@@ -203,8 +203,9 @@ def test_leaked_test_secrets_rejected_negative() -> None:
         # Case A: Leaked AWS Key without pragma
         secret_file_a = test_dir / "test_secret_leak_no_pragma.py"
         secret_file_a.write_text(
-            'AWS_KEY = "AKIA1234567890ABCDEF"\n', encoding="utf-8"
-        )  # pragma: allowlist-secret
+            'AWS_KEY = "AKIA1234567890ABCDEF"\n',  # pragma: allowlist-secret
+            encoding="utf-8",
+        )
 
         sys.path.insert(0, str(ROOT))
         from scripts.security.secret_scan import scan_file
@@ -215,8 +216,9 @@ def test_leaked_test_secrets_rejected_negative() -> None:
         # Case B: Leaked AWS Key with old bypass '# approved'
         secret_file_b = test_dir / "test_secret_leak_old_bypass.py"
         secret_file_b.write_text(
-            'AWS_KEY = "AKIA1234567890ABCDEF"  # approved\n', encoding="utf-8"
-        )  # pragma: allowlist-secret
+            'AWS_KEY = "AKIA1234567890ABCDEF"  # approved\n',  # pragma: allowlist-secret
+            encoding="utf-8",
+        )
         violations_b = scan_file(secret_file_b)
         assert len(violations_b) > 0, (
             "Should detect AWS key leak even with legacy '# approved' bypass"
