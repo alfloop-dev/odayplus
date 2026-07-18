@@ -249,6 +249,20 @@ export type ExecutePayload = {
   executor: string;
 };
 
+/** ExportPayload */
+export type ExportPayload = {
+  authorizationId: string;
+  authorizedBy: string;
+  dataClassification?: string;
+  destinationResidency?: string;
+  maskingProfile?: string;
+  purpose: string;
+  sensitive?: boolean;
+  subjectId: string;
+  subjectType: string;
+  tenantId: string;
+};
+
 /** FinanceApprovalPayload */
 export type FinanceApprovalPayload = {
   actor: string;
@@ -546,6 +560,15 @@ export type OpenDecisionPayload = {
   report_id: string;
 };
 
+/** PlaceHoldPayload */
+export type PlaceHoldPayload = {
+  approvedBy: string;
+  reason: string;
+  subjectId: string;
+  subjectType: string;
+  tenantId: string;
+};
+
 /** PriceOpsActivationPayload */
 export type PriceOpsActivationPayload = {
   executed_at?: string | null;
@@ -626,6 +649,16 @@ export type PriceOpsPlanPayload = {
   tenant_id: string;
 };
 
+/** PurgePayload */
+export type PurgePayload = {
+  approvedBy: string;
+  dryRun?: boolean;
+  reason: string;
+  subjectId: string;
+  subjectType: string;
+  tenantId: string;
+};
+
 /** RebalanceActorPayload */
 export type RebalanceActorPayload = {
   actorName?: string | null;
@@ -640,6 +673,15 @@ export type RebalanceSubmitPayload = {
   actorRoleId?: string;
   reason: string;
   simulateUnavailable?: boolean;
+};
+
+/** ReleaseHoldPayload */
+export type ReleaseHoldPayload = {
+  approvedBy: string;
+  reason: string;
+  subjectId: string;
+  subjectType: string;
+  tenantId: string;
 };
 
 /** ReleaseMonitorPayload */
@@ -956,6 +998,12 @@ export const API_PATHS = {
   "/api/v1/operator/network-scoring/compare": ["POST"],
   "/api/v1/operator/network-scoring/reset": ["POST"],
   "/api/v1/operator/network-scoring/score": ["POST"],
+  "/api/v1/operator/privacy/export": ["POST"],
+  "/api/v1/operator/privacy/export/download/{download_evidence_id}": ["GET"],
+  "/api/v1/operator/privacy/export/verify/{export_id}": ["GET"],
+  "/api/v1/operator/privacy/hold": ["POST"],
+  "/api/v1/operator/privacy/hold/release": ["POST"],
+  "/api/v1/operator/privacy/purge": ["POST"],
   "/api/v1/operator/search": ["GET"],
   "/api/v1/operator/seed/reset": ["POST"],
   "/api/v1/operator/shell/admin": ["GET"],
