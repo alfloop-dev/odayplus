@@ -16,6 +16,7 @@ skips these live-environment tests):
 3. If neither is available the fixtures ``pytest.skip`` — the tests are marked
    ``requires_live_env`` and are excluded from the default CI marker expression.
 """
+
 from __future__ import annotations
 
 import os

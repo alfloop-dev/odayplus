@@ -346,24 +346,51 @@ def test_product_domain_writes_survive_restart(db_path) -> None:
         cycle_id = str(uuid.uuid4())
 
         tenant = Tenant(tenant_id=tenant_id, tenant_name="ODay Group")
-        brand = Brand(brand_id=brand_id, tenant_id=tenant_id, brand_code="ODAY", brand_name="ODay Laundry")
-        address = AddressLocation(address_id=address_id, raw_address="Taipei 101", city="Taipei", latitude=25.033, longitude=121.564)
+        brand = Brand(
+            brand_id=brand_id, tenant_id=tenant_id, brand_code="ODAY", brand_name="ODay Laundry"
+        )
+        address = AddressLocation(
+            address_id=address_id,
+            raw_address="Taipei 101",
+            city="Taipei",
+            latitude=25.033,
+            longitude=121.564,
+        )
         store = Store(
-            store_id=store_id, tenant_id=tenant_id, brand_id=brand_id, store_name="Xinyi Store",
-            address_id=address_id, opened_on=date(2026, 6, 26), service_start_time=time(8, 0), service_end_time=time(22, 0)
+            store_id=store_id,
+            tenant_id=tenant_id,
+            brand_id=brand_id,
+            store_name="Xinyi Store",
+            address_id=address_id,
+            opened_on=date(2026, 6, 26),
+            service_start_time=time(8, 0),
+            service_end_time=time(22, 0),
         )
         machine = Machine(
-            machine_id=machine_id, store_id=store_id, source_machine_id="M01",
-            machine_family="washer", capacity_kg=15.0, installed_on=date(2026, 6, 26)
+            machine_id=machine_id,
+            store_id=store_id,
+            source_machine_id="M01",
+            machine_family="washer",
+            capacity_kg=15.0,
+            installed_on=date(2026, 6, 26),
         )
         tx = Transaction(
-            transaction_id=tx_id, store_id=store_id, machine_id=machine_id,
-            gross_amount=150.0, net_amount=150.0, source_system="POS"
+            transaction_id=tx_id,
+            store_id=store_id,
+            machine_id=machine_id,
+            gross_amount=150.0,
+            net_amount=150.0,
+            source_system="POS",
         )
         cycle = MachineCycle(
-            cycle_id=cycle_id, store_id=store_id, machine_id=machine_id, transaction_id=tx_id,
-            cycle_start_time=datetime(2026, 7, 11, 3, 0, tzinfo=UTC), cycle_end_time=datetime(2026, 7, 11, 3, 30, tzinfo=UTC),
-            cycle_type="wash", duration_sec=1800
+            cycle_id=cycle_id,
+            store_id=store_id,
+            machine_id=machine_id,
+            transaction_id=tx_id,
+            cycle_start_time=datetime(2026, 7, 11, 3, 0, tzinfo=UTC),
+            cycle_end_time=datetime(2026, 7, 11, 3, 30, tzinfo=UTC),
+            cycle_type="wash",
+            duration_sec=1800,
         )
 
         bundle.tenant_repository.save_tenant(tenant)

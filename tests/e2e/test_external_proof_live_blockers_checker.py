@@ -53,7 +53,9 @@ def status_board(status: str = "pending_external_handback") -> dict:
     }
 
 
-def issue_payload(state: str = "OPEN", *, labels: list[str] | None = None, assignees: list[dict] | None = None) -> dict:
+def issue_payload(
+    state: str = "OPEN", *, labels: list[str] | None = None, assignees: list[dict] | None = None
+) -> dict:
     if labels is None:
         labels = ["product-e2e", "external-proof", "platform-ops", "release-blocker"]
     if assignees is None:
@@ -72,7 +74,9 @@ def issue_payload(state: str = "OPEN", *, labels: list[str] | None = None, assig
 def test_validate_live_blockers_accepts_open_pending_issue() -> None:
     checker = load_checker_module()
 
-    errors = checker.validate_live_blockers(queue_payload(), status_board(), issue_payload(), require_assignees=True)
+    errors = checker.validate_live_blockers(
+        queue_payload(), status_board(), issue_payload(), require_assignees=True
+    )
 
     assert errors == []
 
@@ -80,7 +84,9 @@ def test_validate_live_blockers_accepts_open_pending_issue() -> None:
 def test_validate_live_blockers_rejects_closed_unaccepted_issue() -> None:
     checker = load_checker_module()
 
-    errors = checker.validate_live_blockers(queue_payload(), status_board(), issue_payload(state="CLOSED"))
+    errors = checker.validate_live_blockers(
+        queue_payload(), status_board(), issue_payload(state="CLOSED")
+    )
 
     assert any("must stay open until accepted" in error for error in errors)
     assert any("cannot be closed before Product Validation accepts" in error for error in errors)
@@ -89,7 +95,9 @@ def test_validate_live_blockers_rejects_closed_unaccepted_issue() -> None:
 def test_validate_live_blockers_allows_closed_accepted_issue() -> None:
     checker = load_checker_module()
 
-    errors = checker.validate_live_blockers(queue_payload(), status_board("accepted"), issue_payload(state="CLOSED"))
+    errors = checker.validate_live_blockers(
+        queue_payload(), status_board("accepted"), issue_payload(state="CLOSED")
+    )
 
     assert errors == []
 
@@ -114,7 +122,9 @@ def test_validate_live_blockers_rejects_accepted_without_metadata() -> None:
     broken_status["tasks"][0]["artifact_check_passed"] = False
     broken_status["tasks"][0]["accepted_by"] = None
 
-    errors = checker.validate_live_blockers(queue_payload(), broken_status, issue_payload(state="CLOSED"))
+    errors = checker.validate_live_blockers(
+        queue_payload(), broken_status, issue_payload(state="CLOSED")
+    )
 
     assert any("artifact_check_passed=true" in error for error in errors)
     assert any("accepted handback missing accepted_by" in error for error in errors)

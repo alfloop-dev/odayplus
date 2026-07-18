@@ -39,6 +39,7 @@ def test_weather_providers() -> None:
     assert "precipitation" in res_live1
     assert res_live1["snapshot_id"].startswith("weather-live-")
 
+
 def test_demographics_providers() -> None:
     # Test Fixture Mode (using default valid JSON loading)
     fixture_prov = FixtureDemographicsProvider()
@@ -63,14 +64,21 @@ def test_demographics_providers() -> None:
     assert res_live1["household_total"] > 0
     assert res_live1["snapshot_id"] == f"demographics-live-{test_h3}"
 
+
 def test_provider_registry_listing_and_retrieval() -> None:
     assert "CONN-WEATHER-FIXTURE" in provider_registry.list_providers()
     assert "CONN-WEATHER-LIVE" in provider_registry.list_providers()
     assert "CONN-DEMOGRAPHICS-FIXTURE" in provider_registry.list_providers()
     assert "CONN-DEMOGRAPHICS-LIVE" in provider_registry.list_providers()
 
-    assert set(provider_registry.list_providers("weather")) == {"CONN-WEATHER-FIXTURE", "CONN-WEATHER-LIVE"}
-    assert set(provider_registry.list_providers("demographics")) == {"CONN-DEMOGRAPHICS-FIXTURE", "CONN-DEMOGRAPHICS-LIVE"}
+    assert set(provider_registry.list_providers("weather")) == {
+        "CONN-WEATHER-FIXTURE",
+        "CONN-WEATHER-LIVE",
+    }
+    assert set(provider_registry.list_providers("demographics")) == {
+        "CONN-DEMOGRAPHICS-FIXTURE",
+        "CONN-DEMOGRAPHICS-LIVE",
+    }
 
     prov = provider_registry.get_provider("CONN-WEATHER-FIXTURE")
     assert isinstance(prov, FixtureWeatherProvider)
@@ -78,6 +86,7 @@ def test_provider_registry_listing_and_retrieval() -> None:
     meta = provider_registry.get_metadata("CONN-WEATHER-LIVE")
     assert meta.license_type == "commercial"
     assert meta.source_category == "weather"
+
 
 def test_provider_licensing_enforcement() -> None:
     # CONN-WEATHER-FIXTURE allows training
@@ -102,7 +111,7 @@ def test_provider_licensing_enforcement() -> None:
             acquisition_method="api",
             license_type="commercial",
             status="blocked",
-        )
+        ),
     )
     with pytest.raises(LicenseViolationError) as exc_info:
         custom_registry.verify_usage("BLOCKED-SOURCE", "prediction")

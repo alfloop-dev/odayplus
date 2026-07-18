@@ -57,7 +57,9 @@ def test_external_proof_handback_bundle_rejects_duplicate_task(tmp_path) -> None
     duplicate_dir = tmp_path / "duplicates"
     duplicate_dir.mkdir()
     duplicate = duplicate_dir / "ODP-MAP-STAGE-001-duplicate.json"
-    duplicate.write_text(json.dumps(valid_handback("ODP-MAP-STAGE-001"), indent=2), encoding="utf-8")
+    duplicate.write_text(
+        json.dumps(valid_handback("ODP-MAP-STAGE-001"), indent=2), encoding="utf-8"
+    )
 
     result = run_checker(str(tmp_path), str(duplicate_dir), "--expected-sha", EXPECTED_SHA)
 
@@ -65,7 +67,9 @@ def test_external_proof_handback_bundle_rejects_duplicate_task(tmp_path) -> None
     assert "duplicate handbacks for ODP-MAP-STAGE-001" in result.stdout
 
 
-def test_external_proof_handback_bundle_rejects_mixed_release_sha_without_expected_sha(tmp_path) -> None:
+def test_external_proof_handback_bundle_rejects_mixed_release_sha_without_expected_sha(
+    tmp_path,
+) -> None:
     write_bundle(tmp_path)
     payload = json.loads((tmp_path / "ODP-EXT-PROD-001.json").read_text(encoding="utf-8"))
     payload["release_head_ref_oid"] = "0" * 40

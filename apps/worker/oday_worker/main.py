@@ -6,7 +6,7 @@ from typing import Any
 
 from apps.worker.oday_worker.handlers import build_default_registry
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
-from shared.jobs.queue import JobRecord, JobStatus
+from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
 from shared.observability import SpanKind, Telemetry, TraceContext
 
@@ -79,50 +79,61 @@ class ODayWorker:
                 )
             except Exception as exc:
                 duration = time.monotonic() - start_time
-                self.job_queue.update_status(job.job_id, JobStatus.FAILED)
-
-                # Record metrics
-                self.telemetry.metrics.observe(
-                    "job_duration_seconds",
-                    duration,
-                    labels={"job_type": job.job_type, "status": "failure"},
-                )
-                self.telemetry.metrics.increment(
-                    "job_failure_count",
-                    labels={"job_type": job.job_type, "error_class": type(exc).__name__},
-                )
-                self.telemetry.logger.error(
-                    f"Job {job.job_id} failed: {exc}",
-                    correlation_id=job.correlation_id,
-                    actor="worker",
-                    resource=f"job/{job.job_type}",
-                    action="execute",
-                    result="error",
-                    error_code=type(exc).__name__,
-                )
-
-                # Retry behavior
-                payload = dict(job.payload)
-                retries = payload.get("_retry_count", 0)
-                if retries < 3:
-                    payload["_retry_count"] = retries + 1
-                    self.job_queue.update_status(job.job_id, JobStatus.QUEUED, payload=payload)
+                latest_job = self.job_queue.get(job.job_id)
+                if latest_job and latest_job.status == JobStatus.CANCELLED:
                     self.telemetry.logger.info(
-                        f"Job {job.job_id} queued for retry (attempt {retries + 1}/3)",
+                        f"Job {job.job_id} execution aborted because it was CANCELLED",
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",
-                        action="retry",
+                        action="cancel",
                     )
                 else:
-                    self.job_queue.update_status(job.job_id, JobStatus.FAILED)
-                    self.telemetry.logger.info(
-                        f"Job {job.job_id} marked failed (max retries reached)",
+                    self.job_queue.update_status(job.job_id, JobStatus.FAILED, error_message=str(exc))
+
+                    # Record metrics
+                    self.telemetry.metrics.observe(
+                        "job_duration_seconds",
+                        duration,
+                        labels={"job_type": job.job_type, "status": "failure"},
+                    )
+                    self.telemetry.metrics.increment(
+                        "job_failure_count",
+                        labels={"job_type": job.job_type, "error_class": type(exc).__name__},
+                    )
+                    self.telemetry.logger.error(
+                        f"Job {job.job_id} failed: {exc}",
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",
-                        action="fail",
+                        action="execute",
+                        result="error",
+                        error_code=type(exc).__name__,
                     )
+
+                    # Retry behavior
+                    is_retryable = not isinstance(exc, NonRetryableJobError)
+                    payload = dict(job.payload)
+                    retries = payload.get("_retry_count", 0)
+                    if is_retryable and retries < 3:
+                        payload["_retry_count"] = retries + 1
+                        self.job_queue.update_status(job.job_id, JobStatus.QUEUED, payload=payload)
+                        self.telemetry.logger.info(
+                            f"Job {job.job_id} queued for retry (attempt {retries + 1}/3)",
+                            correlation_id=job.correlation_id,
+                            actor="worker",
+                            resource=f"job/{job.job_type}",
+                            action="retry",
+                        )
+                    else:
+                        self.job_queue.update_status(job.job_id, JobStatus.FAILED, error_message=str(exc))
+                        self.telemetry.logger.info(
+                            f"Job {job.job_id} marked failed (max retries reached or non-retryable)",
+                            correlation_id=job.correlation_id,
+                            actor="worker",
+                            resource=f"job/{job.job_type}",
+                            action="fail",
+                        )
 
         return True
 

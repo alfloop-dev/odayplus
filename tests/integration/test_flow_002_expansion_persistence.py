@@ -152,9 +152,31 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
             json={
                 "source_id": "flow002-listing-source",
                 "records": [
-                    _listing_record("FLOW002-LST-1", "台北市大安區復興南路二段100號1樓", 25.026, 121.543, 45000, 25.5),
-                    _listing_record("FLOW002-LST-1", "台北市大安區復興南路二段100號1樓", 25.026, 121.543, 45000, 25.5),
-                    _listing_record("FLOW002-LST-2", "台北市大安區復興南路二段200號地下1樓", 25.028, 121.545, 35000, 30, "B1"),
+                    _listing_record(
+                        "FLOW002-LST-1",
+                        "台北市大安區復興南路二段100號1樓",
+                        25.026,
+                        121.543,
+                        45000,
+                        25.5,
+                    ),
+                    _listing_record(
+                        "FLOW002-LST-1",
+                        "台北市大安區復興南路二段100號1樓",
+                        25.026,
+                        121.543,
+                        45000,
+                        25.5,
+                    ),
+                    _listing_record(
+                        "FLOW002-LST-2",
+                        "台北市大安區復興南路二段200號地下1樓",
+                        25.028,
+                        121.545,
+                        35000,
+                        30,
+                        "B1",
+                    ),
                 ],
             },
         )
@@ -170,8 +192,11 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
             client,
             candidate_id,
             "flow002-score-1",
-            {"comparable_store_count": 0, "average_confidence": 0.46,
-             "source_snapshot_ids": ["flow002-v1"]},
+            {
+                "comparable_store_count": 0,
+                "average_confidence": 0.46,
+                "source_snapshot_ids": ["flow002-v1"],
+            },
         )
         returned_decision = _open_decision(client, first["reports"][0]["report_id"], "analyst")
         returned = client.post(
@@ -187,8 +212,12 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
             client,
             candidate_id,
             "flow002-score-2",
-            {"comparable_store_count": 6, "comparable_monthly_revenue_p50": 520000,
-             "average_confidence": 0.92, "source_snapshot_ids": ["flow002-v2", "flow002-comps"]},
+            {
+                "comparable_store_count": 6,
+                "comparable_monthly_revenue_p50": 520000,
+                "average_confidence": 0.92,
+                "source_snapshot_ids": ["flow002-v2", "flow002-comps"],
+            },
         )
         second_report = second["reports"][0]
         assert second_report["report_version"] == 2
@@ -235,7 +264,14 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
             json={
                 "source_id": "flow002-listing-source",
                 "records": [
-                    _listing_record("FLOW002-LST-1", "台北市大安區復興南路二段100號1樓", 25.026, 121.543, 45000, 25.5),
+                    _listing_record(
+                        "FLOW002-LST-1",
+                        "台北市大安區復興南路二段100號1樓",
+                        25.026,
+                        121.543,
+                        45000,
+                        25.5,
+                    ),
                 ],
             },
         )
