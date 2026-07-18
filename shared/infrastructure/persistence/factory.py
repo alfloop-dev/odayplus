@@ -63,6 +63,7 @@ class PersistenceBundle:
     machine_cycle_repository: Any
     external_fetch_state_store: Any = None
     notification_repository: Any = None
+    outbox_repository: Any = None
     engine: Any = None
 
 
@@ -94,6 +95,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.infrastructure.persistence.outbox import InMemoryOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         InMemoryAddressLocationRepository,
         InMemoryBrandRepository,
@@ -137,6 +139,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         machine_cycle_repository=InMemoryMachineCycleRepository(),
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
         notification_repository=InMemoryNotificationRepository(),
+        outbox_repository=InMemoryOutboxRepository(),
     )
 
 
@@ -152,6 +155,7 @@ def _durable_bundle(
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
@@ -212,6 +216,7 @@ def _durable_bundle(
         machine_cycle_repository=DurableMachineCycleRepository(engine),
         external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         engine=engine,
     )
 
