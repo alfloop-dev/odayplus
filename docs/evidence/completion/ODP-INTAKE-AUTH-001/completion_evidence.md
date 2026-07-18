@@ -45,3 +45,17 @@ Output:
 ```text
 No issues found.
 ```
+
+## 3. Closeout Finalization (2026-07-18)
+- Reviewer **Antigravity** recorded `review_approved` at 2026-07-18T05:28:03Z
+  ("Independent review passed. All checks clean.").
+- Deliverable is durable in `dev`: **PR #329** merged at 2026-07-18T05:28:06Z
+  (dev merge commit `c5c86a96`). Task branch HEAD is an ancestor of `origin/dev`.
+- Owner re-ran the brief's focused verification at finalization from the task
+  worktree:
+  - `uv run pytest tests/security/test_assisted_listing_intake_security.py tests/security/test_assisted_listing_intake_authorization_matrix.py -q` -> **35 passed**.
+  - `python3 -m ruff check shared/auth modules/opsboard/auth modules/listing/application/intake_authorization.py tests/security` -> **All checks passed**.
+  - `git diff --check origin/dev...HEAD` -> **clean**.
+- This closeout note is added on top of the deliverable so the finalization
+  commit carries the required LLM-Agent / Task-ID / Reviewer trailers (the prior
+  branch HEAD was a supervisor dev re-merge commit without trailers).
