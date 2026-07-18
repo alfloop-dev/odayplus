@@ -45,12 +45,12 @@ def queue_payload() -> dict:
                 ],
                 "allowed_commands": [
                     "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
-                    "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+                    'PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',
                 ],
                 "handback_commands": [
                     "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
                     "python3 scripts/e2e/check_external_proof_handback_template.py",
-                    "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+                    'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
                 ],
                 "evidence_refs": [
                     "tests/e2e/e2e-map-live-boundary.spec.ts",
@@ -97,8 +97,8 @@ def synced_issue_payload() -> dict:
                     "- Run `python3 scripts/e2e/update_external_proof_handback_status_board.py --task ODP-MAP-STAGE-001 --status handback_submitted --handback <handback.json>` when Product Validation receives a handback.",
                     "- Run `python3 scripts/e2e/check_external_proof_handback_status_board.py` after updating intake status.",
                     "- Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
-                    "- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before accepting or closing this issue.",
-                    "- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"` before release closeout.",
+                    '- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing this issue.',
+                    '- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before release closeout.',
                     "- Before go/no-go, Product Validation runs `python3 scripts/e2e/check_product_go_no_go.py` and confirms `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` still marks #132-#138 as pending external proof.",
                     "Owner: `Platform/Ops`",
                     "Reviewer: `Product Validation`",
@@ -111,7 +111,7 @@ def synced_issue_payload() -> dict:
                     "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
                     "```",
                     "```bash",
-                    "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+                    'PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',
                     "```",
                     "## Evidence refs",
                     "- `tests/e2e/e2e-map-live-boundary.spec.ts`",
@@ -127,7 +127,9 @@ def synced_issue_payload() -> dict:
 def test_validate_issue_sync_accepts_synced_issue() -> None:
     checker = load_checker_module()
 
-    errors = checker.validate_issue_sync(queue_payload(), synced_issue_payload(), require_assignees=True)
+    errors = checker.validate_issue_sync(
+        queue_payload(), synced_issue_payload(), require_assignees=True
+    )
 
     assert errors == []
 
@@ -148,7 +150,9 @@ def test_validate_issue_sync_rejects_missing_labels_and_body_tokens() -> None:
 def test_validate_issue_sync_rejects_missing_queue_acceptance_tokens() -> None:
     checker = load_checker_module()
     issue = synced_issue_payload()
-    issue["135"]["body"] = issue["135"]["body"].replace("- [ ] staging map tile URL configured\n", "")
+    issue["135"]["body"] = issue["135"]["body"].replace(
+        "- [ ] staging map tile URL configured\n", ""
+    )
     issue["135"]["body"] = issue["135"]["body"].replace(
         "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.\n",
         "",
@@ -164,9 +168,19 @@ def test_validate_issue_sync_rejects_missing_queue_acceptance_tokens() -> None:
 
     errors = checker.validate_issue_sync(queue_payload(), issue)
 
-    assert any("body missing required evidence: staging map tile URL configured" in error for error in errors)
-    assert any("body missing handback command: python3 scripts/e2e/check_external_proof_handback_template.py" in error for error in errors)
-    assert any("body missing token: check_external_proof_acceptance_readiness.py --report" in error for error in errors)
+    assert any(
+        "body missing required evidence: staging map tile URL configured" in error
+        for error in errors
+    )
+    assert any(
+        "body missing handback command: python3 scripts/e2e/check_external_proof_handback_template.py"
+        in error
+        for error in errors
+    )
+    assert any(
+        "body missing token: check_external_proof_acceptance_readiness.py --report" in error
+        for error in errors
+    )
     assert any("body missing completion rule" in error for error in errors)
 
 

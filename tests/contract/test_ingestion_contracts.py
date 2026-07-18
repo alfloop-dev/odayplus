@@ -82,9 +82,7 @@ def _invalid_record_cases() -> list[tuple[str, dict, list[str]]]:
         contract_id = data["contract_id"]
         for case in data["cases"]:
             label = case["label"].replace(" ", "_")
-            cases.append(
-                (f"{contract_id}: {label}", case["record"], case["expect_codes"])
-            )
+            cases.append((f"{contract_id}: {label}", case["record"], case["expect_codes"]))
     return cases
 
 
@@ -108,9 +106,9 @@ def test_every_contract_has_required_metadata() -> None:
         assert contract.mapping_id, f"{contract.contract_id} missing mapping_id"
         assert contract.fields, f"{contract.contract_id} declares no fields"
         assert contract.required_fields(), f"{contract.contract_id} has no required field"
-        assert (
-            contract.canonical_target in canonical_entities
-        ), f"{contract.contract_id} -> unknown canonical {contract.canonical_target!r}"
+        assert contract.canonical_target in canonical_entities, (
+            f"{contract.contract_id} -> unknown canonical {contract.canonical_target!r}"
+        )
 
 
 def test_external_contracts_declare_acquisition_method() -> None:

@@ -61,8 +61,9 @@ def _client() -> TestClient:
 
 
 def _create_plan(client: TestClient, plan_id: str) -> None:
-    response = client.post("/api/v1/priceops/plans", json=_plan_body(plan_id),
-                           headers=WRITE_HEADERS)
+    response = client.post(
+        "/api/v1/priceops/plans", json=_plan_body(plan_id), headers=WRITE_HEADERS
+    )
     assert response.status_code == 201, response.text
 
 
@@ -271,8 +272,11 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
     client = _client()
     _seed_submittable_plan(client, "PLAN-REPLAY")
     body = {"actor_id": "approver", "reason": "pilot approved", "decision": "APPROVE"}
-    headers = {**WRITE_HEADERS, "Idempotency-Key": "idem-approve-1",
-               "x-correlation-id": "corr-approve-1"}
+    headers = {
+        **WRITE_HEADERS,
+        "Idempotency-Key": "idem-approve-1",
+        "x-correlation-id": "corr-approve-1",
+    }
 
     first = client.post("/api/v1/priceops/plans/PLAN-REPLAY/approve", json=body, headers=headers)
     second = client.post("/api/v1/priceops/plans/PLAN-REPLAY/approve", json=body, headers=headers)
@@ -285,9 +289,9 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
         "a replay must not append a second audit event claiming the approval happened again"
     )
 
-    events = client.get(
-        "/api/v1/audit/events", params={"correlation_id": "corr-approve-1"}
-    ).json()["events"]
+    events = client.get("/api/v1/audit/events", params={"correlation_id": "corr-approve-1"}).json()[
+        "events"
+    ]
     approvals = [e for e in events if e["event_type"] == "priceops.approved.v1"]
     assert len(approvals) == 1, "the plan must be approved exactly once"
 
@@ -414,9 +418,7 @@ def test_concurrent_create_plan_with_one_key_creates_exactly_one_plan(
     app = create_app(external_provider_validation=lambda: None)
     body = _plan_body()
     del body["plan_id"]
-    responses = _post_concurrently(
-        app, "/api/v1/priceops/plans", body, "concurrent-create-1"
-    )
+    responses = _post_concurrently(app, "/api/v1/priceops/plans", body, "concurrent-create-1")
 
     for response in responses:
         assert response.status_code == 201, response.text

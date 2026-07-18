@@ -12,6 +12,13 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class NonRetryableJobError(RuntimeError):
+    """Raised when a job should fail permanently without further retries."""
+
+    pass
 
 
 @dataclass(frozen=True)
@@ -51,7 +58,9 @@ class JobRecord:
             "version": self.version,
             "locked_by": self.locked_by,
             "heartbeat_at": self.heartbeat_at.isoformat() if self.heartbeat_at else None,
-            "lease_expires_at": self.lease_expires_at.isoformat() if self.lease_expires_at else None,
+            "lease_expires_at": self.lease_expires_at.isoformat()
+            if self.lease_expires_at
+            else None,
             "attempts": self.attempts,
             "error_message": self.error_message,
         }
@@ -63,7 +72,9 @@ class InMemoryJobQueue:
         self._idempotency_index: dict[str, str] = {}
 
     def count_active_jobs(self) -> int:
-        return sum(1 for job in self._jobs.values() if job.status in (JobStatus.QUEUED, JobStatus.RUNNING))
+        return sum(
+            1 for job in self._jobs.values() if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+        )
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
         if request.idempotency_key:
@@ -84,6 +95,45 @@ class InMemoryJobQueue:
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._jobs.get(job_id)
+
+    def get_by_idempotency_key(self, idempotency_key: str) -> JobRecord | None:
+        job_id = self._idempotency_index.get(idempotency_key)
+        return self.get(job_id) if job_id else None
+
+    def replay(
+        self, job_id: str, *, expected_version: int | None = None, fence_token: int | None = None
+    ) -> JobRecord:
+        if job_id not in self._jobs:
+            raise ValueError(f"Job {job_id} not found")
+        record = self._jobs[job_id]
+        if expected_version is not None and record.version != expected_version:
+            raise ValueError("Fence/version mismatch")
+        if fence_token is not None and record.fence_token != fence_token:
+            raise ValueError("Fence/version mismatch")
+
+        payload = dict(record.payload)
+        payload.pop("_retry_count", None)
+        payload.pop("stage_attempts", None)
+        payload.pop("current_stage", None)
+
+        updated = JobRecord(
+            job_type=record.job_type,
+            payload=payload,
+            correlation_id=record.correlation_id,
+            idempotency_key=record.idempotency_key,
+            status=JobStatus.QUEUED,
+            job_id=record.job_id,
+            created_at=record.created_at,
+            fence_token=record.fence_token,
+            version=record.version + 1,
+            locked_by=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            attempts=0,
+            error_message=None,
+        )
+        self._jobs[job_id] = updated
+        return updated
 
     def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
         for job_id, record in self._jobs.items():
@@ -121,9 +171,13 @@ class InMemoryJobQueue:
             record = self._jobs[job_id]
             # Simple check for mock
             if expected_version is not None and record.version != expected_version:
-                raise ValueError(f"Job version mismatch: expected {expected_version}, got {record.version}")
+                raise ValueError(
+                    f"Job version mismatch: expected {expected_version}, got {record.version}"
+                )
             if fence_token is not None and record.fence_token != fence_token:
-                raise ValueError(f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}")
+                raise ValueError(
+                    f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}"
+                )
 
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,

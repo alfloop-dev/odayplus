@@ -1395,10 +1395,35 @@ class NetworkListingService:
         actor_role_id: str,
         actor_name: str | None,
         correlation_id: str | None,
+        job_queue: Any | None = None,
     ) -> dict[str, Any]:
         intake = self._listing_intake(intake_id)
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
+
+        if job_queue is not None and intake.get("idempotencyKey"):
+            job = job_queue.get_by_idempotency_key(intake["idempotencyKey"])
+            if job is not None:
+                intake["stage"] = "SUBMITTED"
+                job_queue.replay(job.job_id)
+                audit_evt = {
+                    "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+                    "occurredAt": _now(),
+                    "actorRoleId": actor_role_id,
+                    "actorName": actor_name or "Expansion Manager",
+                    "action": "intake.retry",
+                    "targetId": intake_id,
+                    "message": f"Replayed async intake job for {intake['originalUrl']}.",
+                    "correlationId": correlation_id,
+                    "metadata": {
+                        "job_id": job.job_id,
+                        "stage": intake["stage"],
+                    }
+                }
+                intake["auditEvents"].append(audit_evt)
+                self._save_intake(intake)
+                return _copy(intake)
+
 
         from modules.external_data.application.assisted_intake import (
             content_fingerprint,

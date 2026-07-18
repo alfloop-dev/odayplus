@@ -323,7 +323,7 @@ def test_sitescore_prediction_run_replay() -> None:
     body = score_response.json()
     report = body["reports"][0]
     sitescore_run_id = report["sitescore_run_id"]
-    
+
     # 1. Fetch sitescore run by ID
     run_response = client.get(f"/sitescore/runs/{sitescore_run_id}")
     assert run_response.status_code == 200
@@ -339,4 +339,3 @@ def test_sitescore_prediction_run_replay() -> None:
     assert pred_run_body["prediction_run"]["prediction_run_id"] == prediction_run_id
     assert len(pred_run_body["predictions"]) == 1
     assert pred_run_body["predictions"][0]["entity_id"] == "CS-REPLAY-001"
-

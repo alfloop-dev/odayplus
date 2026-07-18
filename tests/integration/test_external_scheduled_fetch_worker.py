@@ -24,7 +24,9 @@ class CountingProvider:
     fail: bool = False
     exception: Exception | None = None
 
-    def fetch_and_ingest(self, *, ingestion_time: datetime | None = None, correlation_id: str | None = None) -> Any:
+    def fetch_and_ingest(
+        self, *, ingestion_time: datetime | None = None, correlation_id: str | None = None
+    ) -> Any:
         self.calls += 1
         if self.exception is not None:
             raise self.exception
@@ -74,7 +76,9 @@ def test_scheduled_fetch_creates_durable_snapshot_ids_and_watermark() -> None:
 
 def test_backfill_is_idempotent_for_same_windows() -> None:
     provider = CountingProvider()
-    scheduler = ExternalFetchScheduler(provider_factories={"listing.partner_feed": lambda: provider})
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": lambda: provider}
+    )
     spec = ExternalFetchJobSpec(
         provider_id="listing.partner_feed",
         schedule_id="hourly-listing",
@@ -94,7 +98,9 @@ def test_backfill_is_idempotent_for_same_windows() -> None:
 
 def test_stale_source_clock_marks_data_status_stale_without_fabricating_freshness() -> None:
     provider = CountingProvider(observed_at="2026-06-20T00:00:00Z")
-    scheduler = ExternalFetchScheduler(provider_factories={"listing.partner_feed": lambda: provider})
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": lambda: provider}
+    )
     spec = ExternalFetchJobSpec(
         provider_id="listing.partner_feed",
         schedule_id="hourly-listing",

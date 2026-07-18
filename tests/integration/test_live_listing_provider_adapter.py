@@ -223,9 +223,7 @@ def test_malformed_listing_payload_enters_connector_quarantine() -> None:
     assert result.connector_run.accepted_count == 0
     assert result.connector_run.quarantined_count == 1
     rejected = result.connector_run.quarantined[0]
-    assert {"missing_required_field", "invalid_amount"} <= set(
-        rejected.lineage.quarantine_reasons
-    )
+    assert {"missing_required_field", "invalid_amount"} <= set(rejected.lineage.quarantine_reasons)
 
 
 def test_provider_auth_error_from_live_client_fails_closed_without_secret_values() -> None:
@@ -295,7 +293,9 @@ def test_provider_rate_limit_from_live_client_fails_closed_without_secret_values
     assert "listing-live-secret" not in str(exc_info.value)
 
 
-def test_http_listing_client_classifies_5xx_without_secret_values(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_http_listing_client_classifies_5xx_without_secret_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def raise_503(*_args: Any, **_kwargs: Any) -> None:
         raise urllib.error.HTTPError(
             url="https://listing.example.test/feed",

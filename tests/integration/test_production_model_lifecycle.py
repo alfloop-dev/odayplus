@@ -380,9 +380,7 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             MonitoringSignalType.DRIFT,
             MonitoringSignalType.OUTCOME,
         }
-        stored_comparison = service2.repository.get_inference_comparison(
-            comparison.comparison_id
-        )
+        stored_comparison = service2.repository.get_inference_comparison(comparison.comparison_id)
         assert stored_comparison.rollback_recommended
         assert [p.input_id for p in stored_comparison.champion_predictions] == [
             p.input_id for p in stored_comparison.challenger_predictions
@@ -411,8 +409,14 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
         assert rollback.release_type is ReleaseType.ROLLBACK
         assert rollback.rollback_target == "1.0.0"
         assert service2.repository.get_alias(MODEL_NAME, ModelAlias.PRODUCTION).version == "1.0.0"
-        assert service2.repository.get_model_version(MODEL_NAME, "1.0.0").stage is ModelStage.PRODUCTION
-        assert service2.repository.get_model_version(MODEL_NAME, "1.1.0").stage is ModelStage.ROLLED_BACK
+        assert (
+            service2.repository.get_model_version(MODEL_NAME, "1.0.0").stage
+            is ModelStage.PRODUCTION
+        )
+        assert (
+            service2.repository.get_model_version(MODEL_NAME, "1.1.0").stage
+            is ModelStage.ROLLED_BACK
+        )
     finally:
         restarted.close()
 

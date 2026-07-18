@@ -10,7 +10,9 @@ EXPECTED_SHA = "11f4fb625f922c5e2d178508128e9106da7c465a"
 
 
 def load_checker_module():
-    spec = importlib.util.spec_from_file_location("check_external_proof_issue_handback_scan", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "check_external_proof_issue_handback_scan", CHECKER
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

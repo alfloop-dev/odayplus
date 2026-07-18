@@ -77,9 +77,7 @@ def _view_forecast(principal, engine, *, region_id: str = "north"):
     request = AccessRequest(
         principal=principal,
         action=Action.VIEW,
-        resource=ResourceDescriptor(
-            type="forecastops", tenant_id="tenant-a", region_id=region_id
-        ),
+        resource=ResourceDescriptor(type="forecastops", tenant_id="tenant-a", region_id=region_id),
         environment=Environment(attributes={"correlation_id": "corr-int"}),
     )
     return engine.authorize(request)

@@ -71,6 +71,7 @@ def _boundary(config: AuthBoundaryConfig, **kw: object) -> AuthenticationBoundar
 
 # --- happy path -------------------------------------------------------------
 
+
 def test_valid_token_authenticates_and_maps_claims(config, key):
     boundary = _boundary(config)
     token = encode_compact_jwt(_claims(), key)
@@ -106,6 +107,7 @@ def test_valid_authentication_writes_success_audit_event(config, key):
 
 # --- fail-closed configuration ---------------------------------------------
 
+
 def test_unconfigured_boundary_denies_every_token(key):
     boundary = _boundary(AuthBoundaryConfig())
     token = encode_compact_jwt(_claims(), key)
@@ -126,7 +128,8 @@ def test_partial_config_is_not_configured(key):
 def test_no_credentials_denied():
     boundary = _boundary(
         AuthBoundaryConfig(
-            issuer=ISSUER, audiences=frozenset({AUDIENCE}),
+            issuer=ISSUER,
+            audiences=frozenset({AUDIENCE}),
             signing_keys={"k1": SigningKey("k1", "HS256", b"x")},
         )
     )
@@ -137,6 +140,7 @@ def test_no_credentials_denied():
 
 
 # --- invalid tokens ---------------------------------------------------------
+
 
 def test_expired_token_denied(config, key):
     boundary = _boundary(config)
@@ -223,18 +227,14 @@ def test_unknown_kid_denied(config, key):
 
 
 def test_malformed_token_denied(config):
-    outcome = _boundary(config).authenticate(
-        Credentials(bearer_token="not-a-jwt"), now=NOW
-    )
+    outcome = _boundary(config).authenticate(Credentials(bearer_token="not-a-jwt"), now=NOW)
     assert outcome.reason is AuthFailureReason.MALFORMED_TOKEN
 
 
 def test_denied_authentication_is_audited_as_failure(config, key):
     boundary = _boundary(config)
     token = encode_compact_jwt(_claims(exp=(NOW - timedelta(hours=1)).timestamp()), key)
-    boundary.authenticate(
-        Credentials(bearer_token=token, correlation_id="corr-x"), now=NOW
-    )
+    boundary.authenticate(Credentials(bearer_token=token, correlation_id="corr-x"), now=NOW)
     events = boundary.audit_log.list_events(correlation_id="corr-x")
     assert len(events) == 1
     assert events[0].outcome == "failure"
@@ -242,15 +242,14 @@ def test_denied_authentication_is_audited_as_failure(config, key):
 
 
 def test_raise_for_status_raises_on_denial(config):
-    outcome = _boundary(config).authenticate(
-        Credentials(bearer_token="bad"), now=NOW
-    )
+    outcome = _boundary(config).authenticate(Credentials(bearer_token="bad"), now=NOW)
     with pytest.raises(AuthenticationError) as exc:
         outcome.raise_for_status()
     assert exc.value.reason is AuthFailureReason.MALFORMED_TOKEN
 
 
 # --- service identity -------------------------------------------------------
+
 
 def _service_boundary(config: AuthBoundaryConfig) -> AuthenticationBoundary:
     verifier = ServiceIdentityVerifier(
@@ -300,6 +299,7 @@ def test_empty_service_registry_fails_closed(config):
 
 # --- config + metrics + headers --------------------------------------------
 
+
 def test_config_from_env_reads_hs256_keys():
     cfg = config_from_env(
         {
@@ -340,9 +340,7 @@ def test_malformed_hs256_keys_only_still_has_live_inputs():
 def test_metrics_counter_records_outcomes(config, key):
     metrics = MetricsRegistry()
     boundary = AuthenticationBoundary(config, metrics=metrics)
-    boundary.authenticate(
-        Credentials(bearer_token=encode_compact_jwt(_claims(), key)), now=NOW
-    )
+    boundary.authenticate(Credentials(bearer_token=encode_compact_jwt(_claims(), key)), now=NOW)
     boundary.authenticate(Credentials(bearer_token="bad"), now=NOW)
     snapshot = metrics.snapshot()
     assert "auth.attempts_total" in snapshot

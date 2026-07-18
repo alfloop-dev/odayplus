@@ -41,9 +41,7 @@ LISTING_HEADERS = auth_headers(Role.EXPANSION_USER)
 EXTERNAL_DATA_HEADERS = auth_headers(Role.DATA_OWNER)
 # Intervention lifecycle spans create/approve (operations manager) and execute
 # (regional supervisor); a principal may hold both roles.
-INTERVENTION_HEADERS = auth_headers(
-    Role.OPERATIONS_MANAGER, Role.REGIONAL_SUPERVISOR
-)
+INTERVENTION_HEADERS = auth_headers(Role.OPERATIONS_MANAGER, Role.REGIONAL_SUPERVISOR)
 # PriceOps view/create/approve/execute is held by the pricing manager.
 PRICEOPS_HEADERS = auth_headers(Role.PRICING_MANAGER)
 SITESCORE_HEADERS = auth_headers(Role.SITE_REVIEWER)

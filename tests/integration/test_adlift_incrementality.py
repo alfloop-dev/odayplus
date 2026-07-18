@@ -353,7 +353,12 @@ def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
         "ad_spend": 1_000.0,
         "observations": [],
     }
-    for store, pre, post in (("t1", 1_000, 1_300), ("t2", 1_000, 1_300), ("c1", 1_000, 1_100), ("c2", 1_000, 1_100)):
+    for store, pre, post in (
+        ("t1", 1_000, 1_300),
+        ("t2", 1_000, 1_300),
+        ("c1", 1_000, 1_100),
+        ("c2", 1_000, 1_100),
+    ):
         for day in PRE_DAYS:
             campaign_payload["observations"].append(
                 {

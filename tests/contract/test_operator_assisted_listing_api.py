@@ -288,6 +288,7 @@ def test_timeout_contract_test() -> None:
 def test_fixture_compatible_replay() -> None:
     # Verify that the entire retrieval corpus remains queryable and matches exact schemas
     from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
+
     for result in RETRIEVAL_CORPUS.values():
         assert result.snapshot_id is not None
         if result.ok:
@@ -332,7 +333,11 @@ def test_promote_intake_contract_test() -> None:
     resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={"url": url, "heatZoneId": "HZ-01"},
-        headers={**HEADERS, "x-subject-id": "operator-expansion-staff", "x-operator-role": "expansion-staff"},
+        headers={
+            **HEADERS,
+            "x-subject-id": "operator-expansion-staff",
+            "x-operator-role": "expansion-staff",
+        },
     )
     data = resp.json()
     intake_id = data["id"]
@@ -373,7 +378,11 @@ def _ready_intake_id(client) -> str:
     resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
-        headers={**HEADERS, "x-subject-id": "operator-expansion-staff", "x-operator-role": "expansion-staff"},
+        headers={
+            **HEADERS,
+            "x-subject-id": "operator-expansion-staff",
+            "x-operator-role": "expansion-staff",
+        },
     )
     assert resp.status_code == 200
     return resp.json()["id"]
@@ -516,9 +525,7 @@ def test_promote_persists_caller_risk_summary_in_audit() -> None:
     )
     assert resp.status_code == 200
 
-    detail = client.get(
-        f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS
-    )
+    detail = client.get(f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS)
     audit = detail.json()["auditEvents"][-1]
     assert audit["action"] == "intake.promote"
     assert audit["metadata"]["riskSummary"] == caller_summary

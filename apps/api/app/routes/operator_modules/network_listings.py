@@ -387,7 +387,7 @@ def create_network_listings_sub_router(
     ) -> dict[str, Any]:
         try:
             reject_sensitive_submission_material(body)
-            
+
             # Backpressure Check
             job_queue = getattr(request.app.state, "job_queue", None)
             if job_queue is not None:
@@ -638,11 +638,13 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
+            job_queue = getattr(request.app.state, "job_queue", None)
             result = service.retry_intake(
                 intake_id=intake_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=actor_name,
                 correlation_id=x_correlation_id,
+                job_queue=job_queue,
             )
             return mask_intake(principal, result)
         except NetworkListingNotFound as exc:

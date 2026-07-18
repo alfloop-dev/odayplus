@@ -262,7 +262,8 @@ def test_release_monitor_healthy_records_audit_without_recommending_rollback() -
     assert assessment.breaches == ()
     assert assessment.audit_event_id is not None
     monitor_events = [
-        event for event in audit_log.list_events()
+        event
+        for event in audit_log.list_events()
         if event.event_type == "learninghub.release_monitor.v1"
     ]
     assert len(monitor_events) == 1
@@ -294,7 +295,9 @@ def test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged()
     assert assessment.recommended_action is RecommendedAction.ROLLBACK
     assert [breach.metric_name for breach in assessment.breaches] == ["p80_coverage"]
     # Monitor is never optimistic: it recommends, it does not mutate the alias.
-    assert repository.get_alias("forecast_revenue_interval", ModelAlias.PRODUCTION).version == "1.1.0"
+    assert (
+        repository.get_alias("forecast_revenue_interval", ModelAlias.PRODUCTION).version == "1.1.0"
+    )
     assert any(
         event.event_type == "learninghub.release_monitor.v1" and event.outcome == "breached"
         for event in audit_log.list_events()

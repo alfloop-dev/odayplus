@@ -23,26 +23,41 @@ def test_postcss_advisory_resolved() -> None:
     major, minor, patch = map(int, version.split("."))
     # PostCSS advisory is fixed in >= 8.5.10 or >= 8.4.38 depending on the backport.
     # We upgraded to 8.5.19, so let's check it's secure.
-    assert (major == 8 and minor == 5 and patch >= 10) or (major == 8 and minor == 4 and patch >= 38) or (major > 8), f"PostCSS version {version} is vulnerable"
+    assert (
+        (major == 8 and minor == 5 and patch >= 10)
+        or (major == 8 and minor == 4 and patch >= 38)
+        or (major > 8)
+    ), f"PostCSS version {version} is vulnerable"
 
 
 def test_npm_audit_passes() -> None:
-    res = subprocess.run(["npm", "audit", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True)
+    res = subprocess.run(
+        ["npm", "audit", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True
+    )
     assert res.returncode == 0, f"npm audit failed with output:\n{res.stdout}\n{res.stderr}"
 
 
 def test_pip_audit_passes() -> None:
-    res = subprocess.run(["uv", "run", "--with", "pip-audit", "pip-audit", "--local"], cwd=ROOT, capture_output=True, text=True)
+    res = subprocess.run(
+        ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
     assert res.returncode == 0, f"pip-audit failed with output:\n{res.stdout}\n{res.stderr}"
 
 
 def test_secrets_scan_passes() -> None:
-    res = subprocess.run([str(ROOT / "scripts/security/secret_scan.py")], cwd=ROOT, capture_output=True, text=True)
+    res = subprocess.run(
+        [str(ROOT / "scripts/security/secret_scan.py")], cwd=ROOT, capture_output=True, text=True
+    )
     assert res.returncode == 0, f"Secret scanning failed with output:\n{res.stdout}"
 
 
 def test_sast_scan_passes() -> None:
-    res = subprocess.run([str(ROOT / "scripts/security/sast_scan.py")], cwd=ROOT, capture_output=True, text=True)
+    res = subprocess.run(
+        [str(ROOT / "scripts/security/sast_scan.py")], cwd=ROOT, capture_output=True, text=True
+    )
     assert res.returncode == 0, f"SAST scan failed with output:\n{res.stdout}"
 
 
@@ -81,6 +96,7 @@ def test_sign_images_script_executable() -> None:
 
 # --- Negative tests verifying that the supply-chain security gates fail closed (B7) ---
 
+
 def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
     # Copy pyproject.toml and uv.lock to a temporary directory
     shutil.copy(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
@@ -90,8 +106,7 @@ def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
     pyproject_path = tmp_path / "pyproject.toml"
     content = pyproject_path.read_text(encoding="utf-8")
     modified_content = content.replace(
-        'dependencies = [',
-        'dependencies = [\n    "nonexistent-test-package-xyz>=1.0.0",'
+        "dependencies = [", 'dependencies = [\n    "nonexistent-test-package-xyz>=1.0.0",'
     )
     pyproject_path.write_text(modified_content, encoding="utf-8")
 
@@ -106,9 +121,19 @@ def test_generated_client_drift_rejected_negative() -> None:
         original_content = index_path.read_text(encoding="utf-8")
         try:
             # Append a syntax / type error
-            index_path.write_text(original_content + "\nconst drift_test_const: number = 'breaking_type_drift';\n", encoding="utf-8")
-            res = subprocess.run(["npm", "run", "typecheck", "--workspace=@oday-plus/openapi-client"], cwd=ROOT, capture_output=True, text=True)
-            assert res.returncode != 0, "Typecheck should fail when openapi client has type drift/errors"
+            index_path.write_text(
+                original_content + "\nconst drift_test_const: number = 'breaking_type_drift';\n",
+                encoding="utf-8",
+            )
+            res = subprocess.run(
+                ["npm", "run", "typecheck", "--workspace=@oday-plus/openapi-client"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            assert res.returncode != 0, (
+                "Typecheck should fail when openapi client has type drift/errors"
+            )
         finally:
             index_path.write_text(original_content, encoding="utf-8")
 
@@ -121,7 +146,9 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
     # Run pip-audit on requirements-vulnerable.txt
     res = subprocess.run(
         ["uv", "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)],
-        cwd=tmp_path, capture_output=True, text=True
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
     )
     assert res.returncode != 0, "pip-audit should fail when scanning a vulnerable fixture"
 
@@ -130,10 +157,20 @@ def test_unsigned_images_rejected_negative() -> None:
     # Run sign_images.sh verify on a bogus image name in CI mode and expect non-zero exit code
     script_path = ROOT / "scripts/security/sign_images.sh"
     res = subprocess.run(
-        ["env", "CI=true", str(script_path), "verify", "ghcr.io/totally/nonexistent-image@sha256:0000000000000000000000000000000000000000000000000000000000000000"],
-        cwd=ROOT, capture_output=True, text=True
+        [
+            "env",
+            "CI=true",
+            str(script_path),
+            "verify",
+            "ghcr.io/totally/nonexistent-image@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
-    assert res.returncode != 0, "Verification of unsigned/nonexistent image should fail with non-zero exit code"
+    assert res.returncode != 0, (
+        "Verification of unsigned/nonexistent image should fail with non-zero exit code"
+    )
 
 
 def test_invalid_provenance_rejected_negative(tmp_path: Path) -> None:
@@ -150,7 +187,9 @@ def test_invalid_provenance_rejected_negative(tmp_path: Path) -> None:
     from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
 
     current_sbom = current_generate_sbom()
-    assert current_sbom.get("components") != data.get("components"), "Drift check must fail when components list is tampered with"
+    assert current_sbom.get("components") != data.get("components"), (
+        "Drift check must fail when components list is tampered with"
+    )
 
 
 def test_leaked_test_secrets_rejected_negative() -> None:
@@ -163,7 +202,9 @@ def test_leaked_test_secrets_rejected_negative() -> None:
     try:
         # Case A: Leaked AWS Key without pragma
         secret_file_a = test_dir / "test_secret_leak_no_pragma.py"
-        secret_file_a.write_text('AWS_KEY = "AKIA1234567890ABCDEF"\n', encoding="utf-8")  # pragma: allowlist-secret
+        secret_file_a.write_text(
+            'AWS_KEY = "AKIA1234567890ABCDEF"\n', encoding="utf-8"
+        )  # pragma: allowlist-secret
 
         sys.path.insert(0, str(ROOT))
         from scripts.security.secret_scan import scan_file
@@ -173,21 +214,33 @@ def test_leaked_test_secrets_rejected_negative() -> None:
 
         # Case B: Leaked AWS Key with old bypass '# approved'
         secret_file_b = test_dir / "test_secret_leak_old_bypass.py"
-        secret_file_b.write_text('AWS_KEY = "AKIA1234567890ABCDEF"  # approved\n', encoding="utf-8")  # pragma: allowlist-secret
+        secret_file_b.write_text(
+            'AWS_KEY = "AKIA1234567890ABCDEF"  # approved\n', encoding="utf-8"
+        )  # pragma: allowlist-secret
         violations_b = scan_file(secret_file_b)
-        assert len(violations_b) > 0, "Should detect AWS key leak even with legacy '# approved' bypass"
+        assert len(violations_b) > 0, (
+            "Should detect AWS key leak even with legacy '# approved' bypass"
+        )
 
         # Case C: Leaked AWS Key with pragma
         secret_file_c = test_dir / "test_secret_leak_with_pragma.py"
-        secret_file_c.write_text('AWS_KEY = "AKIA1234567890ABCDEF"  # pragma: allowlist-secret\n', encoding="utf-8")  # pragma: allowlist-secret
+        secret_file_c.write_text(
+            'AWS_KEY = "AKIA1234567890ABCDEF"  # pragma: allowlist-secret\n', encoding="utf-8"
+        )  # pragma: allowlist-secret
         violations_c = scan_file(secret_file_c)
-        assert len(violations_c) == 0, "Should bypass AWS key leak if pragma allowlist is present in test path"
+        assert len(violations_c) == 0, (
+            "Should bypass AWS key leak if pragma allowlist is present in test path"
+        )
 
         # Case D: Leaked AWS Key with pragma in a NON-test path
         secret_file_d = non_test_dir / "prod_file.py"
-        secret_file_d.write_text('AWS_KEY = "AKIA1234567890ABCDEF"  # pragma: allowlist-secret\n', encoding="utf-8")  # pragma: allowlist-secret
+        secret_file_d.write_text(
+            'AWS_KEY = "AKIA1234567890ABCDEF"  # pragma: allowlist-secret\n', encoding="utf-8"
+        )  # pragma: allowlist-secret
         violations_d = scan_file(secret_file_d)
-        assert len(violations_d) > 0, "Should reject secrets even with pragma if not in test/fixture/mock path"
+        assert len(violations_d) > 0, (
+            "Should reject secrets even with pragma if not in test/fixture/mock path"
+        )
     finally:
         shutil.rmtree(test_dir, ignore_errors=True)
         shutil.rmtree(non_test_dir, ignore_errors=True)

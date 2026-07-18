@@ -53,7 +53,11 @@ def test_merge_closes_edges_creates_redirect_and_preserves_history() -> None:
 def test_split_and_unmerge_are_append_only_reversals() -> None:
     graph, first, second = graph_with_sources()
     merged = graph.merge(
-        "tenant-a", ("property-a",), "property-b", reason="merge", expected_version=graph.version("tenant-a")
+        "tenant-a",
+        ("property-a",),
+        "property-b",
+        reason="merge",
+        expected_version=graph.version("tenant-a"),
     )
     split = graph.split(
         "tenant-a",
@@ -65,12 +69,18 @@ def test_split_and_unmerge_are_append_only_reversals() -> None:
     assert split.before_edges != split.after_edges
 
     graph.reverse(
-        "tenant-a", split.decision_id, reason="split evidence invalid", expected_version=graph.version("tenant-a")
+        "tenant-a",
+        split.decision_id,
+        reason="split evidence invalid",
+        expected_version=graph.version("tenant-a"),
     )
     assert graph.resolve_source(first).effective_property_id == "property-b"
 
     graph.unmerge(
-        "tenant-a", merged.decision_id, reason="merge evidence invalid", expected_version=graph.version("tenant-a")
+        "tenant-a",
+        merged.decision_id,
+        reason="merge evidence invalid",
+        expected_version=graph.version("tenant-a"),
     )
     assert graph.resolve_source(first).effective_property_id == "property-a"
     assert graph.resolve_source(second).effective_property_id == "property-b"
@@ -81,11 +91,19 @@ def test_split_and_unmerge_are_append_only_reversals() -> None:
 def test_cycle_concurrency_and_cross_tenant_access_are_rejected() -> None:
     graph, first, _ = graph_with_sources()
     graph.merge(
-        "tenant-a", ("property-a",), "property-b", reason="merge", expected_version=graph.version("tenant-a")
+        "tenant-a",
+        ("property-a",),
+        "property-b",
+        reason="merge",
+        expected_version=graph.version("tenant-a"),
     )
     with pytest.raises(IdentityCycleError):
         graph.merge(
-            "tenant-a", ("property-b",), "property-a", reason="cycle", expected_version=graph.version("tenant-a")
+            "tenant-a",
+            ("property-b",),
+            "property-a",
+            reason="cycle",
+            expected_version=graph.version("tenant-a"),
         )
     with pytest.raises(IdentityConflictError):
         graph.split("tenant-a", {first: "property-c"}, reason="stale", expected_version=0)
