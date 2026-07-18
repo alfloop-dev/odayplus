@@ -64,7 +64,6 @@ class SlaState(StrEnum):
 class PromotionState(StrEnum):
     REQUESTED = "REQUESTED"
     VALIDATING = "VALIDATING"
-    PENDING_REVIEW = "PENDING_REVIEW"
     REJECTED = "REJECTED"
     APPROVED = "APPROVED"
     CANDIDATE_CREATING = "CANDIDATE_CREATING"
@@ -83,7 +82,7 @@ class PrincipalRole(StrEnum):
     PRIVACY_OFFICER = "PRIVACY_OFFICER"
     PLATFORM_ADMIN = "PLATFORM_ADMIN"
     EMERGENCY_ADMIN = "EMERGENCY_ADMIN"
-    
+
     # Service principals
     SVC_INTAKE = "SVC_INTAKE"
     SVC_RETRIEVAL = "SVC_RETRIEVAL"
@@ -229,7 +228,7 @@ class BaseStateMachine:
                 f"Tenant isolation mismatch: Actor tenant {context.actor.tenant_id} "
                 f"cannot access entity tenant {entity.tenant_id}."
             )
-        
+
         # Concurrency / Version Check (If-Match requirement)
         if context.version_before is not None and entity.version != context.version_before:
             raise DomainValidationError(
@@ -667,7 +666,7 @@ class SlaStateMachine(BaseStateMachine):
         SlaState.DUE_SOON: {SlaState.OVERDUE, SlaState.BREACHED, SlaState.COMPLETED, SlaState.PAUSED},
         SlaState.OVERDUE: {SlaState.BREACHED, SlaState.COMPLETED, SlaState.PAUSED},
         SlaState.BREACHED: {SlaState.COMPLETED},
-        SlaState.PAUSED: {SlaState.ON_TRACK, SlaState.DUE_SOON, SlaState.OVERDUE, SlaState.COMPLETED},
+        SlaState.PAUSED: {SlaState.ON_TRACK, SlaState.DUE_SOON, SlaState.OVERDUE, SlaState.BREACHED, SlaState.COMPLETED},
         SlaState.COMPLETED: set(),
     }
 
@@ -704,8 +703,7 @@ class PromotionStateMachine(BaseStateMachine):
     LEGAL_TRANSITIONS: dict[PromotionState | None, set[PromotionState]] = {
         None: {PromotionState.REQUESTED},
         PromotionState.REQUESTED: {PromotionState.VALIDATING},
-        PromotionState.VALIDATING: {PromotionState.REJECTED, PromotionState.APPROVED, PromotionState.PENDING_REVIEW},
-        PromotionState.PENDING_REVIEW: {PromotionState.APPROVED, PromotionState.REJECTED},
+        PromotionState.VALIDATING: {PromotionState.REJECTED, PromotionState.APPROVED},
         PromotionState.APPROVED: {PromotionState.CANDIDATE_CREATING},
         PromotionState.CANDIDATE_CREATING: {PromotionState.CANDIDATE_CREATED, PromotionState.FAILED},
         PromotionState.CANDIDATE_CREATED: {PromotionState.SCORE_QUEUED},

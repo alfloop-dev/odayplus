@@ -61,4 +61,3 @@ __all__ = [
     "SlaStateMachine",
     "PromotionStateMachine",
 ]
-

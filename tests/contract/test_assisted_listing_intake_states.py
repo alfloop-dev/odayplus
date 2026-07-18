@@ -207,7 +207,7 @@ def test_intake_segregation_needs_review_to_ready(base_context: TransitionContex
     # Move to MATCHING -> Needs review
     parser_context = TransitionContext(actor=Actor(actor_id="parser", role=PrincipalRole.SVC_PARSER, tenant_id="tenant-a"))
     service.complete_parsing("IN-1", "run-1", parser_context)
-    
+
     matcher_context = TransitionContext(actor=Actor(actor_id="matcher", role=PrincipalRole.SVC_MATCHER, tenant_id="tenant-a"))
     service.route_review_from_matching("IN-1", ["L-100"], matcher_context)
     assert intake.stage == IntakeStage.NEEDS_REVIEW
@@ -416,6 +416,17 @@ def test_sla_derived_and_pause_behavior() -> None:
     service.resume_sla("SLA-1", eval_context_overdue)
     # Since current time is past due, should resume as OVERDUE
     assert sla.status == SlaState.OVERDUE
+
+    # 7. Pause again and resume after 24h+ -> BREACHED (Blocker 1)
+    service.pause_sla("SLA-1", "waiting on broker again", due + timedelta(hours=26), manager_context)
+    assert sla.status == SlaState.PAUSED
+
+    eval_context_breached = TransitionContext(
+        actor=Actor(actor_id="sys", role=PrincipalRole.SVC_SLA, tenant_id="tenant-a"),
+        current_time=due + timedelta(hours=25)
+    )
+    service.resume_sla("SLA-1", eval_context_breached)
+    assert sla.status == SlaState.BREACHED
 
 
 # --- 5. CANDIDATE PROMOTION TESTS ---
