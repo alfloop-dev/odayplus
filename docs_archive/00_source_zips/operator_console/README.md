@@ -25,8 +25,8 @@ Package 9 is the R6 Assisted Listing Intake resubmission. It closes the exact
 duplicate identity/stage defect and canonical-code defect, and adds partial
 assignment, evidence, dialog, hash-link, and mobile-fallback changes. The
 package remains `CHANGES_REQUESTED`: source scanning language, required
-responsive workflows, accessibility, durable submission routing, Figma/review
-evidence, Pause/evidence behavior, and package consistency remain unresolved.
+responsive workflows, accessibility, durable submission routing, reviewer
+outcomes, Pause/evidence behavior, and package consistency remain unresolved.
 
 The standalone R6 HTML in Package 9 is byte-identical to Package 8 and does not
 contain the canonical prototype corrections. Do not use it as implementation

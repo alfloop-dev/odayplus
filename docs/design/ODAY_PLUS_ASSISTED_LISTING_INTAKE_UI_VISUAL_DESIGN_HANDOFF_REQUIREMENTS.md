@@ -1,20 +1,21 @@
 ---
 doc_id: ODP-UXD-003-ADD-002
 title: ODay Plus Assisted Listing Intake UI and Visual Design Handoff Requirements
-version: 1.0.0
+version: 1.0.1
 status: ready-for-visual-design
 document_class: visual-design-handoff
 project: ODay Plus
 language: zh-TW
 owner: Product / Expansion Operations
 design_owner: Product Design / UI Visual Design
+canonical_design_tool: Claude Design
 engineering_task: ODP-INTAKE-UX-001
 responds_to: ODP-UXD-003-ADD-001
 system_design: ODP-SD-INTAKE-001
 system_design_version: 0.2.1
 approved_system_design_commit: e644bd0e01a3f9134ee0230490577db4f67b0aa9
 approval_review: ODP-SD-INTAKE-REVIEW-005
-updated_at: 2026-07-18
+updated_at: 2026-07-19
 ---
 
 # ODay Plus Assisted Listing Intake UI and Visual Design Handoff Requirements
@@ -34,12 +35,17 @@ audit evidence。
 - 所有狀態、權限、錯誤、衝突與 durable receipt 的視覺表達；
 - 繁體中文最終文案與 canonical English state code 的共存方式；
 - keyboard、focus、screen-reader、色盲與 reduced-motion 標註；
-- Figma flow、component variants、prototype 與工程 handoff annotations。
+- Claude Design flow、component variants、互動原型與工程 handoff annotations。
 
 設計團隊不負責重新定義 domain state、權限、API payload、資料擁有權、來源政策或
 promotion transaction。這些已由核准的 System Design package 綁定。
 
 ## 2. Authority and Conflict Resolution
+
+Product owner 於 2026-07-19 確認：本任務以 **Claude Design 互動原型**作為
+canonical visual-design package，不要求 Figma 交付。後續審查不得再以缺少 Figma
+作為 finding；應直接驗證 Claude Design source、runnable artifact、screen/state coverage、
+responsive、accessibility 與工程 handoff 完整度。
 
 遇到文件不一致時，依下列優先序處理：
 
@@ -416,9 +422,10 @@ wrap/truncate with accessible full value，不得溢出或遮住 action。
 - Copy 應說明目前狀態與 next action，不寫 marketing value proposition 或教學式 feature 宣傳。
 - `robots.txt` 不得被描述為單獨的 retrieval 授權依據。
 
-## 15. Required Figma Deliverables
+## 15. Required Claude Design Deliverables
 
-設計團隊需回傳一個可供工程實作的 canonical Figma package，至少包含：
+設計團隊需回傳一個可供工程實作的 canonical Claude Design package。Package 至少包含
+Claude Design source、與 source 同步的 runnable standalone artifact，以及以下內容：
 
 1. Cover、scope、source-document links、版本與 design owner。
 2. Desktop/mobile end-to-end flow map，含本文件 §7 六條情境。
@@ -434,24 +441,25 @@ wrap/truncate with accessible full value，不得溢出或遮住 action。
 12. Engineering handoff：measurements、responsive constraints、overflow、sticky regions、URL state、
     testable state/frame mapping。
 
-Frame naming：
+Screen/state naming：
 
 ```text
 ODP / Expansion / Assisted Intake / <Screen ID> / <Breakpoint> / <State>
 ```
 
-每個 frame 必須標記所對應的 canonical state、role、permission mode、data classification 與
-source requirement section。不要只以 `Frame 123` 或 `Final Final` 命名。
+每個可到達 screen/state 必須透過 `data-screen-label` 或等價的穩定識別標記所對應的
+canonical state、role、permission mode、data classification 與 source requirement section。
+不要只以流水號或 `Final Final` 命名。
 
 ## 16. Design Response Document
 
-除 Figma 外，請提交：
+除 Claude Design package 外，請提交：
 
 `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE.md`
 
 Response 至少包含：
 
-- Figma file/page/node links；
+- Claude Design source、runnable artifact、版本與 checksum links；
 - route/screen/frame index；
 - accepted/modified requirement matrix；
 - component reuse/new-component decisions；

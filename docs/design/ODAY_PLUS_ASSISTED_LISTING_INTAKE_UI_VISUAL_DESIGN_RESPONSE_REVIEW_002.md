@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-UXD-003-ADD-002-REVIEW-002
 title: ODay Plus Assisted Listing Intake UI Visual Design Resubmission Review
-version: 0.2.0
+version: 0.2.1
 status: changes-requested
 decision: CHANGES_REQUESTED
 owner: Product Platform Engineering
@@ -9,7 +9,7 @@ reviewers: Product / System Design / Frontend / Accessibility / QA
 reviews: ODP-UXD-003-ADD-002-RESPONSE
 responds_to: ODP-UXD-003-ADD-002
 supersedes_review: ODP-UXD-003-ADD-002-REVIEW-001
-requirement_version: 1.0.0
+requirement_version: 1.0.1
 reviewed_package: operator-console-r6-20260719-package-9
 reviewed_zip_sha256: 601a55b29f1097c6c50938f30e1acbdf4c9dc7f1ff9dfbc07021b00ac6f12abd
 reviewed_prototype_sha256: b3226df775cf1bf98a6707317ee0cf1c93c5b7ce90f2fd4c0bab8fba825e5fea
@@ -44,7 +44,7 @@ forward without re-verification.
 | `VDR-003` responsive design | OPEN | 1024 px still overflows by 256 px; mobile blocks every screen |
 | `VDR-004` accessibility | OPEN | Dialog attributes added; focus, trap, labels, rows, live/table semantics, and contrast remain incomplete |
 | `VDR-005` durable routes | OPEN | Direct hash link works; submission, filters, selection, and section state are not durable |
-| `VDR-006` required deliverables | OPEN | Figma substitution has no committed approval; reviewers remain unassigned |
+| `VDR-006` required deliverables | PARTIAL | Claude Design is the approved canonical format; reviewer outcomes remain unassigned |
 | `VDR-007` assignment/evidence | PARTIAL | Transfer works; Pause omits resume-time control and evidence remains summary-only |
 | `VDR-008` canonical codes | CLOSED | `EXACT_DUPLICATE` and `POSSIBLE_MATCH` are preserved |
 
@@ -199,20 +199,21 @@ Required correction:
 
 ## 4. Additional Required Changes
 
-### VDR-006 (P1) - The Figma substitution and reviewer approvals are not evidenced
+### VDR-006 (P1) - Required reviewer outcomes are not recorded
 
-Submitted response section 7, lines 54-55, states that the user formally
-approved HTML as a Figma replacement on 2026-07-18. No committed Product,
-Frontend, or Accessibility approval record is linked, and section 8, lines
-59-61, still says every reviewer is awaiting assignment. This cannot waive
-handoff sections 15-16.
+The delivery-format portion of this finding is closed. Product owner confirmed
+on 2026-07-19 that Claude Design source plus its synchronized runnable package
+is the canonical visual-design deliverable; Figma is not required. Handoff
+requirement version 1.0.1 records that decision.
+
+Submitted response section 8, lines 59-61, still says Product, System Design,
+Frontend, and Accessibility reviewers are awaiting assignment, and it does not
+record QA review. Format acceptance does not replace those review outcomes.
 
 Required correction:
 
-- Deliver the requested Figma package, or commit an approval record identifying
-  approvers, scope, date, accepted substitute artifacts, and acceptance method.
 - Assign and record Product, System Design, Frontend, Accessibility, and QA
-  review results.
+  review results against the Claude Design package.
 - Give each defer an interim behavior, owner, follow-up task, and release gate.
 
 ### VDR-007 (P1) - Assignment and WORM evidence are only partially corrected
