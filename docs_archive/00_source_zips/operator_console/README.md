@@ -6,28 +6,34 @@ before searching ad hoc workspace paths.
 
 ## Current Source Of Truth
 
-- Delivery: `Oday Plus 營運管理後台 (8).zip`
-- Canonical copy: `r6-20260718-package-8/Oday Plus 營運管理後台 (8).zip`
-- Extracted payload: `r6-20260718-package-8/extracted/`
-- Package manifest: `r6-20260718-package-8/manifest.json`
+- Delivery: `Oday Plus 營運管理後台 (9).zip`
+- Canonical copy: `r6-20260719-package-9/Oday Plus 營運管理後台 (9).zip`
+- Extracted payload: `r6-20260719-package-9/extracted/`
+- Package manifest: `r6-20260719-package-9/manifest.json`
 - Design identity: Operator Console R6
 - Demo state: `oday-plus-r6-20260718`
-- ZIP SHA-256: `cacd5f3ac659e5a52be4380f469c0c20082c1dd23cd430fafd1a3a60002a97f0`
+- ZIP SHA-256: `601a55b29f1097c6c50938f30e1acbdf4c9dc7f1ff9dfbc07021b00ac6f12abd`
 - Review disposition: `CHANGES_REQUESTED`
 
 The user supplied a URL-encoded path. Its decoded local path is:
 
-`/home/lupin/oday-plus/Oday Plus 營運管理後台 (8).zip`
+`/home/lupin/oday-plus/Oday Plus 營運管理後台 (9).zip`
 
-## Package 8 Review
+## Package 9 Review
 
-Package 8 is the R6 visual-design response for Assisted Listing Intake. It adds
-promotion, state-matrix, role, error-recovery, and durable-receipt concepts to
-the R5 intake surfaces. The package is archived as received, but its visual
-design review is `CHANGES_REQUESTED`; latest does not mean approved.
+Package 9 is the R6 Assisted Listing Intake resubmission. It closes the exact
+duplicate identity/stage defect and canonical-code defect, and adds partial
+assignment, evidence, dialog, hash-link, and mobile-fallback changes. The
+package remains `CHANGES_REQUESTED`: source scanning language, required
+responsive workflows, accessibility, durable submission routing, Figma/review
+evidence, Pause/evidence behavior, and package consistency remain unresolved.
+
+The standalone R6 HTML in Package 9 is byte-identical to Package 8 and does not
+contain the canonical prototype corrections. Do not use it as implementation
+evidence.
 
 See
-`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW.md`
+`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_002.md`
 for the binding review and remediation requirements.
 
 ## Audit Rule
@@ -49,7 +55,7 @@ preflight before editing or approving a page:
 1. Sync the task branch with the latest `origin/dev` using the repository's
    non-destructive branch policy.
 2. Confirm `docs_archive/00_source_zips/operator_console/LATEST.json` exists in
-   the worktree and resolves to package 8 / R6.
+   the worktree and resolves to package 9 / R6.
 3. Run `unzip -t` on the canonical ZIP and verify its SHA-256 against
    `LATEST.json`.
 4. Open the extracted `Oday Plus Operator Console.dc.html`; do not implement
@@ -59,6 +65,7 @@ preflight before editing or approving a page:
 6. A reviewer must reject visual completion when the worker cannot identify the
    exact package path, screen label, and comparison evidence.
 
-Packages 6 and 7 remain historical R4/R5 evidence. Package 8 is the latest
-received source, but Fleet adoption remains blocked until the visual-design
-response is resubmitted and independently approved.
+Packages 6 and 7 remain historical R4/R5 evidence; Package 8 is the first R6
+review baseline. Package 9 is the latest received source, but Fleet adoption
+remains blocked until the visual-design response is resubmitted and
+independently approved.

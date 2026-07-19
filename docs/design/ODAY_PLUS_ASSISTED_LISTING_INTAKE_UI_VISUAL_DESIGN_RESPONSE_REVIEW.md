@@ -8,6 +8,7 @@ owner: Product Platform Engineering
 reviewers: Product / System Design / Frontend / Accessibility / QA
 reviews: ODP-UXD-003-ADD-002-RESPONSE
 responds_to: ODP-UXD-003-ADD-002
+superseded_by_review: ODP-UXD-003-ADD-002-REVIEW-002
 requirement_version: 1.0.0
 reviewed_package: operator-console-r6-20260718-package-8
 reviewed_zip_sha256: cacd5f3ac659e5a52be4380f469c0c20082c1dd23cd430fafd1a3a60002a97f0

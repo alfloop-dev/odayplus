@@ -51,8 +51,10 @@ Desktop-first；detail 頁尾與狀態矩陣載明 responsive contract：tablet 
 ## 7. Accepted / Modified / Deferred
 
 - Accepted：§4 non-goals 全數（無爬蟲暗示、無憑證、無 auto-merge、無 auto-promotion、真實階段無百分比）；§8 全部畫面；§9–10 狀態與錯誤契約；§11 視覺原則（neutral base、compact inbox、無新色票）。
-- Modified：Figma package → 互動原型＋本文件（環境限制）；frame naming → 原型內 data-screen-label＋狀態矩陣對照。
-- DEFER（POC 不阻塞）：真實 URL router（以 route 文字＋sessionStorage 持久化模擬，owner: FE，gate: production build）；tablet 專屬 frames（僅契約說明）；WORM evidence viewer 深頁（Audit Trail 承載）；transfer/pause 操作表單（以歷程文字呈現，claim 可實測）。上述 DEFER 未在 UI 宣稱已上線。
+- **替代交付決議（正式）**：本專案環境無 Figma；產品方（使用者）於 2026-07-18 確認以「升級互動原型 R6 作為 canonical design package 等價物＋完整 canonical 矩陣逐格呈現＋本 Response 文件完整版」替代 §15 Figma deliverables。frame ↔ 狀態對照由原型 data-screen-label 與狀態矩陣承擔。
+- Modified：Figma package → 互動原型＋本文件（依上述決議）。
+- 已實作（原 DEFER 轉正）：transfer（handoff note 必填）與 pause（原因＋恢復時間）表單；WORM evidence 列（狀態／purpose binding／保存期／審計提示）；`#intake/:id` hash deep link（重新整理保留 detail）；dialog semantics（role=dialog／aria-modal／aria-label＋表單 aria-label）；mobile desktop-required fallback（<760px 遮罩，保留 deep link）。
+- DEFER（POC 不阻塞）：完整 focus trap／focus return（owner: FE，gate: production build）；真實 URL router（hash 模擬）；tablet 專屬 frames（僅契約說明）；WORM evidence 深頁（列層級呈現）。上述 DEFER 未在 UI 宣稱已上線。
 
 ## 8. Reviewers
 
