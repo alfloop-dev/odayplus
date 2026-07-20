@@ -103,8 +103,11 @@ def test_live_runtime_serves_every_effective_operation() -> None:
                 live_op = live_paths[live_path][method]
                 assert "requestBody" in live_op, f"runtime missing requestBody on {method.upper()} {live_path}"
                 
-                spec_content = resolve_ref(op["requestBody"]["content"].get("application/json", {}).get("schema", {}), artifact)
-                live_content = resolve_ref(live_op["requestBody"]["content"].get("application/json", {}).get("schema", {}), live)
+                spec_rb = resolve_ref(op["requestBody"], artifact)
+                live_rb = resolve_ref(live_op["requestBody"], live)
+                
+                spec_content = resolve_ref(spec_rb.get("content", {}).get("application/json", {}).get("schema", {}), artifact)
+                live_content = resolve_ref(live_rb.get("content", {}).get("application/json", {}).get("schema", {}), live)
                 
                 if spec_content.get("properties"):
                     assert "properties" in live_content, f"properties missing in runtime requestBody schema for {method.upper()} {live_path}"
