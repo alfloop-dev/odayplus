@@ -351,6 +351,9 @@ def install_error_handlers(app: Any) -> None:
         elif "WORKFLOW_STATE_DENIED" in detail_str:
             code = "WORKFLOW_STATE_DENIED"
             next_action = "REFRESH"
+        elif "OWNER_CONFLICT" in detail_str:
+            code = "OWNER_CONFLICT"
+            next_action = "REFRESH"
         elif "VERSION_CONFLICT" in detail_str or "version conflict" in detail_str:
             code = "VERSION_CONFLICT"
             next_action = "REFRESH"

@@ -813,6 +813,62 @@ def test_unassigned_intake_is_not_owned_by_unrelated_same_tenant_staff(
     assert response.status_code == 200
     assert intake_id not in {item["intake_id"] for item in response.json()["items"]}
 
+    detail = client.get(
+        f"/api/v1/intakes/{intake_id}", headers=unrelated_staff_headers
+    )
+    assert detail.status_code == 403
+    assert detail.json()["code"] == "OWNERSHIP_REQUIRED"
+
+    cancelled = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json={"reason": "Attempt to cancel another staff member's intake"},
+        headers={
+            **unrelated_staff_headers,
+            "Idempotency-Key": f"idem-unrelated-cancel-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert cancelled.status_code == 403
+    assert cancelled.json()["code"] == "OWNERSHIP_REQUIRED"
+
+
+def test_restricted_v1_fields_are_masked_in_the_http_detail_response(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/restricted-field-masking",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-mask-setup-{uuid4()}"},
+    )
+    intake_id = submitted.json()["intake_id"]
+    store = _store_with_intake(intake_id)
+    store.intakes[intake_id]["fields"] = [
+        {
+            "field_path": "broker.contact_phone",
+            "classification": "RESTRICTED",
+            "masked": False,
+            "parsed": "+886-2-5555-0101",
+            "normalized": "+886255550101",
+            "corrected": "+886-2-5555-0199",
+            "effective": "+886-2-5555-0199",
+            "confidence": 0.99,
+        }
+    ]
+
+    response = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_A)
+
+    assert response.status_code == 200
+    field = response.json()["fields"][0]
+    assert field["parsed"] is None
+    assert field["normalized"] is None
+    assert field["corrected"] is None
+    assert field["effective"] is None
+    assert field["masked"] is True
+    assert field["mask_reason_code"] == "FIELD_MASKED"
+
 
 def test_assignment_replay_is_immutable_after_the_assignment_is_claimed(
     client: TestClient,
@@ -864,6 +920,121 @@ def test_assignment_replay_is_immutable_after_the_assignment_is_claimed(
     assert replayed.status_code == 200
     assert replayed.json() == first.json()
     assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_staff_transfer_lost_response_replays_after_ownership_changes(
+    client: TestClient,
+) -> None:
+    staff_headers = {
+        "x-subject-id": ACTOR_A,
+        "x-tenant-id": TENANT_A,
+        "x-roles": "expansion_user",
+        "x-operator-role": "expansion-staff",
+    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/staff-transfer-replay",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-transfer-replay-setup-{uuid4()}",
+        },
+    )
+    intake_id = submitted.json()["intake_id"]
+    assigned = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json={
+            "owner_subject_id": ACTOR_A,
+            "owner_role": "expansion-staff",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Assign the submitted intake to its staff owner",
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-transfer-replay-assign-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert assigned.status_code == 200
+    assignment_id = assigned.json()["assignment_id"]
+    transfer_body = {
+        "target_owner_subject_id": ACTOR_C,
+        "target_owner_role": "reviewer",
+        "reason": "Transfer to the reviewing operator",
+        "handoff_note": "Review the source evidence before deciding",
+    }
+    transfer_headers = {
+        **staff_headers,
+        "Idempotency-Key": f"idem-staff-transfer-replay-{uuid4()}",
+        "If-Match": assigned.headers["ETag"],
+    }
+
+    first = client.post(
+        f"/api/v1/assignments/{assignment_id}/actions/transfer",
+        json=transfer_body,
+        headers=transfer_headers,
+    )
+    replayed = client.post(
+        f"/api/v1/assignments/{assignment_id}/actions/transfer",
+        json=transfer_body,
+        headers=transfer_headers,
+    )
+
+    assert first.status_code == replayed.status_code == 200
+    assert replayed.json() == first.json()
+    assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_assign_intake_rejects_a_second_active_assignment_with_fresh_etag(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/active-owner-conflict",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-owner-conflict-setup-{uuid4()}",
+        },
+    )
+    intake_id = submitted.json()["intake_id"]
+    first = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json={
+            "owner_subject_id": ACTOR_A,
+            "owner_role": "reviewer",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Create the active assignment",
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-owner-conflict-first-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json={
+            "owner_subject_id": ACTOR_C,
+            "owner_role": "reviewer",
+            "due_at": "2026-07-26T12:00:00Z",
+            "reason": "Attempt to create another active assignment",
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-owner-conflict-second-{uuid4()}",
+            "If-Match": first.headers["ETag"],
+        },
+    )
+
+    assert second.status_code == 409
+    assert second.json()["code"] == "OWNER_CONFLICT"
 
 
 def test_assignment_idempotency_is_scoped_to_the_path_intake(

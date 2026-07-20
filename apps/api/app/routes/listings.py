@@ -743,6 +743,29 @@ else:
         def fingerprint(body: Any) -> str:
             return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
+        def load_replay(
+            key: str | None,
+            body: Any,
+            tenant_id: str,
+            actor_id: str,
+            operation_id: str,
+            *,
+            resource_id: str | None = None,
+        ) -> tuple[dict[str, Any], int] | None:
+            if not key:
+                raise HTTPException(422, "Idempotency-Key is required")
+            digest = fingerprint(body)
+            replay_scope = resource_id or "_collection"
+            composite_key = (
+                f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
+            )
+            prior = active.replays.get(composite_key)
+            if prior is None:
+                return None
+            if prior[0] != digest:
+                raise HTTPException(409, "idempotency key was used with another payload")
+            return copy.deepcopy(prior[1]), prior[2]
+
         def replay(
             key: str | None,
             body: Any,
@@ -753,19 +776,22 @@ else:
             *,
             resource_id: str | None = None,
         ) -> tuple[dict[str, Any], int, bool]:
-            if not key:
-                raise HTTPException(422, "Idempotency-Key is required")
+            prior = load_replay(
+                key,
+                body,
+                tenant_id,
+                actor_id,
+                operation_id,
+                resource_id=resource_id,
+            )
+            if prior is not None:
+                return prior[0], prior[1], True
+            result, code = make()
             digest = fingerprint(body)
             replay_scope = resource_id or "_collection"
             composite_key = (
                 f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
             )
-            prior = active.replays.get(composite_key)
-            if prior:
-                if prior[0] != digest:
-                    raise HTTPException(409, "idempotency key was used with another payload")
-                return copy.deepcopy(prior[1]), prior[2], True
-            result, code = make()
             active.replays[composite_key] = (digest, copy.deepcopy(result), code)
             return result, code, False
 
@@ -1463,6 +1489,17 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
+                active_assignment = next(
+                    (
+                        assignment
+                        for assignment in active.assignments.values()
+                        if assignment.get("intake_id") == intake_id
+                        and assignment.get("status") != "COMPLETED"
+                    ),
+                    None,
+                )
+                if active_assignment is not None:
+                    raise HTTPException(409, "OWNER_CONFLICT")
                 current["version"] += 1
                 aid = str(uuid4())
                 audit_event_id = str(uuid4())
@@ -2414,6 +2451,20 @@ else:
 
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
+
+            prior = load_replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "transferAssignment",
+                resource_id=assignment_id,
+            )
+            if prior is not None:
+                val, _ = prior
+                response.status_code = 200
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
 
             if is_staff and current.get("owner_subject_id") != actor_id:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")

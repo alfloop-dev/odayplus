@@ -144,9 +144,10 @@ def authorize_intake_action(
 
     def _is_owner(owner: Any, submitter: Any) -> bool:
         sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
-        if owner in sentinels or submitter in sentinels:
-            return True
-        return principal.subject_id in (owner, submitter)
+        ownership_subjects = {
+            subject for subject in (owner, submitter) if subject not in sentinels
+        }
+        return principal.subject_id in ownership_subjects
 
     # Action-specific checks
     if action == "view":
@@ -314,10 +315,46 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.CONFIDENTIAL:
+    if clearance >= DataClassification.RESTRICTED:
         return intake
 
     masked = intake.copy()
+
+    # Mask the canonical v1 FieldValue collection according to each field's
+    # declared classification. Field names are not a safe substitute for the
+    # classification carried by the contract.
+    if "fields" in masked and isinstance(masked["fields"], list):
+        fields = []
+        masked_field_paths = list(masked.get("masked_fields") or [])
+        for field_info in masked["fields"]:
+            if not isinstance(field_info, dict):
+                fields.append(field_info)
+                continue
+
+            field_info_copy = field_info.copy()
+            raw_classification = field_info_copy.get("classification", "RESTRICTED")
+            try:
+                if isinstance(raw_classification, DataClassification):
+                    field_class = raw_classification
+                else:
+                    field_class = DataClassification[str(raw_classification).upper()]
+            except (KeyError, AttributeError):
+                # Unknown classifications fail closed so a schema drift cannot
+                # disclose values before policy support is deployed.
+                field_class = DataClassification.HIGHLY_RESTRICTED
+
+            if clearance < field_class:
+                for value_key in ("parsed", "normalized", "corrected", "effective"):
+                    field_info_copy[value_key] = None
+                field_info_copy["masked"] = True
+                field_info_copy["mask_reason_code"] = "FIELD_MASKED"
+                field_path = field_info_copy.get("field_path")
+                if field_path and field_path not in masked_field_paths:
+                    masked_field_paths.append(field_path)
+
+            fields.append(field_info_copy)
+        masked["fields"] = fields
+        masked["masked_fields"] = masked_field_paths
 
     # Mask parsedFields
     if "parsedFields" in masked and isinstance(masked["parsedFields"], dict):
