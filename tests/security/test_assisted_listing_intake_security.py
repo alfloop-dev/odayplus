@@ -19,7 +19,7 @@ from modules.external_data.security import (
 
 WRITER_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "site_reviewer",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }

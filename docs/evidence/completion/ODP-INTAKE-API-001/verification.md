@@ -187,3 +187,46 @@ Verified on 2026-07-20 after `3806ed73`:
   PASS.
 - `git diff --check origin/dev...HEAD` and `git diff --check` — PASS before
   this evidence-only commit.
+
+## Fifth changes-requested remediation
+
+Reviewer follow-up at `25b10c48` was implemented at trusted-role/retry anchor
+`1fdf0cdf`, followed by the generated contract and exhaustive negative-parity
+update:
+
+- `expansion_user` now maps only to `expansion-staff`; a verified
+  `site_reviewer` or executive claim is required for `expansion-manager`.
+  Local-header and live-JWT regressions reproduce the manager-only Operator
+  listing merge with an Expansion-user principal and forged
+  `X-Operator-Role`, and require HTTP 403;
+- `listIntakes` malformed query values return the declared 400, malformed UUID
+  resource identifiers on GET return the declared 404, and mutation validation
+  (including malformed `If-Match`) returns 422. The effective overlay declares
+  the previously omitted `assignIntake` and `createSavedView` validation errors;
+- a 27-case matrix executes one negative request for every approved operation,
+  asserts that the observed status is declared, and validates the actual JSON
+  body against that operation's effective error schema;
+- `retryJob` resolves an exact actor/tenant/operation/resource replay before
+  mutable intake ownership checks. New retry commands require a linked intake
+  authorization resource and fail closed with `409 DEPENDENCY_CONFLICT` when
+  the job is orphaned.
+
+Verified on 2026-07-20 after the fifth remediation:
+
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py --json` —
+  PASS, effective OpenAPI 1.1.3 with all five overlays in manifest order.
+- `uv run python scripts/generate_assisted_listing_intake_client.py` — PASS;
+  the committed effective artifact was regenerated from the five-overlay bundle.
+- `uv run pytest -q tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py tests/security/test_api_auth_wiring.py tests/security/test_assisted_listing_intake_authorization_matrix.py tests/security/test_opsboard_auth_boundary.py` —
+  PASS (142 tests, including all 27 executed negative operation cases).
+- `uv run pytest -q tests/contract/test_api_error_envelope.py tests/contract/test_operator_network_listings_api.py tests/contract/test_operator_network_rebalance_api.py tests/contract/test_operator_network_review_api.py tests/contract/test_operator_network_scoring_api.py tests/contract/test_operator_shell_api.py tests/security/test_assisted_listing_intake_security.py tests/integration/test_operator_shell_persistence.py` —
+  PASS for the affected Operator role-mapping surface.
+- `uv run pytest -q tests/contract/test_openapi_artifact_and_client.py` — PASS
+  (17 live-artifact and generated-client checks).
+- `uv run python scripts/openapi/check_drift.py --base-ref origin/dev` — PASS;
+  live artifact and generated client are fresh with 27 additive and zero
+  breaking changes.
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check apps/api/app/routes/listings.py apps/api/oday_api/security/dependencies.py modules/opsboard/application/operator_state.py shared/api/errors.py tests/contract/test_assisted_listing_openapi.py tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/security/test_assisted_listing_intake_authorization_matrix.py` — PASS.
+- `git diff --check origin/dev...HEAD` and `git diff --check` — PASS before the
+  final remediation commit.

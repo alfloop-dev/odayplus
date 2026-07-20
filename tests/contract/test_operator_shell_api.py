@@ -38,7 +38,7 @@ AUDITOR_HEADERS = {
 # expansion-manager: no govern-only workspaces beyond its own grants.
 EXPANSION_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "site_reviewer",
+    "x-roles": "site_reviewer,expansion_user",
     "x-tenant-id": "tenant-a",
 }
 FRANCHISEE_HEADERS = {

@@ -8,7 +8,7 @@ from shared.auth import DataClassification
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "site_reviewer",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }
@@ -140,7 +140,7 @@ def test_self_review_prohibition() -> None:
         "self-review-manager",
         {
             "x-subject-id": "user-a",
-            "x-roles": "site_reviewer",
+            "x-roles": "site_reviewer,expansion_user",
             "x-operator-role": "expansion-manager",
         },
     )

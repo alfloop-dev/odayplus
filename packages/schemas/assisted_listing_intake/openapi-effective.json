@@ -666,6 +666,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
           }
         },
         "summary": "Assign an intake"
@@ -784,6 +787,12 @@
           },
           "409": {
             "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
           }
         },
         "summary": "Create a saved intake view"

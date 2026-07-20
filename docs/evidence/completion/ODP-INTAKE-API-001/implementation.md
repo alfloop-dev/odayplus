@@ -19,8 +19,11 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   promotion, and identity-decision resources. Read paths retain role/ownership
   authorization and field masking. Intake authorization derives roles only
   from the authenticated principal (or a server-selected role already written
-  to request state); a raw `X-Operator-Role` cannot elevate either the local
-  development principal or a live bearer-token principal. Brand, region,
+  to request state). The verified `expansion_user` platform role maps only to
+  `expansion-staff`; `expansion-manager` requires a distinct verified
+  `site_reviewer` or executive claim. A raw `X-Operator-Role` therefore cannot
+  elevate an Expansion user in either local-header or live bearer-token mode.
+  Brand, region,
   assigned-area, and HeatZone restrictions are parsed from local headers and
   verified claims, then applied to nested/flat resources on create, list,
   detail, and mutation paths. Missing metadata fails closed for any restricted
@@ -57,9 +60,12 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
 - `claimAssignment` resolves an exact actor/tenant/operation/resource-scoped
   replay before mutable current-owner checks. A lost claim response therefore
   replays the original immutable body and ETag after a later transfer changes
-  ownership. Staff retry authorization receives the canonical intake ownership
-  fields, allowing Expansion staff to retry their own failed intake without
-  granting access to another subject's job.
+  ownership. `retryJob` applies the same ordering: an exact accepted receipt is
+  resolved before mutable intake ownership authorization, while a new retry
+  fails closed with `DEPENDENCY_CONFLICT` when its linked intake authorization
+  resource is absent. Staff retry authorization receives the canonical intake
+  ownership fields, allowing Expansion staff to retry their own failed intake
+  without granting access to another subject's job.
 - Assignment authorization preserves staff ownership rules without granting
   queue-routing authority: Expansion staff cannot assign an owned intake to a
   different subject. The target owner of a transferred assignment can claim it
@@ -68,12 +74,20 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   intake; the server returns the declared `409 OWNER_CONFLICT` instead.
 - Batch intake reports schema-valid partial success without hiding rejected-row
   errors, and all API errors use the effective `ApiError` wire schema.
+- Request validation stays inside each operation's declared negative contract:
+  malformed inbox queries return `400`, malformed GET resource identifiers
+  return `404`, mutation validation (including malformed `If-Match`) returns
+  `422`, and missing `If-Match` remains `428`. The effective 1.1.3 overlay now
+  includes the previously omitted `assignIntake` and `createSavedView`
+  validation responses.
 - Contract tests compare parameters, request bodies, exact response-status sets,
   response headers, and exact request/response schemas for all 27 operations.
   Exercised runtime responses are independently validated against the effective
   bundle with UUID/date-time format checking, and every declared success header
-  must be present on the actual response. The live FastAPI artifact and generated
-  shared TypeScript types are regenerated from those exact declarations.
+  must be present on the actual response. A data-driven negative matrix executes
+  every one of the 27 operations and validates the observed error status and
+  body against its declared response schema. The live FastAPI artifact and
+  generated shared TypeScript types are regenerated from those exact declarations.
 - Effective artifact and generated-client drift remain byte-for-byte pinned.
 
 ## Composition boundary

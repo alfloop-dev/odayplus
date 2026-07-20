@@ -20,7 +20,7 @@ from apps.api.oday_api.main import create_app
 # Site Reviewer holds sitescore APPROVE (may decide).
 REVIEWER_HEADERS = {
     "x-subject-id": "operator-site-reviewer",
-    "x-roles": "site_reviewer",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }

@@ -135,6 +135,297 @@ def _store_with_intake(intake_id: str) -> AssistedIntakeStore:
     )
 
 
+MUTATION_VALIDATION_HEADERS = {
+    **HEADERS_A,
+    "Idempotency-Key": "negative-contract-key-0001",
+    "If-Match": 'W/"1"',
+}
+
+NEGATIVE_OPERATION_CASES = [
+    pytest.param(
+        "listIntakes",
+        "GET",
+        "/api/v1/intakes",
+        {"params": {"submitted_by": "invalid-uuid"}, "headers": HEADERS_A},
+        400,
+        id="listIntakes",
+    ),
+    pytest.param(
+        "submitUrlIntake",
+        "POST",
+        "/api/v1/intakes/url",
+        {
+            "json": {},
+            "headers": {
+                **HEADERS_A,
+                "Idempotency-Key": "negative-contract-key-0002",
+            },
+        },
+        422,
+        id="submitUrlIntake",
+    ),
+    pytest.param(
+        "submitIntakeBatch",
+        "POST",
+        "/api/v1/intake-batches",
+        {
+            "json": {},
+            "headers": {
+                **HEADERS_A,
+                "Idempotency-Key": "negative-contract-key-0003",
+            },
+        },
+        422,
+        id="submitIntakeBatch",
+    ),
+    pytest.param(
+        "getIntake",
+        "GET",
+        "/api/v1/intakes/invalid-uuid",
+        {"headers": HEADERS_A},
+        404,
+        id="getIntake",
+    ),
+    pytest.param(
+        "proposeCorrection",
+        "POST",
+        "/api/v1/intakes/invalid-uuid/corrections",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="proposeCorrection",
+    ),
+    pytest.param(
+        "decideMatchCase",
+        "POST",
+        "/api/v1/match-cases/invalid-uuid/decisions",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="decideMatchCase",
+    ),
+    pytest.param(
+        "mergeProperties",
+        "POST",
+        "/api/v1/identity/merge",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="mergeProperties",
+    ),
+    pytest.param(
+        "splitProperty",
+        "POST",
+        "/api/v1/identity/split",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="splitProperty",
+    ),
+    pytest.param(
+        "unmergeProperty",
+        "POST",
+        "/api/v1/identity/unmerge",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="unmergeProperty",
+    ),
+    pytest.param(
+        "assignIntake",
+        "PUT",
+        f"/api/v1/intakes/{uuid4()}/assignment",
+        {
+            "json": {
+                "owner_subject_id": ACTOR_A,
+                "owner_role": "reviewer",
+                "due_at": "invalid-date",
+                "reason": "Invalid date contract check",
+            },
+            "headers": MUTATION_VALIDATION_HEADERS,
+        },
+        422,
+        id="assignIntake",
+    ),
+    pytest.param(
+        "retryJob",
+        "POST",
+        "/api/v1/jobs/invalid-uuid/retry",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="retryJob",
+    ),
+    pytest.param(
+        "listSavedViews",
+        "GET",
+        "/api/v1/saved-views",
+        {
+            "headers": {
+                "x-subject-id": ACTOR_A,
+                "x-tenant-id": TENANT_A,
+                "x-roles": "franchisee",
+            }
+        },
+        403,
+        id="listSavedViews",
+    ),
+    pytest.param(
+        "createSavedView",
+        "POST",
+        "/api/v1/saved-views",
+        {
+            "json": {},
+            "headers": {
+                **HEADERS_A,
+                "Idempotency-Key": "negative-contract-key-0004",
+            },
+        },
+        422,
+        id="createSavedView",
+    ),
+    pytest.param(
+        "requestCandidatePromotion",
+        "POST",
+        "/api/v1/intakes/invalid-uuid/promotion-requests",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="requestCandidatePromotion",
+    ),
+    pytest.param(
+        "getPromotionDecision",
+        "GET",
+        "/api/v1/promotion-decisions/invalid-uuid",
+        {"headers": HEADERS_A},
+        404,
+        id="getPromotionDecision",
+    ),
+    pytest.param(
+        "reviewPromotionDecision",
+        "POST",
+        "/api/v1/promotion-decisions/invalid-uuid/actions/review",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="reviewPromotionDecision",
+    ),
+    pytest.param(
+        "cancelIntake",
+        "POST",
+        "/api/v1/intakes/invalid-uuid/actions/cancel",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="cancelIntake",
+    ),
+    pytest.param(
+        "quarantineIntake",
+        "POST",
+        "/api/v1/intakes/invalid-uuid/actions/quarantine",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="quarantineIntake",
+    ),
+    pytest.param(
+        "reopenIntake",
+        "POST",
+        "/api/v1/intakes/invalid-uuid/actions/reopen",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="reopenIntake",
+    ),
+    pytest.param(
+        "claimAssignment",
+        "POST",
+        "/api/v1/assignments/invalid-uuid/actions/claim",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="claimAssignment",
+    ),
+    pytest.param(
+        "transferAssignment",
+        "POST",
+        "/api/v1/assignments/invalid-uuid/actions/transfer",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="transferAssignment",
+    ),
+    pytest.param(
+        "completeAssignment",
+        "POST",
+        "/api/v1/assignments/invalid-uuid/actions/complete",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="completeAssignment",
+    ),
+    pytest.param(
+        "pauseSla",
+        "POST",
+        "/api/v1/sla-instances/invalid-uuid/actions/pause",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="pauseSla",
+    ),
+    pytest.param(
+        "resumeSla",
+        "POST",
+        "/api/v1/sla-instances/invalid-uuid/actions/resume",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="resumeSla",
+    ),
+    pytest.param(
+        "getIdentityDecision",
+        "GET",
+        "/api/v1/identity-decisions/invalid-uuid",
+        {"headers": HEADERS_A},
+        404,
+        id="getIdentityDecision",
+    ),
+    pytest.param(
+        "reviewIdentityDecision",
+        "POST",
+        "/api/v1/identity-decisions/invalid-uuid/actions/review",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="reviewIdentityDecision",
+    ),
+    pytest.param(
+        "requestIdentityDecisionReversal",
+        "POST",
+        "/api/v1/identity-decisions/invalid-uuid/actions/reverse",
+        {"json": {}, "headers": MUTATION_VALIDATION_HEADERS},
+        422,
+        id="requestIdentityDecisionReversal",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "method", "path", "request_kwargs", "expected_status"),
+    NEGATIVE_OPERATION_CASES,
+)
+def test_every_operation_executes_a_declared_negative_error_schema(
+    client: ContractTestClient,
+    operation_id: str,
+    method: str,
+    path: str,
+    request_kwargs: dict,
+    expected_status: int,
+) -> None:
+    response = client.request(method, path, **request_kwargs)
+    operation = _contract_operation(method, response.request.url.path)
+
+    assert operation is not None
+    assert operation["operationId"] == operation_id
+    assert response.status_code == expected_status
+    declared = operation["responses"].get(str(response.status_code))
+    assert declared is not None, (
+        f"{operation_id} returned undeclared negative status "
+        f"{response.status_code}"
+    )
+    resolved_response = _resolve_contract(declared)
+    assert isinstance(resolved_response, dict)
+    schema = resolved_response.get("content", {}).get("application/json", {}).get("schema")
+    assert schema is not None, f"{operation_id} negative response lacks an error schema"
+    Draft202012Validator(
+        _resolve_contract(schema),
+        format_checker=FormatChecker(),
+    ).validate(response.json())
+
+
 def test_authentication_and_tenant_isolation_boundary(client: TestClient) -> None:
     # 1. 401 Unauthorized when missing x-subject-id (not authenticated)
     resp = client.get("/api/v1/intakes", headers={"x-tenant-id": TENANT_A})
