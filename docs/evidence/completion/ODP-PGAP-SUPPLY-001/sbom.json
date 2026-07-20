@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-f7c0ae83903133d1dfc94043a73ecc14",
+  "serialNumber": "urn:uuid:sha256-a95f610547701a9ddd4e427f1f9cad6b",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-20T02:29:42.482395+00:00",
+    "timestamp": "2026-07-16T01:02:51.725060+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "f7bc3df23de22b4aac486b2532b9b96ba391ba6c"
+        "value": "68e06131e2fac77395ba0b7ce7e95abdac69d853"
       },
       {
         "name": "sbom-hash",
-        "value": "f7c0ae83903133d1dfc94043a73ecc148794d8681721e74383cbff95fb60d0e4"
+        "value": "a95f610547701a9ddd4e427f1f9cad6be8fc175dc87c31125d0c4a4603023e96"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:12cd91e22188f520d8ca0de6629e3c5fe0f72be327a908171e8194dfefe37d36"
+        "value": "sha256:21b1c2c8c0ceede58a4a9f05ae6ec789c21348fd757a5e9150e875b1b8073d48"
       }
     ]
   },
@@ -3226,13 +3226,6 @@
       "bom-ref": "pkg:pypi/anyio@4.14.1"
     },
     {
-      "name": "attrs",
-      "version": "26.1.0",
-      "type": "library",
-      "purl": "pkg:pypi/attrs@26.1.0",
-      "bom-ref": "pkg:pypi/attrs@26.1.0"
-    },
-    {
       "name": "certifi",
       "version": "2026.6.17",
       "type": "library",
@@ -3338,41 +3331,6 @@
       "bom-ref": "pkg:pypi/joblib@1.5.3"
     },
     {
-      "name": "jsonpath-ng",
-      "version": "1.8.0",
-      "type": "library",
-      "purl": "pkg:pypi/jsonpath-ng@1.8.0",
-      "bom-ref": "pkg:pypi/jsonpath-ng@1.8.0"
-    },
-    {
-      "name": "jsonschema",
-      "version": "4.26.0",
-      "type": "library",
-      "purl": "pkg:pypi/jsonschema@4.26.0",
-      "bom-ref": "pkg:pypi/jsonschema@4.26.0"
-    },
-    {
-      "name": "jsonschema-path",
-      "version": "0.5.0",
-      "type": "library",
-      "purl": "pkg:pypi/jsonschema-path@0.5.0",
-      "bom-ref": "pkg:pypi/jsonschema-path@0.5.0"
-    },
-    {
-      "name": "jsonschema-specifications",
-      "version": "2025.9.1",
-      "type": "library",
-      "purl": "pkg:pypi/jsonschema-specifications@2025.9.1",
-      "bom-ref": "pkg:pypi/jsonschema-specifications@2025.9.1"
-    },
-    {
-      "name": "lazy-object-proxy",
-      "version": "1.12.0",
-      "type": "library",
-      "purl": "pkg:pypi/lazy-object-proxy@1.12.0",
-      "bom-ref": "pkg:pypi/lazy-object-proxy@1.12.0"
-    },
-    {
       "name": "narwhals",
       "version": "2.23.0",
       "type": "library",
@@ -3394,20 +3352,6 @@
       "bom-ref": "pkg:pypi/odayplus@0.1.0"
     },
     {
-      "name": "openapi-schema-validator",
-      "version": "0.9.0",
-      "type": "library",
-      "purl": "pkg:pypi/openapi-schema-validator@0.9.0",
-      "bom-ref": "pkg:pypi/openapi-schema-validator@0.9.0"
-    },
-    {
-      "name": "openapi-spec-validator",
-      "version": "0.9.0",
-      "type": "library",
-      "purl": "pkg:pypi/openapi-spec-validator@0.9.0",
-      "bom-ref": "pkg:pypi/openapi-spec-validator@0.9.0"
-    },
-    {
       "name": "ortools",
       "version": "9.15.6755",
       "type": "library",
@@ -3427,13 +3371,6 @@
       "type": "library",
       "purl": "pkg:pypi/pandas@3.0.3",
       "bom-ref": "pkg:pypi/pandas@3.0.3"
-    },
-    {
-      "name": "pathable",
-      "version": "0.6.0",
-      "type": "library",
-      "purl": "pkg:pypi/pathable@0.6.0",
-      "bom-ref": "pkg:pypi/pathable@0.6.0"
     },
     {
       "name": "patsy",
@@ -3471,13 +3408,6 @@
       "bom-ref": "pkg:pypi/pydantic-core@2.46.4"
     },
     {
-      "name": "pydantic-settings",
-      "version": "2.14.2",
-      "type": "library",
-      "purl": "pkg:pypi/pydantic-settings@2.14.2",
-      "bom-ref": "pkg:pypi/pydantic-settings@2.14.2"
-    },
-    {
       "name": "pygments",
       "version": "2.20.0",
       "type": "library",
@@ -3511,27 +3441,6 @@
       "type": "library",
       "purl": "pkg:pypi/pyyaml@6.0.3",
       "bom-ref": "pkg:pypi/pyyaml@6.0.3"
-    },
-    {
-      "name": "referencing",
-      "version": "0.37.0",
-      "type": "library",
-      "purl": "pkg:pypi/referencing@0.37.0",
-      "bom-ref": "pkg:pypi/referencing@0.37.0"
-    },
-    {
-      "name": "rfc3339-validator",
-      "version": "0.1.4",
-      "type": "library",
-      "purl": "pkg:pypi/rfc3339-validator@0.1.4",
-      "bom-ref": "pkg:pypi/rfc3339-validator@0.1.4"
-    },
-    {
-      "name": "rpds-py",
-      "version": "2026.6.3",
-      "type": "library",
-      "purl": "pkg:pypi/rpds-py@2026.6.3",
-      "bom-ref": "pkg:pypi/rpds-py@2026.6.3"
     },
     {
       "name": "ruff",
