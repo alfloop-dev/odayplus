@@ -8,7 +8,7 @@ from shared.auth import DataClassification
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }
@@ -135,12 +135,12 @@ def test_self_review_prohibition() -> None:
     client = TestClient(create_app())
 
     # Submit intake as user-a (who is a Manager)
-    # Manager must have write permission (so expansion_user platform role + expansion-manager operator role)
+    # Manager authority requires the verified site_reviewer platform role.
     headers_user_a = _write_headers(
         "self-review-manager",
         {
             "x-subject-id": "user-a",
-            "x-roles": "expansion_user",
+            "x-roles": "site_reviewer,expansion_user",
             "x-operator-role": "expansion-manager",
         },
     )

@@ -10,7 +10,8 @@ Recognised claims (namespaced under a configurable prefix, default
 - ``sub``            -> subject id (required by the caller)
 - ``roles``          -> list[str] of canonical role ids
 - ``tenant_id``      -> home tenant for isolation
-- ``brand_ids`` / ``region_ids`` / ``store_ids`` / ``modules`` -> scope axes
+- ``brand_ids`` / ``region_ids`` / ``store_ids`` / ``assigned_area_ids`` /
+  ``heat_zone_ids`` / ``modules`` -> scope axes
 - ``clearance``      -> data-classification name (default CONFIDENTIAL)
 """
 
@@ -20,8 +21,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from shared.auth import DataClassification, Principal, Role, Scope
-
-_LIST_AXES = ("brand_ids", "region_ids", "store_ids", "modules")
 
 
 def _as_str_set(value: Any) -> frozenset[str]:
@@ -72,6 +71,10 @@ def principal_from_claims(
         brand_ids=_as_str_set(_lookup(claims, "brand_ids", claim_prefix)),
         region_ids=_as_str_set(_lookup(claims, "region_ids", claim_prefix)),
         store_ids=_as_str_set(_lookup(claims, "store_ids", claim_prefix)),
+        assigned_area_ids=_as_str_set(
+            _lookup(claims, "assigned_area_ids", claim_prefix)
+        ),
+        heat_zone_ids=_as_str_set(_lookup(claims, "heat_zone_ids", claim_prefix)),
         modules=_as_str_set(_lookup(claims, "modules", claim_prefix)),
         clearance=_parse_clearance(_lookup(claims, "clearance", claim_prefix)),
     )

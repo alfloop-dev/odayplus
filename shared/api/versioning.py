@@ -41,6 +41,8 @@ DEPRECATION_HEADER = "Deprecation"
 
 _ALIAS_TEMPLATES_KEY = "_odp_alias_templates"
 _ALIAS_MATCHERS_KEY = "_odp_alias_matchers"
+_EXACT_RESPONSES_KEY = "_odp_exact_openapi_responses"
+_EXACT_RESPONSES_INSTALLED_KEY = "_odp_exact_openapi_responses_installed"
 
 
 def _iter_router_paths(router: Any, prefix: str = "") -> Iterator[str]:
@@ -66,7 +68,52 @@ def _iter_router_paths(router: Any, prefix: str = "") -> Iterator[str]:
         yield from _iter_router_paths(nested, f"{prefix}{nested_prefix}")
 
 
-def mount_versioned(app: Any, router: Any, *, prefix: str = "") -> None:
+def _iter_operation_routes(router: Any) -> Iterator[Any]:
+    for route in getattr(router, "routes", []):
+        if getattr(route, "operation_id", None):
+            yield route
+            continue
+        nested = getattr(route, "original_router", None)
+        if nested is not None:
+            yield from _iter_operation_routes(nested)
+
+
+def _install_exact_response_filter(app: Any) -> None:
+    if getattr(app.state, _EXACT_RESPONSES_INSTALLED_KEY, False):
+        return
+
+    base_openapi = app.openapi
+
+    def exact_openapi() -> dict[str, Any]:
+        schema = base_openapi()
+        allowed_by_operation: dict[str, set[str]] = getattr(
+            app.state, _EXACT_RESPONSES_KEY, {}
+        )
+        for path_item in schema.get("paths", {}).values():
+            for operation in path_item.values():
+                if not isinstance(operation, dict):
+                    continue
+                allowed = allowed_by_operation.get(operation.get("operationId", ""))
+                if allowed is None:
+                    continue
+                operation["responses"] = {
+                    status: response
+                    for status, response in operation.get("responses", {}).items()
+                    if status in allowed
+                }
+        return schema
+
+    app.openapi = exact_openapi
+    setattr(app.state, _EXACT_RESPONSES_INSTALLED_KEY, True)
+
+
+def mount_versioned(
+    app: Any,
+    router: Any,
+    *,
+    prefix: str = "",
+    exact_responses: bool = False,
+) -> None:
     """Mount ``router`` at ``/api/v1`` and again as a deprecated alias.
 
     ``prefix`` is any extra prefix the caller would have passed to
@@ -76,7 +123,23 @@ def mount_versioned(app: Any, router: Any, *, prefix: str = "") -> None:
 
     from shared.api.errors import ERROR_RESPONSES
 
-    app.include_router(router, prefix=f"{API_V1_PREFIX}{prefix}", responses=ERROR_RESPONSES)
+    exact_operation_routes = list(_iter_operation_routes(router)) if exact_responses else []
+    app.include_router(
+        router,
+        prefix=f"{API_V1_PREFIX}{prefix}",
+        responses={} if exact_responses else ERROR_RESPONSES,
+    )
+    if exact_responses:
+        allowed_by_operation: dict[str, set[str]] = getattr(
+            app.state, _EXACT_RESPONSES_KEY, {}
+        )
+        for route in exact_operation_routes:
+            operation_id = route.operation_id
+            allowed = {str(getattr(route, "status_code", None) or 200)}
+            allowed.update(str(status) for status in getattr(route, "responses", {}))
+            allowed_by_operation[operation_id] = allowed
+        setattr(app.state, _EXACT_RESPONSES_KEY, allowed_by_operation)
+        _install_exact_response_filter(app)
     # include_in_schema=False keeps the alias out of the OpenAPI artifact, so
     # the generated client only ever targets the versioned contract.
     app.include_router(router, prefix=prefix, include_in_schema=False)

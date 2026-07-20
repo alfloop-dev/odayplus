@@ -190,6 +190,8 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         brand_ids=_split(headers.get("x-brand-ids")),
         region_ids=_split(headers.get("x-region-ids")),
         store_ids=_split(headers.get("x-store-ids")),
+        assigned_area_ids=_split(headers.get("x-assigned-area-ids")),
+        heat_zone_ids=_split(headers.get("x-heat-zone-ids")),
     )
     return Principal(subject_id=subject, roles=frozenset(roles), scope=scope)
 
@@ -334,8 +336,12 @@ _OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
     Role.OPERATIONS_MANAGER: ("ops-lead",),
     Role.REGIONAL_SUPERVISOR: ("field-lead",),
     Role.MARKETING_MANAGER: ("marketing-manager",),
-    Role.EXPANSION_USER: ("expansion-manager", "expansion-staff"),
-    Role.SITE_REVIEWER: ("expansion-manager", "expansion-staff"),
+    # An expansion user is an individual contributor.  Manager authority is
+    # granted only by a distinct verified reviewer/executive claim; the
+    # caller-controlled X-Operator-Role header may select among grants but can
+    # never widen them.
+    Role.EXPANSION_USER: ("expansion-staff",),
+    Role.SITE_REVIEWER: ("expansion-manager",),
     Role.AUDITOR: ("pm-audit",),
     Role.EXECUTIVE: ("ops-lead", "expansion-manager", "pm-audit"),
 }
@@ -366,6 +372,7 @@ _OPERATOR_ROLE_ALIASES = {
 _OPERATOR_ROLE_PRIORITY = (
     "ops-lead",
     "expansion-manager",
+    "expansion-staff",
     "marketing-manager",
     "field-lead",
     "pm-audit",

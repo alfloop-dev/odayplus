@@ -40,6 +40,7 @@
 // Generated first: local declarations below intentionally shadow their
 // generated namesakes (ES module semantics), which is how the narrowings win.
 export * from "./generated/types";
+export * as AssistedListingIntakeV1 from "./generated/assisted_listing_intake";
 
 import type {
   IntakeCorrectPayload as GeneratedIntakeCorrectPayload,

@@ -17,7 +17,7 @@ ENVELOPE_FIELDS = {"code", "message", "next_action", "occurred_at", "details", "
 
 OPERATOR_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }

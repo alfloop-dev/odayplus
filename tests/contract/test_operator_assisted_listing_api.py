@@ -3,15 +3,17 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.operator_modules.network_listings import is_record_owner
 from apps.api.oday_api.main import create_app
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingService,
 )
+from shared.auth import Principal
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer,expansion_user",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }
@@ -336,6 +338,7 @@ def test_promote_intake_contract_test() -> None:
         headers={
             **HEADERS,
             "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
             "x-operator-role": "expansion-staff",
         },
     )
@@ -381,6 +384,7 @@ def _ready_intake_id(client) -> str:
         headers={
             **HEADERS,
             "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
             "x-operator-role": "expansion-staff",
         },
     )
@@ -530,3 +534,16 @@ def test_promote_persists_caller_risk_summary_in_audit() -> None:
     assert audit["action"] == "intake.promote"
     assert audit["metadata"]["riskSummary"] == caller_summary
     assert audit["metadata"]["riskAcknowledged"] is True
+
+
+def test_unassigned_operator_intake_is_not_owned_by_unrelated_staff() -> None:
+    principal = Principal(subject_id="staff-a")
+
+    assert not is_record_owner(
+        principal,
+        {"owner": "unassigned", "submitter": "staff-b"},
+    )
+    assert is_record_owner(
+        principal,
+        {"owner": None, "submitter": "staff-a"},
+    )

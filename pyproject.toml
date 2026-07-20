@@ -28,6 +28,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonpath-ng>=1.8.0",
+    "openapi-spec-validator>=0.9.0",
     "pytest>=8",
     "ruff>=0.6",
 ]
@@ -46,6 +48,11 @@ select = ["E", "F", "I", "UP", "B"]
 # Ignore them repo-wide so CI lints for real bugs (pyflakes/bugbear/pyupgrade)
 # rather than failing on legacy style.
 ignore = ["E501", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI routes use callable defaults (Query/Header) -> B008; keep `str, Enum`
+# for stable OpenAPI enum serialization that the contract test pins -> UP042.
+"apps/api/app/routes/listings.py" = ["B008", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = [

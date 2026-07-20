@@ -115,6 +115,13 @@ def _render_type(schema: Any, indent: int = 0) -> str:
 
     schema_type = schema.get("type")
 
+    # OpenAPI 3.1 permits JSON Schema type arrays (most commonly
+    # ["string", "null"]). Render each member instead of treating the list as
+    # a dictionary key.
+    if isinstance(schema_type, list):
+        members = [_render_type({**schema, "type": member}, indent) for member in schema_type]
+        return " | ".join(dict.fromkeys(members)) or "unknown"
+
     if schema_type == "array":
         item = _render_type(schema.get("items", {}), indent)
         # Parenthesise unions so `A | B[]` cannot be misparsed.
