@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
+import os
 import re
+import secrets
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -13,6 +16,9 @@ from uuid import UUID, uuid4
 from modules.external_data.geo import GeoPipeline
 from modules.listing import InMemoryListingRepository, ListingPipeline
 from shared.audit import InMemoryAuditLog
+
+_CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
+_PROCESS_CURSOR_SIGNING_KEY = secrets.token_bytes(32)
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -661,6 +667,7 @@ else:
     def create_assisted_intake_router(
         store: AssistedIntakeStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        cursor_signing_key: str | bytes | None = None,
     ) -> APIRouter:
         """Implement the approved ODP assisted-intake `/api/v1` contract."""
         from modules.listing.application.intake_authorization import (
@@ -672,6 +679,27 @@ else:
         active = store or AssistedIntakeStore()
         active_audit_log = audit_log or InMemoryAuditLog()
         router = APIRouter(tags=["assisted-listing-intake"])
+
+        configured_cursor_signing_key = (
+            os.environ.get(_CURSOR_SIGNING_KEY_ENV)
+            if cursor_signing_key is None
+            else cursor_signing_key
+        )
+        if configured_cursor_signing_key is None:
+            # Local/test apps share one unpredictable process-local key. Deployed
+            # replicas configure ODP_INTAKE_CURSOR_SIGNING_KEY so cursors remain
+            # valid across workers and restarts without embedding a repository key.
+            active_cursor_signing_key = _PROCESS_CURSOR_SIGNING_KEY
+        else:
+            active_cursor_signing_key = (
+                configured_cursor_signing_key.encode("utf-8")
+                if isinstance(configured_cursor_signing_key, str)
+                else configured_cursor_signing_key
+            )
+            if len(active_cursor_signing_key) < 32:
+                raise ValueError(
+                    f"{_CURSOR_SIGNING_KEY_ENV} must contain at least 32 bytes"
+                )
 
         def api_error_responses(*codes: int) -> dict[int, dict[str, Any]]:
             return {
@@ -707,9 +735,10 @@ else:
             owner = record.get("assigned_to") or record.get("owner")
             submitter = record.get("submitted_by") or record.get("submitter")
             sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
-            if owner in sentinels or submitter in sentinels:
-                return True
-            return principal.subject_id in (owner, submitter)
+            ownership_subjects = {
+                subject for subject in (owner, submitter) if subject not in sentinels
+            }
+            return principal.subject_id in ownership_subjects
 
         def fingerprint(body: Any) -> str:
             return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
@@ -723,9 +752,9 @@ else:
             if prior:
                 if prior[0] != digest:
                     raise HTTPException(409, "idempotency key was used with another payload")
-                return prior[1], prior[2], True
+                return copy.deepcopy(prior[1]), prior[2], True
             result, code = make()
-            active.replays[composite_key] = (digest, result, code)
+            active.replays[composite_key] = (digest, copy.deepcopy(result), code)
             return result, code, False
 
         def require_version(if_match: str | None, current: int = 1) -> None:
@@ -745,28 +774,26 @@ else:
             if not (16 <= len(key) <= 128) or not re.match(r"^[A-Za-z0-9._:-]+$", key):
                 raise HTTPException(422, "invalid Idempotency-Key format")
 
-        CURSOR_SECRET = b"oday-plus-secret-key-12345"
-
         def encode_cursor(
-            offset: int,
             tenant_id: str,
             query_fingerprint: str,
             sort_value: str,
             snapshot_time: str,
             last_resource_id: str,
+            sort_tuple: tuple[Any, ...],
         ) -> str:
             data = {
                 "contract_version": "1.1.3",
-                "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
+                "expires_at": (datetime.now(UTC) + timedelta(hours=24)).isoformat(),
                 "last_resource_id": last_resource_id,
-                "offset": offset,
                 "query_fingerprint": query_fingerprint,
                 "snapshot_time": snapshot_time,
                 "sort": sort_value,
+                "sort_tuple": list(sort_tuple),
                 "tenant_id": tenant_id,
             }
             payload = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
-            sig = hmac.new(CURSOR_SECRET, payload.encode(), hashlib.sha256).digest()
+            sig = hmac.new(active_cursor_signing_key, payload.encode(), hashlib.sha256).digest()
             sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")
             return f"{payload}.{sig_b64}"
 
@@ -781,7 +808,9 @@ else:
                 if len(parts) != 2:
                     raise ValueError()
                 payload, sig_b64 = parts[0], parts[1]
-                expected_sig = hmac.new(CURSOR_SECRET, payload.encode(), hashlib.sha256).digest()
+                expected_sig = hmac.new(
+                    active_cursor_signing_key, payload.encode(), hashlib.sha256
+                ).digest()
                 actual_sig = base64.urlsafe_b64decode(sig_b64 + "=" * (4 - len(sig_b64) % 4))
                 if not hmac.compare_digest(expected_sig, actual_sig):
                     raise ValueError("invalid signature")
@@ -797,10 +826,28 @@ else:
                     raise ValueError("sort mismatch")
                 if datetime.fromisoformat(data["expires_at"]) <= datetime.now(UTC):
                     raise ValueError("expired")
-                data["offset"] = int(data["offset"])
+                if not isinstance(data.get("last_resource_id"), str):
+                    raise ValueError("missing last resource")
+                if not isinstance(data.get("sort_tuple"), list):
+                    raise ValueError("missing sort tuple")
+                if not data["sort_tuple"] or data["sort_tuple"][-1] != data["last_resource_id"]:
+                    raise ValueError("inconsistent sort tuple")
                 return data
             except Exception:
                 raise HTTPException(400, "invalid or expired cursor") from None
+
+        def intake_sort_tuple(
+            value: dict[str, Any], sort_value: str
+        ) -> tuple[Any, ...]:
+            intake_id = value.get("intake_id", "")
+            if sort_value == "submitted_at_desc":
+                return (value.get("submitted_at", ""), intake_id)
+            if sort_value == "updated_at_desc":
+                return (value.get("updated_at", ""), intake_id)
+            if sort_value == "due_at_asc":
+                due_at = value.get("due_at")
+                return (due_at is None, due_at or "", intake_id)
+            return (value.get("state", ""), intake_id)
 
         def receipt(
             resource: str,
@@ -848,11 +895,10 @@ else:
                 "submitted_by": submitted_by,
             }
             query_fingerprint = fingerprint(query_parameters)
-            offset = 0
             snapshot_time = now()
+            cursor_data: dict[str, Any] | None = None
             if cursor:
                 cursor_data = decode_cursor(cursor, tenant_id, query_fingerprint, sort_value)
-                offset = cursor_data["offset"]
                 snapshot_time = cursor_data["snapshot_time"]
 
             principal = get_principal(request)
@@ -870,6 +916,7 @@ else:
             tenant_items = [
                 v for v in active.intakes.values()
                 if v.get("scope", {}).get("tenant_id") == tenant_id
+                and v.get("submitted_at", "") <= snapshot_time
             ]
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -913,17 +960,27 @@ else:
                     or any(q_lower in str(f.get("effective") or "").lower() or q_lower in str(f.get("corrected") or "").lower() for f in v.get("fields", []))
                 ]
 
-            if sort_value:
-                if sort_value == "submitted_at_desc":
-                    tenant_items.sort(key=lambda x: x.get("submitted_at", ""), reverse=True)
-                elif sort_value == "updated_at_desc":
-                    tenant_items.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                elif sort_value == "due_at_asc":
-                    tenant_items.sort(key=lambda x: (x.get("due_at") is None, x.get("due_at") or ""))
-                elif sort_value == "status_asc":
-                    tenant_items.sort(key=lambda x: x.get("state", ""))
+            reverse_sort = sort_value in {"submitted_at_desc", "updated_at_desc"}
+            tenant_items.sort(
+                key=lambda value: intake_sort_tuple(value, sort_value),
+                reverse=reverse_sort,
+            )
+            total_count = len(tenant_items)
 
-            items = tenant_items[offset : offset + page_size]
+            page_candidates = tenant_items
+            if cursor_data is not None:
+                last_sort_tuple = tuple(cursor_data["sort_tuple"])
+                page_candidates = [
+                    value
+                    for value in tenant_items
+                    if (
+                        intake_sort_tuple(value, sort_value) < last_sort_tuple
+                        if reverse_sort
+                        else intake_sort_tuple(value, sort_value) > last_sort_tuple
+                    )
+                ]
+
+            items = page_candidates[:page_size]
 
             summaries = []
             for value in items:
@@ -945,21 +1002,21 @@ else:
                 ))
 
             next_cursor = None
-            if offset + page_size < len(tenant_items) and items:
+            if len(page_candidates) > page_size and items:
                 next_cursor = encode_cursor(
-                    offset + page_size,
                     tenant_id,
                     query_fingerprint,
                     sort_value,
                     snapshot_time,
                     items[-1]["intake_id"],
+                    intake_sort_tuple(items[-1], sort_value),
                 )
 
             return IntakePage(
                 items=summaries,
                 next_cursor=next_cursor,
                 page_size=page_size,
-                total_count=len(tenant_items),
+                total_count=total_count,
                 total_count_accuracy="EXACT",
                 snapshot_time=snapshot_time,
                 query_fingerprint=query_fingerprint,

@@ -38,9 +38,10 @@ def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
     owner = record.get("owner")
     submitter = record.get("submitter")
     sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
-    if owner in sentinels or submitter in sentinels:
-        return True
-    return principal.subject_id in (owner, submitter)
+    ownership_subjects = {
+        subject for subject in (owner, submitter) if subject not in sentinels
+    }
+    return principal.subject_id in ownership_subjects
 
 
 class NetworkListingActorPayload(BaseModel):

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import re
 from uuid import uuid4
@@ -769,6 +772,145 @@ def test_stateful_idempotency_replay_returns_the_original_receipt(client: TestCl
     assert first.status_code == replayed.status_code == 200
     assert replayed.json() == first.json()
     assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_unassigned_intake_is_not_owned_by_unrelated_same_tenant_staff(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/unassigned-ownership",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-owner-setup-{uuid4()}"},
+    )
+    intake_id = submitted.json()["intake_id"]
+    unrelated_staff_headers = {
+        "x-subject-id": ACTOR_C,
+        "x-tenant-id": TENANT_A,
+        "x-roles": "expansion_user",
+        "x-operator-role": "expansion-staff",
+    }
+
+    response = client.get("/api/v1/intakes", headers=unrelated_staff_headers)
+
+    assert response.status_code == 200
+    assert intake_id not in {item["intake_id"] for item in response.json()["items"]}
+
+
+def test_assignment_replay_is_immutable_after_the_assignment_is_claimed(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/assignment-receipt-replay",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-replay-setup-{uuid4()}"},
+    )
+    intake_id = submitted.json()["intake_id"]
+    assignment_body = {
+        "owner_subject_id": ACTOR_A,
+        "owner_role": "reviewer",
+        "due_at": "2026-07-25T12:00:00Z",
+        "reason": "Preserve the original assignment receipt",
+    }
+    assignment_headers = {
+        **HEADERS_A,
+        "Idempotency-Key": f"idem-assignment-receipt-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+    first = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json=assignment_body,
+        headers=assignment_headers,
+    )
+    assignment_id = first.json()["assignment_id"]
+    claimed = client.post(
+        f"/api/v1/assignments/{assignment_id}/actions/claim",
+        json={"reason": "Claim before the lost assignment response is retried"},
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-claim-before-replay-{uuid4()}",
+            "If-Match": first.headers["ETag"],
+        },
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["status"] == "CLAIMED"
+
+    replayed = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json=assignment_body,
+        headers=assignment_headers,
+    )
+
+    assert replayed.status_code == 200
+    assert replayed.json() == first.json()
+    assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signing_key = "cursor-signing-key-for-contract-tests-0001"
+    monkeypatch.setenv("ODP_INTAKE_CURSOR_SIGNING_KEY", signing_key)
+    client = ContractTestClient(create_app())
+
+    submitted_ids = []
+    for index in range(3):
+        response = client.post(
+            "/api/v1/intakes/url",
+            json={
+                "original_url": f"https://example.com/cursor/{index}",
+                "scope": {"tenant_id": TENANT_A},
+            },
+            headers={
+                **HEADERS_A,
+                "Idempotency-Key": f"idem-cursor-{index}-{uuid4()}",
+            },
+        )
+        submitted_ids.append(response.json()["intake_id"])
+
+    first_page = client.get("/api/v1/intakes?page_size=2", headers=HEADERS_A)
+    cursor = first_page.json()["next_cursor"]
+    assert cursor is not None
+    payload, encoded_signature = cursor.split(".")
+    expected_signature = hmac.new(
+        signing_key.encode(), payload.encode(), hashlib.sha256
+    ).digest()
+    actual_signature = base64.urlsafe_b64decode(
+        encoded_signature + "=" * (-len(encoded_signature) % 4)
+    )
+    assert hmac.compare_digest(actual_signature, expected_signature)
+
+    cursor_payload = json.loads(
+        base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+    )
+    assert "offset" not in cursor_payload
+    assert cursor_payload["sort_tuple"][-1] == cursor_payload["last_resource_id"]
+
+    inserted_after_snapshot = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/cursor/post-snapshot",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-cursor-new-{uuid4()}"},
+    ).json()["intake_id"]
+    second_page = client.get(
+        "/api/v1/intakes",
+        params={"cursor": cursor, "page_size": 2},
+        headers=HEADERS_A,
+    )
+
+    first_ids = {item["intake_id"] for item in first_page.json()["items"]}
+    assert second_page.status_code == 200
+    second_ids = {item["intake_id"] for item in second_page.json()["items"]}
+    assert first_ids.isdisjoint(second_ids)
+    assert inserted_after_snapshot not in second_ids
+    assert first_ids | second_ids == set(submitted_ids)
 
 
 def test_every_effective_operation_has_a_schema_valid_runtime_response() -> None:
