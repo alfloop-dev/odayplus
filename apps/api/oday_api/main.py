@@ -386,7 +386,10 @@ else:
         mount_versioned(
             api, create_listings_router(audit_log=audit_log, repository=listing_repository)
         )
-        mount_versioned(api, create_assisted_intake_router())
+        # This router is generated from a separately approved OpenAPI bundle;
+        # preserve its per-operation response set instead of adding the generic
+        # platform responses to every operation.
+        mount_versioned(api, create_assisted_intake_router(), exact_responses=True)
         mount_versioned(api, create_avm_router(repository=avm_repo, audit_log=audit_log))
         mount_versioned(
             api,

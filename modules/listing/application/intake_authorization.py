@@ -21,7 +21,6 @@ from shared.auth import (
     Role,
 )
 
-
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),

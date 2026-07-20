@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from apps.api.oday_api.security import dependencies as auth_dependencies
+from modules.opsboard.auth import SigningKey, encode_compact_jwt
 
 HEADERS = {
     "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
@@ -58,6 +64,180 @@ def test_if_match_and_assignment_contract() -> None:
     ok = client.put(url, headers={**manager_headers, "Idempotency-Key": "assign-idempotency-key-1", "If-Match": 'W/"1"'}, json=body)
     assert ok.status_code == 200
     assert ok.json()["status"] == "ASSIGNED"
+
+
+def test_local_operator_role_header_cannot_grant_a_role() -> None:
+    response = TestClient(create_app()).post(
+        "/api/v1/intakes/url",
+        headers={
+            "X-Tenant-Id": HEADERS["X-Tenant-Id"],
+            "X-Subject-Id": HEADERS["X-Subject-Id"],
+            "X-Operator-Role": "expansion-manager",
+            "Idempotency-Key": "forged-local-role-1",
+        },
+        json={
+            "original_url": "https://example.test/listing/forged-local-role",
+            "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "ROLE_DENIED"
+
+
+def test_live_operator_role_header_cannot_expand_verified_claims(monkeypatch) -> None:
+    issuer = "https://idp.assisted-intake.test"
+    audience = "assisted-intake-api"
+    signing_key = SigningKey(
+        kid="intake-key",
+        algorithm="HS256",
+        secret=b"assisted-intake-live-test-secret",
+    )
+    monkeypatch.setenv("ODP_AUTH_ISSUER", issuer)
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", audience)
+    monkeypatch.setenv(
+        "ODP_AUTH_HS256_KEYS",
+        "intake-key:assisted-intake-live-test-secret",
+    )
+    auth_dependencies.reset_default_boundary()
+    now = datetime.now(UTC)
+    token = encode_compact_jwt(
+        {
+            "sub": HEADERS["X-Subject-Id"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now.timestamp(),
+            "exp": (now + timedelta(hours=1)).timestamp(),
+            "tenant_id": HEADERS["X-Tenant-Id"],
+            "roles": [],
+        },
+        signing_key,
+    )
+    try:
+        response = TestClient(create_app()).post(
+            "/api/v1/intakes/url",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Operator-Role": "expansion-manager",
+                "Idempotency-Key": "forged-live-role-1",
+            },
+            json={
+                "original_url": "https://example.test/listing/forged-live-role",
+                "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
+            },
+        )
+    finally:
+        auth_dependencies.reset_default_boundary()
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "ROLE_DENIED"
+
+
+@pytest.mark.parametrize(
+    ("header_name", "scope_field"),
+    [
+        ("X-Brand-Ids", "brand_id"),
+        ("X-Region-Ids", "region_id"),
+        ("X-Assigned-Area-Ids", "assigned_area_id"),
+        ("X-Heat-Zone-Ids", "heat_zone_id"),
+    ],
+)
+def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
+    header_name: str,
+    scope_field: str,
+) -> None:
+    client = TestClient(create_app())
+    allowed_id = str(uuid4())
+    denied_id = str(uuid4())
+    restricted_headers = {
+        **HEADERS,
+        "X-Roles": "site_reviewer",
+        header_name: allowed_id,
+    }
+    unrestricted_headers = {
+        **HEADERS,
+        "X-Roles": "site_reviewer",
+    }
+
+    allowed = client.post(
+        "/api/v1/intakes/url",
+        headers={
+            **restricted_headers,
+            "Idempotency-Key": f"scope-allowed-{scope_field}",
+        },
+        json={
+            "original_url": f"https://example.test/scope/{scope_field}/allowed",
+            "scope": {
+                "tenant_id": HEADERS["X-Tenant-Id"],
+                scope_field: allowed_id,
+            },
+        },
+    )
+    assert allowed.status_code == 202
+    allowed_intake_id = allowed.json()["intake_id"]
+
+    denied_create = client.post(
+        "/api/v1/intakes/url",
+        headers={
+            **restricted_headers,
+            "Idempotency-Key": f"scope-denied-{scope_field}",
+        },
+        json={
+            "original_url": f"https://example.test/scope/{scope_field}/denied-create",
+            "scope": {
+                "tenant_id": HEADERS["X-Tenant-Id"],
+                scope_field: denied_id,
+            },
+        },
+    )
+    assert denied_create.status_code == 403
+    assert denied_create.json()["code"] == "SCOPE_DENIED"
+
+    outside = client.post(
+        "/api/v1/intakes/url",
+        headers={
+            **unrestricted_headers,
+            "Idempotency-Key": f"scope-outside-{scope_field}",
+        },
+        json={
+            "original_url": f"https://example.test/scope/{scope_field}/outside",
+            "scope": {
+                "tenant_id": HEADERS["X-Tenant-Id"],
+                scope_field: denied_id,
+            },
+        },
+    )
+    assert outside.status_code == 202
+    outside_intake_id = outside.json()["intake_id"]
+
+    assert client.get(
+        f"/api/v1/intakes/{allowed_intake_id}",
+        headers=restricted_headers,
+    ).status_code == 200
+    denied_read = client.get(
+        f"/api/v1/intakes/{outside_intake_id}",
+        headers=restricted_headers,
+    )
+    assert denied_read.status_code == 403
+    assert denied_read.json()["code"] == "SCOPE_DENIED"
+
+    listed = client.get("/api/v1/intakes", headers=restricted_headers)
+    assert listed.status_code == 200
+    listed_ids = {item["intake_id"] for item in listed.json()["items"]}
+    assert allowed_intake_id in listed_ids
+    assert outside_intake_id not in listed_ids
+
+    denied_mutation = client.post(
+        f"/api/v1/intakes/{outside_intake_id}/actions/cancel",
+        headers={
+            **restricted_headers,
+            "Idempotency-Key": f"scope-mutation-{scope_field}",
+            "If-Match": 'W/"1"',
+        },
+        json={"reason": "Verify the restricted scope mutation boundary"},
+    )
+    assert denied_mutation.status_code == 403
+    assert denied_mutation.json()["code"] == "SCOPE_DENIED"
 
 
 def test_tenant_scope_is_fail_closed() -> None:

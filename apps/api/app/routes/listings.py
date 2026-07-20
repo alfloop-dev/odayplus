@@ -327,12 +327,14 @@ else:
         reason_code: str | None = None
         field_errors: list[FieldError] = Field(default_factory=list)
         current_version: int | None = None
-        current_owner_subject_id: UuidString | None = None
-        current_state: str | None = None
-        retry_with_etag: str | None = None
         retry_after_seconds: int | None = Field(None, ge=0)
         occurred_at: DateTimeString
         next_action: Literal["RETRY", "REFRESH", "CORRECT_INPUT", "REQUEST_ACCESS", "CONTACT_SUPPORT", "WAIT"] | None
+
+    class ConflictError(ApiError):
+        current_state: str | None = None
+        current_owner_subject_id: UuidString | None = None
+        retry_with_etag: str | None = None
 
     class BatchRowReceipt(BaseModel):
         row_index: int = Field(..., ge=1)
@@ -703,9 +705,19 @@ else:
                     f"{_CURSOR_SIGNING_KEY_ENV} must contain at least 32 bytes"
                 )
 
-        def api_error_responses(*codes: int) -> dict[int, dict[str, Any]]:
+        def api_error_responses(
+            *codes: int,
+            idempotency_conflict: bool = False,
+        ) -> dict[int, dict[str, Any]]:
             return {
-                code: {"model": ApiError, "description": "Assisted intake API error"}
+                code: {
+                    "model": (
+                        ApiError
+                        if code != 409 or idempotency_conflict
+                        else ConflictError
+                    ),
+                    "description": "Assisted intake API error",
+                }
                 for code in codes
             }
 
@@ -713,6 +725,7 @@ else:
             schemas = {
                 "ETag": {"type": "string", "example": 'W/"7"'},
                 "Idempotency-Replayed": {"type": "boolean"},
+                "Retry-After": {"type": "integer", "minimum": 1},
             }
             return {
                 name: {"schema": schemas[name]}
@@ -1151,7 +1164,7 @@ else:
                     "description": "Idempotent replay",
                     "headers": response_headers("Idempotency-Replayed"),
                 },
-                **api_error_responses(403, 409, 422),
+                **api_error_responses(403, 409, 422, idempotency_conflict=True),
             },
         )
         def submit_url(
@@ -1249,7 +1262,7 @@ else:
             response_model=BatchIntakeReceipt,
             responses={
                 202: {"model": BatchIntakeReceipt, "description": "All rows accepted"},
-                **api_error_responses(409, 413, 422),
+                **api_error_responses(409, 413, 422, idempotency_conflict=True),
             },
         )
         def submit_batch(
@@ -1783,7 +1796,7 @@ else:
             operation_id="createSavedView",
             status_code=201,
             response_model=SavedView,
-            responses=api_error_responses(409),
+            responses=api_error_responses(409, idempotency_conflict=True),
         )
         def create_saved_view(
             body: SavedViewRequest,
@@ -1838,7 +1851,24 @@ else:
             operation_id="requestCandidatePromotion",
             status_code=202,
             response_model=PromotionDecisionReceipt,
-            responses=api_error_responses(403, 409, 422, 428, 429, 503),
+            responses={
+                202: {
+                    "model": PromotionDecisionReceipt,
+                    "description": "Promotion review requested",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                429: {
+                    "model": ApiError,
+                    "description": "Rate limited",
+                    "headers": response_headers("Retry-After"),
+                },
+                503: {
+                    "model": ApiError,
+                    "description": "Backpressure active",
+                    "headers": response_headers("Retry-After"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def promote(
             intake_id: UuidString,
@@ -2288,7 +2318,14 @@ else:
             operation_id="cancelIntake",
             status_code=200,
             response_model=TransitionReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": TransitionReceipt,
+                    "description": "Transition committed",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def cancel_intake(
             intake_id: UuidString,
@@ -2355,7 +2392,14 @@ else:
             operation_id="quarantineIntake",
             status_code=200,
             response_model=TransitionReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": TransitionReceipt,
+                    "description": "Transition committed",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def quarantine_intake(
             intake_id: UuidString,
@@ -2423,7 +2467,14 @@ else:
             operation_id="reopenIntake",
             status_code=200,
             response_model=TransitionReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": TransitionReceipt,
+                    "description": "Transition committed",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def reopen_intake(
             intake_id: UuidString,
@@ -2530,7 +2581,14 @@ else:
             operation_id="claimAssignment",
             status_code=200,
             response_model=AssignmentReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": AssignmentReceipt,
+                    "description": "Assignment updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def claim_assignment(
             assignment_id: UuidString,
@@ -2617,7 +2675,14 @@ else:
             operation_id="transferAssignment",
             status_code=200,
             response_model=AssignmentReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": AssignmentReceipt,
+                    "description": "Assignment updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def transfer_assignment(
             assignment_id: UuidString,
@@ -2703,7 +2768,14 @@ else:
             operation_id="completeAssignment",
             status_code=200,
             response_model=AssignmentReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": AssignmentReceipt,
+                    "description": "Assignment updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def complete_assignment(
             assignment_id: UuidString,
@@ -2772,7 +2844,14 @@ else:
             operation_id="pauseSla",
             status_code=200,
             response_model=SlaReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": SlaReceipt,
+                    "description": "SLA updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def pause_sla(
             sla_instance_id: UuidString,
@@ -2827,7 +2906,14 @@ else:
             operation_id="resumeSla",
             status_code=200,
             response_model=SlaReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                200: {
+                    "model": SlaReceipt,
+                    "description": "SLA updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def resume_sla(
             sla_instance_id: UuidString,
@@ -2883,7 +2969,16 @@ else:
             status_code=200,
             response_model=PromotionDecisionReceipt,
             responses={
-                202: {"model": PromotionDecisionReceipt, "description": "Review queued"},
+                200: {
+                    "model": PromotionDecisionReceipt,
+                    "description": "Review committed",
+                    "headers": response_headers("ETag"),
+                },
+                202: {
+                    "model": PromotionDecisionReceipt,
+                    "description": "Review queued",
+                    "headers": response_headers("ETag"),
+                },
                 **api_error_responses(403, 409, 422, 428),
             },
         )
@@ -2955,7 +3050,16 @@ else:
             status_code=200,
             response_model=DecisionReceipt,
             responses={
-                202: {"model": DecisionReceipt, "description": "Review queued"},
+                200: {
+                    "model": DecisionReceipt,
+                    "description": "Review committed",
+                    "headers": response_headers("ETag"),
+                },
+                202: {
+                    "model": DecisionReceipt,
+                    "description": "Review queued",
+                    "headers": response_headers("ETag"),
+                },
                 **api_error_responses(403, 409, 422, 428),
             },
         )
@@ -3048,7 +3152,14 @@ else:
             operation_id="requestIdentityDecisionReversal",
             status_code=202,
             response_model=DecisionReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                202: {
+                    "model": DecisionReceipt,
+                    "description": "Reversal requested",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def reverse_identity(
             decision_id: UuidString,

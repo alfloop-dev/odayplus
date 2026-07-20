@@ -63,11 +63,7 @@ actions:
   - target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
     update: {summary: Request candidate-site promotion}
   - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get
-    update:
-      summary: Get a promotion decision
-      responses:
-        '200':
-          headers: {ETag: {$ref: '#/components/headers/ETag'}}
+    update: {summary: Get a promotion decision}
   - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post
     update: {summary: Review a promotion decision}
   - target: $.paths['/v1/intakes/{intake_id}/actions/cancel'].post
@@ -87,11 +83,7 @@ actions:
   - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/resume'].post
     update: {summary: Resume an SLA instance}
   - target: $.paths['/v1/identity-decisions/{decision_id}'].get
-    update:
-      summary: Get an identity decision
-      responses:
-        '200':
-          headers: {ETag: {$ref: '#/components/headers/ETag'}}
+    update: {summary: Get an identity decision}
   - target: $.paths['/v1/identity-decisions/{decision_id}/actions/review'].post
     update: {summary: Review an identity decision}
   - target: $.paths['/v1/identity-decisions/{decision_id}/actions/reverse'].post

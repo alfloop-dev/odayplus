@@ -22,6 +22,7 @@ from typing import Any
 
 from shared.auth import DataClassification, Principal, Role, Scope
 
+
 def _as_str_set(value: Any) -> frozenset[str]:
     if value is None:
         return frozenset()

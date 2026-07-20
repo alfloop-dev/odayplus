@@ -62,9 +62,19 @@ class ContractTestClient(TestClient):
 
         status = str(response.status_code)
         declared = operation.get("responses", {}).get(status)
+        if response.status_code < 400:
+            assert declared is not None, (
+                f"successful runtime status {status} is not declared for "
+                f"{operation['operationId']}"
+            )
         if declared is not None:
             resolved_response = _resolve_contract(declared)
             assert isinstance(resolved_response, dict)
+            for header_name in resolved_response.get("headers", {}):
+                assert header_name in response.headers, (
+                    f"runtime response for {operation['operationId']} {status} "
+                    f"is missing declared header {header_name}"
+                )
             schema = resolved_response.get("content", {}).get("application/json", {}).get("schema")
             if schema is not None:
                 resolved_schema = _resolve_contract(schema)
@@ -243,13 +253,14 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     new_version = assign_receipt["version"]
 
     store = _store_with_intake(intake_id)
-    store.intakes[intake_id]["state"] = "AWAITING_ASSISTED_ENTRY"
+    store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
 
     # 5. proposeCorrection (POST /api/v1/intakes/{id}/corrections)
     correct_payload = {
         "field_path": "rent_amount",
         "corrected_value": 1500.0,
-        "reason": "Operator corrected data"
+        "reason": "Rent correction changes listing identity and matching risk",
+        "risk_acknowledged": True,
     }
     resp_correct = client.post(
         f"/api/v1/intakes/{intake_id}/corrections",
@@ -262,9 +273,51 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     )
     assert resp_correct.status_code == 201
     correct_receipt = resp_correct.json()
-    assert correct_receipt["status"] == "APPLIED"
+    assert correct_receipt["status"] == "PENDING_REVIEW"
     assert correct_receipt["intake_id"] == intake_id
-    version_after_correct = correct_receipt["version"]
+    assert not any(
+        field.get("field_path") == "rent_amount"
+        for field in store.intakes[intake_id]["fields"]
+    )
+
+    self_review = client.post(
+        f"/api/v1/identity-decisions/{correct_receipt['correction_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "The proposer must not approve the correction",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-correct-self-review-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert self_review.status_code == 403
+    assert self_review.json()["code"] == "SELF_REVIEW_DENIED"
+
+    correction_review = client.post(
+        f"/api/v1/identity-decisions/{correct_receipt['correction_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "Independent reviewer approves the attributable rent correction",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **HEADERS_A_REVIEWER,
+            "Idempotency-Key": f"idem-correct-review-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert correction_review.status_code == 200
+    assert correction_review.json()["status"] == "APPROVED"
+    assert "ETag" in correction_review.headers
+    assert any(
+        field.get("field_path") == "rent_amount"
+        and field.get("corrected") == 1500.0
+        for field in store.intakes[intake_id]["fields"]
+    )
+    version_after_correct = store.intakes[intake_id]["version"]
 
     store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
 
@@ -285,8 +338,9 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert quar_receipt["to_state"] == "QUARANTINED"
     version_after_quar = quar_receipt["version_after"]
 
-    # 7. reopenIntake (POST /api/v1/intakes/{id}/actions/reopen)
-    resp_reopen = client.post(
+    # 7. reopenIntake requires an independent second actor. The first call only
+    # records the release proposal and leaves the intake quarantined.
+    reopen_proposal = client.post(
         f"/api/v1/intakes/{intake_id}/actions/reopen",
         json={"reason": "Reopen after incident resolution", "risk_acknowledged": True},
         headers={
@@ -294,6 +348,34 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "Idempotency-Key": f"idem-reopen-{uuid4()}",
             "If-Match": f'W/"{version_after_quar}"'
         }
+    )
+    assert reopen_proposal.status_code == 200
+    assert reopen_proposal.json()["to_state"] == "QUARANTINED"
+    pending_reopen_version = reopen_proposal.json()["version_after"]
+
+    self_reopen_review = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/reopen",
+        json={
+            "reason": "The proposer must not release their own quarantine",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-reopen-self-review-{uuid4()}",
+            "If-Match": f'W/"{pending_reopen_version}"',
+        },
+    )
+    assert self_reopen_review.status_code == 403
+    assert self_reopen_review.json()["code"] == "SELF_REVIEW_DENIED"
+
+    resp_reopen = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/reopen",
+        json={"reason": "Independent review confirms the quarantine cause is resolved", "risk_acknowledged": True},
+        headers={
+            **HEADERS_A_REVIEWER,
+            "Idempotency-Key": f"idem-reopen-review-{uuid4()}",
+            "If-Match": f'W/"{pending_reopen_version}"',
+        },
     )
     assert resp_reopen.status_code == 200
     reopen_receipt = resp_reopen.json()
@@ -365,6 +447,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     resp_get_promo = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_A)
     assert resp_get_promo.status_code == 200
     assert resp_get_promo.json()["promotion_decision_id"] == promo_id
+    assert "ETag" in resp_get_promo.headers
 
     # getPromotionDecision tenant isolation
     resp_get_promo_b = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_B)
@@ -478,6 +561,49 @@ def test_job_retry_operation(client: TestClient) -> None:
     assert resp_retry_b.status_code == 403
 
 
+def test_expansion_staff_can_retry_their_own_failed_intake(
+    client: TestClient,
+) -> None:
+    staff_headers = {
+        "x-subject-id": ACTOR_A,
+        "x-tenant-id": TENANT_A,
+        "x-roles": "expansion_user",
+    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/staff-owned-retry",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-staff-retry-setup-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    receipt = submitted.json()
+    store = _store_with_intake(receipt["intake_id"])
+    store.jobs[receipt["job_id"]]["status"] = "FAILED"
+    store.jobs[receipt["job_id"]]["checkpoint"] = "PARSING"
+    store.intakes[receipt["intake_id"]]["state"] = "FAILED"
+
+    retried = client.post(
+        f"/api/v1/jobs/{receipt['job_id']}/retry",
+        json={
+            "checkpoint": "PARSING",
+            "reason": "Retry the staff member's own transient parser failure",
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-staff-retry-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+
+    assert retried.status_code == 202
+    assert retried.json()["status"] == "QUEUED"
+
+
 def test_saved_views_operations(client: TestClient) -> None:
     view_payload = {
         "name": "My Active Intakes",
@@ -540,10 +666,16 @@ def test_assignment_actions(client: TestClient) -> None:
     version = resp_assign.json()["version"]
 
     # 1. claimAssignment
+    claim_body = {"reason": "Claiming assignment for manual triage review"}
+    claim_headers = {
+        **HEADERS_A,
+        "Idempotency-Key": f"idem-claim-{uuid4()}",
+        "If-Match": f'W/"{version}"',
+    }
     resp_claim = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/claim",
-        json={"reason": "Claiming assignment for manual triage review"},
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-claim-{uuid4()}", "If-Match": f'W/"{version}"'}
+        json=claim_body,
+        headers=claim_headers,
     )
     assert resp_claim.status_code == 200
     claim_receipt = resp_claim.json()
@@ -566,6 +698,17 @@ def test_assignment_actions(client: TestClient) -> None:
     assert transfer_receipt["status"] == "TRANSFERRED"
     assert transfer_receipt["owner_subject_id"] == ACTOR_C
     version_after_transfer = transfer_receipt["version"]
+
+    # A lost-response replay is immutable even though the transfer changed
+    # current ownership after the first claim was committed.
+    replayed_claim = client.post(
+        f"/api/v1/assignments/{assignment_id}/actions/claim",
+        json=claim_body,
+        headers=claim_headers,
+    )
+    assert replayed_claim.status_code == 200
+    assert replayed_claim.json() == resp_claim.json()
+    assert replayed_claim.headers["ETag"] == resp_claim.headers["ETag"]
 
     # The target owner accepts the transfer by claiming it through the API.
     resp_transferred_claim = client.post(
@@ -650,6 +793,7 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-decide-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_decide.status_code == 201
+    assert "ETag" in resp_decide.headers
     decision = resp_decide.json()
     assert decision["status"] == "PENDING_REVIEW"
     decision_id = decision["decision_id"]
@@ -658,6 +802,7 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
     resp_get = client.get(f"/api/v1/identity-decisions/{decision_id}", headers=HEADERS_A)
     assert resp_get.status_code == 200
     assert resp_get.json()["decision_id"] == decision_id
+    assert "ETag" in resp_get.headers
 
     # 3. reviewIdentityDecision
     review_payload = {

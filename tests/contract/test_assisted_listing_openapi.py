@@ -103,6 +103,17 @@ def _canonical_schema(schema: Any) -> Any:
         canonical["required"] = sorted(canonical["required"])
     if "enum" in canonical:
         canonical["enum"] = sorted(canonical["enum"], key=lambda value: str(value))
+    if "const" in canonical:
+        inferred_type = {
+            bool: "boolean",
+            int: "integer",
+            float: "number",
+            str: "string",
+        }.get(type(canonical["const"]))
+        if canonical.get("type") == inferred_type:
+            canonical.pop("type")
+    if canonical.get("additionalProperties") is True:
+        canonical.pop("additionalProperties")
     return canonical
 
 
@@ -130,30 +141,7 @@ def _assert_schema_equal(
         if isinstance(live_value.get("enum"), list) and None in live_value["enum"]:
             live_value["enum"] = [value for value in live_value["enum"] if value is not None]
 
-    def assert_contains(contract_node: Any, live_node: Any, path: str) -> None:
-        if isinstance(contract_node, dict):
-            assert isinstance(live_node, dict), f"{location}: {path} is not an object schema"
-            for key, contract_child in contract_node.items():
-                assert key in live_node, f"{location}: missing {path}.{key}"
-                if key == "properties":
-                    for property_name, property_schema in contract_child.items():
-                        assert property_name in live_node[key], (
-                            f"{location}: missing {path}.properties.{property_name}"
-                        )
-                        assert_contains(
-                            property_schema,
-                            live_node[key][property_name],
-                            f"{path}.properties.{property_name}",
-                        )
-                else:
-                    assert_contains(contract_child, live_node[key], f"{path}.{key}")
-            return
-        if isinstance(contract_node, list):
-            assert live_node == contract_node, f"{location}: value drift at {path}"
-            return
-        assert live_node == contract_node, f"{location}: value drift at {path}"
-
-    assert_contains(contract_value, live_value, "schema")
+    assert live_value == contract_value, f"{location}: exact schema drift"
 
 
 def test_committed_artifact_is_the_effective_five_overlay_bundle() -> None:
@@ -189,6 +177,9 @@ def test_live_runtime_request_and_response_schema_match_every_effective_operatio
             live_op = live_paths[live_path][method]
             operation_id = op["operationId"]
             assert live_op["operationId"] == operation_id
+            assert set(live_op.get("responses", {})) == set(op.get("responses", {})), (
+                f"runtime response statuses drifted for {operation_id}"
+            )
 
             contract_parameters = {
                 (parameter["in"], parameter["name"]): parameter
@@ -234,6 +225,19 @@ def test_live_runtime_request_and_response_schema_match_every_effective_operatio
                 )
                 contract_response = _resolve_refs(resp, artifact)
                 live_response = _resolve_refs(live_op["responses"][status], live)
+                contract_headers = contract_response.get("headers", {})
+                live_headers = live_response.get("headers", {})
+                assert set(live_headers) == set(contract_headers), (
+                    f"response header drift at {operation_id} {status}"
+                )
+                for header_name, contract_header in contract_headers.items():
+                    _assert_schema_equal(
+                        artifact,
+                        contract_header.get("schema", {}),
+                        live,
+                        live_headers[header_name].get("schema", {}),
+                        f"response header schema drift at {operation_id} {status} {header_name}",
+                    )
                 contract_schema = contract_response.get("content", {}).get("application/json", {}).get("schema")
                 live_schema = live_response.get("content", {}).get("application/json", {}).get("schema")
                 assert (contract_schema is None) == (live_schema is None), (
