@@ -82,3 +82,43 @@ Verified on 2026-07-20 after `335b1a5a`:
 - `uv run ruff check apps/api/app/routes/listings.py shared/api/errors.py tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py` —
   PASS.
 - `git diff --check origin/dev...HEAD` and `git diff --check` — PASS.
+
+## Third changes-requested remediation
+
+Reviewer follow-up at `812ffefd` was implemented at runtime anchor `713f4481`:
+
+- staff ownership now fails closed when either or both owner/submitter fields
+  are unassigned; same-tenant unrelated staff receive
+  `403 OWNERSHIP_REQUIRED` from both intake detail and cancel endpoints;
+- canonical v1 `fields[]` entries are masked from their declared
+  classification rather than from legacy camelCase field names, with all four
+  value slots removed and `FIELD_MASKED` metadata retained;
+- a staff transfer lost-response retry resolves the immutable actor/tenant/
+  operation/resource-scoped receipt before mutable current-owner authorization,
+  so the exact original receipt and ETag replay after ownership changes;
+- `assignIntake` permits only one non-completed assignment per intake and emits
+  the declared `409 OWNER_CONFLICT` under a fresh matching ETag; the v1 error
+  normalizer preserves that specific code.
+
+Verified on 2026-07-20 after `713f4481`:
+
+- `python scripts/build_validate_assisted_listing_intake_openapi.py` — the
+  environment has no `python` binary; `python3` also lacks the project
+  dependencies, so the repo-managed command below was used.
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py` —
+  PASS, effective OpenAPI 1.1.3.
+- `uv run python scripts/generate_assisted_listing_intake_client.py` — PASS;
+  effective artifact and generated client remained unchanged.
+- `uv run pytest tests/contract/test_assisted_listing_operations.py -q -k 'unassigned_intake_is_not_owned or restricted_v1_fields or staff_transfer_lost_response or rejects_a_second_active_assignment'` —
+  PASS (4 targeted regressions).
+- `uv run pytest tests/contract/test_assisted_listing_operations.py -q` — PASS
+  (19 tests).
+- `uv run pytest tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q` —
+  PASS (26 tests).
+- `uv run pytest tests/contract/test_assisted_listing_v1_runtime.py -q` — PASS
+  (4 tests); the three assisted-intake suites total 49 passing tests.
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check apps/api/app/routes/listings.py modules/listing/application/intake_authorization.py shared/api/errors.py tests/contract/test_assisted_listing_operations.py` —
+  PASS.
+- `git diff --check origin/dev...HEAD`, `git diff --check`, and task-owned
+  working-tree inspection — PASS.

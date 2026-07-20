@@ -18,7 +18,11 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
 - Tenant isolation fails closed for intake, job, assignment, saved-view,
   promotion, and identity-decision resources. Read paths retain role/ownership
   authorization and field masking. An unassigned record has no implicit staff
-  owner: only its actual submitter or assignee satisfies the ownership gate.
+  owner: only its actual submitter or assignee satisfies the ownership gate on
+  list, detail, and mutation paths. Canonical v1 `fields[]` values are masked
+  from `parsed`, `normalized`, `corrected`, and `effective` according to their
+  declared classification, including `RESTRICTED` fields for principals with
+  the default confidential clearance.
 - List pagination uses a 24-hour HMAC-signed keyset cursor bound to tenant,
   filters, sort, snapshot, sort tuple, and last resource identifier. Deployed
   replicas configure `ODP_INTAKE_CURSOR_SIGNING_KEY`; local/test processes use
@@ -30,15 +34,20 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
 - Idempotent mutation replay stores an immutable receipt snapshot and returns
   the original status/body and stable ETag without re-running a now-invalid
   state transition. Later assignment claim/transfer/complete mutations cannot
-  rewrite the cached assignment receipt. Reuse with a changed payload returns
-  the declared conflict error. Replay identities for path-scoped mutations also
-  include the path resource ID, so the same key and body may be applied
-  independently to two different authorized resources without replaying the
-  first resource's receipt.
+  rewrite the cached assignment receipt. A staff transfer retry resolves its
+  durable receipt before checking mutable current ownership, while remaining
+  scoped to the same authenticated actor, tenant, operation, resource, key, and
+  request fingerprint. Reuse with a changed payload returns the declared
+  conflict error. Replay identities for path-scoped mutations also include the
+  path resource ID, so the same key and body may be applied independently to
+  two different authorized resources without replaying the first resource's
+  receipt.
 - Assignment authorization preserves staff ownership rules without granting
   queue-routing authority: Expansion staff cannot assign an owned intake to a
   different subject. The target owner of a transferred assignment can claim it
   through the HTTP API and then complete it without an out-of-band state edit.
+  A fresh ETag cannot create a second non-completed assignment for the same
+  intake; the server returns the declared `409 OWNER_CONFLICT` instead.
 - Batch intake reports schema-valid partial success without hiding rejected-row
   errors, and all API errors use the effective `ApiError` wire schema.
 - Contract tests compare parameters, request bodies, and every declared response
