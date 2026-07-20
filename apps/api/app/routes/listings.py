@@ -1407,43 +1407,17 @@ else:
                 correlation_id=correlation_id,
             )
 
-            # Auto-seed assignment if assigned_to is set but no assignment exists
+            # Lookup assignment if assigned_to is set but no assignment exists
             active_assignment = next(
                 (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
                 None
             )
-            if active_assignment is None and value.get("assigned_to"):
-                aid = str(uuid4())
-                active_assignment = {
-                    "assignment_id": aid,
-                    "status": "ASSIGNED",
-                    "owner_subject_id": value.get("assigned_to"),
-                    "due_at": value.get("due_at"),
-                    "version": 1,
-                    "audit_event_id": str(uuid4()),
-                    "tenant_id": tenant_id,
-                    "intake_id": intake_id,
-                }
-                active.assignments[aid] = active_assignment
 
-            # Auto-seed SLA if not exists
+            # Lookup SLA if exists
             active_sla = next(
                 (s for s in active.slas.values() if s.get("intake_id") == intake_id),
                 None
             )
-            if active_sla is None:
-                sid = str(uuid4())
-                active_sla = {
-                    "sla_instance_id": sid,
-                    "state": "ON_TRACK",
-                    "due_at": value.get("due_at") or now(),
-                    "paused_duration_seconds": 0,
-                    "version": 1,
-                    "audit_event_id": str(uuid4()),
-                    "tenant_id": tenant_id,
-                    "intake_id": intake_id,
-                }
-                active.slas[sid] = active_sla
 
             response.headers["ETag"] = f'W/"{value["version"]}"'
 
@@ -2826,16 +2800,6 @@ else:
                     intake["assigned_to"] = body.target_owner_subject_id
                     if body.due_at is not None:
                         intake["due_at"] = body.due_at
-                    intake["version"] += 1
-                    intake["processing_history"].append({
-                        "transition_id": str(uuid4()),
-                        "from_state": intake.get("state"),
-                        "to_state": intake.get("state"),
-                        "occurred_at": now(),
-                        "actor": actor_id,
-                        "reason_code": f"ASSIGNMENT_TRANSFERRED: {body.reason}",
-                        "version_after": intake.get("version"),
-                    })
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -2979,19 +2943,7 @@ else:
                 updated["correlation_id"] = correlation_id or str(uuid4())
                 updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
 
-                # Update parent intake
-                intake = active.intakes.get(updated.get("intake_id", ""))
-                if intake:
-                    intake["version"] += 1
-                    intake["processing_history"].append({
-                        "transition_id": str(uuid4()),
-                        "from_state": intake.get("state"),
-                        "to_state": intake.get("state"),
-                        "occurred_at": now(),
-                        "actor": actor_id,
-                        "reason_code": f"SLA_PAUSED: {body.reason} (Resume: {body.expected_resume_at})",
-                        "version_after": intake.get("version"),
-                    })
+
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -3058,19 +3010,7 @@ else:
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
 
-                # Update parent intake
-                intake = active.intakes.get(updated.get("intake_id", ""))
-                if intake:
-                    intake["version"] += 1
-                    intake["processing_history"].append({
-                        "transition_id": str(uuid4()),
-                        "from_state": intake.get("state"),
-                        "to_state": intake.get("state"),
-                        "occurred_at": now(),
-                        "actor": actor_id,
-                        "reason_code": f"SLA_RESUMED: {body.reason}",
-                        "version_after": intake.get("version"),
-                    })
+
                 return updated, 200
 
             val, code, was_replayed = replay(

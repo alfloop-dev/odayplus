@@ -1990,14 +1990,6 @@
 }
 
 @media (max-width: 768px) {
-  :global(#__next),
-  :global(body),
-  :global(html) {
-    min-width: 100% !important;
-    max-width: 100vw !important;
-    overflow-x: hidden !important;
-  }
-
   .consoleNetworkParity,
   .topbar {
     min-width: 100% !important;
