@@ -403,6 +403,11 @@ else:
         processing_history: list[TransitionReceipt]
         fields: list[FieldValue]
         audit: list[AuditReference]
+        assignment_id: UuidString | None = None
+        assignment_status: str | None = None
+        sla_instance_id: UuidString | None = None
+        sla_state: str | None = None
+        sla_receipt: str | None = None
 
     class IntakePage(BaseModel):
         items: list[IntakeSummary]
@@ -1402,6 +1407,44 @@ else:
                 correlation_id=correlation_id,
             )
 
+            # Auto-seed assignment if assigned_to is set but no assignment exists
+            active_assignment = next(
+                (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
+                None
+            )
+            if active_assignment is None and value.get("assigned_to"):
+                aid = str(uuid4())
+                active_assignment = {
+                    "assignment_id": aid,
+                    "status": "ASSIGNED",
+                    "owner_subject_id": value.get("assigned_to"),
+                    "due_at": value.get("due_at"),
+                    "version": 1,
+                    "audit_event_id": str(uuid4()),
+                    "tenant_id": tenant_id,
+                    "intake_id": intake_id,
+                }
+                active.assignments[aid] = active_assignment
+
+            # Auto-seed SLA if not exists
+            active_sla = next(
+                (s for s in active.slas.values() if s.get("intake_id") == intake_id),
+                None
+            )
+            if active_sla is None:
+                sid = str(uuid4())
+                active_sla = {
+                    "sla_instance_id": sid,
+                    "state": "ON_TRACK",
+                    "due_at": value.get("due_at") or now(),
+                    "paused_duration_seconds": 0,
+                    "version": 1,
+                    "audit_event_id": str(uuid4()),
+                    "tenant_id": tenant_id,
+                    "intake_id": intake_id,
+                }
+                active.slas[sid] = active_sla
+
             response.headers["ETag"] = f'W/"{value["version"]}"'
 
             masked_val = mask_intake(principal, value)
@@ -1428,6 +1471,11 @@ else:
                 processing_history=masked_val.get("processing_history") or [],
                 fields=masked_val.get("fields") or [],
                 audit=masked_val.get("audit") or [],
+                assignment_id=active_assignment.get("assignment_id") if active_assignment else None,
+                assignment_status=active_assignment.get("status") if active_assignment else None,
+                sla_instance_id=active_sla.get("sla_instance_id") if active_sla else None,
+                sla_state=active_sla.get("state") if active_sla else None,
+                sla_receipt=active_sla.get("receipt") if active_sla else None,
             )
             return detail
 
@@ -2770,6 +2818,24 @@ else:
                 if body.due_at is not None:
                     current["due_at"] = body.due_at
                 updated = generic_mutate(active.assignments, assignment_id, "TRANSFERRED", actor_id)
+                updated["audit_event_id"] = str(uuid4())
+                
+                # Update parent intake
+                intake = active.intakes.get(updated.get("intake_id", ""))
+                if intake:
+                    intake["assigned_to"] = body.target_owner_subject_id
+                    if body.due_at is not None:
+                        intake["due_at"] = body.due_at
+                    intake["version"] += 1
+                    intake["processing_history"].append({
+                        "transition_id": str(uuid4()),
+                        "from_state": intake.get("state"),
+                        "to_state": intake.get("state"),
+                        "occurred_at": now(),
+                        "actor": actor_id,
+                        "reason_code": f"ASSIGNMENT_TRANSFERRED: {body.reason}",
+                        "version_after": intake.get("version"),
+                    })
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -2892,6 +2958,7 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
             )
@@ -2908,6 +2975,23 @@ else:
                 current["state_before_pause"] = current["state"]
                 updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
                 updated["active_pause_interval_id"] = str(uuid4())
+                updated["audit_event_id"] = str(uuid4())
+                updated["correlation_id"] = correlation_id or str(uuid4())
+                updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
+                
+                # Update parent intake
+                intake = active.intakes.get(updated.get("intake_id", ""))
+                if intake:
+                    intake["version"] += 1
+                    intake["processing_history"].append({
+                        "transition_id": str(uuid4()),
+                        "from_state": intake.get("state"),
+                        "to_state": intake.get("state"),
+                        "occurred_at": now(),
+                        "actor": actor_id,
+                        "reason_code": f"SLA_PAUSED: {body.reason} (Resume: {body.expected_resume_at})",
+                        "version_after": intake.get("version"),
+                    })
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -2954,6 +3038,7 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
             )
@@ -2970,6 +3055,22 @@ else:
                 resume_state = current.pop("state_before_pause", "ON_TRACK")
                 updated = generic_mutate(active.slas, sla_instance_id, resume_state, actor_id)
                 updated["active_pause_interval_id"] = None
+                updated["audit_event_id"] = str(uuid4())
+                updated["correlation_id"] = correlation_id or str(uuid4())
+                
+                # Update parent intake
+                intake = active.intakes.get(updated.get("intake_id", ""))
+                if intake:
+                    intake["version"] += 1
+                    intake["processing_history"].append({
+                        "transition_id": str(uuid4()),
+                        "from_state": intake.get("state"),
+                        "to_state": intake.get("state"),
+                        "occurred_at": now(),
+                        "actor": actor_id,
+                        "reason_code": f"SLA_RESUMED: {body.reason}",
+                        "version_after": intake.get("version"),
+                    })
                 return updated, 200
 
             val, code, was_replayed = replay(

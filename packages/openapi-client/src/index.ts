@@ -50,6 +50,12 @@ import type {
   NetworkListingActorPayload as GeneratedNetworkListingActorPayload,
   NetworkListingMergePayload as GeneratedNetworkListingMergePayload,
   ErrorEnvelope,
+  ReasonCommand,
+  AssignmentTransferRequest,
+  AssignmentReceipt,
+  AssignmentRequest,
+  SlaPauseRequest,
+  SlaReceipt,
 } from "./generated/types";
 
 export type { ErrorEnvelope };
@@ -769,6 +775,7 @@ type RequestOptions = {
   body?: unknown;
   correlationId?: string;
   idempotencyKey?: string;
+  ifMatch?: string;
   query?: Record<string, string | undefined>;
 };
 
@@ -819,6 +826,7 @@ export class OdpApiClient {
           ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
           ...(options.correlationId ? { [CORRELATION_ID_HEADER]: options.correlationId } : {}),
           ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
+          ...(options.ifMatch ? { "If-Match": options.ifMatch } : {}),
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
@@ -1296,26 +1304,28 @@ export class OdpApiClient {
   correctIntake(
     intakeId: string,
     payload: IntakeCorrectPayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
     });
   }
 
   decideIntake(
     intakeId: string,
     payload: IntakeDecidePayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
     });
   }
 
@@ -1341,6 +1351,90 @@ export class OdpApiClient {
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  assignIntake(
+    intakeId: string,
+    payload: AssignmentRequest,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<AssignmentReceipt> {
+    return this.request<AssignmentReceipt>(`/api/v1/intakes/${intakeId}/assignment`, {
+      method: "PUT",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  claimAssignment(
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<AssignmentReceipt> {
+    return this.request<AssignmentReceipt>(`/api/v1/assignments/${assignmentId}/actions/claim`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  transferAssignment(
+    assignmentId: string,
+    payload: AssignmentTransferRequest,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<AssignmentReceipt> {
+    return this.request<AssignmentReceipt>(`/api/v1/assignments/${assignmentId}/actions/transfer`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  completeAssignment(
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<AssignmentReceipt> {
+    return this.request<AssignmentReceipt>(`/api/v1/assignments/${assignmentId}/actions/complete`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  pauseSla(
+    slaInstanceId: string,
+    payload: SlaPauseRequest,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<SlaReceipt> {
+    return this.request<SlaReceipt>(`/api/v1/sla-instances/${slaInstanceId}/actions/pause`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  resumeSla(
+    slaInstanceId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
+  ): Promise<SlaReceipt> {
+    return this.request<SlaReceipt>(`/api/v1/sla-instances/${slaInstanceId}/actions/resume`, {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
     });
   }
 
@@ -1573,6 +1667,13 @@ export type AssistedIntake = {
   auditEvents: IntakeAuditEvent[];
   idempotencyKey?: string | null;
   failure?: IntakeFailure | null;
+  version: number;
+  assignmentId?: string | null;
+  assignmentStatus?: string | null;
+  slaInstanceId?: string | null;
+  slaState?: string | null;
+  slaReceipt?: string | null;
+  dueAt?: string | null;
 };
 
 export type NetworkListingRadarSnapshot = {

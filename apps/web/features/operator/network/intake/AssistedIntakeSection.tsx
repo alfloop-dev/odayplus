@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { parseUrlState, serializeUrlState } from "./urlState";
 import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
@@ -10,12 +12,14 @@ import { AssistedIntakeQueuePanel } from "./AssistedIntakeQueuePanel";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
+import { IntakeAssignmentSlaDialog } from "./IntakeAssignmentSlaDialog";
 import {
   buildIntakeClient,
   intakeApi,
   missingClientError,
   newIdempotencyKey,
   newIntakeActionIdempotencyKey,
+  newCorrelationId,
   type IntakeApiError,
 } from "./intakeClient";
 import { NO_ACCESS_NOTE, READ_ONLY_NOTE, canPerform, canView, isReadOnly } from "./intakePermissions";
@@ -41,16 +45,42 @@ export function AssistedIntakeSection({
   activeRoleId: OperatorRoleId;
   selectedHeatZoneId?: string;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
+
+  const selectedId = urlState.selectedId;
+  const dialog = urlState.dialog;
+  const fixFieldKey = urlState.fixFieldKey;
+  const decisionKind = urlState.decisionKind as any;
+  const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
+
   const [records, setRecords] = useState<AssistedIntake[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
-  const [dialog, setDialog] = useState<"add" | "detail" | "fix" | "decide" | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [fixFieldKey, setFixFieldKey] = useState<string | null>(null);
-  const [decisionKind, setDecisionKind] = useState<IntakeDecisionKind | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
+    const nextState = {
+      filters: urlState.filters,
+      sort: urlState.sort,
+      view: urlState.view,
+      selectedId: urlState.selectedId,
+      dialog: urlState.dialog,
+      activeSection: urlState.activeSection,
+      fixFieldKey: urlState.fixFieldKey,
+      decisionKind: urlState.decisionKind,
+      receiptId: urlState.receiptId,
+      compareTask: urlState.compareTask,
+      ...updates,
+    };
+    const newParams = serializeUrlState(nextState, searchParams);
+    router.replace(`${pathname}?${newParams.toString()}`);
+  }, [urlState, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(() => buildIntakeClient(activeRoleId), [activeRoleId]);
@@ -94,14 +124,14 @@ export function AssistedIntakeSection({
     function openFromHash() {
       const match = /^#intake\/(.+)$/.exec(window.location.hash);
       if (match) {
-        setSelectedId(match[1]);
-        setDialog("detail");
+        updateUrlState({ dialog: "detail", selectedId: match[1] });
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
       }
     }
     openFromHash();
     window.addEventListener("hashchange", openFromHash);
     return () => window.removeEventListener("hashchange", openFromHash);
-  }, []);
+  }, [updateUrlState]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -118,22 +148,17 @@ export function AssistedIntakeSection({
   const selected = records.find((record) => record.id === selectedId) ?? null;
 
   function closeDialog() {
-    setDialog(null);
+    updateUrlState({ dialog: null, selectedId: null, fixFieldKey: null, decisionKind: null, receiptId: null });
     setActionError(null);
     submitKeyRef.current = null;
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
     decisionKeyRef.current = null;
-    if (window.location.hash.startsWith("#intake/")) {
-      history.replaceState(null, "", window.location.pathname + window.location.search);
-    }
   }
 
   function openDetail(intakeId: string) {
-    setSelectedId(intakeId);
-    setDialog("detail");
+    updateUrlState({ dialog: "detail", selectedId: intakeId });
     setActionError(null);
-    history.replaceState(null, "", `#intake/${intakeId}`);
   }
 
   /** Merge a server response back into the queue; the server is authoritative. */
@@ -145,7 +170,7 @@ export function AssistedIntakeSection({
       next[index] = record;
       return next;
     });
-    setSelectedId(record.id);
+    updateUrlState({ selectedId: record.id });
   }
 
   async function handleSubmit({ url, heatZoneId }: { url: string; heatZoneId: string }) {
@@ -172,8 +197,7 @@ export function AssistedIntakeSection({
     }
     submitKeyRef.current = null;
     applyRecord(result.value);
-    setDialog("detail");
-    history.replaceState(null, "", `#intake/${result.value.id}`);
+    updateUrlState({ dialog: "detail", selectedId: result.value.id });
     setToast(
       result.value.matchResult?.outcome === "EXACT_DUPLICATE"
         ? `已於識別檢查攔截 — 此 URL 已存在（${result.value.matchResult.targetListingId ?? result.value.id}），未執行擷取`
@@ -220,8 +244,7 @@ export function AssistedIntakeSection({
     }
     correctionKeyRef.current = null;
     applyRecord(result.value);
-    setDialog("detail");
-    setFixFieldKey(null);
+    updateUrlState({ dialog: "detail", fixFieldKey: null });
     setToast("已記錄人工修正（前後值已寫入 Audit）");
   }
 
@@ -284,7 +307,7 @@ export function AssistedIntakeSection({
       client,
       selected.id,
       {
-        action: DECISION_API_ACTION[decisionKind],
+        action: DECISION_API_ACTION[decisionKind as IntakeDecisionKind],
         reason,
         riskSummary,
         riskAcknowledged,
@@ -302,8 +325,7 @@ export function AssistedIntakeSection({
     }
     decisionKeyRef.current = null;
     applyRecord(result.value);
-    setDialog("detail");
-    setDecisionKind(null);
+    updateUrlState({ dialog: "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
     void refresh();
   }
@@ -322,6 +344,253 @@ export function AssistedIntakeSection({
     applyRecord(result.value);
     setToast("已重試擷取 — 先前送件內容與人工修正已保留");
     void refresh();
+  }
+
+  async function handleClaim() {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+
+    const key = newIntakeActionIdempotencyKey(selected.id, "claim-asg");
+    const correlationId = newCorrelationId();
+
+    try {
+      let receipt;
+      if (selected.assignmentId) {
+        receipt = await client.claimAssignment(
+          selected.assignmentId,
+          { reason: "Claiming existing assignment" },
+          { idempotencyKey: key, correlationId }
+        );
+      } else {
+        receipt = await client.assignIntake(
+          selected.id,
+          {
+            owner_subject_id: activeRoleId,
+            owner_role: "reviewer",
+            reason: "Claiming assignment for manual triage review",
+            due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          { idempotencyKey: key, correlationId }
+        );
+      }
+
+      setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
+      
+      const getResult = await intakeApi.get(client, selected.id);
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+      }
+      void refresh();
+    } catch (err: any) {
+      setActionError({
+        code: err.code || "CLAIM_ERROR",
+        summary: err.message || "認領收件時發生錯誤",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請稍後再試",
+        status: err.status,
+        retryable: false,
+        correlationId: err.correlationId,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTransferSubmit(payload: {
+    target_owner_subject_id: string;
+    target_owner_role: string;
+    handoff_note: string;
+    reason: string;
+  }) {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+
+    const asgId = selected.assignmentId;
+    if (!asgId) {
+      setActionError({
+        code: "NO_ASSIGNMENT",
+        summary: "無法轉交：找不到此收件的指派記錄",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請先認領或指派收件",
+        retryable: false,
+        correlationId: null,
+        status: 400,
+      });
+      setBusy(false);
+      return;
+    }
+
+    const key = newIntakeActionIdempotencyKey(selected.id, "transfer-asg");
+    const correlationId = newCorrelationId();
+
+    try {
+      const receipt = await client.transferAssignment(
+        asgId,
+        {
+          target_owner_subject_id: payload.target_owner_subject_id,
+          target_owner_role: payload.target_owner_role,
+          handoff_note: payload.handoff_note,
+          reason: payload.reason,
+          due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        {
+          idempotencyKey: key,
+          correlationId,
+          ifMatch: `W/"${selected.version}"`,
+        }
+      );
+
+      setToast(`已成功轉交收件！`);
+      
+      const getResult = await intakeApi.get(client, selected.id);
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+      }
+      updateUrlState({ dialog: "detail" });
+      void refresh();
+    } catch (err: any) {
+      setActionError({
+        code: err.code || "TRANSFER_ERROR",
+        summary: err.message || "轉交收件時發生錯誤",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請檢查對象角色或狀態",
+        status: err.status,
+        retryable: false,
+        correlationId: err.correlationId,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePauseSubmit(payload: {
+    expected_resume_at: string;
+    reason: string;
+  }) {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+
+    const slaId = selected.slaInstanceId;
+    if (!slaId) {
+      setActionError({
+        code: "NO_SLA_INSTANCE",
+        summary: "無法暫停 SLA：找不到此收件的 SLA 實例",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請重新整理收件",
+        retryable: false,
+        correlationId: null,
+        status: 400,
+      });
+      setBusy(false);
+      return;
+    }
+
+    const key = newIntakeActionIdempotencyKey(selected.id, "pause-sla");
+    const correlationId = newCorrelationId();
+
+    try {
+      const receipt = await client.pauseSla(
+        slaId,
+        {
+          reason: payload.reason,
+          expected_resume_at: payload.expected_resume_at,
+        },
+        {
+          idempotencyKey: key,
+          correlationId,
+          ifMatch: `W/"${selected.version}"`,
+        }
+      );
+
+      setToast(`SLA 已暫停！`);
+      
+      const getResult = await intakeApi.get(client, selected.id);
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+      }
+      updateUrlState({ dialog: "detail" });
+      void refresh();
+    } catch (err: any) {
+      setActionError({
+        code: err.code || "PAUSE_ERROR",
+        summary: err.message || "暫停 SLA 時發生錯誤",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請稍後再試",
+        status: err.status,
+        retryable: false,
+        correlationId: err.correlationId,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResumeSla() {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+
+    const slaId = selected.slaInstanceId;
+    if (!slaId) {
+      setActionError({
+        code: "NO_SLA_INSTANCE",
+        summary: "無法恢復 SLA：找不到此收件的 SLA 實例",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請重新整理收件",
+        retryable: false,
+        correlationId: null,
+        status: 400,
+      });
+      setBusy(false);
+      return;
+    }
+
+    const key = newIntakeActionIdempotencyKey(selected.id, "resume-sla");
+    const correlationId = newCorrelationId();
+
+    try {
+      const receipt = await client.resumeSla(
+        slaId,
+        { reason: "Manual resume SLA" },
+        {
+          idempotencyKey: key,
+          correlationId,
+          ifMatch: `W/"${selected.version}"`,
+        }
+      );
+
+      setToast(`SLA 已恢復計時！`);
+      
+      const getResult = await intakeApi.get(client, selected.id);
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+      }
+      void refresh();
+    } catch (err: any) {
+      setActionError({
+        code: err.code || "RESUME_ERROR",
+        summary: err.message || "恢復 SLA 時發生錯誤",
+        occurredAt: new Date().toISOString(),
+        nextAction: "請稍後再試",
+        status: err.status,
+        retryable: false,
+        correlationId: err.correlationId,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleConflictRefresh() {
+    if (!client || !selected) return;
+    setActionError(null);
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) {
+      applyRecord(getResult.value);
+    }
   }
 
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
@@ -362,7 +631,7 @@ export function AssistedIntakeSection({
         onAdd={() => {
           submitKeyRef.current = null;
           setActionError(null);
-          setDialog("add");
+          updateUrlState({ dialog: "add" });
         }}
         onOpen={openDetail}
         onRetryLoad={() => void refresh()}
@@ -400,20 +669,28 @@ export function AssistedIntakeSection({
             decisionKeyRef.current = selected
               ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
               : null;
-            setDecisionKind(kind);
             setActionError(null);
-            setDialog("decide");
+            updateUrlState({ dialog: "decide", decisionKind: kind });
           }}
           onOpenFix={(fieldKey) => {
             correctionKeyRef.current = selected
               ? newIntakeActionIdempotencyKey(selected.id, "correct", fieldKey)
               : null;
-            setFixFieldKey(fieldKey);
             setActionError(null);
-            setDialog("fix");
+            updateUrlState({ dialog: "fix", fixFieldKey: fieldKey });
           }}
           onRetry={handleRetry}
           record={selected}
+          onClaimAssignment={handleClaim}
+          onOpenTransfer={() => {
+            setActionError(null);
+            updateUrlState({ dialog: "assignmentSla", decisionKind: "transfer" });
+          }}
+          onOpenPause={() => {
+            setActionError(null);
+            updateUrlState({ dialog: "assignmentSla", decisionKind: "pause" });
+          }}
+          onResumeSla={handleResumeSla}
         />
       ) : null}
 
@@ -423,7 +700,7 @@ export function AssistedIntakeSection({
           error={actionError}
           field={fixField}
           onClose={() => {
-            setDialog("detail");
+            updateUrlState({ dialog: "detail", fixFieldKey: null });
             setActionError(null);
             correctionKeyRef.current = null;
           }}
@@ -437,12 +714,27 @@ export function AssistedIntakeSection({
           error={actionError}
           kind={decisionKind}
           onClose={() => {
-            setDialog("detail");
+            updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
             decisionKeyRef.current = null;
           }}
           onSubmit={handleDecide}
           record={selected}
+        />
+      ) : null}
+
+      {dialog === "assignmentSla" && selected && asgKind ? (
+        <IntakeAssignmentSlaDialog
+          busy={busy}
+          error={actionError}
+          kind={asgKind}
+          onClose={() => {
+            updateUrlState({ dialog: "detail", decisionKind: null });
+            setActionError(null);
+          }}
+          onSubmit={asgKind === "transfer" ? handleTransferSubmit : handlePauseSubmit}
+          record={selected}
+          onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
     </>
