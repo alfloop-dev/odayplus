@@ -83,6 +83,13 @@ ROLES: list[dict[str, Any]] = [
         "heroName": "王若寧",
     },
     {
+        "id": "expansion-staff",
+        "label": "展店專員",
+        "subtitle": "送件、資料補正與自有案件追蹤",
+        "allowedWorkspaces": ["today", "network"],
+        "heroName": "林曉青",
+    },
+    {
         "id": "pm-audit",
         "label": "PM／稽核",
         "subtitle": "模型、決策追蹤與稽核線索",
@@ -96,7 +103,7 @@ SYSTEM_ROLE_TO_OPERATOR_ROLE: dict[str, OperatorRoleId] = {
     "operations_manager": "ops-lead",
     "regional_supervisor": "field-lead",
     "marketing_manager": "marketing-manager",
-    "expansion_user": "expansion-manager",
+    "expansion_user": "expansion-staff",
     "site_reviewer": "expansion-manager",
     "auditor": "pm-audit",
 }

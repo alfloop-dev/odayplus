@@ -59,7 +59,10 @@ def _claims(**overrides: object) -> dict[str, object]:
         "exp": (NOW + timedelta(hours=1)).timestamp(),
         "roles": ["operations_manager"],
         "tenant_id": "tenant-a",
+        "brand_ids": ["brand-x"],
         "region_ids": ["north"],
+        "assigned_area_ids": ["area-7"],
+        "heat_zone_ids": ["heat-zone-9"],
     }
     base.update(overrides)
     return base
@@ -84,7 +87,10 @@ def test_valid_token_authenticates_and_maps_claims(config, key):
     assert outcome.principal.authenticated is True
     assert Role.OPERATIONS_MANAGER in outcome.principal.roles
     assert outcome.principal.tenant_id == "tenant-a"
+    assert outcome.principal.scope.brand_ids == frozenset({"brand-x"})
     assert outcome.principal.scope.region_ids == frozenset({"north"})
+    assert outcome.principal.scope.assigned_area_ids == frozenset({"area-7"})
+    assert outcome.principal.scope.heat_zone_ids == frozenset({"heat-zone-9"})
 
 
 def test_valid_authentication_writes_success_audit_event(config, key):

@@ -20,6 +20,18 @@ HEADERS = {
     "x-tenant-id": "tenant-a",
 }
 
+MANAGER_HEADERS = {
+    # EXPANSION_USER supplies the listing UPDATE grant; SITE_REVIEWER is the
+    # verified claim that authorizes selection of the expansion-manager role.
+    **auth_headers(
+        Role.SITE_REVIEWER,
+        Role.EXPANSION_USER,
+        subject="operator-expansion-manager",
+    ),
+    "x-operator-role": "expansion-manager",
+    "x-tenant-id": "tenant-a",
+}
+
 
 def _write_headers(key: str) -> dict[str, str]:
     return {
@@ -108,7 +120,7 @@ def test_duplicate_and_revision_contract_test() -> None:
     assert decide_resp.json()["stage"] == "READY"
 
     # Now check if target listing rent is updated in snapshot
-    snap_resp = client.get("/api/v1/operator/network-listings", headers=HEADERS)
+    snap_resp = client.get("/api/v1/operator/network-listings", headers=MANAGER_HEADERS)
     listings = snap_resp.json()["listings"]
     l2024 = next(item for item in listings if item["id"] == "L-2024")
     assert l2024["rentPerMonth"] == 55000
@@ -326,8 +338,7 @@ def _merge_l2029(client: TestClient, *, idempotency_key: str, reason: str):
     return client.post(
         "/api/v1/operator/network-listings/listings/L-2029/merge",
         headers={
-            **HEADERS,
-            "x-operator-role": "expansion-manager",
+            **MANAGER_HEADERS,
             "Idempotency-Key": idempotency_key,
             "X-Correlation-Id": f"corr-{idempotency_key}",
         },
@@ -362,7 +373,9 @@ def test_merge_terminal_state_survives_restart(db_path) -> None:
     try:
         client2 = TestClient(create_app(persistence=reopened))
 
-        snapshot = client2.get("/api/v1/operator/network-listings", headers=HEADERS).json()
+        snapshot = client2.get(
+            "/api/v1/operator/network-listings", headers=MANAGER_HEADERS
+        ).json()
         source = next(item for item in snapshot["listings"] if item["id"] == "L-2029")
         assert source["mergedIntoId"] == "L-2025"
         assert source["mergeReason"] == "FIRST reason"
@@ -376,7 +389,9 @@ def test_merge_terminal_state_survives_restart(db_path) -> None:
         # The rejected request wrote nothing. Audit events are in-process only,
         # so their count says nothing across a restart; the durable merge reason
         # is what proves the second request did not take effect.
-        after = client2.get("/api/v1/operator/network-listings", headers=HEADERS).json()
+        after = client2.get(
+            "/api/v1/operator/network-listings", headers=MANAGER_HEADERS
+        ).json()
         source_after = next(item for item in after["listings"] if item["id"] == "L-2029")
         assert source_after["mergeReason"] == "FIRST reason"
         assert source_after["mergedIntoId"] == "L-2025"
