@@ -28,6 +28,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonpath-ng>=1.8.0",
+    "openapi-spec-validator>=0.9.0",
     "pytest>=8",
     "ruff>=0.6",
 ]
