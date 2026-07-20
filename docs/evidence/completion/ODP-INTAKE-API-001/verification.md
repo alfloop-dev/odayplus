@@ -122,3 +122,25 @@ Verified on 2026-07-20 after `713f4481`:
   PASS.
 - `git diff --check origin/dev...HEAD`, `git diff --check`, and task-owned
   working-tree inspection — PASS.
+
+## Supply-chain artifact remediation
+
+Reviewer follow-up at `8e17ac83` identified that the retained OpenAPI
+development dependencies in `pyproject.toml` and `uv.lock` made the committed
+SBOM stale. The SBOM was regenerated from the current `package-lock.json` and
+`uv.lock`; it now catalogs 516 components and restores the fail-closed lockfile
+parity check without changing the assisted-intake runtime or API contract.
+
+Verified on 2026-07-20 after regeneration:
+
+- `python3 scripts/security/generate_sbom.py` — PASS (516 components).
+- `uv run pytest tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid -q` —
+  PASS (committed component set matches both current lockfiles).
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py` and
+  `uv run python scripts/generate_assisted_listing_intake_client.py` — PASS,
+  effective OpenAPI 1.1.3 with no generated artifact drift.
+- `uv run pytest tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q` —
+  PASS (49 tests).
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check apps/api/app/routes/listings.py modules/listing/application/intake_authorization.py shared/api/errors.py tests/contract/test_assisted_listing_operations.py` —
+  PASS.
