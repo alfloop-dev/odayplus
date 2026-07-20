@@ -49,3 +49,36 @@ Verified on 2026-07-20 after `ecc33a29`:
 - `make security` — PASS (npm/pip audits found no known vulnerabilities; 189 passed, 6 skipped).
 - `make node-check` — PASS when run serially after pytest; workspace lint/typechecks and the Next.js production build completed successfully.
 - `git diff --check origin/dev...HEAD` — PASS before the evidence-only final commit.
+
+## Second changes-requested remediation
+
+Reviewer follow-up at `09502d45` was implemented at runtime anchor `335b1a5a`:
+
+- every mutation whose target is identified by a path parameter now includes
+  that resource ID in its replay identity; an HTTP regression applies the same
+  `assignIntake` key and body to two intakes and verifies two independent
+  assignment receipts and mutations;
+- Expansion staff may not assign an intake they own to another subject, and the
+  canonical error normalizer preserves `ASSIGNMENT_SCOPE_DENIED` instead of
+  collapsing it to the generic `SCOPE_DENIED` substring;
+- a transfer target may claim a `TRANSFERRED` assignment through
+  `claimAssignment`; the assignment lifecycle regression now transfers, claims,
+  and completes entirely through HTTP and no longer writes `CLAIMED` directly
+  into the in-memory store;
+- the older If-Match smoke test now uses an explicit Expansion manager for its
+  cross-user assignment, leaving staff authorization to the dedicated denial
+  regression.
+
+Verified on 2026-07-20 after `335b1a5a`:
+
+- `python scripts/build_validate_assisted_listing_intake_openapi.py` — the
+  environment has no `python` binary; the equivalent repo runtime command below
+  was used.
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py` —
+  PASS, effective OpenAPI 1.1.3; no artifact drift.
+- `uv run pytest tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q` —
+  PASS (46 tests).
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check apps/api/app/routes/listings.py shared/api/errors.py tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py` —
+  PASS.
+- `git diff --check origin/dev...HEAD` and `git diff --check` — PASS.

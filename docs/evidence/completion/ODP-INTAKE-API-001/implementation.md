@@ -31,7 +31,14 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   the original status/body and stable ETag without re-running a now-invalid
   state transition. Later assignment claim/transfer/complete mutations cannot
   rewrite the cached assignment receipt. Reuse with a changed payload returns
-  the declared conflict error.
+  the declared conflict error. Replay identities for path-scoped mutations also
+  include the path resource ID, so the same key and body may be applied
+  independently to two different authorized resources without replaying the
+  first resource's receipt.
+- Assignment authorization preserves staff ownership rules without granting
+  queue-routing authority: Expansion staff cannot assign an owned intake to a
+  different subject. The target owner of a transferred assignment can claim it
+  through the HTTP API and then complete it without an out-of-band state edit.
 - Batch intake reports schema-valid partial success without hiding rejected-row
   errors, and all API errors use the effective `ApiError` wire schema.
 - Contract tests compare parameters, request bodies, and every declared response
