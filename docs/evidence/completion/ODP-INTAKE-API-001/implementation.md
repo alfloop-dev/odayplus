@@ -17,15 +17,21 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   idempotency-key, and exact weak `If-Match` constraints before route logic.
 - Tenant isolation fails closed for intake, job, assignment, saved-view,
   promotion, and identity-decision resources. Read paths retain role/ownership
-  authorization and field masking.
-- List pagination uses an expiring HMAC-signed cursor bound to tenant, filters,
-  sort, snapshot, offset, and last resource identifier; mismatched or expired
-  cursors fail closed.
+  authorization and field masking. An unassigned record has no implicit staff
+  owner: only its actual submitter or assignee satisfies the ownership gate.
+- List pagination uses a 24-hour HMAC-signed keyset cursor bound to tenant,
+  filters, sort, snapshot, sort tuple, and last resource identifier. Deployed
+  replicas configure `ODP_INTAKE_CURSOR_SIGNING_KEY`; local/test processes use
+  an unpredictable process-local fallback rather than a repository secret.
+  Mismatched, expired, or differently signed cursors fail closed, and records
+  inserted after the snapshot cannot shift an offset or duplicate a row.
 - Lifecycle guards enforce the approved cancel, quarantine, reopen, correction,
   assignment, SLA, promotion-review, identity-review, and reversal transitions.
-- Idempotent mutation replay returns the original status/body and stable receipt
-  ETag without re-running a now-invalid state transition. Reuse with a changed
-  payload returns the declared conflict error.
+- Idempotent mutation replay stores an immutable receipt snapshot and returns
+  the original status/body and stable ETag without re-running a now-invalid
+  state transition. Later assignment claim/transfer/complete mutations cannot
+  rewrite the cached assignment receipt. Reuse with a changed payload returns
+  the declared conflict error.
 - Batch intake reports schema-valid partial success without hiding rejected-row
   errors, and all API errors use the effective `ApiError` wire schema.
 - Contract tests compare parameters, request bodies, and every declared response

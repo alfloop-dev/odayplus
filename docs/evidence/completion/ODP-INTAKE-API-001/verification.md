@@ -12,3 +12,40 @@ Verified on 2026-07-20 at task anchors `e54bad56` and `17f8ad46`:
 
 The generated artifact is `packages/schemas/assisted_listing_intake/openapi-effective.json`.
 The generated client namespace is exported as `AssistedListingIntakeV1`.
+
+## Changes-requested remediation
+
+Reviewer follow-up was implemented at runtime anchor `6748b17e` and live
+artifact anchor `ecc33a29`:
+
+- same-tenant Expansion staff no longer inherit ownership of unassigned
+  intakes submitted by another subject, including the Operator compatibility
+  helper;
+- replay cache values are deep-copied, so claiming an assignment cannot mutate
+  the original assignment response or its ETag;
+- cursor pagination is configured through
+  `ODP_INTAKE_CURSOR_SIGNING_KEY`, uses the approved 24-hour lifetime and a
+  deterministic sort tuple/resource-ID keyset, and excludes post-snapshot
+  inserts instead of advancing by offset;
+- `packages/openapi-client/openapi.json` and generated shared types were rebuilt
+  from the live FastAPI app, removing the PR #335 artifact drift.
+
+Regression coverage verifies both ownership helpers, assignment replay after
+claim, configured HMAC signing, absence of an offset in the cursor, stable
+pagination after an intervening insert, and artifact/client byte parity.
+
+## Re-review verification
+
+Verified on 2026-07-20 after `ecc33a29`:
+
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py` — PASS, effective OpenAPI 1.1.3.
+- `uv run pytest tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q` — PASS.
+- `uv run pytest tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q` — PASS (44 tests).
+- `uv run pytest tests/contract/test_openapi_artifact_and_client.py -q` — PASS (17 tests).
+- `uv run python scripts/openapi/check_drift.py --base-ref origin/dev` — PASS; live artifact and generated client are fresh, with 27 additive and zero breaking changes.
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check tests modules apps shared models solver pipelines infra` — PASS.
+- `uv run pytest -m "not requires_live_env" tests modules apps shared models` — PASS (1096 passed, 19 deselected).
+- `make security` — PASS (npm/pip audits found no known vulnerabilities; 189 passed, 6 skipped).
+- `make node-check` — PASS when run serially after pytest; workspace lint/typechecks and the Next.js production build completed successfully.
+- `git diff --check origin/dev...HEAD` — PASS before the evidence-only final commit.
