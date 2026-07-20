@@ -264,7 +264,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 
     # 11. reviewPromotionDecision (POST /api/v1/promotion-decisions/{id}/actions/review)
     review_promo_payload = {
-        "decision": "approve",
+        "decision": "APPROVE",
         "reason": "Reviewer approves promotion",
         "risk_acknowledged": True
     }

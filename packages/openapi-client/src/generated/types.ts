@@ -105,7 +105,7 @@ export type AssignmentReceipt = {
   audit_event_id: string;
   due_at: string;
   owner_subject_id: string;
-  status: string;
+  status: AssignmentStatus;
   version: number;
 };
 
@@ -117,6 +117,9 @@ export type AssignmentRequest = {
   owner_subject_id: string;
   reason: string;
 };
+
+/** AssignmentStatus */
+export type AssignmentStatus = "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
 
 /** AssignmentTransferRequest */
 export type AssignmentTransferRequest = {
@@ -139,6 +142,9 @@ export type AuditReference = {
 /** AuditResult */
 export type AuditResult = "ALLOWED" | "DENIED" | "SUCCEEDED" | "FAILED" | "MASKED";
 
+/** BatchIntakeMethod */
+export type BatchIntakeMethod = "MANUAL" | "CSV" | "APPROVED_FEED";
+
 /** BatchIntakeReceipt */
 export type BatchIntakeReceipt = {
   accepted_count: number;
@@ -152,7 +158,7 @@ export type BatchIntakeReceipt = {
 /** BatchIntakeRequest */
 export type BatchIntakeRequest = {
   batch_id: string;
-  method: string;
+  method: BatchIntakeMethod;
   rows: ManualIntakeRow[];
   scope: ScopeContext;
 };
@@ -163,13 +169,19 @@ export type BatchRowReceipt = {
   error?: ApiError | null;
   intake_id?: string | null;
   row_index: number;
-  status: string;
+  status: BatchRowStatus;
 };
+
+/** BatchRowStatus */
+export type BatchRowStatus = "ACCEPTED" | "REJECTED" | "REPLAYED";
+
+/** CandidateDisposition */
+export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
 /** CandidateReassignment */
 export type CandidateReassignment = {
   candidate_site_id: string;
-  disposition: string;
+  disposition: CandidateDisposition;
   target_property_id?: string | null;
 };
 
@@ -189,7 +201,7 @@ export type CorrectionReceipt = {
   correlation_id: string;
   intake_id: string;
   listing_revision_id?: string | null;
-  status: string;
+  status: CorrectionStatus;
   version: number;
 };
 
@@ -201,6 +213,9 @@ export type CorrectionRequest = {
   reason: string;
   risk_acknowledged?: boolean | null;
 };
+
+/** CorrectionStatus */
+export type CorrectionStatus = "PROPOSED" | "APPLIED" | "PENDING_REVIEW";
 
 /** POST /operator/growth/actions — create draft body.
 
@@ -246,8 +261,14 @@ export type DecisionReceipt = {
   decision_id: string;
   job_id?: string | null;
   resource_versions: Record<string, number>;
-  status: string;
+  status: DecisionStatus;
 };
+
+/** DecisionStatus */
+export type DecisionStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECUTING" | "EXECUTED" | "FAILED" | "REVERSAL_PENDING" | "REVERSED";
+
+/** DecisionType */
+export type DecisionType = "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT" | "REOPEN" | "MERGE" | "SPLIT" | "UNMERGE";
 
 /** EligibilityPayload */
 export type EligibilityPayload = {
@@ -605,9 +626,12 @@ export type JobReceipt = {
   checkpoint: string;
   correlation_id: string;
   job_id: string;
-  status: string;
+  status: JobStatus;
   version: number;
 };
+
+/** JobStatus */
+export type JobStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
 
 /** ListingImportPayload */
 export type ListingImportPayload = {
@@ -629,7 +653,7 @@ export type ManualIntakeRow = {
 
 /** MatchDecisionRequest */
 export type MatchDecisionRequest = {
-  decision_type: string;
+  decision_type: DecisionType;
   reason: string;
   requested_second_reviewer_id?: string | null;
   risk_acknowledged: boolean;
@@ -914,15 +938,18 @@ export type PromotionDecisionReceipt = {
   audit_event_id: string;
   candidate_site_id?: string | null;
   correlation_id: string;
-  decision_type: string;
+  decision_type: PromotionDecisionType;
   intake_id: string;
   listing_id: string;
   promotion_decision_id: string;
   reviewer_subject_id?: string | null;
   site_score_job_id?: string | null;
-  status: string;
+  status: PromotionStatus;
   version: number;
 };
+
+/** PromotionDecisionType */
+export type PromotionDecisionType = "STANDARD" | "LEGACY_RECONCILED";
 
 /** PromotionRequest */
 export type PromotionRequest = {
@@ -932,6 +959,9 @@ export type PromotionRequest = {
   risk_acknowledged: boolean;
   target_format_code: string;
 };
+
+/** PromotionStatus */
+export type PromotionStatus = "REQUESTED" | "VALIDATING" | "PENDING_REVIEW" | "REJECTED" | "APPROVED" | "CANDIDATE_CREATING" | "CANDIDATE_CREATED" | "SCORE_QUEUED" | "COMPLETED" | "FAILED" | "SCORE_FAILED";
 
 /** PurgePayload */
 export type PurgePayload = {
@@ -996,13 +1026,19 @@ export type ReleasePayload = {
   version: string;
 };
 
+/** RetryCheckpoint */
+export type RetryCheckpoint = "RETRIEVING" | "PARSING" | "MATCHING" | "CANDIDATE_CREATING" | "SCORE_QUEUED";
+
 /** RetryRequest */
 export type RetryRequest = {
-  checkpoint: string;
+  checkpoint: RetryCheckpoint;
   override_retry_budget?: boolean;
   reason: string;
   risk_acknowledged?: boolean;
 };
+
+/** ReviewDecision */
+export type ReviewDecision = "APPROVE" | "REJECT" | "RETURN";
 
 /** POST /operator/network-reviews/{review_id}/decide. */
 export type ReviewDecisionPayload = {
@@ -1017,7 +1053,7 @@ export type ReviewDecisionPayload = {
 
 /** ReviewDecisionRequest */
 export type ReviewDecisionRequest = {
-  decision: string;
+  decision: ReviewDecision;
   reason: string;
   requested_changes?: string[] | null;
   risk_acknowledged: boolean;
@@ -1045,7 +1081,7 @@ export type SavedView = {
   saved_view_id: string;
   shared_role?: string | null;
   version: number;
-  visibility?: string;
+  visibility?: SavedViewVisibility;
 };
 
 /** SavedViewRequest */
@@ -1054,8 +1090,11 @@ export type SavedViewRequest = {
   query: Record<string, unknown>;
   resource?: string;
   shared_role?: string | null;
-  visibility?: string;
+  visibility?: SavedViewVisibility;
 };
+
+/** SavedViewVisibility */
+export type SavedViewVisibility = "PRIVATE" | "ROLE" | "TENANT";
 
 /** ScopeContext */
 export type ScopeContext = {
@@ -1101,9 +1140,12 @@ export type SlaReceipt = {
   due_soon_at?: string | null;
   paused_duration_seconds: number;
   sla_instance_id: string;
-  state: string;
+  state: SlaState;
   version: number;
 };
+
+/** SlaState */
+export type SlaState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "COMPLETED";
 
 /** SourcePolicyState */
 export type SourcePolicyState = "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED" | "SOURCE_BLOCKED" | "POLICY_UNKNOWN";

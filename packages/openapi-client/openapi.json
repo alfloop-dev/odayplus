@@ -392,8 +392,7 @@
             "type": "string"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/AssignmentStatus"
           },
           "version": {
             "title": "Version",
@@ -450,6 +449,17 @@
         ],
         "title": "AssignmentRequest",
         "type": "object"
+      },
+      "AssignmentStatus": {
+        "enum": [
+          "ASSIGNED",
+          "CLAIMED",
+          "TRANSFERRED",
+          "ESCALATED",
+          "COMPLETED"
+        ],
+        "title": "AssignmentStatus",
+        "type": "string"
       },
       "AssignmentTransferRequest": {
         "additionalProperties": false,
@@ -544,6 +554,15 @@
         "title": "AuditResult",
         "type": "string"
       },
+      "BatchIntakeMethod": {
+        "enum": [
+          "MANUAL",
+          "CSV",
+          "APPROVED_FEED"
+        ],
+        "title": "BatchIntakeMethod",
+        "type": "string"
+      },
       "BatchIntakeReceipt": {
         "properties": {
           "accepted_count": {
@@ -592,13 +611,13 @@
             "type": "string"
           },
           "method": {
-            "title": "Method",
-            "type": "string"
+            "$ref": "#/components/schemas/BatchIntakeMethod"
           },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/ManualIntakeRow"
             },
+            "minItems": 1,
             "title": "Rows",
             "type": "array"
           },
@@ -654,8 +673,7 @@
             "type": "integer"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/BatchRowStatus"
           }
         },
         "required": [
@@ -665,6 +683,24 @@
         "title": "BatchRowReceipt",
         "type": "object"
       },
+      "BatchRowStatus": {
+        "enum": [
+          "ACCEPTED",
+          "REJECTED",
+          "REPLAYED"
+        ],
+        "title": "BatchRowStatus",
+        "type": "string"
+      },
+      "CandidateDisposition": {
+        "enum": [
+          "KEEP_HISTORICAL",
+          "REASSIGN",
+          "REQUIRE_REVIEW"
+        ],
+        "title": "CandidateDisposition",
+        "type": "string"
+      },
       "CandidateReassignment": {
         "properties": {
           "candidate_site_id": {
@@ -672,8 +708,7 @@
             "type": "string"
           },
           "disposition": {
-            "title": "Disposition",
-            "type": "string"
+            "$ref": "#/components/schemas/CandidateDisposition"
           },
           "target_property_id": {
             "anyOf": [
@@ -764,8 +799,7 @@
             "title": "Listing Revision Id"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/CorrectionStatus"
           },
           "version": {
             "title": "Version",
@@ -829,6 +863,15 @@
         ],
         "title": "CorrectionRequest",
         "type": "object"
+      },
+      "CorrectionStatus": {
+        "enum": [
+          "PROPOSED",
+          "APPLIED",
+          "PENDING_REVIEW"
+        ],
+        "title": "CorrectionStatus",
+        "type": "string"
       },
       "CreateActionPayload": {
         "additionalProperties": true,
@@ -1027,8 +1070,7 @@
             "type": "object"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/DecisionStatus"
           }
         },
         "required": [
@@ -1040,6 +1082,35 @@
         ],
         "title": "DecisionReceipt",
         "type": "object"
+      },
+      "DecisionStatus": {
+        "enum": [
+          "PENDING_REVIEW",
+          "APPROVED",
+          "REJECTED",
+          "EXECUTING",
+          "EXECUTED",
+          "FAILED",
+          "REVERSAL_PENDING",
+          "REVERSED"
+        ],
+        "title": "DecisionStatus",
+        "type": "string"
+      },
+      "DecisionType": {
+        "enum": [
+          "CREATE",
+          "REVISE",
+          "DUPLICATE",
+          "QUARANTINE",
+          "REJECT",
+          "REOPEN",
+          "MERGE",
+          "SPLIT",
+          "UNMERGE"
+        ],
+        "title": "DecisionType",
+        "type": "string"
       },
       "EligibilityPayload": {
         "properties": {
@@ -1993,6 +2064,7 @@
             "items": {
               "type": "string"
             },
+            "minItems": 1,
             "title": "Source Identity Edge Ids",
             "type": "array"
           },
@@ -2404,7 +2476,7 @@
             "type": "integer"
           },
           "total_count_accuracy": {
-            "default": "exact",
+            "default": "EXACT",
             "title": "Total Count Accuracy",
             "type": "string"
           }
@@ -2822,8 +2894,7 @@
             "type": "string"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/JobStatus"
           },
           "version": {
             "title": "Version",
@@ -2840,6 +2911,19 @@
         ],
         "title": "JobReceipt",
         "type": "object"
+      },
+      "JobStatus": {
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "RETRYING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED",
+          "DEAD_LETTER"
+        ],
+        "title": "JobStatus",
+        "type": "string"
       },
       "ListingImportPayload": {
         "properties": {
@@ -2959,8 +3043,7 @@
       "MatchDecisionRequest": {
         "properties": {
           "decision_type": {
-            "title": "Decision Type",
-            "type": "string"
+            "$ref": "#/components/schemas/DecisionType"
           },
           "reason": {
             "maxLength": 4000,
@@ -3074,6 +3157,7 @@
             "items": {
               "type": "string"
             },
+            "minItems": 1,
             "title": "Source Property Ids",
             "type": "array"
           },
@@ -4454,8 +4538,7 @@
             "type": "string"
           },
           "decision_type": {
-            "title": "Decision Type",
-            "type": "string"
+            "$ref": "#/components/schemas/PromotionDecisionType"
           },
           "intake_id": {
             "title": "Intake Id",
@@ -4492,8 +4575,7 @@
             "title": "Site Score Job Id"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/PromotionStatus"
           },
           "version": {
             "title": "Version",
@@ -4512,6 +4594,14 @@
         ],
         "title": "PromotionDecisionReceipt",
         "type": "object"
+      },
+      "PromotionDecisionType": {
+        "enum": [
+          "STANDARD",
+          "LEGACY_RECONCILED"
+        ],
+        "title": "PromotionDecisionType",
+        "type": "string"
       },
       "PromotionRequest": {
         "properties": {
@@ -4556,6 +4646,23 @@
         ],
         "title": "PromotionRequest",
         "type": "object"
+      },
+      "PromotionStatus": {
+        "enum": [
+          "REQUESTED",
+          "VALIDATING",
+          "PENDING_REVIEW",
+          "REJECTED",
+          "APPROVED",
+          "CANDIDATE_CREATING",
+          "CANDIDATE_CREATED",
+          "SCORE_QUEUED",
+          "COMPLETED",
+          "FAILED",
+          "SCORE_FAILED"
+        ],
+        "title": "PromotionStatus",
+        "type": "string"
       },
       "PurgePayload": {
         "properties": {
@@ -4849,11 +4956,21 @@
         "title": "ReleasePayload",
         "type": "object"
       },
+      "RetryCheckpoint": {
+        "enum": [
+          "RETRIEVING",
+          "PARSING",
+          "MATCHING",
+          "CANDIDATE_CREATING",
+          "SCORE_QUEUED"
+        ],
+        "title": "RetryCheckpoint",
+        "type": "string"
+      },
       "RetryRequest": {
         "properties": {
           "checkpoint": {
-            "title": "Checkpoint",
-            "type": "string"
+            "$ref": "#/components/schemas/RetryCheckpoint"
           },
           "override_retry_budget": {
             "default": false,
@@ -4876,6 +4993,15 @@
         ],
         "title": "RetryRequest",
         "type": "object"
+      },
+      "ReviewDecision": {
+        "enum": [
+          "APPROVE",
+          "REJECT",
+          "RETURN"
+        ],
+        "title": "ReviewDecision",
+        "type": "string"
       },
       "ReviewDecisionPayload": {
         "additionalProperties": true,
@@ -4941,8 +5067,7 @@
         "additionalProperties": false,
         "properties": {
           "decision": {
-            "title": "Decision",
-            "type": "string"
+            "$ref": "#/components/schemas/ReviewDecision"
           },
           "reason": {
             "maxLength": 4000,
@@ -5074,10 +5199,8 @@
             "type": "integer"
           },
           "visibility": {
-            "default": "PRIVATE",
-            "pattern": "^(PRIVATE|ROLE|TENANT)$",
-            "title": "Visibility",
-            "type": "string"
+            "$ref": "#/components/schemas/SavedViewVisibility",
+            "default": "PRIVATE"
           }
         },
         "required": [
@@ -5122,10 +5245,8 @@
             "title": "Shared Role"
           },
           "visibility": {
-            "default": "PRIVATE",
-            "pattern": "^(PRIVATE|ROLE|TENANT)$",
-            "title": "Visibility",
-            "type": "string"
+            "$ref": "#/components/schemas/SavedViewVisibility",
+            "default": "PRIVATE"
           }
         },
         "required": [
@@ -5134,6 +5255,15 @@
         ],
         "title": "SavedViewRequest",
         "type": "object"
+      },
+      "SavedViewVisibility": {
+        "enum": [
+          "PRIVATE",
+          "ROLE",
+          "TENANT"
+        ],
+        "title": "SavedViewVisibility",
+        "type": "string"
       },
       "ScopeContext": {
         "properties": {
@@ -5343,8 +5473,7 @@
             "type": "string"
           },
           "state": {
-            "title": "State",
-            "type": "string"
+            "$ref": "#/components/schemas/SlaState"
           },
           "version": {
             "title": "Version",
@@ -5363,6 +5492,18 @@
         "title": "SlaReceipt",
         "type": "object"
       },
+      "SlaState": {
+        "enum": [
+          "ON_TRACK",
+          "DUE_SOON",
+          "OVERDUE",
+          "BREACHED",
+          "PAUSED",
+          "COMPLETED"
+        ],
+        "title": "SlaState",
+        "type": "string"
+      },
       "SourcePolicyState": {
         "enum": [
           "APPROVED_RETRIEVAL",
@@ -5380,6 +5521,7 @@
             "items": {
               "$ref": "#/components/schemas/IdentityPartition"
             },
+            "minItems": 2,
             "title": "Partitions",
             "type": "array"
           },
@@ -5831,6 +5973,7 @@
             "items": {
               "$ref": "#/components/schemas/IdentityPartition"
             },
+            "minItems": 1,
             "title": "Replacement Edges",
             "type": "array"
           },
@@ -12165,7 +12308,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "$ref": "#/components/schemas/IntakeState"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -12181,7 +12327,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -12197,7 +12346,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "$ref": "#/components/schemas/MatchOutcome"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -12277,6 +12429,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 200,
                   "type": "string"
                 },
                 {
