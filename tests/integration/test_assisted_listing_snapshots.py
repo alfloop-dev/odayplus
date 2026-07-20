@@ -120,10 +120,10 @@ def test_create_snapshot_success(memory_store, workflow_service, base_context) -
     assert snapshot_id is not None
 
     # Check GCS contents
-    raw_content = memory_store.download_object(tenant_id, f"gs://taiwan-snapshots/snapshots/{snapshot_id}/raw")
+    raw_content = memory_store.download_object(tenant_id, f"gs://taiwan-snapshots/tenants/{tenant_id}/snapshots/{snapshot_id}/raw")
     assert raw_content == raw_data
 
-    redacted_content = memory_store.download_object(tenant_id, f"gs://taiwan-snapshots/snapshots/{snapshot_id}/redacted")
+    redacted_content = memory_store.download_object(tenant_id, f"gs://taiwan-snapshots/tenants/{tenant_id}/snapshots/{snapshot_id}/redacted")
     assert redacted_content == redacted_data
 
 
@@ -223,7 +223,7 @@ def test_reconciliation_missing_object(memory_store, workflow_service, base_cont
     )
 
     # Delete raw object directly from GCS to simulate discrepancy
-    uri = f"gs://taiwan-snapshots/snapshots/{snapshot_id}/raw"
+    uri = f"gs://taiwan-snapshots/tenants/{tenant_id}/snapshots/{snapshot_id}/raw"
     memory_store.delete_object(tenant_id, uri)
 
     # Run integrity check -> fails closed and quarantines intake
@@ -253,7 +253,7 @@ def test_reconciliation_orphan_object(memory_store, workflow_service) -> None:
     memory_store.upload_object(
         tenant_id=tenant_id,
         bucket=bucket,
-        key="snapshots/orphan-snap-999/raw",
+        key=f"tenants/{tenant_id}/snapshots/orphan-snap-999/raw",
         data=b"orphan html",
         content_type="text/html",
         if_generation_match=0,
@@ -267,7 +267,7 @@ def test_reconciliation_orphan_object(memory_store, workflow_service) -> None:
     assert len(service._in_memory_findings) == 1
     finding = list(service._in_memory_findings.values())[0]
     assert finding["finding_type"] == "ORPHAN_REFERENCE"
-    assert finding["source_id"] == f"gs://{bucket}/snapshots/orphan-snap-999/raw"
+    assert finding["source_id"] == f"gs://{bucket}/tenants/{tenant_id}/snapshots/orphan-snap-999/raw"
 
 
 @pytest.mark.requires_live_env

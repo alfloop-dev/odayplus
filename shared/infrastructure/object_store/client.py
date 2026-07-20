@@ -62,6 +62,49 @@ def parse_gs_uri(uri: str) -> tuple[str, str]:
     return bucket, key.strip("/")
 
 
+RESIDENCY_APPROVED_BUCKETS: dict[str, set[str]] = {
+    "TW_ONLY": {
+        "snapshots-taiwan",
+        "taiwan-snapshots",
+        "tw-intake-snapshots",
+        "taiwan-snapshots-dev",
+        "taiwan-snapshots-prod",
+    },
+    "APPROVED_APAC_DR": {
+        "snapshots-taiwan",
+        "taiwan-snapshots",
+        "tw-intake-snapshots",
+        "taiwan-snapshots-dev",
+        "taiwan-snapshots-prod",
+        "snapshots-apac-dr",
+        "apac-snapshots",
+        "apac-snapshots-dr",
+    }
+}
+
+
+def check_bucket_residency(residency_mode: str, bucket: str) -> None:
+    """Enforce fail-closed residency mapping.
+    
+    Checks if bucket is explicitly allowed for the given residency_mode.
+    """
+    mode = (residency_mode or "").strip().upper()
+    
+    # Load allowed buckets from environment or static mapping
+    allowed_set = set()
+    env_buckets = os.environ.get("ODP_RESIDENCY_APPROVED_BUCKETS")
+    if env_buckets:
+        allowed_set.update(b.strip() for b in env_buckets.split(",") if b.strip())
+    
+    # Fallback/default mapping
+    if mode in RESIDENCY_APPROVED_BUCKETS:
+        allowed_set.update(RESIDENCY_APPROVED_BUCKETS[mode])
+        
+    # If the mode is unknown OR the bucket is not in the allowlist, fail-closed!
+    if not allowed_set or bucket not in allowed_set:
+        raise ResidencyDeniedError(f"RESIDENCY_DENIED: Bucket {bucket!r} is not allowed for residency mode {mode!r}")
+
+
 class InMemoryObjectStore:
     """In-memory object store for unit tests and local runs.
 
@@ -86,12 +129,14 @@ class InMemoryObjectStore:
 
     def _enforce_residency(self, tenant_id: str, bucket: str) -> None:
         residency = self._get_residency(tenant_id)
-        if residency == "TW_ONLY":
-            normalized = bucket.lower()
-            has_tw = ("taiwan" in normalized) or ("tw" in normalized)
-            has_disallowed = any(x in normalized for x in ("apac", "dr", "us", "eu", "global", "singapore", "japan", "frankfurt", "tokyo", "seoul", "hongkong", "hk"))
-            if not has_tw or has_disallowed:
-                raise ResidencyDeniedError("RESIDENCY_DENIED")
+        check_bucket_residency(residency, bucket)
+
+    def _enforce_tenant_prefix(self, tenant_id: str, key: str) -> None:
+        expected_prefix = f"tenants/{tenant_id}/"
+        if not key.startswith(expected_prefix):
+            raise ResidencyDeniedError(
+                f"Access Denied: Object tenant prefix mismatch: {key!r} does not start with {expected_prefix!r}"
+            )
 
     def upload_object(
         self,
@@ -101,8 +146,9 @@ class InMemoryObjectStore:
         data: bytes,
         content_type: str,
         if_generation_match: int | None = 0,
-    ) -> str:
+    ) -> tuple[str, int]:
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         self._objects.setdefault(bucket, {})
         bucket_data = self._objects[bucket]
 
@@ -123,18 +169,23 @@ class InMemoryObjectStore:
             "content_type": content_type,
             "sha256": content_sha256,
         }
-        return f"gs://{bucket}/{key}"
+        return f"gs://{bucket}/{key}", next_gen
 
-    def download_object(self, tenant_id: str, uri: str) -> bytes:
+    def download_object(self, tenant_id: str, uri: str, generation: int | None = None) -> bytes:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         if bucket not in self._objects or key not in self._objects[bucket]:
             raise FileNotFoundError(f"Object not found: {uri}")
-        return self._objects[bucket][key]["data"]
+        obj = self._objects[bucket][key]
+        if generation is not None and obj["generation"] != generation:
+            raise FileNotFoundError(f"Object generation {generation} not found for {uri}")
+        return obj["data"]
 
     def delete_object(self, tenant_id: str, uri: str, if_generation_match: int | None = None) -> None:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         if bucket not in self._objects or key not in self._objects[bucket]:
             raise FileNotFoundError(f"Object not found: {uri}")
 
@@ -147,6 +198,7 @@ class InMemoryObjectStore:
     def head_object(self, tenant_id: str, uri: str) -> dict[str, Any]:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         if bucket not in self._objects or key not in self._objects[bucket]:
             raise FileNotFoundError(f"Object not found: {uri}")
         obj = self._objects[bucket][key]
@@ -160,7 +212,8 @@ class InMemoryObjectStore:
     def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
         self._enforce_residency(tenant_id, bucket)
         bucket_data = self._objects.get(bucket, {})
-        return list(bucket_data.keys())
+        prefix = f"tenants/{tenant_id}/"
+        return [k for k in bucket_data.keys() if k.startswith(prefix)]
 
 
 class GcsObjectStore:
@@ -180,12 +233,14 @@ class GcsObjectStore:
 
     def _enforce_residency(self, tenant_id: str, bucket: str) -> None:
         residency = self._get_residency(tenant_id)
-        if residency == "TW_ONLY":
-            normalized = bucket.lower()
-            has_tw = ("taiwan" in normalized) or ("tw" in normalized)
-            has_disallowed = any(x in normalized for x in ("apac", "dr", "us", "eu", "global", "singapore", "japan", "frankfurt", "tokyo", "seoul", "hongkong", "hk"))
-            if not has_tw or has_disallowed:
-                raise ResidencyDeniedError("RESIDENCY_DENIED")
+        check_bucket_residency(residency, bucket)
+
+    def _enforce_tenant_prefix(self, tenant_id: str, key: str) -> None:
+        expected_prefix = f"tenants/{tenant_id}/"
+        if not key.startswith(expected_prefix):
+            raise ResidencyDeniedError(
+                f"Access Denied: Object tenant prefix mismatch: {key!r} does not start with {expected_prefix!r}"
+            )
 
     def _get_token(self) -> str:
         token = os.environ.get("ODP_AUDIT_WORM_GCS_TOKEN", "").strip() or os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
@@ -201,8 +256,9 @@ class GcsObjectStore:
         data: bytes,
         content_type: str,
         if_generation_match: int | None = 0,
-    ) -> str:
+    ) -> tuple[str, int]:
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         token = self._get_token()
         content_sha256 = hashlib.sha256(data).hexdigest()
 
@@ -229,7 +285,8 @@ class GcsObjectStore:
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-                response.read()
+                body = json.loads(response.read().decode("utf-8"))
+                generation = int(body.get("generation", 0))
         except urllib.error.HTTPError as exc:
             if exc.code == 412:
                 raise ValueError(f"Precondition Failed: generation match failed: {exc.read().decode('utf-8')}") from exc
@@ -237,11 +294,12 @@ class GcsObjectStore:
         except Exception as exc:
             raise OSError(f"GCS upload failed: {exc}") from exc
 
-        return f"gs://{bucket}/{key}"
+        return f"gs://{bucket}/{key}", generation
 
-    def download_object(self, tenant_id: str, uri: str) -> bytes:
+    def download_object(self, tenant_id: str, uri: str, generation: int | None = None) -> bytes:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         token = self._get_token()
 
         endpoint = (
@@ -250,6 +308,9 @@ class GcsObjectStore:
             f"{urllib.parse.quote(key, safe='')}"
             "?alt=media"
         )
+        if generation is not None:
+            endpoint += f"&generation={generation}"
+
         request = urllib.request.Request(
             endpoint,
             method="GET",
@@ -268,6 +329,7 @@ class GcsObjectStore:
     def delete_object(self, tenant_id: str, uri: str, if_generation_match: int | None = None) -> None:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         token = self._get_token()
 
         endpoint = (
@@ -301,6 +363,7 @@ class GcsObjectStore:
     def head_object(self, tenant_id: str, uri: str) -> dict[str, Any]:
         bucket, key = parse_gs_uri(uri)
         self._enforce_residency(tenant_id, bucket)
+        self._enforce_tenant_prefix(tenant_id, key)
         token = self._get_token()
 
         endpoint = (
@@ -334,10 +397,12 @@ class GcsObjectStore:
     def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
         self._enforce_residency(tenant_id, bucket)
         token = self._get_token()
+        prefix = f"tenants/{tenant_id}/"
 
         endpoint = (
             "https://storage.googleapis.com/storage/v1/b/"
             f"{urllib.parse.quote(bucket, safe='')}/o"
+            f"?prefix={urllib.parse.quote(prefix, safe='')}"
         )
         request = urllib.request.Request(
             endpoint,

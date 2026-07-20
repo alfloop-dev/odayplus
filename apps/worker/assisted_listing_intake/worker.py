@@ -399,17 +399,51 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         # 3. Retrieval
         # -------------------------------------------------------------
         def do_retrieval():
-            from modules.external_data.application.assisted_intake import normalize_url, retrieve
+            from modules.external_data.application.assisted_intake import normalize_url
+            from modules.external_data.application.source_snapshots import build_source_snapshot_service
+            from modules.external_data.security.assisted_listing_retrieval import RetrievalSecurityGate
             from modules.external_data.security import redact_sensitive_snapshot
+            import json
+
+            snapshot_service = build_source_snapshot_service(persistence, doc_store)
+            gate = RetrievalSecurityGate(source_snapshot_service=snapshot_service)
 
             canon_url = normalize_url(url)
-            retrieval = retrieve(canon_url, policy=policy)
-            if not retrieval.ok:
+            resolved_tenant_id = payload.get("tenant_id") or "00000000-0000-0000-0000-000000000000"
+            
+            # Fetch page through security gate
+            retrieval_res = gate.fetch(
+                canon_url,
+                tenant_id=resolved_tenant_id,
+                retrieval_method="fixture_replay",
+            )
+            if not retrieval_res.ok:
                 raise RuntimeError(
-                    f"Retrieval failed: {retrieval.failure.summary if retrieval.failure else 'unknown'}"
+                    f"Retrieval failed: {retrieval_res.failure.summary if retrieval_res.failure else 'unknown'}"
                 )
-            redacted_raw = redact_sensitive_snapshot(retrieval.raw)
-            return redacted_raw, retrieval.snapshot_id, retrieval.captured_at
+            
+            raw_dict = json.loads(retrieval_res.body.decode("utf-8"))
+            redacted_raw = redact_sensitive_snapshot(raw_dict)
+            redacted_data = json.dumps(redacted_raw).encode("utf-8")
+            
+            snapshot_id = snapshot_service.create_snapshot(
+                tenant_id=resolved_tenant_id,
+                intake_id=intake_id,
+                source_id=policy.source_id,
+                raw_data=retrieval_res.body,
+                original_url=url,
+                canonical_url=canon_url,
+                media_type="application/json",
+                capture_method="SERVER_RETRIEVAL",
+                retention_class="STANDARD",
+                encryption_key_ref="kms://default-key",
+                observed_at=datetime.now(UTC),
+                captured_at=datetime.now(UTC),
+                bucket="taiwan-snapshots",
+                redacted_data=redacted_data,
+            )
+            
+            return redacted_raw, snapshot_id, datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
         raw_snapshot, snapshot_id, captured_at = run_stage("RETRIEVING", do_retrieval)
 
@@ -417,19 +451,15 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         # 4. Parsing
         # -------------------------------------------------------------
         def do_parsing():
-            from dataclasses import replace
-
-            # Reconstruct retrieval result
             from modules.external_data.application.assisted_intake import (
-                normalize_url,
                 parse_snapshot,
-                retrieve,
+                RetrievalResult,
             )
 
-            canon_url = normalize_url(url)
-            retrieval = retrieve(canon_url, policy=policy)
-            retrieval = replace(
-                retrieval, raw=raw_snapshot, snapshot_id=snapshot_id, captured_at=captured_at
+            retrieval = RetrievalResult(
+                snapshot_id=snapshot_id,
+                captured_at=captured_at,
+                raw=raw_snapshot,
             )
 
             parsed_fields_val = parse_snapshot(retrieval)
