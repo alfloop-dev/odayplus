@@ -743,11 +743,23 @@ else:
         def fingerprint(body: Any) -> str:
             return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
-        def replay(key: str | None, body: Any, tenant_id: str, actor_id: str, operation_id: str, make: Any) -> tuple[dict[str, Any], int, bool]:
+        def replay(
+            key: str | None,
+            body: Any,
+            tenant_id: str,
+            actor_id: str,
+            operation_id: str,
+            make: Any,
+            *,
+            resource_id: str | None = None,
+        ) -> tuple[dict[str, Any], int, bool]:
             if not key:
                 raise HTTPException(422, "Idempotency-Key is required")
             digest = fingerprint(body)
-            composite_key = f"{tenant_id}:{actor_id}:{operation_id}:{key}"
+            replay_scope = resource_id or "_collection"
+            composite_key = (
+                f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
+            )
             prior = active.replays.get(composite_key)
             if prior:
                 if prior[0] != digest:
@@ -1385,7 +1397,15 @@ else:
                 }
                 return receipt_val, 201
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "proposeCorrection", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "proposeCorrection",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
@@ -1436,6 +1456,8 @@ else:
             if is_staff:
                 if current.get("submitted_by") != principal.subject_id and current.get("assigned_to") != principal.subject_id:
                     raise HTTPException(403, "OWNERSHIP_REQUIRED")
+                if body.owner_subject_id != principal.subject_id:
+                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
 
             actor_id = principal.subject_id
 
@@ -1472,7 +1494,15 @@ else:
                 active.assignments[aid] = value
                 return value, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "assignIntake", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "assignIntake",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
@@ -1544,7 +1574,15 @@ else:
                 }
                 return receipt_val, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "retryJob", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "retryJob",
+                make,
+                resource_id=job_id,
+            )
             response.status_code = code
             return JobReceipt(**val)
 
@@ -1710,7 +1748,15 @@ else:
                 active.promotions[did] = value
                 return value, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestCandidatePromotion", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "requestCandidatePromotion",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
@@ -1835,7 +1881,15 @@ else:
                 active.decisions[did] = value
                 return value, 201
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "decideMatchCase", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "decideMatchCase",
+                make,
+                resource_id=match_case_id,
+            )
             response.status_code = code
             return DecisionReceipt(**val)
 
@@ -2088,7 +2142,15 @@ else:
                 tr = receipt(from_state, "CANCELLED", updated["version"], actor_id)
                 return tr, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "cancelIntake", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "cancelIntake",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
@@ -2147,7 +2209,15 @@ else:
                 tr = receipt(from_state, "QUARANTINED", updated["version"], actor_id)
                 return tr, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "quarantineIntake", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "quarantineIntake",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
@@ -2219,7 +2289,15 @@ else:
                 tr = receipt(from_state, to_state, updated["version"], actor_id)
                 return tr, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reopenIntake", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "reopenIntake",
+                make,
+                resource_id=intake_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
@@ -2271,13 +2349,25 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") not in {"ASSIGNED", "ESCALATED"}:
+                if current.get("status") not in {
+                    "ASSIGNED",
+                    "TRANSFERRED",
+                    "ESCALATED",
+                }:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "claimAssignment", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "claimAssignment",
+                make,
+                resource_id=assignment_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
@@ -2338,7 +2428,15 @@ else:
                 updated = generic_mutate(active.assignments, assignment_id, "TRANSFERRED", actor_id)
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "transferAssignment", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "transferAssignment",
+                make,
+                resource_id=assignment_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
@@ -2396,7 +2494,15 @@ else:
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "completeAssignment", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "completeAssignment",
+                make,
+                resource_id=assignment_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
@@ -2443,7 +2549,15 @@ else:
                 updated["active_pause_interval_id"] = str(uuid4())
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "pauseSla", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "pauseSla",
+                make,
+                resource_id=sla_instance_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return SlaReceipt(**val)
@@ -2490,7 +2604,15 @@ else:
                 updated["active_pause_interval_id"] = None
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "resumeSla", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "resumeSla",
+                make,
+                resource_id=sla_instance_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return SlaReceipt(**val)
@@ -2552,7 +2674,15 @@ else:
                 updated["reviewer_subject_id"] = actor_id
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewPromotionDecision", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "reviewPromotionDecision",
+                make,
+                resource_id=promotion_decision_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
@@ -2610,7 +2740,15 @@ else:
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
                 return updated, 200
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewIdentityDecision", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "reviewIdentityDecision",
+                make,
+                resource_id=decision_id,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
@@ -2662,7 +2800,15 @@ else:
                 updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
                 return updated, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestIdentityDecisionReversal", make)
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "requestIdentityDecisionReversal",
+                make,
+                resource_id=decision_id,
+            )
             response.status_code = code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)

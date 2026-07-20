@@ -567,14 +567,29 @@ def test_assignment_actions(client: TestClient) -> None:
     assert transfer_receipt["owner_subject_id"] == ACTOR_C
     version_after_transfer = transfer_receipt["version"]
 
-    store = _store_with_intake(intake_id)
-    store.assignments[assignment_id]["status"] = "CLAIMED"
+    # The target owner accepts the transfer by claiming it through the API.
+    resp_transferred_claim = client.post(
+        f"/api/v1/assignments/{assignment_id}/actions/claim",
+        json={"reason": "Accepting the transferred assignment"},
+        headers={
+            **HEADERS_C,
+            "Idempotency-Key": f"idem-claim-transfer-{uuid4()}",
+            "If-Match": f'W/"{version_after_transfer}"',
+        },
+    )
+    assert resp_transferred_claim.status_code == 200
+    assert resp_transferred_claim.json()["status"] == "CLAIMED"
+    version_after_transferred_claim = resp_transferred_claim.json()["version"]
 
     # 3. completeAssignment
     resp_complete = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/complete",
         json={"reason": "Completed manual triage review with no issues found"},
-        headers={**HEADERS_C, "Idempotency-Key": f"idem-complete-{uuid4()}", "If-Match": f'W/"{version_after_transfer}"'}
+        headers={
+            **HEADERS_C,
+            "Idempotency-Key": f"idem-complete-{uuid4()}",
+            "If-Match": f'W/"{version_after_transferred_claim}"',
+        },
     )
     assert resp_complete.status_code == 200
     assert resp_complete.json()["status"] == "COMPLETED"
@@ -849,6 +864,99 @@ def test_assignment_replay_is_immutable_after_the_assignment_is_claimed(
     assert replayed.status_code == 200
     assert replayed.json() == first.json()
     assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_assignment_idempotency_is_scoped_to_the_path_intake(
+    client: TestClient,
+) -> None:
+    intake_ids = []
+    for suffix in ("first", "second"):
+        submitted = client.post(
+            "/api/v1/intakes/url",
+            json={
+                "original_url": f"https://example.com/resource-idempotency/{suffix}",
+                "scope": {"tenant_id": TENANT_A},
+            },
+            headers={
+                **HEADERS_A,
+                "Idempotency-Key": f"idem-resource-setup-{suffix}-{uuid4()}",
+            },
+        )
+        assert submitted.status_code == 202
+        intake_ids.append(submitted.json()["intake_id"])
+
+    assignment_body = {
+        "owner_subject_id": ACTOR_A,
+        "owner_role": "reviewer",
+        "due_at": "2026-07-25T12:00:00Z",
+        "reason": "The same command applies independently to each intake",
+    }
+    shared_headers = {
+        **HEADERS_A,
+        "Idempotency-Key": f"idem-resource-scoped-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+
+    first = client.put(
+        f"/api/v1/intakes/{intake_ids[0]}/assignment",
+        json=assignment_body,
+        headers=shared_headers,
+    )
+    second = client.put(
+        f"/api/v1/intakes/{intake_ids[1]}/assignment",
+        json=assignment_body,
+        headers=shared_headers,
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["assignment_id"] != second.json()["assignment_id"]
+    second_detail = client.get(
+        f"/api/v1/intakes/{intake_ids[1]}", headers=HEADERS_A
+    )
+    assert second_detail.status_code == 200
+    assert second_detail.json()["assigned_to"] == ACTOR_A
+
+
+def test_expansion_staff_cannot_assign_an_owned_intake_across_users(
+    client: TestClient,
+) -> None:
+    staff_headers = {
+        "x-subject-id": ACTOR_A,
+        "x-tenant-id": TENANT_A,
+        "x-roles": "expansion_user",
+        "x-operator-role": "expansion-staff",
+    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/staff-cross-user-assignment",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-staff-assign-setup-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_id = submitted.json()["intake_id"]
+
+    assigned = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json={
+            "owner_subject_id": ACTOR_C,
+            "owner_role": "reviewer",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Attempt to route an owned intake to another user",
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-staff-cross-user-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+
+    assert assigned.status_code == 403
+    assert assigned.json()["code"] == "ASSIGNMENT_SCOPE_DENIED"
 
 
 def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(

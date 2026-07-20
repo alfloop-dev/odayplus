@@ -334,12 +334,12 @@ def install_error_handlers(app: Any) -> None:
             next_action = "REQUEST_ACCESS"
             if "TENANT_SCOPE_DENIED" in detail_str:
                 code = "TENANT_SCOPE_DENIED"
+            elif "ASSIGNMENT_SCOPE_DENIED" in detail_str:
+                code = "ASSIGNMENT_SCOPE_DENIED"
             elif "SCOPE_DENIED" in detail_str:
                 code = "SCOPE_DENIED"
             elif "OWNERSHIP_REQUIRED" in detail_str:
                 code = "OWNERSHIP_REQUIRED"
-            elif "ASSIGNMENT_SCOPE_DENIED" in detail_str:
-                code = "ASSIGNMENT_SCOPE_DENIED"
             elif "SELF_REVIEW_DENIED" in detail_str:
                 code = "SELF_REVIEW_DENIED"
         elif "RISK_ACKNOWLEDGEMENT_REQUIRED" in detail_str or "risk summary is required" in detail_str or "risk acknowledgement is required" in detail_str:
