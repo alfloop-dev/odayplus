@@ -337,3 +337,75 @@ def test_postgres_snapshot_integration(intake_db) -> None:
         assert row is not None
         assert row[0] == len(b"pg raw html data")
         assert row[1].strip() == hashlib.sha256(b"pg raw html data").hexdigest()
+
+
+def test_idempotent_snapshot_recapture(memory_store, workflow_service, base_context) -> None:
+    """Test that recapture of identical content returns the same snapshot ID and does not delete the existing object."""
+    service = SourceSnapshotService(db_conn=None, object_store=memory_store, intake_workflow_service=workflow_service)
+
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    intake_id = "IN-123"
+    source_id = "src-591"
+
+    service.register_source(
+        source_id=source_id,
+        display_name="591",
+        allowed_hosts=["591.com.tw"],
+        retrieval_mode="APPROVED_RETRIEVAL",
+    )
+
+    # Submit intake
+    workflow_service.submit_intake(
+        intake_id=intake_id,
+        tenant_id=tenant_id,
+        source_id=source_id,
+        canonical_url="https://591.com.tw/listing-123",
+        context=base_context,
+    )
+    workflow_service.start_identity_check(intake_id, base_context)
+    workflow_service.start_source_policy_evaluation(intake_id, base_context)
+
+    raw_data = b"identical listing data content"
+
+    # First capture
+    snapshot_id_1 = service.create_snapshot(
+        tenant_id=tenant_id,
+        intake_id=intake_id,
+        source_id=source_id,
+        raw_data=raw_data,
+        original_url="https://591.com.tw/listing-123",
+        canonical_url="https://591.com.tw/listing-123",
+        media_type="text/html",
+        capture_method="SERVER_RETRIEVAL",
+        retention_class="STANDARD",
+        encryption_key_ref="kms://key-1",
+        observed_at=datetime.now(UTC),
+        captured_at=datetime.now(UTC),
+        bucket="taiwan-snapshots",
+        context=base_context,
+    )
+
+    # Second capture (identical content/tenant/source)
+    snapshot_id_2 = service.create_snapshot(
+        tenant_id=tenant_id,
+        intake_id="IN-different",
+        source_id=source_id,
+        raw_data=raw_data,
+        original_url="https://591.com.tw/listing-123",
+        canonical_url="https://591.com.tw/listing-123",
+        media_type="text/html",
+        capture_method="SERVER_RETRIEVAL",
+        retention_class="STANDARD",
+        encryption_key_ref="kms://key-1",
+        observed_at=datetime.now(UTC),
+        captured_at=datetime.now(UTC),
+        bucket="taiwan-snapshots",
+        context=base_context,
+    )
+
+    # Both snapshot IDs must be identical
+    assert snapshot_id_1 == snapshot_id_2
+
+    # The GCS object must still exist (was not deleted by compensating delete)
+    raw_content = memory_store.download_object(tenant_id, f"gs://taiwan-snapshots/tenants/{tenant_id}/snapshots/{snapshot_id_1}/raw")
+    assert raw_content == raw_data

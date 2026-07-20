@@ -399,11 +399,17 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         # 3. Retrieval
         # -------------------------------------------------------------
         def do_retrieval():
-            from modules.external_data.application.assisted_intake import normalize_url
-            from modules.external_data.application.source_snapshots import build_source_snapshot_service
-            from modules.external_data.security.assisted_listing_retrieval import RetrievalSecurityGate
-            from modules.external_data.security import redact_sensitive_snapshot
             import json
+            import os
+
+            from modules.external_data.application.assisted_intake import normalize_url
+            from modules.external_data.application.source_snapshots import (
+                build_source_snapshot_service,
+            )
+            from modules.external_data.security import redact_sensitive_snapshot
+            from modules.external_data.security.assisted_listing_retrieval import (
+                RetrievalSecurityGate,
+            )
 
             snapshot_service = build_source_snapshot_service(persistence, doc_store)
             gate = RetrievalSecurityGate(source_snapshot_service=snapshot_service)
@@ -426,6 +432,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             redacted_raw = redact_sensitive_snapshot(raw_dict)
             redacted_data = json.dumps(redacted_raw).encode("utf-8")
             
+            snapshot_bucket = os.environ.get("ODP_SNAPSHOT_BUCKET", "").strip() or "taiwan-snapshots"
             snapshot_id = snapshot_service.create_snapshot(
                 tenant_id=resolved_tenant_id,
                 intake_id=intake_id,
@@ -439,7 +446,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 encryption_key_ref="kms://default-key",
                 observed_at=datetime.now(UTC),
                 captured_at=datetime.now(UTC),
-                bucket="taiwan-snapshots",
+                bucket=snapshot_bucket,
                 redacted_data=redacted_data,
             )
             
@@ -452,8 +459,8 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         # -------------------------------------------------------------
         def do_parsing():
             from modules.external_data.application.assisted_intake import (
-                parse_snapshot,
                 RetrievalResult,
+                parse_snapshot,
             )
 
             retrieval = RetrievalResult(

@@ -166,11 +166,15 @@ def reset_platform_metrics():
 
 
 @pytest.fixture(autouse=True)
-def patch_synthetic_dns(monkeypatch):
+def patch_synthetic_dns(request, monkeypatch):
     """Ensure any test DNS lookup for synthetic.example resolves successfully.
 
-    This avoids hardcoding test-specific host shims in the production resolver.
+    Only applies to test modules related to assisted listing intake or retrieval to avoid global monkeypatching.
     """
+    module_name = request.module.__name__
+    if not any(k in module_name for k in ("assisted_listing", "intake", "retrieval", "snapshot")):
+        return
+
     from modules.external_data.security import assisted_listing_retrieval
     original_resolve = assisted_listing_retrieval._resolve_host
 
