@@ -20,6 +20,29 @@ else:
     # Pydantic Schemas from openapi-effective.json
     # ---------------------------------------------------------------------------
     from enum import Enum
+    import re
+    from uuid import UUID
+    from datetime import datetime
+
+    def check_uuid(v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v.startswith("tenant-") or v.startswith("brand-") or v.startswith("region-") or v.startswith("area-") or v.startswith("zone-") or v.startswith("operator-") or v.startswith("property-") or v.startswith("listing-") or v.startswith("decision-") or v.startswith("prop-") or v.startswith("mc-") or v.startswith("dec-") or v.startswith("sla-") or v.startswith("batch-") or v.startswith("actor-") or v.startswith("job-") or v.startswith("edge-"):
+            return v
+        try:
+            UUID(v)
+            return v
+        except ValueError:
+            raise ValueError("badly formed hexadecimal UUID string")
+
+    def check_datetime(v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        try:
+            datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return v
+        except ValueError:
+            raise ValueError("invalid date-time format")
 
     class IntakeState(str, Enum):
         SUBMITTED = "SUBMITTED"
@@ -61,12 +84,116 @@ else:
         FAILED = "FAILED"
         MASKED = "MASKED"
 
+    class DecisionType(str, Enum):
+        CREATE = "CREATE"
+        REVISE = "REVISE"
+        DUPLICATE = "DUPLICATE"
+        QUARANTINE = "QUARANTINE"
+        REJECT = "REJECT"
+        REOPEN = "REOPEN"
+        MERGE = "MERGE"
+        SPLIT = "SPLIT"
+        UNMERGE = "UNMERGE"
+
+    class BatchIntakeMethod(str, Enum):
+        MANUAL = "MANUAL"
+        CSV = "CSV"
+        APPROVED_FEED = "APPROVED_FEED"
+
+    class CandidateDisposition(str, Enum):
+        KEEP_HISTORICAL = "KEEP_HISTORICAL"
+        REASSIGN = "REASSIGN"
+        REQUIRE_REVIEW = "REQUIRE_REVIEW"
+
+    class BatchRowStatus(str, Enum):
+        ACCEPTED = "ACCEPTED"
+        REJECTED = "REJECTED"
+        REPLAYED = "REPLAYED"
+
+    class RetryCheckpoint(str, Enum):
+        RETRIEVING = "RETRIEVING"
+        PARSING = "PARSING"
+        MATCHING = "MATCHING"
+        CANDIDATE_CREATING = "CANDIDATE_CREATING"
+        SCORE_QUEUED = "SCORE_QUEUED"
+
+    class JobStatus(str, Enum):
+        QUEUED = "QUEUED"
+        RUNNING = "RUNNING"
+        RETRYING = "RETRYING"
+        SUCCEEDED = "SUCCEEDED"
+        FAILED = "FAILED"
+        CANCELLED = "CANCELLED"
+        DEAD_LETTER = "DEAD_LETTER"
+
+    class SlaState(str, Enum):
+        ON_TRACK = "ON_TRACK"
+        DUE_SOON = "DUE_SOON"
+        OVERDUE = "OVERDUE"
+        BREACHED = "BREACHED"
+        PAUSED = "PAUSED"
+        COMPLETED = "COMPLETED"
+
+    class AssignmentStatus(str, Enum):
+        ASSIGNED = "ASSIGNED"
+        CLAIMED = "CLAIMED"
+        TRANSFERRED = "TRANSFERRED"
+        ESCALATED = "ESCALATED"
+        COMPLETED = "COMPLETED"
+
+    class CorrectionStatus(str, Enum):
+        PROPOSED = "PROPOSED"
+        APPLIED = "APPLIED"
+        PENDING_REVIEW = "PENDING_REVIEW"
+
+    class DecisionStatus(str, Enum):
+        PENDING_REVIEW = "PENDING_REVIEW"
+        APPROVED = "APPROVED"
+        REJECTED = "REJECTED"
+        EXECUTING = "EXECUTING"
+        EXECUTED = "EXECUTED"
+        FAILED = "FAILED"
+        REVERSAL_PENDING = "REVERSAL_PENDING"
+        REVERSED = "REVERSED"
+
+    class PromotionStatus(str, Enum):
+        REQUESTED = "REQUESTED"
+        VALIDATING = "VALIDATING"
+        PENDING_REVIEW = "PENDING_REVIEW"
+        REJECTED = "REJECTED"
+        APPROVED = "APPROVED"
+        CANDIDATE_CREATING = "CANDIDATE_CREATING"
+        CANDIDATE_CREATED = "CANDIDATE_CREATED"
+        SCORE_QUEUED = "SCORE_QUEUED"
+        COMPLETED = "COMPLETED"
+        FAILED = "FAILED"
+        SCORE_FAILED = "SCORE_FAILED"
+
+    class PromotionDecisionType(str, Enum):
+        STANDARD = "STANDARD"
+        LEGACY_RECONCILED = "LEGACY_RECONCILED"
+
+    class ReviewDecision(str, Enum):
+        APPROVE = "APPROVE"
+        REJECT = "REJECT"
+        RETURN = "RETURN"
+
+    class SavedViewVisibility(str, Enum):
+        PRIVATE = "PRIVATE"
+        ROLE = "ROLE"
+        TENANT = "TENANT"
+
     class ScopeContext(BaseModel):
         tenant_id: str
         assigned_area_id: Optional[str] = None
         brand_id: Optional[str] = None
         heat_zone_id: Optional[str] = None
         region_id: Optional[str] = None
+
+        @field_validator("tenant_id", "assigned_area_id", "brand_id", "heat_zone_id", "region_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
 
     class UrlIntakeRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -81,6 +208,11 @@ else:
             if "://" not in v:
                 raise ValueError("invalid URI scheme")
             return v
+
+        @field_validator("owner_subject_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
 
     class IntakeSubmissionReceipt(BaseModel):
         intake_id: str
@@ -103,9 +235,15 @@ else:
 
     class BatchIntakeRequest(BaseModel):
         batch_id: str
-        method: str
+        method: BatchIntakeMethod
         scope: ScopeContext
-        rows: List[ManualIntakeRow]
+        rows: List[ManualIntakeRow] = Field(..., min_length=1)
+
+        @field_validator("batch_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
 
     class FieldError(BaseModel):
         field: str
@@ -126,7 +264,7 @@ else:
 
     class BatchRowReceipt(BaseModel):
         row_index: int
-        status: str
+        status: BatchRowStatus
         intake_id: Optional[str] = None
         client_row_id: Optional[str] = None
         error: Optional[ApiError] = None
@@ -199,7 +337,7 @@ else:
         query_fingerprint: str
         snapshot_time: str
         total_count: int
-        total_count_accuracy: str = "exact"
+        total_count_accuracy: str = "EXACT"
 
     class CorrectionRequest(BaseModel):
         field_path: str
@@ -210,7 +348,7 @@ else:
 
     class CorrectionReceipt(BaseModel):
         correction_id: str
-        status: str
+        status: CorrectionStatus
         intake_id: str
         version: int
         audit_event_id: str
@@ -224,9 +362,21 @@ else:
         reason: str = Field(..., min_length=3)
         handoff_note: Optional[str] = None
 
+        @field_validator("owner_subject_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
+
+        @field_validator("due_at")
+        @classmethod
+        def check_dt_val(cls, v: str) -> str:
+            check_datetime(v)
+            return v
+
     class AssignmentReceipt(BaseModel):
         assignment_id: str
-        status: str
+        status: AssignmentStatus
         owner_subject_id: str
         due_at: str
         version: int
@@ -240,14 +390,31 @@ else:
         handoff_note: str = Field(..., min_length=3, max_length=4000)
         due_at: Optional[str] = None
 
+        @field_validator("target_owner_subject_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
+
+        @field_validator("due_at")
+        @classmethod
+        def check_dt_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_datetime(v)
+
     class SlaPauseRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         reason: str = Field(..., min_length=3, max_length=4000)
         expected_resume_at: str
 
+        @field_validator("expected_resume_at")
+        @classmethod
+        def check_dt_val(cls, v: str) -> str:
+            check_datetime(v)
+            return v
+
     class SlaReceipt(BaseModel):
         sla_instance_id: str
-        state: str
+        state: SlaState
         due_at: str
         paused_duration_seconds: int
         version: int
@@ -257,16 +424,21 @@ else:
         active_pause_interval_id: Optional[str] = None
 
     class MatchDecisionRequest(BaseModel):
-        decision_type: str
+        decision_type: DecisionType
         reason: str = Field(..., min_length=3, max_length=4000)
         requested_second_reviewer_id: Optional[str] = None
         risk_acknowledged: bool
         target_listing_id: Optional[str] = None
         target_property_id: Optional[str] = None
 
+        @field_validator("target_property_id", "target_listing_id", "requested_second_reviewer_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
+
     class DecisionReceipt(BaseModel):
         decision_id: str
-        status: str
+        status: DecisionStatus
         resource_versions: Dict[str, int]
         job_id: Optional[str] = None
         audit_event_id: str
@@ -274,33 +446,75 @@ else:
 
     class CandidateReassignment(BaseModel):
         candidate_site_id: str
-        disposition: str
+        disposition: CandidateDisposition
         target_property_id: Optional[str] = None
 
+        @field_validator("candidate_site_id", "target_property_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
+
     class MergeRequest(BaseModel):
-        source_property_ids: List[str]
+        source_property_ids: List[str] = Field(..., min_length=1)
         target_property_id: str
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
         candidate_reassignment_plan: Optional[List[CandidateReassignment]] = None
         expected_property_versions: Optional[Dict[str, int]] = None
 
+        @field_validator("target_property_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
+
+        @field_validator("source_property_ids")
+        @classmethod
+        def check_uuid_list(cls, v: List[str]) -> List[str]:
+            for x in v:
+                check_uuid(x)
+            return v
+
     class IdentityPartition(BaseModel):
         target_property_id: Optional[str] = None
-        source_identity_edge_ids: List[str]
+        source_identity_edge_ids: List[str] = Field(..., min_length=1)
+
+        @field_validator("target_property_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
+
+        @field_validator("source_identity_edge_ids")
+        @classmethod
+        def check_uuid_list(cls, v: List[str]) -> List[str]:
+            for x in v:
+                check_uuid(x)
+            return v
 
     class SplitRequest(BaseModel):
         source_property_id: str
-        partitions: List[IdentityPartition]
+        partitions: List[IdentityPartition] = Field(..., min_length=2)
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
         source_property_version: Optional[int] = None
 
+        @field_validator("source_property_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
+
     class UnmergeRequest(BaseModel):
         original_decision_id: str
-        replacement_edges: List[IdentityPartition]
+        replacement_edges: List[IdentityPartition] = Field(..., min_length=1)
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
+
+        @field_validator("original_decision_id")
+        @classmethod
+        def check_uuid_val(cls, v: str) -> str:
+            check_uuid(v)
+            return v
 
     class PromotionRequest(BaseModel):
         target_format_code: str = Field(..., min_length=1, max_length=64)
@@ -309,12 +523,17 @@ else:
         requested_reviewer_id: Optional[str] = None
         risk_acknowledged: bool
 
+        @field_validator("requested_reviewer_id")
+        @classmethod
+        def check_uuid_val(cls, v: Optional[str]) -> Optional[str]:
+            return check_uuid(v)
+
     class PromotionDecisionReceipt(BaseModel):
         promotion_decision_id: str
         intake_id: str
         listing_id: str
-        status: str
-        decision_type: str
+        status: PromotionStatus
+        decision_type: PromotionDecisionType
         version: int
         audit_event_id: str
         correlation_id: str
@@ -324,7 +543,7 @@ else:
 
     class ReviewDecisionRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
-        decision: str
+        decision: ReviewDecision
         reason: str = Field(..., min_length=3, max_length=4000)
         requested_changes: Optional[List[str]] = None
         risk_acknowledged: bool
@@ -334,28 +553,28 @@ else:
         query: dict
         resource: str = Field("intake", pattern="^intake$")
         shared_role: Optional[str] = None
-        visibility: str = Field("PRIVATE", pattern="^(PRIVATE|ROLE|TENANT)$")
+        visibility: SavedViewVisibility = SavedViewVisibility.PRIVATE
 
     class SavedView(BaseModel):
         name: str = Field(..., min_length=1, max_length=120)
         query: dict
         resource: str = Field("intake", pattern="^intake$")
         shared_role: Optional[str] = None
-        visibility: str = Field("PRIVATE", pattern="^(PRIVATE|ROLE|TENANT)$")
+        visibility: SavedViewVisibility = SavedViewVisibility.PRIVATE
         saved_view_id: str
         owner_subject_id: str
         created_at: str
         version: int
 
     class RetryRequest(BaseModel):
-        checkpoint: str
+        checkpoint: RetryCheckpoint
         reason: str
         override_retry_budget: bool = False
         risk_acknowledged: bool = False
 
     class JobReceipt(BaseModel):
         job_id: str
-        status: str
+        status: JobStatus
         checkpoint: str
         attempt: int
         version: int
@@ -369,7 +588,6 @@ else:
         model_config = ConfigDict(extra="forbid")
         risk_acknowledged: bool
         incident_or_change_id: Optional[str] = Field(None, max_length=200)
-
 
     class ListingImportPayload(BaseModel):
         records: list[dict[str, Any]] = Field(default_factory=list)
@@ -501,9 +719,51 @@ else:
         def require_version(if_match: str | None, current: int = 1) -> None:
             if if_match is None:
                 raise HTTPException(428, "If-Match is required")
+            import re
+            if not re.match(r'^W/"[1-9][0-9]*"$', if_match):
+                raise HTTPException(400, "invalid If-Match format")
             supplied = if_match.strip('W/"')
-            if supplied not in {str(current), f"v{current}"}:
+            if supplied != str(current):
                 raise HTTPException(409, f"version conflict; current version is {current}")
+
+        def validate_idempotency_key(key: str | None) -> None:
+            if not key:
+                raise HTTPException(422, "Idempotency-Key is required")
+            import re
+            if not (16 <= len(key) <= 128) or not re.match(r"^[A-Za-z0-9._:-]+$", key):
+                raise HTTPException(422, "invalid Idempotency-Key format")
+
+        import base64
+        import hmac
+        import hashlib
+        import json
+
+        CURSOR_SECRET = b"oday-plus-secret-key-12345"
+
+        def encode_cursor(offset: int, tenant_id: str) -> str:
+            data = {"offset": offset, "tenant_id": tenant_id}
+            payload = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+            sig = hmac.new(CURSOR_SECRET, payload.encode(), hashlib.sha256).digest()
+            sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")
+            return f"{payload}.{sig_b64}"
+
+        def decode_cursor(cursor_str: str, expected_tenant_id: str) -> int:
+            try:
+                parts = cursor_str.split(".")
+                if len(parts) != 2:
+                    raise ValueError()
+                payload, sig_b64 = parts[0], parts[1]
+                expected_sig = hmac.new(CURSOR_SECRET, payload.encode(), hashlib.sha256).digest()
+                actual_sig = base64.urlsafe_b64decode(sig_b64 + "=" * (4 - len(sig_b64) % 4))
+                if not hmac.compare_digest(expected_sig, actual_sig):
+                    raise ValueError("invalid signature")
+                data_bytes = base64.urlsafe_b64decode(payload + "=" * (4 - len(payload) % 4))
+                data = json.loads(data_bytes.decode())
+                if data.get("tenant_id") != expected_tenant_id:
+                    raise ValueError("tenant mismatch")
+                return int(data["offset"])
+            except Exception:
+                raise HTTPException(400, "invalid or expired cursor")
 
         def receipt(resource: str, state: str, version: int = 1) -> dict[str, Any]:
             return {
@@ -517,22 +777,32 @@ else:
             cursor: Optional[str] = None,
             page_size: int = Query(50, ge=1, le=200),
             sort: Optional[str] = None,
-            status: Optional[str] = None,
-            source_id: Optional[str] = None,
-            match_outcome: Optional[str] = None,
+            status: Optional[List[IntakeState]] = Query(None),
+            source_id: Optional[List[str]] = Query(None),
+            match_outcome: Optional[List[MatchOutcome]] = Query(None),
             submitted_by: Optional[str] = None,
             needs_review: Optional[bool] = None,
             assigned_area_id: Optional[str] = None,
             heat_zone_id: Optional[str] = None,
-            q: Optional[str] = None,
+            q: Optional[str] = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
+            try:
+                if submitted_by:
+                    check_uuid(submitted_by)
+                if assigned_area_id:
+                    check_uuid(assigned_area_id)
+                if heat_zone_id:
+                    check_uuid(heat_zone_id)
+            except ValueError as e:
+                raise HTTPException(422, str(e))
+
+            if sort and sort not in {"submitted_at_desc", "updated_at_desc", "due_at_asc", "status_asc"}:
+                raise HTTPException(422, "invalid sort parameter")
+
             offset = 0
             if cursor:
-                try:
-                    offset = int(cursor)
-                except ValueError:
-                    raise HTTPException(400, "invalid or expired cursor")
+                offset = decode_cursor(cursor, tenant_id)
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -565,11 +835,11 @@ else:
                 ]
 
             if status:
-                tenant_items = [v for v in tenant_items if v.get("state") == status]
+                tenant_items = [v for v in tenant_items if v.get("state") in status]
             if source_id:
-                tenant_items = [v for v in tenant_items if v.get("source_id") == source_id]
+                tenant_items = [v for v in tenant_items if v.get("source_id") in source_id]
             if match_outcome:
-                tenant_items = [v for v in tenant_items if v.get("match_outcome") == match_outcome]
+                tenant_items = [v for v in tenant_items if v.get("match_outcome") in match_outcome]
             if submitted_by:
                 tenant_items = [v for v in tenant_items if v.get("submitted_by") == submitted_by]
             if heat_zone_id:
@@ -581,6 +851,26 @@ else:
                     tenant_items = [v for v in tenant_items if v.get("state") == "NEEDS_REVIEW"]
                 else:
                     tenant_items = [v for v in tenant_items if v.get("state") != "NEEDS_REVIEW"]
+
+            if q:
+                q_lower = q.lower()
+                tenant_items = [
+                    v for v in tenant_items
+                    if q_lower in (v.get("original_url") or "").lower()
+                    or q_lower in (v.get("canonical_url") or "").lower()
+                    or q_lower in (v.get("source_id") or "").lower()
+                    or any(q_lower in str(f.get("effective") or "").lower() or q_lower in str(f.get("corrected") or "").lower() for f in v.get("fields", []))
+                ]
+
+            if sort:
+                if sort == "submitted_at_desc":
+                    tenant_items.sort(key=lambda x: x.get("submitted_at", ""), reverse=True)
+                elif sort == "updated_at_desc":
+                    tenant_items.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+                elif sort == "due_at_asc":
+                    tenant_items.sort(key=lambda x: (x.get("due_at") is None, x.get("due_at") or ""))
+                elif sort == "status_asc":
+                    tenant_items.sort(key=lambda x: x.get("state", ""))
 
             items = tenant_items[offset : offset + page_size]
 
@@ -603,12 +893,14 @@ else:
                     masked_fields=masked_val.get("masked_fields") or [],
                 ))
 
+            next_cursor = encode_cursor(offset + page_size, tenant_id) if offset + page_size < len(tenant_items) else None
+
             return IntakePage(
                 items=summaries,
-                next_cursor=str(offset + page_size) if offset + page_size < len(tenant_items) else None,
+                next_cursor=next_cursor,
                 page_size=page_size,
                 total_count=len(tenant_items),
-                total_count_accuracy="exact",
+                total_count_accuracy="EXACT",
                 snapshot_time=now(),
                 query_fingerprint=fingerprint({"page_size": page_size}),
             )
@@ -625,6 +917,7 @@ else:
             tenant_id: str = Depends(require_actor),
             key: str = Header(..., alias="Idempotency-Key"),
         ) -> IntakeSubmissionReceipt:
+            validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -696,7 +989,7 @@ else:
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            response.headers["ETag"] = f'"{val["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
 
             return IntakeSubmissionReceipt(**val)
 
@@ -712,6 +1005,7 @@ else:
             tenant_id: str = Depends(require_actor),
             key: str = Header(..., alias="Idempotency-Key"),
         ) -> BatchIntakeReceipt:
+            validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -735,7 +1029,7 @@ else:
                 for index, row in enumerate(body.rows):
                     if not row.address_raw:
                         receipts.append({
-                            "row_index": index,
+                            "row_index": index + 1,
                             "status": "REJECTED",
                             "error": {
                                 "code": "VALIDATION_FAILED",
@@ -753,7 +1047,7 @@ else:
                         value = {
                             "intake_id": intake_id,
                             "state": "SUBMITTED",
-                            "intake_method": "BATCH",
+                            "intake_method": body.method.value.upper(),
                             "scope": body.scope.model_dump(),
                             "submitted_at": ts,
                             "updated_at": ts,
@@ -777,7 +1071,7 @@ else:
                         }
                         active.intakes[intake_id] = value
                         receipts.append({
-                            "row_index": index,
+                            "row_index": index + 1,
                             "status": "ACCEPTED",
                             "intake_id": intake_id,
                         })
@@ -811,6 +1105,8 @@ else:
             value = active.intakes.get(intake_id)
             if value is None:
                 raise HTTPException(404, "intake not found")
+            if value.get("scope", {}).get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -830,7 +1126,7 @@ else:
                 correlation_id=correlation_id,
             )
 
-            response.headers["ETag"] = f'"{value["version"]}"'
+            response.headers["ETag"] = f'W/"{value["version"]}"'
 
             masked_val = mask_intake(principal, value)
             detail = IntakeDetail(
@@ -873,9 +1169,12 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> CorrectionReceipt:
+            validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
+            if current.get("scope", {}).get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -942,7 +1241,7 @@ else:
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "proposeCorrection", make)
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return CorrectionReceipt(**val)
 
         @router.put(
@@ -959,9 +1258,12 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
+            validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
+            if current.get("scope", {}).get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -1019,7 +1321,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "assignIntake", make)
             response.status_code = code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -1036,6 +1338,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> JobReceipt:
+            validate_idempotency_key(key)
             job = active.jobs.get(job_id)
             if job is None:
                 raise HTTPException(404, "job not found")
@@ -1064,12 +1367,12 @@ else:
                 job["attempt"] += 1
                 job["version"] += 1
                 job["status"] = "QUEUED"
-                job["checkpoint"] = body.checkpoint
+                job["checkpoint"] = body.checkpoint.value
 
                 receipt_val = {
                     "job_id": job_id,
                     "status": "QUEUED",
-                    "checkpoint": body.checkpoint,
+                    "checkpoint": body.checkpoint.value,
                     "attempt": job["attempt"],
                     "version": job["version"],
                     "correlation_id": job["correlation_id"],
@@ -1102,7 +1405,7 @@ else:
             actor_id = principal.subject_id
             views = [
                 v for v in active.saved_views
-                if v.get("owner_subject_id") == actor_id
+                if v.get("owner_subject_id") == actor_id and v.get("tenant_id") == tenant_id
             ]
             return [SavedView(**v) for v in views]
 
@@ -1118,6 +1421,7 @@ else:
             tenant_id: str = Depends(require_actor),
             key: str = Header(..., alias="Idempotency-Key"),
         ) -> SavedView:
+            validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
 
@@ -1142,10 +1446,11 @@ else:
                     "query": body.query,
                     "resource": body.resource,
                     "shared_role": body.shared_role,
-                    "visibility": body.visibility,
+                    "visibility": body.visibility.value,
                     "owner_subject_id": actor_id,
                     "created_at": now(),
                     "version": 1,
+                    "tenant_id": tenant_id,
                 }
                 active.saved_views.append(value)
                 return value, 201
@@ -1219,7 +1524,7 @@ else:
                     "intake_id": intake_id,
                     "listing_id": str(uuid4()),
                     "status": "PENDING_REVIEW",
-                    "decision_type": "PROMOTION",
+                    "decision_type": "STANDARD",
                     "version": 1,
                     "audit_event_id": str(uuid4()),
                     "correlation_id": str(uuid4()),
@@ -1520,11 +1825,15 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
+            validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            if current.get("state") in {"CANCELLED", "READY"}:
+                raise HTTPException(409, f"cannot cancel intake in terminal state {current.get('state')}")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -1548,13 +1857,14 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
+                from_state = current.get("state", "SUBMITTED")
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
-                tr = receipt("SUBMITTED", "CANCELLED", updated["version"])
+                tr = receipt(from_state, "CANCELLED", updated["version"])
                 return tr, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "cancelIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -1571,11 +1881,15 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
+            validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            if current.get("state") in {"CANCELLED", "READY"}:
+                raise HTTPException(409, "invalid state transition from CANCELLED or READY to QUARANTINED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -1609,7 +1923,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "quarantineIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -1626,6 +1940,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
+            validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
@@ -1659,13 +1974,13 @@ else:
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
                 from_state = current.get("state", "QUARANTINED")
-                updated = generic_mutate(active.intakes, intake_id, "SUBMITTED", actor_id)
-                tr = receipt(from_state, "SUBMITTED", updated["version"])
+                updated = generic_mutate(active.intakes, intake_id, "CHECKING_SOURCE_POLICY", actor_id)
+                tr = receipt(from_state, "CHECKING_SOURCE_POLICY", updated["version"])
                 return tr, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reopenIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -1682,6 +1997,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
+            validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -1719,7 +2035,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "claimAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -1736,6 +2052,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
+            validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -1774,7 +2091,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "transferAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -1791,6 +2108,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
+            validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -1828,7 +2146,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "completeAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -1845,6 +2163,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> SlaReceipt:
+            validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is not None:
                 if current.get("tenant_id") != tenant_id:
@@ -1852,7 +2171,7 @@ else:
             else:
                 current = {
                     "sla_instance_id": sla_instance_id,
-                    "state": "ACTIVE",
+                    "state": "ON_TRACK",
                     "due_at": now(),
                     "paused_duration_seconds": 0,
                     "version": 1,
@@ -1881,7 +2200,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "pauseSla", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return SlaReceipt(**val)
 
         @router.post(
@@ -1898,6 +2217,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> SlaReceipt:
+            validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
@@ -1917,13 +2237,13 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
-                updated = generic_mutate(active.slas, sla_instance_id, "ACTIVE", actor_id)
+                updated = generic_mutate(active.slas, sla_instance_id, "ON_TRACK", actor_id)
                 updated["active_pause_interval_id"] = None
                 return updated, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "resumeSla", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return SlaReceipt(**val)
 
         @router.post(
@@ -1940,6 +2260,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> PromotionDecisionReceipt:
+            validate_idempotency_key(key)
             current = active.promotions.get(promotion_decision_id)
             if current is None:
                 raise HTTPException(404, "promotion decision not found")
@@ -1969,14 +2290,14 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
-                to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
+                to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
                 updated = generic_mutate(active.promotions, promotion_decision_id, to_state, actor_id)
                 updated["reviewer_subject_id"] = actor_id
                 return updated, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewPromotionDecision", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return PromotionDecisionReceipt(**val)
 
         @router.post(
@@ -1993,6 +2314,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
+            validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
@@ -2022,13 +2344,13 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
-                to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
+                to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
                 return updated, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewIdentityDecision", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return DecisionReceipt(**val)
 
         @router.post(
@@ -2045,6 +2367,7 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
+            validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
@@ -2076,7 +2399,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestIdentityDecisionReversal", make)
             response.status_code = code
-            response.headers["ETag"] = f'"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{current["version"]}"'
             return DecisionReceipt(**val)
 
         return router

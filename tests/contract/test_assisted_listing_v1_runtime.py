@@ -11,7 +11,7 @@ HEADERS = {
 }
 
 
-def submit(client: TestClient, key: str = "url-1"):
+def submit(client: TestClient, key: str = "url-idempotency-key-1"):
     return client.post("/api/v1/intakes/url", headers={**HEADERS, "Idempotency-Key": key}, json={
         "original_url": "https://example.test/listing/1",
         "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
@@ -26,14 +26,14 @@ def test_url_submission_replay_and_conflict() -> None:
     replayed = submit(client)
     assert replayed.status_code == 200
     assert replayed.json() == first.json()
-    conflict = client.post("/api/v1/intakes/url", headers={**HEADERS, "Idempotency-Key": "url-1"}, json={
+    conflict = client.post("/api/v1/intakes/url", headers={**HEADERS, "Idempotency-Key": "url-idempotency-key-1"}, json={
         "original_url": "https://example.test/listing/2", "scope": {"tenant_id": HEADERS["X-Tenant-Id"]}})
     assert conflict.status_code == 409
 
 
 def test_batch_partial_success_and_cursor_failure() -> None:
     client = TestClient(create_app())
-    result = client.post("/api/v1/intake-batches", headers={**HEADERS, "Idempotency-Key": "batch-1"}, json={
+    result = client.post("/api/v1/intake-batches", headers={**HEADERS, "Idempotency-Key": "batch-idempotency-key-1"}, json={
         "batch_id": "00000000-0000-0000-0000-000000000002", "method": "MANUAL",
         "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
         "rows": [{"address_raw": "Taipei"}, {"address_raw": ""}],
@@ -45,12 +45,12 @@ def test_batch_partial_success_and_cursor_failure() -> None:
 
 def test_if_match_and_assignment_contract() -> None:
     client = TestClient(create_app())
-    intake = submit(client, "url-assignment").json()
+    intake = submit(client, "url-assignment-key-1").json()
     url = f'/api/v1/intakes/{intake["intake_id"]}/assignment'
     body = {"owner_subject_id": "00000000-0000-0000-0000-000000000003", "owner_role": "reviewer",
             "due_at": "2026-07-19T00:00:00Z", "reason": "triage"}
-    assert client.put(url, headers={**HEADERS, "Idempotency-Key": "assign-1"}, json=body).status_code == 428
-    ok = client.put(url, headers={**HEADERS, "Idempotency-Key": "assign-1", "If-Match": '"1"'}, json=body)
+    assert client.put(url, headers={**HEADERS, "Idempotency-Key": "assign-idempotency-key-1"}, json=body).status_code == 428
+    ok = client.put(url, headers={**HEADERS, "Idempotency-Key": "assign-idempotency-key-1", "If-Match": 'W/"1"'}, json=body)
     assert ok.status_code == 200
     assert ok.json()["status"] == "ASSIGNED"
 

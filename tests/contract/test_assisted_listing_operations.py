@@ -143,7 +143,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-assign-{uuid4()}",
-            "If-Match": f'"{version}"'
+            "If-Match": f'W/"{version}"'
         }
     )
     assert resp_assign.status_code == 200
@@ -166,7 +166,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-correct-{uuid4()}",
-            "If-Match": f'"{new_version}"'
+            "If-Match": f'W/"{new_version}"'
         }
     )
     assert resp_correct.status_code == 201
@@ -175,24 +175,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert correct_receipt["intake_id"] == intake_id
     version_after_correct = correct_receipt["version"]
 
-    # 6. cancelIntake (POST /api/v1/intakes/{id}/actions/cancel)
-    cancel_payload = {"reason": "Duplicate submission"}
-    resp_cancel = client.post(
-        f"/api/v1/intakes/{intake_id}/actions/cancel",
-        json=cancel_payload,
-        headers={
-            **HEADERS_A,
-            "Idempotency-Key": f"idem-cancel-{uuid4()}",
-            "If-Match": f'"{version_after_correct}"'
-        }
-    )
-    assert resp_cancel.status_code == 200
-    cancel_receipt = resp_cancel.json()
-    assert cancel_receipt["from_state"] == "SUBMITTED"
-    assert cancel_receipt["to_state"] == "CANCELLED"
-    version_after_cancel = cancel_receipt["version_after"]
-
-    # 7. quarantineIntake (POST /api/v1/intakes/{id}/actions/quarantine)
+    # 6. quarantineIntake (POST /api/v1/intakes/{id}/actions/quarantine)
     quarantine_payload = {"reason": "Quarantine due to active incident triage", "risk_acknowledged": True, "incident_or_change_id": "INC-101"}
     resp_quar = client.post(
         f"/api/v1/intakes/{intake_id}/actions/quarantine",
@@ -200,28 +183,47 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-quar-{uuid4()}",
-            "If-Match": f'"{version_after_cancel}"'
+            "If-Match": f'W/"{version_after_correct}"'
         }
     )
     assert resp_quar.status_code == 200
     quar_receipt = resp_quar.json()
+    assert quar_receipt["from_state"] == "SUBMITTED"
     assert quar_receipt["to_state"] == "QUARANTINED"
     version_after_quar = quar_receipt["version_after"]
 
-    # 8. reopenIntake (POST /api/v1/intakes/{id}/actions/reopen)
+    # 7. reopenIntake (POST /api/v1/intakes/{id}/actions/reopen)
     resp_reopen = client.post(
         f"/api/v1/intakes/{intake_id}/actions/reopen",
         json={"reason": "Reopen after incident resolution", "risk_acknowledged": True},
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-reopen-{uuid4()}",
-            "If-Match": f'"{version_after_quar}"'
+            "If-Match": f'W/"{version_after_quar}"'
         }
     )
     assert resp_reopen.status_code == 200
     reopen_receipt = resp_reopen.json()
-    assert reopen_receipt["to_state"] == "SUBMITTED"
+    assert reopen_receipt["from_state"] == "QUARANTINED"
+    assert reopen_receipt["to_state"] == "CHECKING_SOURCE_POLICY"
     version_after_reopen = reopen_receipt["version_after"]
+
+    # 8. cancelIntake (POST /api/v1/intakes/{id}/actions/cancel)
+    cancel_payload = {"reason": "Duplicate submission"}
+    resp_cancel = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json=cancel_payload,
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-cancel-{uuid4()}",
+            "If-Match": f'W/"{version_after_reopen}"'
+        }
+    )
+    assert resp_cancel.status_code == 200
+    cancel_receipt = resp_cancel.json()
+    assert cancel_receipt["from_state"] == "CHECKING_SOURCE_POLICY"
+    assert cancel_receipt["to_state"] == "CANCELLED"
+    version_after_cancel = cancel_receipt["version_after"]
 
     # Transition the intake state to READY in store to satisfy the promotion prerequisite
     from apps.api.app.routes.listings import AssistedIntakeStore
@@ -243,7 +245,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-promo-{uuid4()}",
-            "If-Match": f'"{version_after_reopen}"'
+            "If-Match": f'W/"{version_after_cancel}"'
         }
     )
     assert resp_promo.status_code == 202
@@ -272,7 +274,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A_REVIEWER,
             "Idempotency-Key": f"idem-rev-promo-{uuid4()}",
-            "If-Match": '"1"'
+            "If-Match": 'W/"1"'
         }
     )
     assert resp_rev_promo.status_code == 200
@@ -342,7 +344,7 @@ def test_job_retry_operation(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-retry-{uuid4()}",
-            "If-Match": '"1"'
+            "If-Match": 'W/"1"'
         }
     )
     assert resp_retry.status_code == 202
@@ -358,7 +360,7 @@ def test_job_retry_operation(client: TestClient) -> None:
         headers={
             **HEADERS_B,
             "Idempotency-Key": f"idem-retry-b-{uuid4()}",
-            "If-Match": '"2"'
+            "If-Match": 'W/"2"'
         }
     )
     assert resp_retry_b.status_code == 403
@@ -419,7 +421,7 @@ def test_assignment_actions(client: TestClient) -> None:
             "due_at": "2026-07-25T12:00:00Z",
             "reason": "Triage assignment",
         },
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-action-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-action-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assignment_id = resp_assign.json()["assignment_id"]
     version = resp_assign.json()["version"]
@@ -428,7 +430,7 @@ def test_assignment_actions(client: TestClient) -> None:
     resp_claim = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/claim",
         json={"reason": "Claiming assignment for manual triage review"},
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-claim-{uuid4()}", "If-Match": f'"{version}"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-claim-{uuid4()}", "If-Match": f'W/"{version}"'}
     )
     assert resp_claim.status_code == 200
     claim_receipt = resp_claim.json()
@@ -444,7 +446,7 @@ def test_assignment_actions(client: TestClient) -> None:
             "reason": "Escalate to senior reviewer",
             "handoff_note": "Awaiting escalation triage review",
         },
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-transfer-{uuid4()}", "If-Match": f'"{version_after_claim}"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-transfer-{uuid4()}", "If-Match": f'W/"{version_after_claim}"'}
     )
     assert resp_transfer.status_code == 200
     transfer_receipt = resp_transfer.json()
@@ -456,7 +458,7 @@ def test_assignment_actions(client: TestClient) -> None:
     resp_complete = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/complete",
         json={"reason": "Completed manual triage review with no issues found"},
-        headers={**HEADERS_C, "Idempotency-Key": f"idem-complete-{uuid4()}", "If-Match": f'"{version_after_transfer}"'}
+        headers={**HEADERS_C, "Idempotency-Key": f"idem-complete-{uuid4()}", "If-Match": f'W/"{version_after_transfer}"'}
     )
     assert resp_complete.status_code == 200
     assert resp_complete.json()["status"] == "COMPLETED"
@@ -471,7 +473,7 @@ def test_sla_actions(client: TestClient) -> None:
     resp_pause = client.post(
         f"/api/v1/sla-instances/{sla_id}/actions/pause",
         json={"reason": "Awaiting customer feedback", "expected_resume_at": "2026-07-26T12:00:00Z"},
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-pause-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-pause-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_pause.status_code == 200
     pause_receipt = resp_pause.json()
@@ -483,10 +485,10 @@ def test_sla_actions(client: TestClient) -> None:
     resp_resume = client.post(
         f"/api/v1/sla-instances/{sla_id}/actions/resume",
         json={"reason": "Resuming SLA triage"},
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-resume-{uuid4()}", "If-Match": f'"{version}"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-resume-{uuid4()}", "If-Match": f'W/"{version}"'}
     )
     assert resp_resume.status_code == 200
-    assert resp_resume.json()["state"] == "ACTIVE"
+    assert resp_resume.json()["state"] == "ON_TRACK"
 
 
 
@@ -503,7 +505,7 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
     resp_decide = client.post(
         f"/api/v1/match-cases/{match_case_id}/decisions",
         json=decision_payload,
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-decide-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-decide-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_decide.status_code == 201
     decision = resp_decide.json()
@@ -524,17 +526,17 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
     resp_rev = client.post(
         f"/api/v1/identity-decisions/{decision_id}/actions/review",
         json=review_payload,
-        headers={**HEADERS_A_REVIEWER, "Idempotency-Key": f"idem-rev-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A_REVIEWER, "Idempotency-Key": f"idem-rev-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_rev.status_code == 200
     assert resp_rev.json()["status"] == "APPROVED"
-    version_after_rev = resp_rev.headers["ETag"].strip('"')
+    version_after_rev = resp_rev.headers["ETag"].strip('W/"')
 
     # 4. requestIdentityDecisionReversal
     resp_reverse = client.post(
         f"/api/v1/identity-decisions/{decision_id}/actions/reverse",
         json={"reason": "Reversing incorrect merge", "risk_acknowledged": True},
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-reverse-{uuid4()}", "If-Match": f'"{version_after_rev}"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-reverse-{uuid4()}", "If-Match": f'W/"{version_after_rev}"'}
     )
     assert resp_reverse.status_code == 202
     assert resp_reverse.json()["status"] == "REVERSAL_PENDING"
@@ -552,7 +554,7 @@ def test_identity_graph_mutations(client: TestClient) -> None:
     resp_merge = client.post(
         "/api/v1/identity/merge",
         json=merge_payload,
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-merge-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-merge-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_merge.status_code == 202
     assert resp_merge.json()["status"] == "PENDING_REVIEW"
@@ -564,6 +566,10 @@ def test_identity_graph_mutations(client: TestClient) -> None:
             {
                 "target_property_id": "prop-split-1",
                 "source_identity_edge_ids": ["edge-1"]
+            },
+            {
+                "target_property_id": "prop-split-2",
+                "source_identity_edge_ids": ["edge-2"]
             }
         ],
         "reason": "Property split by steward",
@@ -572,7 +578,7 @@ def test_identity_graph_mutations(client: TestClient) -> None:
     resp_split = client.post(
         "/api/v1/identity/split",
         json=split_payload,
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-split-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-split-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_split.status_code == 202
     assert resp_split.json()["status"] == "PENDING_REVIEW"
@@ -592,7 +598,7 @@ def test_identity_graph_mutations(client: TestClient) -> None:
     resp_unmerge = client.post(
         "/api/v1/identity/unmerge",
         json=unmerge_payload,
-        headers={**HEADERS_A, "Idempotency-Key": f"idem-unmerge-{uuid4()}", "If-Match": '"1"'}
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-unmerge-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_unmerge.status_code == 202
     assert resp_unmerge.json()["status"] == "PENDING_REVIEW"
