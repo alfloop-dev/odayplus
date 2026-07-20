@@ -166,6 +166,97 @@
         "title": "AdLiftIncrementalityJobPayload",
         "type": "object"
       },
+      "ApiError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
+          },
+          "field_errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FieldError"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Errors"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "correlation_id",
+          "occurred_at"
+        ],
+        "title": "ApiError",
+        "type": "object"
+      },
       "ApprovalDecisionPayload": {
         "description": "POST /operator/growth/approvals/{id}/decision — approve / reject.",
         "properties": {
@@ -282,6 +373,321 @@
         "title": "ApprovalDecisionResponse",
         "type": "object"
       },
+      "AssignmentReceipt": {
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "due_at": {
+            "title": "Due At",
+            "type": "string"
+          },
+          "owner_subject_id": {
+            "title": "Owner Subject Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "status",
+          "owner_subject_id",
+          "due_at",
+          "version",
+          "audit_event_id"
+        ],
+        "title": "AssignmentReceipt",
+        "type": "object"
+      },
+      "AssignmentRequest": {
+        "properties": {
+          "due_at": {
+            "title": "Due At",
+            "type": "string"
+          },
+          "handoff_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handoff Note"
+          },
+          "owner_role": {
+            "title": "Owner Role",
+            "type": "string"
+          },
+          "owner_subject_id": {
+            "title": "Owner Subject Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_subject_id",
+          "owner_role",
+          "due_at",
+          "reason"
+        ],
+        "title": "AssignmentRequest",
+        "type": "object"
+      },
+      "AssignmentTransferRequest": {
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "handoff_note": {
+            "title": "Handoff Note",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "target_owner_role": {
+            "title": "Target Owner Role",
+            "type": "string"
+          },
+          "target_owner_subject_id": {
+            "title": "Target Owner Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_owner_subject_id",
+          "target_owner_role",
+          "reason",
+          "handoff_note"
+        ],
+        "title": "AssignmentTransferRequest",
+        "type": "object"
+      },
+      "AuditReference": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuditResult"
+          }
+        },
+        "required": [
+          "audit_event_id",
+          "action",
+          "occurred_at",
+          "result"
+        ],
+        "title": "AuditReference",
+        "type": "object"
+      },
+      "AuditResult": {
+        "enum": [
+          "ALLOWED",
+          "DENIED",
+          "SUCCEEDED",
+          "FAILED",
+          "MASKED"
+        ],
+        "title": "AuditResult",
+        "type": "string"
+      },
+      "BatchIntakeReceipt": {
+        "properties": {
+          "accepted_count": {
+            "title": "Accepted Count",
+            "type": "integer"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "rejected_count": {
+            "title": "Rejected Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/BatchRowReceipt"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "submitted_at",
+          "accepted_count",
+          "rejected_count",
+          "rows",
+          "correlation_id"
+        ],
+        "title": "BatchIntakeReceipt",
+        "type": "object"
+      },
+      "BatchIntakeRequest": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ManualIntakeRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          }
+        },
+        "required": [
+          "batch_id",
+          "method",
+          "scope",
+          "rows"
+        ],
+        "title": "BatchIntakeRequest",
+        "type": "object"
+      },
+      "BatchRowReceipt": {
+        "properties": {
+          "client_row_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Row Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "row_index": {
+            "title": "Row Index",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row_index",
+          "status"
+        ],
+        "title": "BatchRowReceipt",
+        "type": "object"
+      },
+      "CandidateReassignment": {
+        "properties": {
+          "candidate_site_id": {
+            "title": "Candidate Site Id",
+            "type": "string"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "candidate_site_id",
+          "disposition"
+        ],
+        "title": "CandidateReassignment",
+        "type": "object"
+      },
       "ClosePayload": {
         "properties": {
           "actor": {
@@ -320,6 +726,99 @@
           "disposition"
         ],
         "title": "ClosePayload",
+        "type": "object"
+      },
+      "CorrectionReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correction_id": {
+            "title": "Correction Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "listing_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Revision Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "correction_id",
+          "status",
+          "intake_id",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "CorrectionReceipt",
+        "type": "object"
+      },
+      "CorrectionRequest": {
+        "properties": {
+          "corrected_value": {
+            "title": "Corrected Value"
+          },
+          "expected_effective_value_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Effective Value Sha256"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Acknowledged"
+          }
+        },
+        "required": [
+          "field_path",
+          "corrected_value",
+          "reason"
+        ],
+        "title": "CorrectionRequest",
         "type": "object"
       },
       "CreateActionPayload": {
@@ -484,6 +983,53 @@
           "rows"
         ],
         "title": "DatasetSnapshotPayload",
+        "type": "object"
+      },
+      "DecisionReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "resource_versions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Resource Versions",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "status",
+          "resource_versions",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "DecisionReceipt",
         "type": "object"
       },
       "EligibilityPayload": {
@@ -1097,6 +1643,119 @@
         "title": "ExportPayload",
         "type": "object"
       },
+      "FieldClassification": {
+        "enum": [
+          "PUBLIC",
+          "INTERNAL",
+          "CONFIDENTIAL",
+          "RESTRICTED"
+        ],
+        "title": "FieldClassification",
+        "type": "string"
+      },
+      "FieldError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "code",
+          "message"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
+      "FieldValue": {
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/FieldClassification"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "corrected": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected"
+          },
+          "effective": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "title": "Masked",
+            "type": "boolean"
+          },
+          "normalized": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized"
+          },
+          "parsed": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed"
+          }
+        },
+        "required": [
+          "field_path",
+          "classification",
+          "masked"
+        ],
+        "title": "FieldValue",
+        "type": "object"
+      },
       "FinanceApprovalPayload": {
         "properties": {
           "actor": {
@@ -1319,6 +1978,33 @@
         "title": "HeatZoneScoreJobPayload",
         "type": "object"
       },
+      "IdentityPartition": {
+        "properties": {
+          "source_identity_edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Identity Edge Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "source_identity_edge_ids"
+        ],
+        "title": "IdentityPartition",
+        "type": "object"
+      },
       "IngestionRunPayload": {
         "properties": {
           "idempotency_key": {
@@ -1483,6 +2169,247 @@
         "title": "IntakeDecidePayload",
         "type": "object"
       },
+      "IntakeDetail": {
+        "properties": {
+          "assigned_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned To"
+          },
+          "audit": {
+            "items": {
+              "$ref": "#/components/schemas/AuditReference"
+            },
+            "title": "Audit",
+            "type": "array"
+          },
+          "canonical_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Url"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/FieldValue"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "masked_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masked Fields"
+          },
+          "match_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Case Id"
+          },
+          "match_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "parser_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Run Id"
+          },
+          "policy_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourcePolicyState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_history": {
+            "items": {
+              "$ref": "#/components/schemas/TransitionReceipt"
+            },
+            "title": "Processing History",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IntakeState"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "state",
+          "intake_method",
+          "submitted_by",
+          "submitted_at",
+          "updated_at",
+          "version",
+          "scope"
+        ],
+        "title": "IntakeDetail",
+        "type": "object"
+      },
+      "IntakePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "query_fingerprint": {
+            "title": "Query Fingerprint",
+            "type": "string"
+          },
+          "snapshot_time": {
+            "title": "Snapshot Time",
+            "type": "string"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "total_count_accuracy": {
+            "default": "exact",
+            "title": "Total Count Accuracy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "page_size",
+          "query_fingerprint",
+          "snapshot_time",
+          "total_count"
+        ],
+        "title": "IntakePage",
+        "type": "object"
+      },
       "IntakePromotePayload": {
         "additionalProperties": true,
         "description": "Promotion carries no extra fields beyond the risk disclosure.",
@@ -1534,6 +2461,72 @@
         "title": "IntakePromotePayload",
         "type": "object"
       },
+      "IntakeState": {
+        "enum": [
+          "SUBMITTED",
+          "CHECKING_IDENTITY",
+          "CHECKING_SOURCE_POLICY",
+          "AWAITING_ASSISTED_ENTRY",
+          "RETRIEVING",
+          "PARSING",
+          "MATCHING",
+          "NEEDS_REVIEW",
+          "READY",
+          "QUARANTINED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "title": "IntakeState",
+        "type": "string"
+      },
+      "IntakeSubmissionReceipt": {
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "duplicate_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Hint"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IntakeState"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "state",
+          "version",
+          "job_id",
+          "correlation_id",
+          "submitted_at"
+        ],
+        "title": "IntakeSubmissionReceipt",
+        "type": "object"
+      },
       "IntakeSubmitPayload": {
         "additionalProperties": true,
         "properties": {
@@ -1573,6 +2566,109 @@
           "url"
         ],
         "title": "IntakeSubmitPayload",
+        "type": "object"
+      },
+      "IntakeSummary": {
+        "properties": {
+          "assigned_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned To"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "masked_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masked Fields"
+          },
+          "match_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IntakeState"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "state",
+          "intake_method",
+          "submitted_by",
+          "submitted_at",
+          "updated_at",
+          "version",
+          "scope"
+        ],
+        "title": "IntakeSummary",
         "type": "object"
       },
       "IssueTransitionRequest": {
@@ -1698,6 +2794,44 @@
         "title": "JobCreatePayload",
         "type": "object"
       },
+      "JobReceipt": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "checkpoint",
+          "attempt",
+          "version",
+          "correlation_id"
+        ],
+        "title": "JobReceipt",
+        "type": "object"
+      },
       "ListingImportPayload": {
         "properties": {
           "records": {
@@ -1721,6 +2855,227 @@
           }
         },
         "title": "ListingImportPayload",
+        "type": "object"
+      },
+      "ManualIntakeRow": {
+        "properties": {
+          "address_raw": {
+            "title": "Address Raw",
+            "type": "string"
+          },
+          "area_ping": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Ping"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "rent_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rent Amount"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Listing Id"
+          }
+        },
+        "required": [
+          "address_raw"
+        ],
+        "title": "ManualIntakeRow",
+        "type": "object"
+      },
+      "MatchDecisionRequest": {
+        "properties": {
+          "decision_type": {
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "requested_second_reviewer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Second Reviewer Id"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          },
+          "target_listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Listing Id"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "decision_type",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "title": "MatchDecisionRequest",
+        "type": "object"
+      },
+      "MatchOutcome": {
+        "enum": [
+          "NEW",
+          "REVISION",
+          "POSSIBLE_MATCH",
+          "EXACT_DUPLICATE"
+        ],
+        "title": "MatchOutcome",
+        "type": "string"
+      },
+      "MergeRequest": {
+        "properties": {
+          "candidate_reassignment_plan": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CandidateReassignment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Reassignment Plan"
+          },
+          "expected_property_versions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Property Versions"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Acknowledged"
+          },
+          "source_property_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Property Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "title": "Target Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_property_ids",
+          "target_property_id",
+          "reason"
+        ],
+        "title": "MergeRequest",
         "type": "object"
       },
       "ModelCardPayload": {
@@ -3065,6 +4420,126 @@
         "title": "PriceOpsPlanPayload",
         "type": "object"
       },
+      "PromotionDecisionReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "candidate_site_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Site Id"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_type": {
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "listing_id": {
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "promotion_decision_id": {
+            "title": "Promotion Decision Id",
+            "type": "string"
+          },
+          "reviewer_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Subject Id"
+          },
+          "site_score_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Score Job Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "promotion_decision_id",
+          "intake_id",
+          "listing_id",
+          "status",
+          "decision_type",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "PromotionDecisionReceipt",
+        "type": "object"
+      },
+      "PromotionRequest": {
+        "properties": {
+          "gate_snapshot_sha256": {
+            "title": "Gate Snapshot Sha256",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "requested_reviewer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Reviewer Id"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          },
+          "target_format_code": {
+            "title": "Target Format Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_format_code",
+          "reason",
+          "gate_snapshot_sha256",
+          "risk_acknowledged"
+        ],
+        "title": "PromotionRequest",
+        "type": "object"
+      },
       "PurgePayload": {
         "properties": {
           "approvedBy": {
@@ -3106,6 +4581,19 @@
           "approvedBy"
         ],
         "title": "PurgePayload",
+        "type": "object"
+      },
+      "ReasonCommand": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReasonCommand",
         "type": "object"
       },
       "RebalanceActorPayload": {
@@ -3341,6 +4829,34 @@
         "title": "ReleasePayload",
         "type": "object"
       },
+      "RetryRequest": {
+        "properties": {
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "override_retry_budget": {
+            "default": false,
+            "title": "Override Retry Budget",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "default": false,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "checkpoint",
+          "reason"
+        ],
+        "title": "RetryRequest",
+        "type": "object"
+      },
       "ReviewDecisionPayload": {
         "additionalProperties": true,
         "description": "POST /operator/network-reviews/{review_id}/decide.",
@@ -3401,6 +4917,71 @@
         "title": "ReviewDecisionPayload",
         "type": "object"
       },
+      "ReviewDecisionRequest": {
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "requested_changes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Changes"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decision",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "title": "ReviewDecisionRequest",
+        "type": "object"
+      },
+      "RiskReasonCommand": {
+        "properties": {
+          "incident_or_change_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Or Change Id"
+          },
+          "risk_acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Acknowledged"
+          }
+        },
+        "title": "RiskReasonCommand",
+        "type": "object"
+      },
       "RoleWorkspacesRequest": {
         "description": "Override a role's workspace grants (high-risk, audited).",
         "properties": {
@@ -3416,6 +4997,175 @@
           "allowedWorkspaces"
         ],
         "title": "RoleWorkspacesRequest",
+        "type": "object"
+      },
+      "SavedView": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_subject_id": {
+            "title": "Owner Subject Id",
+            "type": "string"
+          },
+          "query": {
+            "additionalProperties": true,
+            "title": "Query",
+            "type": "object"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "saved_view_id": {
+            "title": "Saved View Id",
+            "type": "string"
+          },
+          "shared_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Role"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "visibility": {
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "query",
+          "visibility",
+          "saved_view_id",
+          "owner_subject_id",
+          "created_at",
+          "version"
+        ],
+        "title": "SavedView",
+        "type": "object"
+      },
+      "SavedViewRequest": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "additionalProperties": true,
+            "title": "Query",
+            "type": "object"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "shared_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Role"
+          },
+          "visibility": {
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "query",
+          "visibility"
+        ],
+        "title": "SavedViewRequest",
+        "type": "object"
+      },
+      "ScopeContext": {
+        "properties": {
+          "assigned_area_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Area Id"
+          },
+          "brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
+          "heat_zone_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heat Zone Id"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ],
+        "title": "ScopeContext",
         "type": "object"
       },
       "SegmentMetricPayload": {
@@ -3501,6 +5251,148 @@
           }
         },
         "title": "SiteScoreScoreJobPayload",
+        "type": "object"
+      },
+      "SlaPauseRequest": {
+        "properties": {
+          "expected_resume_at": {
+            "title": "Expected Resume At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "expected_resume_at"
+        ],
+        "title": "SlaPauseRequest",
+        "type": "object"
+      },
+      "SlaReceipt": {
+        "properties": {
+          "active_pause_interval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Pause Interval Id"
+          },
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "due_at": {
+            "title": "Due At",
+            "type": "string"
+          },
+          "due_soon_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Soon At"
+          },
+          "paused_duration_seconds": {
+            "title": "Paused Duration Seconds",
+            "type": "integer"
+          },
+          "sla_instance_id": {
+            "title": "Sla Instance Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sla_instance_id",
+          "state",
+          "due_at",
+          "paused_duration_seconds",
+          "version",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "SlaReceipt",
+        "type": "object"
+      },
+      "SourcePolicyState": {
+        "enum": [
+          "APPROVED_RETRIEVAL",
+          "ASSISTED_ENTRY_ONLY",
+          "AUTH_REQUIRED",
+          "SOURCE_BLOCKED",
+          "POLICY_UNKNOWN"
+        ],
+        "title": "SourcePolicyState",
+        "type": "string"
+      },
+      "SplitRequest": {
+        "properties": {
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPartition"
+            },
+            "title": "Partitions",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Acknowledged"
+          },
+          "source_property_id": {
+            "title": "Source Property Id",
+            "type": "string"
+          },
+          "source_property_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Property Version"
+          }
+        },
+        "required": [
+          "source_property_id",
+          "partitions",
+          "reason"
+        ],
+        "title": "SplitRequest",
         "type": "object"
       },
       "StoreOpsCameraPurposePayload": {
@@ -3839,6 +5731,137 @@
           "targetStatus"
         ],
         "title": "TransitionActionPayload",
+        "type": "object"
+      },
+      "TransitionReceipt": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From State"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "to_state": {
+            "title": "To State",
+            "type": "string"
+          },
+          "transition_id": {
+            "title": "Transition Id",
+            "type": "string"
+          },
+          "version_after": {
+            "title": "Version After",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "transition_id",
+          "to_state",
+          "occurred_at",
+          "actor",
+          "version_after"
+        ],
+        "title": "TransitionReceipt",
+        "type": "object"
+      },
+      "UnmergeRequest": {
+        "properties": {
+          "original_decision_id": {
+            "title": "Original Decision Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "replacement_edges": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPartition"
+            },
+            "title": "Replacement Edges",
+            "type": "array"
+          },
+          "risk_acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Acknowledged"
+          }
+        },
+        "required": [
+          "original_decision_id",
+          "replacement_edges",
+          "reason"
+        ],
+        "title": "UnmergeRequest",
+        "type": "object"
+      },
+      "UrlIntakeRequest": {
+        "properties": {
+          "original_url": {
+            "title": "Original Url",
+            "type": "string"
+          },
+          "owner_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Subject Id"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          }
+        },
+        "required": [
+          "original_url",
+          "scope"
+        ],
+        "title": "UrlIntakeRequest",
         "type": "object"
       },
       "apps__api__app__routes__interventions__ConflictCheckPayload": {
@@ -4637,7 +6660,7 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/claim": {
       "post": {
-        "operationId": "claimAssignment",
+        "operationId": "claim_assignment_api_v1_assignments__assignment_id__actions_claim_post",
         "parameters": [
           {
             "in": "path",
@@ -4685,28 +6708,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Claimassignment",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AssignmentReceipt"
                 }
               }
             },
@@ -4783,7 +6796,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Claim Assignment",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -4791,7 +6804,7 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/complete": {
       "post": {
-        "operationId": "completeAssignment",
+        "operationId": "complete_assignment_api_v1_assignments__assignment_id__actions_complete_post",
         "parameters": [
           {
             "in": "path",
@@ -4839,28 +6852,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Completeassignment",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AssignmentReceipt"
                 }
               }
             },
@@ -4937,7 +6940,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Complete Assignment",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -4945,7 +6948,7 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/transfer": {
       "post": {
-        "operationId": "transferAssignment",
+        "operationId": "transfer_assignment_api_v1_assignments__assignment_id__actions_transfer_post",
         "parameters": [
           {
             "in": "path",
@@ -4993,28 +6996,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/AssignmentTransferRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Transferassignment",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AssignmentReceipt"
                 }
               }
             },
@@ -5091,7 +7084,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Transfer Assignment",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -9303,38 +11296,6 @@
               "title": "Decision Id",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -9342,9 +11303,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Identity Api V1 Identity Decisions  Decision Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -9429,7 +11388,7 @@
     },
     "/api/v1/identity-decisions/{decision_id}/actions/reverse": {
       "post": {
-        "operationId": "requestIdentityDecisionReversal",
+        "operationId": "reverse_identity_api_v1_identity_decisions__decision_id__actions_reverse_post",
         "parameters": [
           {
             "in": "path",
@@ -9477,28 +11436,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Requestidentitydecisionreversal",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -9575,7 +11524,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Reverse Identity",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -9583,7 +11532,7 @@
     },
     "/api/v1/identity-decisions/{decision_id}/actions/review": {
       "post": {
-        "operationId": "reviewIdentityDecision",
+        "operationId": "review_identity_api_v1_identity_decisions__decision_id__actions_review_post",
         "parameters": [
           {
             "in": "path",
@@ -9631,28 +11580,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reviewidentitydecision",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -9729,7 +11668,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Review Identity",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -9737,28 +11676,8 @@
     },
     "/api/v1/identity/merge": {
       "post": {
-        "operationId": "mergeProperties",
+        "operationId": "merge_properties_api_v1_identity_merge_post",
         "parameters": [
-          {
-            "in": "query",
-            "name": "match_case_id",
-            "required": false,
-            "schema": {
-              "default": "identity",
-              "title": "Match Case Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "_action",
-            "required": false,
-            "schema": {
-              "default": "merge",
-              "title": " Action",
-              "type": "string"
-            }
-          },
           {
             "in": "header",
             "name": "Idempotency-Key",
@@ -9796,28 +11715,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/MergeRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Mergeproperties",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -9894,7 +11803,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Identity Command",
+        "summary": "Merge Properties",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -9902,28 +11811,8 @@
     },
     "/api/v1/identity/split": {
       "post": {
-        "operationId": "splitProperty",
+        "operationId": "split_property_api_v1_identity_split_post",
         "parameters": [
-          {
-            "in": "query",
-            "name": "match_case_id",
-            "required": false,
-            "schema": {
-              "default": "identity",
-              "title": "Match Case Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "_action",
-            "required": false,
-            "schema": {
-              "default": "split",
-              "title": " Action",
-              "type": "string"
-            }
-          },
           {
             "in": "header",
             "name": "Idempotency-Key",
@@ -9961,28 +11850,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/SplitRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Splitproperty",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -10059,7 +11938,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Identity Command",
+        "summary": "Split Property",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -10067,28 +11946,8 @@
     },
     "/api/v1/identity/unmerge": {
       "post": {
-        "operationId": "unmergeProperty",
+        "operationId": "unmerge_property_api_v1_identity_unmerge_post",
         "parameters": [
-          {
-            "in": "query",
-            "name": "match_case_id",
-            "required": false,
-            "schema": {
-              "default": "identity",
-              "title": "Match Case Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "_action",
-            "required": false,
-            "schema": {
-              "default": "unmerge",
-              "title": " Action",
-              "type": "string"
-            }
-          },
           {
             "in": "header",
             "name": "Idempotency-Key",
@@ -10126,28 +11985,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/UnmergeRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Unmergeproperty",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -10224,7 +12073,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Identity Command",
+        "summary": "Unmerge Property",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -10249,47 +12098,13 @@
               ],
               "title": "Idempotency-Key"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/BatchIntakeRequest"
               }
             }
           },
@@ -10300,9 +12115,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Submit Batch Api V1 Intake Batches Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchIntakeReceipt"
                 }
               }
             },
@@ -10416,38 +12229,6 @@
               "title": "Page Size",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -10455,9 +12236,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Intakes Api V1 Intakes Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntakePage"
                 }
               }
             },
@@ -10559,47 +12338,13 @@
               ],
               "title": "Idempotency-Key"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/UrlIntakeRequest"
               }
             }
           },
@@ -10610,9 +12355,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Submit Url Api V1 Intakes Url Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntakeSubmissionReceipt"
                 }
               }
             },
@@ -10707,38 +12450,6 @@
               "title": "Intake Id",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -10746,9 +12457,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Intake Api V1 Intakes  Intake Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntakeDetail"
                 }
               }
             },
@@ -10833,7 +12542,7 @@
     },
     "/api/v1/intakes/{intake_id}/actions/cancel": {
       "post": {
-        "operationId": "cancelIntake",
+        "operationId": "cancel_intake_api_v1_intakes__intake_id__actions_cancel_post",
         "parameters": [
           {
             "in": "path",
@@ -10881,28 +12590,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/ReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancelintake",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TransitionReceipt"
                 }
               }
             },
@@ -10979,7 +12678,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Cancel Intake",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -10987,7 +12686,7 @@
     },
     "/api/v1/intakes/{intake_id}/actions/quarantine": {
       "post": {
-        "operationId": "quarantineIntake",
+        "operationId": "quarantine_intake_api_v1_intakes__intake_id__actions_quarantine_post",
         "parameters": [
           {
             "in": "path",
@@ -11035,28 +12734,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Quarantineintake",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TransitionReceipt"
                 }
               }
             },
@@ -11133,7 +12822,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Quarantine Intake",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -11141,7 +12830,7 @@
     },
     "/api/v1/intakes/{intake_id}/actions/reopen": {
       "post": {
-        "operationId": "reopenIntake",
+        "operationId": "reopen_intake_api_v1_intakes__intake_id__actions_reopen_post",
         "parameters": [
           {
             "in": "path",
@@ -11189,28 +12878,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reopenintake",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TransitionReceipt"
                 }
               }
             },
@@ -11287,7 +12966,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Reopen Intake",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -11337,47 +13016,13 @@
               ],
               "title": "If-Match"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/AssignmentRequest"
               }
             }
           },
@@ -11388,9 +13033,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Assign Api V1 Intakes  Intake Id  Assignment Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AssignmentReceipt"
                 }
               }
             },
@@ -11517,47 +13160,13 @@
               ],
               "title": "If-Match"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/CorrectionRequest"
               }
             }
           },
@@ -11568,9 +13177,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Correct Api V1 Intakes  Intake Id  Corrections Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionReceipt"
                 }
               }
             },
@@ -11697,47 +13304,13 @@
               ],
               "title": "If-Match"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/PromotionRequest"
               }
             }
           },
@@ -11748,9 +13321,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Promote Api V1 Intakes  Intake Id  Promotion Requests Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PromotionDecisionReceipt"
                 }
               }
             },
@@ -13566,47 +15137,13 @@
               ],
               "title": "If-Match"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/RetryRequest"
               }
             }
           },
@@ -13617,9 +15154,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Retry Job Api V1 Jobs  Job Id  Retry Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/JobReceipt"
                 }
               }
             },
@@ -14754,7 +16289,7 @@
     },
     "/api/v1/match-cases/{match_case_id}/decisions": {
       "post": {
-        "operationId": "decideMatchCase",
+        "operationId": "decide_match_case_api_v1_match_cases__match_case_id__decisions_post",
         "parameters": [
           {
             "in": "path",
@@ -14762,16 +16297,6 @@
             "required": true,
             "schema": {
               "title": "Match Case Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "_action",
-            "required": false,
-            "schema": {
-              "default": "match_decision",
-              "title": " Action",
               "type": "string"
             }
           },
@@ -14812,28 +16337,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/MatchDecisionRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "202": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Decidematchcase",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DecisionReceipt"
                 }
               }
             },
@@ -14910,7 +16425,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Identity Command",
+        "summary": "Decide Match Case",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -29104,38 +30619,6 @@
               "title": "Promotion Decision Id",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -29143,9 +30626,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Promotion Api V1 Promotion Decisions  Promotion Decision Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PromotionDecisionReceipt"
                 }
               }
             },
@@ -29230,7 +30711,7 @@
     },
     "/api/v1/promotion-decisions/{promotion_decision_id}/actions/review": {
       "post": {
-        "operationId": "reviewPromotionDecision",
+        "operationId": "review_promotion_api_v1_promotion_decisions__promotion_decision_id__actions_review_post",
         "parameters": [
           {
             "in": "path",
@@ -29278,28 +30759,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reviewpromotiondecision",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PromotionDecisionReceipt"
                 }
               }
             },
@@ -29376,7 +30847,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Review Promotion",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -29384,51 +30855,16 @@
     },
     "/api/v1/saved-views": {
       "get": {
-        "operationId": "saved_views_api_v1_saved_views_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
+        "operationId": "list_saved_views_api_v1_saved_views_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/SavedView"
                   },
-                  "title": "Response Saved Views Api V1 Saved Views Get",
+                  "title": "Response List Saved Views Api V1 Saved Views Get",
                   "type": "array"
                 }
               }
@@ -29506,7 +30942,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Saved Views",
+        "summary": "List Saved Views",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -29529,47 +30965,13 @@
               ],
               "title": "Idempotency-Key"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Tenant-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/SavedViewRequest"
               }
             }
           },
@@ -29580,9 +30982,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Saved View Api V1 Saved Views Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SavedView"
                 }
               }
             },
@@ -30726,7 +32126,7 @@
     },
     "/api/v1/sla-instances/{sla_instance_id}/actions/pause": {
       "post": {
-        "operationId": "pauseSla",
+        "operationId": "pause_sla_api_v1_sla_instances__sla_instance_id__actions_pause_post",
         "parameters": [
           {
             "in": "path",
@@ -30774,28 +32174,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/SlaPauseRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Pausesla",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SlaReceipt"
                 }
               }
             },
@@ -30872,7 +32262,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Pause Sla",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -30880,7 +32270,7 @@
     },
     "/api/v1/sla-instances/{sla_instance_id}/actions/resume": {
       "post": {
-        "operationId": "resumeSla",
+        "operationId": "resume_sla_api_v1_sla_instances__sla_instance_id__actions_resume_post",
         "parameters": [
           {
             "in": "path",
@@ -30928,28 +32318,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RiskReasonCommand"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resumesla",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SlaReceipt"
                 }
               }
             },
@@ -31026,7 +32406,7 @@
             "description": "Unexpected server error"
           }
         },
-        "summary": "Command",
+        "summary": "Resume Sla",
         "tags": [
           "assisted-listing-intake"
         ]

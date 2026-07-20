@@ -57,6 +57,20 @@ export type AdLiftIncrementalityJobPayload = {
   idempotency_key?: string | null;
 };
 
+/** ApiError */
+export type ApiError = {
+  code: string;
+  correlation_id: string;
+  current_version?: number | null;
+  field_errors?: FieldError[] | null;
+  message: string;
+  next_action?: string | null;
+  occurred_at: string;
+  reason_code?: string | null;
+  retry_after_seconds?: number | null;
+  retryable: boolean;
+};
+
 /** POST /operator/growth/approvals/{id}/decision — approve / reject. */
 export type ApprovalDecisionPayload = {
   actorName?: string | null;
@@ -85,6 +99,80 @@ export type ApprovalDecisionResponse = {
   newStatus: string;
 };
 
+/** AssignmentReceipt */
+export type AssignmentReceipt = {
+  assignment_id: string;
+  audit_event_id: string;
+  due_at: string;
+  owner_subject_id: string;
+  status: string;
+  version: number;
+};
+
+/** AssignmentRequest */
+export type AssignmentRequest = {
+  due_at: string;
+  handoff_note?: string | null;
+  owner_role: string;
+  owner_subject_id: string;
+  reason: string;
+};
+
+/** AssignmentTransferRequest */
+export type AssignmentTransferRequest = {
+  due_at?: string | null;
+  handoff_note: string;
+  reason: string;
+  target_owner_role: string;
+  target_owner_subject_id: string;
+};
+
+/** AuditReference */
+export type AuditReference = {
+  action: string;
+  audit_event_id: string;
+  occurred_at: string;
+  reason_code?: string | null;
+  result: AuditResult;
+};
+
+/** AuditResult */
+export type AuditResult = "ALLOWED" | "DENIED" | "SUCCEEDED" | "FAILED" | "MASKED";
+
+/** BatchIntakeReceipt */
+export type BatchIntakeReceipt = {
+  accepted_count: number;
+  batch_id: string;
+  correlation_id: string;
+  rejected_count: number;
+  rows: BatchRowReceipt[];
+  submitted_at: string;
+};
+
+/** BatchIntakeRequest */
+export type BatchIntakeRequest = {
+  batch_id: string;
+  method: string;
+  rows: ManualIntakeRow[];
+  scope: ScopeContext;
+};
+
+/** BatchRowReceipt */
+export type BatchRowReceipt = {
+  client_row_id?: string | null;
+  error?: ApiError | null;
+  intake_id?: string | null;
+  row_index: number;
+  status: string;
+};
+
+/** CandidateReassignment */
+export type CandidateReassignment = {
+  candidate_site_id: string;
+  disposition: string;
+  target_property_id?: string | null;
+};
+
 /** ClosePayload */
 export type ClosePayload = {
   actor: string;
@@ -92,6 +180,26 @@ export type ClosePayload = {
   follow_up?: boolean;
   follow_up_kind?: string | null;
   reason?: string;
+};
+
+/** CorrectionReceipt */
+export type CorrectionReceipt = {
+  audit_event_id: string;
+  correction_id: string;
+  correlation_id: string;
+  intake_id: string;
+  listing_revision_id?: string | null;
+  status: string;
+  version: number;
+};
+
+/** CorrectionRequest */
+export type CorrectionRequest = {
+  corrected_value: unknown;
+  expected_effective_value_sha256?: string | null;
+  field_path: string;
+  reason: string;
+  risk_acknowledged?: boolean | null;
 };
 
 /** POST /operator/growth/actions — create draft body.
@@ -129,6 +237,16 @@ export type DatasetSnapshotPayload = {
   dataset_snapshot_id?: string | null;
   require_training_eligible?: boolean;
   rows: Record<string, unknown>[];
+};
+
+/** DecisionReceipt */
+export type DecisionReceipt = {
+  audit_event_id: string;
+  correlation_id: string;
+  decision_id: string;
+  job_id?: string | null;
+  resource_versions: Record<string, number>;
+  status: string;
 };
 
 /** EligibilityPayload */
@@ -263,6 +381,29 @@ export type ExportPayload = {
   tenantId: string;
 };
 
+/** FieldClassification */
+export type FieldClassification = "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "RESTRICTED";
+
+/** FieldError */
+export type FieldError = {
+  code: string;
+  field: string;
+  message: string;
+};
+
+/** FieldValue */
+export type FieldValue = {
+  classification: FieldClassification;
+  confidence?: number | null;
+  corrected?: unknown | null;
+  effective?: unknown | null;
+  field_path: string;
+  mask_reason_code?: string | null;
+  masked: boolean;
+  normalized?: unknown | null;
+  parsed?: unknown | null;
+};
+
 /** FinanceApprovalPayload */
 export type FinanceApprovalPayload = {
   actor: string;
@@ -314,6 +455,12 @@ export type HeatZoneScoreJobPayload = {
   prediction_origin_time?: string | null;
 };
 
+/** IdentityPartition */
+export type IdentityPartition = {
+  source_identity_edge_ids: string[];
+  target_property_id?: string | null;
+};
+
 /** IngestionRunPayload */
 export type IngestionRunPayload = {
   idempotency_key?: string | null;
@@ -343,6 +490,43 @@ export type IntakeDecidePayload = {
   riskSummary?: string | null;
 };
 
+/** IntakeDetail */
+export type IntakeDetail = {
+  assigned_to?: string | null;
+  audit?: AuditReference[];
+  canonical_url?: string | null;
+  due_at?: string | null;
+  fields?: FieldValue[];
+  intake_id: string;
+  intake_method: string;
+  masked_fields?: string[] | null;
+  match_case_id?: string | null;
+  match_outcome?: MatchOutcome | null;
+  original_url?: string | null;
+  parser_run_id?: string | null;
+  policy_state?: SourcePolicyState | null;
+  processing_history?: TransitionReceipt[];
+  scope: ScopeContext;
+  source_id?: string | null;
+  source_snapshot_id?: string | null;
+  state: IntakeState;
+  submitted_at: string;
+  submitted_by: string;
+  updated_at: string;
+  version: number;
+};
+
+/** IntakePage */
+export type IntakePage = {
+  items: IntakeSummary[];
+  next_cursor?: string | null;
+  page_size: number;
+  query_fingerprint: string;
+  snapshot_time: string;
+  total_count: number;
+  total_count_accuracy?: string;
+};
+
 /** Promotion carries no extra fields beyond the risk disclosure. */
 export type IntakePromotePayload = {
   actorName?: string | null;
@@ -352,12 +536,43 @@ export type IntakePromotePayload = {
   riskSummary?: string | null;
 };
 
+/** IntakeState */
+export type IntakeState = "SUBMITTED" | "CHECKING_IDENTITY" | "CHECKING_SOURCE_POLICY" | "AWAITING_ASSISTED_ENTRY" | "RETRIEVING" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "READY" | "QUARANTINED" | "FAILED" | "CANCELLED";
+
+/** IntakeSubmissionReceipt */
+export type IntakeSubmissionReceipt = {
+  correlation_id: string;
+  duplicate_hint?: string | null;
+  intake_id: string;
+  job_id: string;
+  state: IntakeState;
+  submitted_at: string;
+  version: number;
+};
+
 /** IntakeSubmitPayload */
 export type IntakeSubmitPayload = {
   actorName?: string | null;
   actorRoleId?: string;
   heatZoneId?: string | null;
   url: string;
+};
+
+/** IntakeSummary */
+export type IntakeSummary = {
+  assigned_to?: string | null;
+  due_at?: string | null;
+  intake_id: string;
+  intake_method: string;
+  masked_fields?: string[] | null;
+  match_outcome?: MatchOutcome | null;
+  scope: ScopeContext;
+  source_id?: string | null;
+  state: IntakeState;
+  submitted_at: string;
+  submitted_by: string;
+  updated_at: string;
+  version: number;
 };
 
 /** Write body for POST /operator/issues/{issue_id}/{action_type}. */
@@ -384,10 +599,55 @@ export type JobCreatePayload = {
   payload?: Record<string, unknown>;
 };
 
+/** JobReceipt */
+export type JobReceipt = {
+  attempt: number;
+  checkpoint: string;
+  correlation_id: string;
+  job_id: string;
+  status: string;
+  version: number;
+};
+
 /** ListingImportPayload */
 export type ListingImportPayload = {
   records?: Record<string, unknown>[];
   source_id?: string | null;
+};
+
+/** ManualIntakeRow */
+export type ManualIntakeRow = {
+  address_raw: string;
+  area_ping?: number | null;
+  currency?: string | null;
+  floor?: string | null;
+  original_url?: string | null;
+  rent_amount?: number | null;
+  source_id?: string | null;
+  source_listing_id?: string | null;
+};
+
+/** MatchDecisionRequest */
+export type MatchDecisionRequest = {
+  decision_type: string;
+  reason: string;
+  requested_second_reviewer_id?: string | null;
+  risk_acknowledged: boolean;
+  target_listing_id?: string | null;
+  target_property_id?: string | null;
+};
+
+/** MatchOutcome */
+export type MatchOutcome = "NEW" | "REVISION" | "POSSIBLE_MATCH" | "EXACT_DUPLICATE";
+
+/** MergeRequest */
+export type MergeRequest = {
+  candidate_reassignment_plan?: CandidateReassignment[] | null;
+  expected_property_versions?: Record<string, number> | null;
+  reason: string;
+  risk_acknowledged?: boolean | null;
+  source_property_ids: string[];
+  target_property_id: string;
 };
 
 /** ModelCardPayload */
@@ -649,6 +909,30 @@ export type PriceOpsPlanPayload = {
   tenant_id: string;
 };
 
+/** PromotionDecisionReceipt */
+export type PromotionDecisionReceipt = {
+  audit_event_id: string;
+  candidate_site_id?: string | null;
+  correlation_id: string;
+  decision_type: string;
+  intake_id: string;
+  listing_id: string;
+  promotion_decision_id: string;
+  reviewer_subject_id?: string | null;
+  site_score_job_id?: string | null;
+  status: string;
+  version: number;
+};
+
+/** PromotionRequest */
+export type PromotionRequest = {
+  gate_snapshot_sha256: string;
+  reason: string;
+  requested_reviewer_id?: string | null;
+  risk_acknowledged: boolean;
+  target_format_code: string;
+};
+
 /** PurgePayload */
 export type PurgePayload = {
   approvedBy: string;
@@ -657,6 +941,11 @@ export type PurgePayload = {
   subjectId: string;
   subjectType: string;
   tenantId: string;
+};
+
+/** ReasonCommand */
+export type ReasonCommand = {
+  reason: string;
 };
 
 /** RebalanceActorPayload */
@@ -707,6 +996,14 @@ export type ReleasePayload = {
   version: string;
 };
 
+/** RetryRequest */
+export type RetryRequest = {
+  checkpoint: string;
+  override_retry_budget?: boolean;
+  reason: string;
+  risk_acknowledged?: boolean;
+};
+
 /** POST /operator/network-reviews/{review_id}/decide. */
 export type ReviewDecisionPayload = {
   actorName?: string | null;
@@ -718,9 +1015,54 @@ export type ReviewDecisionPayload = {
   requiredData?: string[];
 };
 
+/** ReviewDecisionRequest */
+export type ReviewDecisionRequest = {
+  decision: string;
+  reason: string;
+  requested_changes?: string[] | null;
+  risk_acknowledged: boolean;
+};
+
+/** RiskReasonCommand */
+export type RiskReasonCommand = {
+  incident_or_change_id?: string | null;
+  risk_acknowledged?: boolean | null;
+};
+
 /** Override a role's workspace grants (high-risk, audited). */
 export type RoleWorkspacesRequest = {
   allowedWorkspaces: string[];
+};
+
+/** SavedView */
+export type SavedView = {
+  created_at: string;
+  name: string;
+  owner_subject_id: string;
+  query: Record<string, unknown>;
+  resource?: string | null;
+  saved_view_id: string;
+  shared_role?: string | null;
+  version: number;
+  visibility: string;
+};
+
+/** SavedViewRequest */
+export type SavedViewRequest = {
+  name: string;
+  query: Record<string, unknown>;
+  resource?: string | null;
+  shared_role?: string | null;
+  visibility: string;
+};
+
+/** ScopeContext */
+export type ScopeContext = {
+  assigned_area_id?: string | null;
+  brand_id?: string | null;
+  heat_zone_id?: string | null;
+  region_id?: string | null;
+  tenant_id: string;
 };
 
 /** SegmentMetricPayload */
@@ -741,6 +1083,37 @@ export type SiteScoreScoreJobPayload = {
   features?: Record<string, unknown>[];
   idempotency_key?: string | null;
   prediction_origin_time?: string | null;
+};
+
+/** SlaPauseRequest */
+export type SlaPauseRequest = {
+  expected_resume_at: string;
+  reason: string;
+};
+
+/** SlaReceipt */
+export type SlaReceipt = {
+  active_pause_interval_id?: string | null;
+  audit_event_id: string;
+  correlation_id: string;
+  due_at: string;
+  due_soon_at?: string | null;
+  paused_duration_seconds: number;
+  sla_instance_id: string;
+  state: string;
+  version: number;
+};
+
+/** SourcePolicyState */
+export type SourcePolicyState = "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED" | "SOURCE_BLOCKED" | "POLICY_UNKNOWN";
+
+/** SplitRequest */
+export type SplitRequest = {
+  partitions: IdentityPartition[];
+  reason: string;
+  risk_acknowledged?: boolean | null;
+  source_property_id: string;
+  source_property_version?: number | null;
 };
 
 /** StoreOpsCameraPurposePayload */
@@ -791,6 +1164,33 @@ export type TransitionActionPayload = {
   actorName?: string | null;
   actorRoleId?: string | null;
   targetStatus: string;
+};
+
+/** TransitionReceipt */
+export type TransitionReceipt = {
+  actor: string;
+  from_state?: string | null;
+  occurred_at: string;
+  reason_code?: string | null;
+  to_state: string;
+  transition_id: string;
+  version_after: number;
+};
+
+/** UnmergeRequest */
+export type UnmergeRequest = {
+  original_decision_id: string;
+  reason: string;
+  replacement_edges: IdentityPartition[];
+  risk_acknowledged?: boolean | null;
+};
+
+/** UrlIntakeRequest */
+export type UrlIntakeRequest = {
+  original_url: string;
+  owner_subject_id?: string | null;
+  purpose?: string | null;
+  scope: ScopeContext;
 };
 
 /** ConflictCheckPayload */

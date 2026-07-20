@@ -95,6 +95,7 @@ else:
 
     class BatchIntakeRequest(BaseModel):
         batch_id: str
+        method: str
         scope: ScopeContext
         rows: List[ManualIntakeRow]
 
@@ -210,18 +211,25 @@ else:
 
     class AssignmentRequest(BaseModel):
         owner_subject_id: str
-        due_at: Optional[str] = None
+        owner_role: str
+        due_at: str
+        reason: str
+        handoff_note: Optional[str] = None
 
     class AssignmentReceipt(BaseModel):
         assignment_id: str
         status: str
         owner_subject_id: str
-        due_at: Optional[str] = None
+        due_at: str
         version: int
         audit_event_id: str
 
     class AssignmentTransferRequest(BaseModel):
-        new_owner_subject_id: str
+        target_owner_subject_id: str
+        target_owner_role: str
+        reason: str
+        handoff_note: str
+        due_at: Optional[str] = None
 
     class SlaPauseRequest(BaseModel):
         reason: str
@@ -476,13 +484,13 @@ else:
         ) -> IntakePage:
             if cursor and cursor != "end":
                 raise HTTPException(400, "invalid or expired cursor")
-            
+
             tenant_items = [
                 v for v in active.intakes.values()
                 if v.get("scope", {}).get("tenant_id") == tenant_id
             ]
             items = tenant_items[:page_size]
-            
+
             summaries = []
             for value in items:
                 summaries.append(IntakeSummary(
@@ -500,7 +508,7 @@ else:
                     scope=ScopeContext(**value["scope"]),
                     masked_fields=value.get("masked_fields") or [],
                 ))
-            
+
             return IntakePage(
                 items=summaries,
                 next_cursor=None,
@@ -525,14 +533,14 @@ else:
         ) -> IntakeSubmissionReceipt:
             if body.scope.tenant_id != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 intake_id, job_id = str(uuid4()), str(uuid4())
                 correlation_id = str(uuid4())
                 ts = now()
-                
+
                 value = {
                     "intake_id": intake_id,
                     "state": "SUBMITTED",
@@ -561,7 +569,7 @@ else:
                     "audit": [],
                 }
                 active.intakes[intake_id] = value
-                
+
                 active.jobs[job_id] = {
                     "job_id": job_id,
                     "status": "QUEUED",
@@ -570,7 +578,7 @@ else:
                     "version": 1,
                     "correlation_id": correlation_id,
                 }
-                
+
                 receipt = {
                     "intake_id": intake_id,
                     "state": "SUBMITTED",
@@ -580,12 +588,12 @@ else:
                     "submitted_at": ts,
                 }
                 return receipt, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'"{val["version"]}"'
-            
+
             return IntakeSubmissionReceipt(**val)
 
         @router.post(
@@ -602,14 +610,14 @@ else:
         ) -> BatchIntakeReceipt:
             if body.scope.tenant_id != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 receipts, accepted = [], 0
                 ts = now()
                 correlation_id = str(uuid4())
-                
+
                 for index, row in enumerate(body.rows):
                     if not row.address_raw:
                         receipts.append({
@@ -627,7 +635,7 @@ else:
                     else:
                         accepted += 1
                         intake_id = str(uuid4())
-                        
+
                         value = {
                             "intake_id": intake_id,
                             "state": "SUBMITTED",
@@ -659,7 +667,7 @@ else:
                             "status": "ACCEPTED",
                             "intake_id": intake_id,
                         })
-                
+
                 result = {
                     "batch_id": body.batch_id,
                     "submitted_at": ts,
@@ -668,10 +676,10 @@ else:
                     "rows": receipts,
                     "correlation_id": correlation_id,
                 }
-                
+
                 code = 202 if accepted == len(body.rows) else 207
                 return result, code
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitIntakeBatch", make)
             response.status_code = 200 if was_replayed else code
             return BatchIntakeReceipt(**val)
@@ -691,9 +699,9 @@ else:
                 raise HTTPException(404, "intake not found")
             if value.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             response.headers["ETag"] = f'"{value["version"]}"'
-            
+
             detail = IntakeDetail(
                 intake_id=value["intake_id"],
                 state=value["state"],
@@ -739,17 +747,17 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] += 1
                 ts = now()
                 cid = str(uuid4())
                 correlation_id = str(uuid4())
                 audit_event_id = str(uuid4())
-                
+
                 current["processing_history"].append({
                     "transition_id": str(uuid4()),
                     "from_state": current["state"],
@@ -758,28 +766,28 @@ else:
                     "actor": actor_id,
                     "version_after": current["version"],
                 })
-                
+
                 field_value = {
                     "field_path": body.field_path,
                     "corrected": body.corrected_value,
                     "classification": "INTERNAL",
                     "masked": False,
                 }
-                
+
                 fields_list = current.setdefault("fields", [])
                 current["fields"] = [f for f in fields_list if f.get("field_path") != body.field_path]
                 current["fields"].append(field_value)
-                
+
                 receipt = {
                     "correction_id": cid,
-                    "status": "ACCEPTED",
+                    "status": "APPLIED",
                     "intake_id": intake_id,
                     "version": current["version"],
                     "audit_event_id": audit_event_id,
                     "correlation_id": correlation_id,
                 }
                 return receipt, 201
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "proposeCorrection", make)
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
@@ -805,20 +813,20 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] += 1
                 aid = str(uuid4())
                 audit_event_id = str(uuid4())
                 ts = now()
-                
+
                 current["assigned_to"] = body.owner_subject_id
                 current["due_at"] = body.due_at
                 current["updated_at"] = ts
-                
+
                 current["processing_history"].append({
                     "transition_id": str(uuid4()),
                     "from_state": current["state"],
@@ -827,7 +835,7 @@ else:
                     "actor": actor_id,
                     "version_after": current["version"],
                 })
-                
+
                 value = {
                     "assignment_id": aid,
                     "status": "ASSIGNED",
@@ -835,10 +843,12 @@ else:
                     "due_at": body.due_at,
                     "version": current["version"],
                     "audit_event_id": audit_event_id,
+                    "tenant_id": tenant_id,
+                    "intake_id": intake_id,
                 }
                 active.assignments[aid] = value
                 return value, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "assignIntake", make)
             response.status_code = code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -861,20 +871,20 @@ else:
             job = active.jobs.get(job_id)
             if job is None:
                 raise HTTPException(404, "job not found")
-            
+
             intake = next((v for v in active.intakes.values() if v.get("correlation_id") == job.get("correlation_id")), None)
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, job["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 job["attempt"] += 1
                 job["version"] += 1
                 job["status"] = "QUEUED"
                 job["checkpoint"] = body.checkpoint
-                
+
                 receipt = {
                     "job_id": job_id,
                     "status": "QUEUED",
@@ -884,7 +894,7 @@ else:
                     "correlation_id": job["correlation_id"],
                 }
                 return receipt, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "retryJob", make)
             response.status_code = code
             return JobReceipt(**val)
@@ -914,7 +924,7 @@ else:
             key: Optional[str] = Header(None, alias="Idempotency-Key"),
         ) -> SavedView:
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 svid = str(uuid4())
                 value = {
@@ -930,7 +940,7 @@ else:
                 }
                 active.saved_views.append(value)
                 return value, 201
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "createSavedView", make)
             response.status_code = code
             return SavedView(**val)
@@ -954,16 +964,16 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 current["version"] += 1
                 current["state"] = "PROMOTED"
                 current["updated_at"] = now()
-                
+
                 current["processing_history"].append({
                     "transition_id": str(uuid4()),
                     "from_state": "READY",
@@ -972,7 +982,7 @@ else:
                     "actor": actor_id,
                     "version_after": current["version"],
                 })
-                
+
                 value = {
                     "promotion_decision_id": did,
                     "intake_id": intake_id,
@@ -985,7 +995,7 @@ else:
                 }
                 active.promotions[did] = value
                 return value, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestCandidatePromotion", make)
             response.status_code = code
             return PromotionDecisionReceipt(**val)
@@ -1001,12 +1011,12 @@ else:
             if promotion_decision_id not in active.promotions:
                 raise HTTPException(404, "promotion decision not found")
             val = active.promotions[promotion_decision_id]
-            
+
             # Find intake to verify tenant
             intake = active.intakes.get(val["intake_id"])
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-                
+
             return PromotionDecisionReceipt(**val)
 
         @router.get(
@@ -1038,12 +1048,12 @@ else:
         ) -> DecisionReceipt:
             require_version(if_match, 1)
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
-                    "status": "ACCEPTED",
+                    "status": "PENDING_REVIEW",
                     "resource_versions": {},
                     "job_id": str(uuid4()),
                     "audit_event_id": str(uuid4()),
@@ -1053,7 +1063,7 @@ else:
                 }
                 active.decisions[did] = value
                 return value, 201
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "decideMatchCase", make)
             response.status_code = 200 if was_replayed else code
             return DecisionReceipt(**val)
@@ -1073,12 +1083,12 @@ else:
         ) -> DecisionReceipt:
             require_version(if_match, 1)
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
-                    "status": "ACCEPTED",
+                    "status": "PENDING_REVIEW",
                     "resource_versions": {},
                     "job_id": str(uuid4()),
                     "audit_event_id": str(uuid4()),
@@ -1088,7 +1098,7 @@ else:
                 }
                 active.decisions[did] = value
                 return value, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "mergeProperties", make)
             response.status_code = 200 if was_replayed else code
             return DecisionReceipt(**val)
@@ -1108,12 +1118,12 @@ else:
         ) -> DecisionReceipt:
             require_version(if_match, 1)
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
-                    "status": "ACCEPTED",
+                    "status": "PENDING_REVIEW",
                     "resource_versions": {},
                     "job_id": str(uuid4()),
                     "audit_event_id": str(uuid4()),
@@ -1123,7 +1133,7 @@ else:
                 }
                 active.decisions[did] = value
                 return value, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "splitProperty", make)
             response.status_code = 200 if was_replayed else code
             return DecisionReceipt(**val)
@@ -1143,12 +1153,12 @@ else:
         ) -> DecisionReceipt:
             require_version(if_match, 1)
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
-                    "status": "ACCEPTED",
+                    "status": "PENDING_REVIEW",
                     "resource_versions": {},
                     "job_id": str(uuid4()),
                     "audit_event_id": str(uuid4()),
@@ -1158,7 +1168,7 @@ else:
                 }
                 active.decisions[did] = value
                 return value, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "unmergeProperty", make)
             response.status_code = 200 if was_replayed else code
             return DecisionReceipt(**val)
@@ -1169,7 +1179,7 @@ else:
             current = collection.get(resource_id)
             if current is None:
                 raise HTTPException(404, "resource not found")
-            
+
             current[version_key] = int(current.get(version_key, 1)) + 1
             from_state = None
             if "state" in current:
@@ -1178,9 +1188,9 @@ else:
             elif "status" in current:
                 from_state = current["status"]
                 current["status"] = to_state
-            
+
             current["updated_at"] = now()
-            
+
             if "processing_history" in current:
                 current["processing_history"].append({
                     "transition_id": str(uuid4()),
@@ -1212,15 +1222,15 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
                 tr = receipt("SUBMITTED", "CANCELLED", updated["version"])
                 return tr, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "cancelIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1245,16 +1255,16 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state", "SUBMITTED")
                 updated = generic_mutate(active.intakes, intake_id, "QUARANTINED", actor_id)
                 tr = receipt(from_state, "QUARANTINED", updated["version"])
                 return tr, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "quarantineIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1279,16 +1289,16 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state", "QUARANTINED")
                 updated = generic_mutate(active.intakes, intake_id, "SUBMITTED", actor_id)
                 tr = receipt(from_state, "SUBMITTED", updated["version"])
                 return tr, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reopenIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1311,14 +1321,25 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            
+
+            # Tenant isolation check
+            assignment_tenant = current.get("tenant_id")
+            if not assignment_tenant:
+                intake = active.intakes.get(current.get("intake_id", ""))
+                if not intake:
+                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
+                if intake:
+                    assignment_tenant = intake.get("scope", {}).get("tenant_id")
+            if assignment_tenant and assignment_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "claimAssignment", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1341,15 +1362,26 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            
+
+            # Tenant isolation check
+            assignment_tenant = current.get("tenant_id")
+            if not assignment_tenant:
+                intake = active.intakes.get(current.get("intake_id", ""))
+                if not intake:
+                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
+                if intake:
+                    assignment_tenant = intake.get("scope", {}).get("tenant_id")
+            if assignment_tenant and assignment_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
-                current["owner_subject_id"] = body.new_owner_subject_id
+                current["owner_subject_id"] = body.target_owner_subject_id
                 updated = generic_mutate(active.assignments, assignment_id, "ASSIGNED", actor_id)
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "transferAssignment", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1372,14 +1404,25 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            
+
+            # Tenant isolation check
+            assignment_tenant = current.get("tenant_id")
+            if not assignment_tenant:
+                intake = active.intakes.get(current.get("intake_id", ""))
+                if not intake:
+                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
+                if intake:
+                    assignment_tenant = intake.get("scope", {}).get("tenant_id")
+            if assignment_tenant and assignment_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "completeAssignment", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1411,15 +1454,15 @@ else:
                     "correlation_id": str(uuid4()),
                 }
                 active.slas[sla_instance_id] = current
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
                 updated["active_pause_interval_id"] = str(uuid4())
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "pauseSla", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1442,15 +1485,15 @@ else:
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.slas, sla_instance_id, "ACTIVE", actor_id)
                 updated["active_pause_interval_id"] = None
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "resumeSla", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1473,16 +1516,16 @@ else:
             current = active.promotions.get(promotion_decision_id)
             if current is None:
                 raise HTTPException(404, "promotion decision not found")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
-                to_state = "APPROVED" if body.decision == "approve" else "REJECTED"
+                to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
                 updated = generic_mutate(active.promotions, promotion_decision_id, to_state, actor_id)
                 updated["reviewer_subject_id"] = actor_id
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewPromotionDecision", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1505,15 +1548,15 @@ else:
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
-                to_state = "APPROVED" if body.decision == "approve" else "REJECTED"
+                to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
                 return updated, 200
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewIdentityDecision", make)
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'"{current["version"]}"'
@@ -1536,14 +1579,14 @@ else:
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
-            
+
             require_version(if_match, current["version"])
             actor_id = request.headers.get("x-subject-id") or "system"
-            
+
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
                 return updated, 202
-            
+
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestIdentityDecisionReversal", make)
             response.status_code = code
             response.headers["ETag"] = f'"{current["version"]}"'

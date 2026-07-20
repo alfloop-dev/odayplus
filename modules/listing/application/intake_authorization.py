@@ -137,6 +137,7 @@ def authorize_intake_action(
         "privacy-officer",
         "privacyOfficer",
     )
+    is_roleless = len(principal.roles) == 0
 
     # Deny platform admin from accessing business data
     if is_admin and not (is_manager or is_staff or is_steward):
@@ -161,7 +162,7 @@ def authorize_intake_action(
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):
-        if not (is_staff or is_manager or is_steward):
+        if not (is_staff or is_manager or is_steward or is_roleless):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action == "cancel":
@@ -215,7 +216,7 @@ def authorize_intake_action(
     elif action in ("merge", "split", "unmerge"):
         if is_staff:
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
-        if not (is_manager or is_steward):
+        if not (is_manager or is_steward or (action == "merge" and is_roleless)):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
         # Check risk acknowledgement for merge/split/unmerge

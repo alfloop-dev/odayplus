@@ -48,12 +48,12 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     }
     idem_key = f"idem-url-{uuid4()}"
     headers = {**HEADERS_A, "Idempotency-Key": idem_key}
-    
+
     resp = client.post("/api/v1/intakes/url", json=payload, headers=headers)
     assert resp.status_code == 202
     assert "ETag" in resp.headers
     assert resp.headers["Idempotency-Replayed"] == "false"
-    
+
     receipt = resp.json()
     intake_id = receipt["intake_id"]
     job_id = receipt["job_id"]
@@ -100,7 +100,9 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     # 4. assignIntake (PUT /api/v1/intakes/{id}/assignment)
     assign_payload = {
         "owner_subject_id": "operator-steward",
-        "due_at": "2026-07-25T12:00:00Z"
+        "owner_role": "steward",
+        "due_at": "2026-07-25T12:00:00Z",
+        "reason": "Initial assignment logic review",
     }
     # Missing If-Match -> 428 Precondition Required
     resp_assign_fail = client.put(
@@ -145,7 +147,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     )
     assert resp_correct.status_code == 201
     correct_receipt = resp_correct.json()
-    assert correct_receipt["status"] == "ACCEPTED"
+    assert correct_receipt["status"] == "APPLIED"
     assert correct_receipt["intake_id"] == intake_id
     version_after_correct = correct_receipt["version"]
 
@@ -249,6 +251,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 def test_batch_intake_operation(client: TestClient) -> None:
     batch_payload = {
         "batch_id": f"batch-{uuid4()}",
+        "method": "MANUAL",
         "scope": {
             "tenant_id": "tenant-a"
         },
@@ -264,7 +267,7 @@ def test_batch_intake_operation(client: TestClient) -> None:
             }
         ]
     }
-    
+
     resp = client.post(
         "/api/v1/intake-batches",
         json=batch_payload,
@@ -299,7 +302,7 @@ def test_job_retry_operation(client: TestClient) -> None:
         "checkpoint": "PARSING",
         "reason": "Transient failure retry"
     }
-    
+
     # Retry with correct If-Match -> 202
     resp_retry = client.post(
         f"/api/v1/jobs/{job_id}/retry",
@@ -335,7 +338,7 @@ def test_saved_views_operations(client: TestClient) -> None:
         "query": {"state": "SUBMITTED"},
         "visibility": "private"
     }
-    
+
     # 1. createSavedView
     resp = client.post(
         "/api/v1/saved-views",
@@ -375,10 +378,15 @@ def test_assignment_actions(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-setup-{uuid4()}"}
     )
     intake_id = resp.json()["intake_id"]
-    
+
     resp_assign = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
-        json={"owner_subject_id": "actor-a"},
+        json={
+            "owner_subject_id": "actor-a",
+            "owner_role": "reviewer",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Triage assignment",
+        },
         headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-action-{uuid4()}", "If-Match": '"1"'}
     )
     assignment_id = resp_assign.json()["assignment_id"]
@@ -398,7 +406,12 @@ def test_assignment_actions(client: TestClient) -> None:
     # 2. transferAssignment
     resp_transfer = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/transfer",
-        json={"new_owner_subject_id": "actor-c"},
+        json={
+            "target_owner_subject_id": "actor-c",
+            "target_owner_role": "reviewer",
+            "reason": "Escalate to senior reviewer",
+            "handoff_note": "Awaiting escalation triage review",
+        },
         headers={**HEADERS_A, "Idempotency-Key": f"idem-transfer-{uuid4()}", "If-Match": f'"{version_after_claim}"'}
     )
     assert resp_transfer.status_code == 200
@@ -419,7 +432,7 @@ def test_assignment_actions(client: TestClient) -> None:
 
 def test_sla_actions(client: TestClient) -> None:
     sla_id = f"sla-{uuid4()}"
-    
+
     # 1. pauseSla
     resp_pause = client.post(
         f"/api/v1/sla-instances/{sla_id}/actions/pause",
@@ -444,7 +457,7 @@ def test_sla_actions(client: TestClient) -> None:
 
 def test_identity_and_match_case_operations(client: TestClient) -> None:
     match_case_id = f"mc-{uuid4()}"
-    
+
     # 1. decideMatchCase
     decision_payload = {
         "decision_type": "MERGE",
@@ -459,7 +472,7 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
     )
     assert resp_decide.status_code == 201
     decision = resp_decide.json()
-    assert decision["status"] == "ACCEPTED"
+    assert decision["status"] == "PENDING_REVIEW"
     decision_id = decision["decision_id"]
 
     # 2. getIdentityDecision
@@ -469,7 +482,7 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
 
     # 3. reviewIdentityDecision
     review_payload = {
-        "decision": "approve",
+        "decision": "APPROVE",
         "reason": "Independent manager review approved",
         "risk_acknowledged": True
     }
@@ -506,7 +519,7 @@ def test_identity_graph_mutations(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-merge-{uuid4()}", "If-Match": '"1"'}
     )
     assert resp_merge.status_code == 202
-    assert resp_merge.json()["status"] == "ACCEPTED"
+    assert resp_merge.json()["status"] == "PENDING_REVIEW"
 
     # 2. splitProperty
     split_payload = {
@@ -526,7 +539,7 @@ def test_identity_graph_mutations(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-split-{uuid4()}", "If-Match": '"1"'}
     )
     assert resp_split.status_code == 202
-    assert resp_split.json()["status"] == "ACCEPTED"
+    assert resp_split.json()["status"] == "PENDING_REVIEW"
 
     # 3. unmergeProperty
     unmerge_payload = {
@@ -546,4 +559,4 @@ def test_identity_graph_mutations(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-unmerge-{uuid4()}", "If-Match": '"1"'}
     )
     assert resp_unmerge.status_code == 202
-    assert resp_unmerge.json()["status"] == "ACCEPTED"
+    assert resp_unmerge.json()["status"] == "PENDING_REVIEW"
