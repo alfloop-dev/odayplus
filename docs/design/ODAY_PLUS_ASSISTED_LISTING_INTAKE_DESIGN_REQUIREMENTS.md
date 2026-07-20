@@ -287,6 +287,8 @@ ODP-UXD-003 Expansion workflow blueprint.
 
 ## 13. Engineering Reference
 
+- UI / visual design team handoff:
+  `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_HANDOFF_REQUIREMENTS.md`
 - R5 Fleet implementation addendum:
   `docs/evidence/fleet_dispatch/ODP-EXT-002-R5-ADDENDUM.md`
 - Historical ingestion contract:
