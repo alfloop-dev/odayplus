@@ -6,7 +6,7 @@ from apps.api.oday_api.main import create_app
 
 HEADERS = {
     "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
-    "X-Subject-Id": "test-user",
+    "X-Subject-Id": "00000000-0000-0000-0000-000000000101",
     "X-Roles": "expansion_user",
 }
 
@@ -57,4 +57,7 @@ def test_if_match_and_assignment_contract() -> None:
 
 def test_tenant_scope_is_fail_closed() -> None:
     assert TestClient(create_app()).get("/api/v1/intakes").status_code == 401
-    assert TestClient(create_app()).get("/api/v1/intakes", headers={"X-Subject-Id": "test-user"}).status_code == 403
+    assert TestClient(create_app()).get(
+        "/api/v1/intakes",
+        headers={"X-Subject-Id": "00000000-0000-0000-0000-000000000101"},
+    ).status_code == 403

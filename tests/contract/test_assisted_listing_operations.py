@@ -5,35 +5,45 @@ from fastapi.testclient import TestClient
 from uuid import uuid4
 
 from apps.api.oday_api.main import create_app
+from apps.api.app.routes.listings import AssistedIntakeStore
+
+TENANT_A = "00000000-0000-0000-0000-000000000001"
+TENANT_B = "00000000-0000-0000-0000-000000000002"
+ACTOR_A = "00000000-0000-0000-0000-000000000101"
+ACTOR_A_REVIEWER = "00000000-0000-0000-0000-000000000102"
+ACTOR_C = "00000000-0000-0000-0000-000000000103"
+ACTOR_B = "00000000-0000-0000-0000-000000000104"
+OWNER_STEWARD = "00000000-0000-0000-0000-000000000105"
+BRAND_X = "00000000-0000-0000-0000-000000000201"
 
 # Standard headers for authenticating as tenant-a
 HEADERS_A = {
-    "x-subject-id": "actor-a",
-    "x-tenant-id": "tenant-a",
+    "x-subject-id": ACTOR_A,
+    "x-tenant-id": TENANT_A,
     "x-roles": "site_reviewer,data_owner,expansion_user",
     "x-operator-role": "expansion-manager",
 }
 
 # Standard headers for reviewer in tenant-a (to avoid self-review errors)
 HEADERS_A_REVIEWER = {
-    "x-subject-id": "actor-a-reviewer",
-    "x-tenant-id": "tenant-a",
+    "x-subject-id": ACTOR_A_REVIEWER,
+    "x-tenant-id": TENANT_A,
     "x-roles": "site_reviewer,data_owner,expansion_user",
     "x-operator-role": "expansion-manager",
 }
 
 # Standard headers for actor-c in tenant-a
 HEADERS_C = {
-    "x-subject-id": "actor-c",
-    "x-tenant-id": "tenant-a",
+    "x-subject-id": ACTOR_C,
+    "x-tenant-id": TENANT_A,
     "x-roles": "site_reviewer,data_owner,expansion_user",
     "x-operator-role": "expansion-manager",
 }
 
 # Standard headers for authenticating as tenant-b
 HEADERS_B = {
-    "x-subject-id": "actor-b",
-    "x-tenant-id": "tenant-b",
+    "x-subject-id": ACTOR_B,
+    "x-tenant-id": TENANT_B,
     "x-roles": "site_reviewer,data_owner,expansion_user",
     "x-operator-role": "expansion-manager",
 }
@@ -47,14 +57,22 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def _store_with_intake(intake_id: str) -> AssistedIntakeStore:
+    return next(
+        store
+        for store in reversed(AssistedIntakeStore._instances)
+        if intake_id in store.intakes
+    )
+
+
 def test_authentication_and_tenant_isolation_boundary(client: TestClient) -> None:
     # 1. 401 Unauthorized when missing x-subject-id (not authenticated)
-    resp = client.get("/api/v1/intakes", headers={"x-tenant-id": "tenant-a"})
+    resp = client.get("/api/v1/intakes", headers={"x-tenant-id": TENANT_A})
     assert resp.status_code == 401
     assert "code" in resp.json()
 
     # 2. 403 Forbidden when missing x-tenant-id
-    resp = client.get("/api/v1/intakes", headers={"x-subject-id": "actor-a"})
+    resp = client.get("/api/v1/intakes", headers={"x-subject-id": ACTOR_A})
     assert resp.status_code == 403
     assert "code" in resp.json()
 
@@ -65,8 +83,8 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     payload = {
         "original_url": "https://example.com/listings/123",
         "scope": {
-            "tenant_id": "tenant-a",
-            "brand_id": "brand-x",
+            "tenant_id": TENANT_A,
+            "brand_id": BRAND_X,
         }
     }
     idem_key = f"idem-url-{uuid4()}"
@@ -102,7 +120,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     detail = resp_get.json()
     assert detail["intake_id"] == intake_id
     assert detail["original_url"] == payload["original_url"]
-    assert detail["scope"]["tenant_id"] == "tenant-a"
+    assert detail["scope"]["tenant_id"] == TENANT_A
 
     # Tenant isolation on getIntake
     resp_get_b = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_B)
@@ -123,7 +141,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 
     # 4. assignIntake (PUT /api/v1/intakes/{id}/assignment)
     assign_payload = {
-        "owner_subject_id": "operator-steward",
+        "owner_subject_id": OWNER_STEWARD,
         "owner_role": "steward",
         "due_at": "2026-07-25T12:00:00Z",
         "reason": "Initial assignment logic review",
@@ -135,6 +153,18 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-{uuid4()}"}
     )
     assert resp_assign_fail.status_code == 428
+
+    cross_tenant_assign = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json=assign_payload,
+        headers={
+            **HEADERS_B,
+            "Idempotency-Key": f"idem-assign-cross-{uuid4()}",
+            "If-Match": f'W/"{version}"',
+        },
+    )
+    assert cross_tenant_assign.status_code == 403
+    assert cross_tenant_assign.json()["code"] == "TENANT_SCOPE_DENIED"
 
     # Correct If-Match -> 200
     resp_assign = client.put(
@@ -150,9 +180,12 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert "ETag" in resp_assign.headers
     assign_receipt = resp_assign.json()
     assert assign_receipt["status"] == "ASSIGNED"
-    assert assign_receipt["owner_subject_id"] == "operator-steward"
+    assert assign_receipt["owner_subject_id"] == OWNER_STEWARD
     assignment_id = assign_receipt["assignment_id"]
     new_version = assign_receipt["version"]
+
+    store = _store_with_intake(intake_id)
+    store.intakes[intake_id]["state"] = "AWAITING_ASSISTED_ENTRY"
 
     # 5. proposeCorrection (POST /api/v1/intakes/{id}/corrections)
     correct_payload = {
@@ -175,6 +208,8 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert correct_receipt["intake_id"] == intake_id
     version_after_correct = correct_receipt["version"]
 
+    store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
+
     # 6. quarantineIntake (POST /api/v1/intakes/{id}/actions/quarantine)
     quarantine_payload = {"reason": "Quarantine due to active incident triage", "risk_acknowledged": True, "incident_or_change_id": "INC-101"}
     resp_quar = client.post(
@@ -188,7 +223,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     )
     assert resp_quar.status_code == 200
     quar_receipt = resp_quar.json()
-    assert quar_receipt["from_state"] == "SUBMITTED"
+    assert quar_receipt["from_state"] == "NEEDS_REVIEW"
     assert quar_receipt["to_state"] == "QUARANTINED"
     version_after_quar = quar_receipt["version_after"]
 
@@ -208,28 +243,43 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert reopen_receipt["to_state"] == "CHECKING_SOURCE_POLICY"
     version_after_reopen = reopen_receipt["version_after"]
 
-    # 8. cancelIntake (POST /api/v1/intakes/{id}/actions/cancel)
+    # 8. cancelIntake on a separate SUBMITTED intake.
+    cancel_setup = client.post(
+        "/api/v1/intakes/url",
+        json={"original_url": "https://example.com/listings/cancel", "scope": {"tenant_id": TENANT_A}},
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-cancel-setup-{uuid4()}"},
+    )
+    cancel_intake_id = cancel_setup.json()["intake_id"]
     cancel_payload = {"reason": "Duplicate submission"}
     resp_cancel = client.post(
-        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        f"/api/v1/intakes/{cancel_intake_id}/actions/cancel",
         json=cancel_payload,
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-cancel-{uuid4()}",
-            "If-Match": f'W/"{version_after_reopen}"'
+            "If-Match": 'W/"1"',
         }
     )
     assert resp_cancel.status_code == 200
     cancel_receipt = resp_cancel.json()
-    assert cancel_receipt["from_state"] == "CHECKING_SOURCE_POLICY"
+    assert cancel_receipt["from_state"] == "SUBMITTED"
     assert cancel_receipt["to_state"] == "CANCELLED"
     version_after_cancel = cancel_receipt["version_after"]
 
+    cancelled_quarantine = client.post(
+        f"/api/v1/intakes/{cancel_intake_id}/actions/quarantine",
+        json={"reason": "Invalid transition regression", "risk_acknowledged": True},
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-cancelled-quarantine-{uuid4()}",
+            "If-Match": f'W/"{version_after_cancel}"',
+        },
+    )
+    assert cancelled_quarantine.status_code == 409
+    assert cancelled_quarantine.json()["code"] == "WORKFLOW_STATE_DENIED"
+
     # Transition the intake state to READY in store to satisfy the promotion prerequisite
-    from apps.api.app.routes.listings import AssistedIntakeStore
-    for store in getattr(AssistedIntakeStore, "_instances", []):
-        if intake_id in store.intakes:
-            store.intakes[intake_id]["state"] = "READY"
+    store.intakes[intake_id]["state"] = "READY"
 
     # 9. requestCandidatePromotion (POST /api/v1/intakes/{id}/promotion-requests)
 
@@ -245,7 +295,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-promo-{uuid4()}",
-            "If-Match": f'W/"{version_after_cancel}"'
+            "If-Match": f'W/"{version_after_reopen}"'
         }
     )
     assert resp_promo.status_code == 202
@@ -284,10 +334,10 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 
 def test_batch_intake_operation(client: TestClient) -> None:
     batch_payload = {
-        "batch_id": f"batch-{uuid4()}",
+        "batch_id": str(uuid4()),
         "method": "MANUAL",
         "scope": {
-            "tenant_id": "tenant-a"
+            "tenant_id": TENANT_A
         },
         "rows": [
             {
@@ -322,7 +372,7 @@ def test_job_retry_operation(client: TestClient) -> None:
     # Since our store is in memory, let's create a submitUrlIntake to auto-register a job
     payload = {
         "original_url": "https://example.com/listings/job-test",
-        "scope": {"tenant_id": "tenant-a"}
+        "scope": {"tenant_id": TENANT_A}
     }
     resp = client.post(
         "/api/v1/intakes/url",
@@ -331,6 +381,10 @@ def test_job_retry_operation(client: TestClient) -> None:
     )
     receipt = resp.json()
     job_id = receipt["job_id"]
+    store = _store_with_intake(receipt["intake_id"])
+    store.jobs[job_id]["status"] = "FAILED"
+    store.jobs[job_id]["checkpoint"] = "PARSING"
+    store.intakes[receipt["intake_id"]]["state"] = "FAILED"
 
     retry_payload = {
         "checkpoint": "PARSING",
@@ -370,6 +424,7 @@ def test_saved_views_operations(client: TestClient) -> None:
     view_payload = {
         "name": "My Active Intakes",
         "query": {"state": "SUBMITTED"},
+        "resource": "intake",
         "visibility": "PRIVATE"
     }
 
@@ -382,7 +437,7 @@ def test_saved_views_operations(client: TestClient) -> None:
     assert resp.status_code == 201
     view = resp.json()
     assert view["name"] == view_payload["name"]
-    assert view["owner_subject_id"] == "actor-a"
+    assert view["owner_subject_id"] == ACTOR_A
     view_id = view["saved_view_id"]
 
     # 2. listSavedViews
@@ -404,7 +459,7 @@ def test_assignment_actions(client: TestClient) -> None:
     # We can assign an intake using the assignIntake endpoint first
     payload = {
         "original_url": "https://example.com/listings/assign-test",
-        "scope": {"tenant_id": "tenant-a"}
+        "scope": {"tenant_id": TENANT_A}
     }
     resp = client.post(
         "/api/v1/intakes/url",
@@ -416,7 +471,7 @@ def test_assignment_actions(client: TestClient) -> None:
     resp_assign = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
         json={
-            "owner_subject_id": "actor-a",
+            "owner_subject_id": ACTOR_A,
             "owner_role": "reviewer",
             "due_at": "2026-07-25T12:00:00Z",
             "reason": "Triage assignment",
@@ -441,7 +496,7 @@ def test_assignment_actions(client: TestClient) -> None:
     resp_transfer = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/transfer",
         json={
-            "target_owner_subject_id": "actor-c",
+            "target_owner_subject_id": ACTOR_C,
             "target_owner_role": "reviewer",
             "reason": "Escalate to senior reviewer",
             "handoff_note": "Awaiting escalation triage review",
@@ -450,9 +505,12 @@ def test_assignment_actions(client: TestClient) -> None:
     )
     assert resp_transfer.status_code == 200
     transfer_receipt = resp_transfer.json()
-    assert transfer_receipt["status"] == "ASSIGNED"
-    assert transfer_receipt["owner_subject_id"] == "actor-c"
+    assert transfer_receipt["status"] == "TRANSFERRED"
+    assert transfer_receipt["owner_subject_id"] == ACTOR_C
     version_after_transfer = transfer_receipt["version"]
+
+    store = _store_with_intake(intake_id)
+    store.assignments[assignment_id]["status"] = "CLAIMED"
 
     # 3. completeAssignment
     resp_complete = client.post(
@@ -467,7 +525,18 @@ def test_assignment_actions(client: TestClient) -> None:
 
 
 def test_sla_actions(client: TestClient) -> None:
-    sla_id = f"sla-{uuid4()}"
+    sla_id = str(uuid4())
+    latest_store = AssistedIntakeStore._instances[-1]
+    latest_store.slas[sla_id] = {
+        "sla_instance_id": sla_id,
+        "state": "ON_TRACK",
+        "due_at": "2026-07-25T12:00:00Z",
+        "paused_duration_seconds": 0,
+        "version": 1,
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+        "tenant_id": TENANT_A,
+    }
 
     # 1. pauseSla
     resp_pause = client.post(
@@ -493,14 +562,14 @@ def test_sla_actions(client: TestClient) -> None:
 
 
 def test_identity_and_match_case_operations(client: TestClient) -> None:
-    match_case_id = f"mc-{uuid4()}"
+    match_case_id = str(uuid4())
 
     # 1. decideMatchCase
     decision_payload = {
         "decision_type": "MERGE",
         "reason": "Same physical property verified",
         "risk_acknowledged": True,
-        "target_property_id": "prop-123"
+        "target_property_id": str(uuid4())
     }
     resp_decide = client.post(
         f"/api/v1/match-cases/{match_case_id}/decisions",
@@ -544,10 +613,18 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
 
 
 def test_identity_graph_mutations(client: TestClient) -> None:
+    source_property_1 = str(uuid4())
+    source_property_2 = str(uuid4())
+    target_property = str(uuid4())
+    split_property_1 = str(uuid4())
+    split_property_2 = str(uuid4())
+    edge_1 = str(uuid4())
+    edge_2 = str(uuid4())
+
     # 1. mergeProperties
     merge_payload = {
-        "source_property_ids": ["prop-1", "prop-2"],
-        "target_property_id": "prop-target",
+        "source_property_ids": [source_property_1, source_property_2],
+        "target_property_id": target_property,
         "reason": "Duplicate properties merged",
         "risk_acknowledged": True
     }
@@ -561,15 +638,15 @@ def test_identity_graph_mutations(client: TestClient) -> None:
 
     # 2. splitProperty
     split_payload = {
-        "source_property_id": "prop-target",
+        "source_property_id": target_property,
         "partitions": [
             {
-                "target_property_id": "prop-split-1",
-                "source_identity_edge_ids": ["edge-1"]
+                "target_property_id": split_property_1,
+                "source_identity_edge_ids": [edge_1]
             },
             {
-                "target_property_id": "prop-split-2",
-                "source_identity_edge_ids": ["edge-2"]
+                "target_property_id": split_property_2,
+                "source_identity_edge_ids": [edge_2]
             }
         ],
         "reason": "Property split by steward",
@@ -585,11 +662,11 @@ def test_identity_graph_mutations(client: TestClient) -> None:
 
     # 3. unmergeProperty
     unmerge_payload = {
-        "original_decision_id": f"dec-{uuid4()}",
+        "original_decision_id": str(uuid4()),
         "replacement_edges": [
             {
-                "target_property_id": "prop-1",
-                "source_identity_edge_ids": ["edge-1"]
+                "target_property_id": source_property_1,
+                "source_identity_edge_ids": [edge_1]
             }
         ],
         "reason": "Unmerging incorrect match",

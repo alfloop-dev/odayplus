@@ -133,8 +133,8 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     # 2. Schema Negative validation tests in live runtime
     client = TestClient(app)
     HEADERS_A = {
-        "x-subject-id": "actor-a",
-        "x-tenant-id": "tenant-a",
+        "x-subject-id": "00000000-0000-0000-0000-000000000101",
+        "x-tenant-id": "00000000-0000-0000-0000-000000000001",
         "x-roles": "site_reviewer,data_owner,expansion_user",
         "x-operator-role": "expansion-manager",
     }
@@ -148,7 +148,7 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     resp_dt = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
         json={
-            "owner_subject_id": "actor-a",
+            "owner_subject_id": "00000000-0000-0000-0000-000000000101",
             "owner_role": "reviewer",
             "due_at": "invalid-date",
             "reason": "Triage assignment",
@@ -159,12 +159,12 @@ def test_live_runtime_serves_every_effective_operation() -> None:
 
     # Negative Test 3: Enum validation failure in request body
     resp_enum = client.post(
-        f"/api/v1/match-cases/mc-123/decisions",
+        f"/api/v1/match-cases/{uuid4()}/decisions",
         json={
             "decision_type": "INVALID_ENUM_VALUE",
             "reason": "Test enum validation",
             "risk_acknowledged": True,
-            "target_property_id": "prop-123",
+            "target_property_id": str(uuid4()),
         },
         headers={**HEADERS_A, "Idempotency-Key": f"idem-decide-{uuid4()}", "If-Match": 'W/"1"'}
     )
@@ -174,7 +174,7 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     resp_minitems = client.post(
         "/api/v1/identity/split",
         json={
-            "source_property_id": "prop-target",
+            "source_property_id": str(uuid4()),
             "partitions": [],  # Empty partitions array, schema requires minItems: 2
             "reason": "Property split by steward validation check",
             "risk_acknowledged": True
@@ -186,7 +186,7 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     # Negative Test 5: Idempotency-Key validation failure (length < 16)
     resp_idem = client.post(
         "/api/v1/intakes/url",
-        json={"original_url": "https://example.com", "scope": {"tenant_id": "tenant-a"}},
+        json={"original_url": "https://example.com", "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}},
         headers={**HEADERS_A, "Idempotency-Key": "short"}
     )
     assert resp_idem.status_code == 422, "Idempotency key format validation bypass"
@@ -195,7 +195,7 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     resp_ifmatch = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
         json={
-            "owner_subject_id": "actor-a",
+            "owner_subject_id": "00000000-0000-0000-0000-000000000101",
             "owner_role": "reviewer",
             "due_at": "2026-07-25T12:00:00Z",
             "reason": "Triage assignment",
@@ -208,7 +208,7 @@ def test_live_runtime_serves_every_effective_operation() -> None:
     resp_ifmatch_missing = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
         json={
-            "owner_subject_id": "actor-a",
+            "owner_subject_id": "00000000-0000-0000-0000-000000000101",
             "owner_role": "reviewer",
             "due_at": "2026-07-25T12:00:00Z",
             "reason": "Triage assignment",

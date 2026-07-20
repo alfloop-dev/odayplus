@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
@@ -381,13 +382,21 @@ def install_error_handlers(app: Any) -> None:
             code = "BACKPRESSURE_ACTIVE"
             next_action = "WAIT"
             retryable = True
+        elif status_code == 400:
+            code = "VALIDATION_FAILED"
+            next_action = "CORRECT_INPUT"
+
+        try:
+            contract_correlation_id = str(UUID(correlation_id)) if correlation_id else str(uuid4())
+        except (TypeError, ValueError):
+            contract_correlation_id = str(uuid4())
 
         occurred_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         return {
             "code": code,
             "message": detail_str,
             "retryable": retryable,
-            "correlation_id": correlation_id or "00000000-0000-0000-0000-000000000000",
+            "correlation_id": contract_correlation_id,
             "reason_code": None,
             "field_errors": field_errors or None,
             "current_version": None,
@@ -468,11 +477,21 @@ def install_error_handlers(app: Any) -> None:
         from fastapi.encoders import jsonable_encoder
         encoded = jsonable_encoder(exc.errors())
 
-        # Check if the validation error is due to a missing If-Match header
+        # Missing If-Match is a 428 precondition failure; a present but
+        # malformed weak ETag is a 400 request-format failure.
         for error in encoded:
             loc = error.get("loc", [])
             if len(loc) >= 2 and str(loc[0]) == "header" and str(loc[1]).lower() == "if-match":
                 if _is_v1(request):
+                    if error.get("type") != "missing":
+                        return JSONResponse(
+                            status_code=400,
+                            content=map_to_api_error(
+                                400,
+                                "invalid If-Match format; expected W/\"<version>\"",
+                                _correlation_id(request),
+                            ),
+                        )
                     return JSONResponse(
                         status_code=428,
                         content=map_to_api_error(428, "Precondition Required: If-Match header is required", _correlation_id(request)),
