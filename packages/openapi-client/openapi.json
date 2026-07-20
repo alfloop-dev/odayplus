@@ -437,6 +437,7 @@
             "type": "string"
           },
           "reason": {
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           }
@@ -451,6 +452,7 @@
         "type": "object"
       },
       "AssignmentTransferRequest": {
+        "additionalProperties": false,
         "properties": {
           "due_at": {
             "anyOf": [
@@ -464,10 +466,14 @@
             "title": "Due At"
           },
           "handoff_note": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Handoff Note",
             "type": "string"
           },
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -785,6 +791,7 @@
           "expected_effective_value_sha256": {
             "anyOf": [
               {
+                "pattern": "^[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -798,6 +805,8 @@
             "type": "string"
           },
           "reason": {
+            "maxLength": 2000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -2954,6 +2963,8 @@
             "type": "string"
           },
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -3044,6 +3055,7 @@
             "title": "Expected Property Versions"
           },
           "reason": {
+            "minLength": 20,
             "title": "Reason",
             "type": "string"
           },
@@ -4504,10 +4516,13 @@
       "PromotionRequest": {
         "properties": {
           "gate_snapshot_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
             "title": "Gate Snapshot Sha256",
             "type": "string"
           },
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -4527,6 +4542,8 @@
             "type": "boolean"
           },
           "target_format_code": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Target Format Code",
             "type": "string"
           }
@@ -4584,8 +4601,11 @@
         "type": "object"
       },
       "ReasonCommand": {
+        "additionalProperties": false,
         "properties": {
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           }
@@ -4918,12 +4938,15 @@
         "type": "object"
       },
       "ReviewDecisionRequest": {
+        "additionalProperties": false,
         "properties": {
           "decision": {
             "title": "Decision",
             "type": "string"
           },
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -4955,10 +4978,12 @@
         "type": "object"
       },
       "RiskReasonCommand": {
+        "additionalProperties": false,
         "properties": {
           "incident_or_change_id": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -4967,18 +4992,21 @@
             ],
             "title": "Incident Or Change Id"
           },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
           "risk_acknowledged": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk Acknowledged"
+            "title": "Risk Acknowledged",
+            "type": "boolean"
           }
         },
+        "required": [
+          "reason",
+          "risk_acknowledged"
+        ],
         "title": "RiskReasonCommand",
         "type": "object"
       },
@@ -5006,6 +5034,8 @@
             "type": "string"
           },
           "name": {
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
@@ -5019,15 +5049,10 @@
             "type": "object"
           },
           "resource": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Resource"
+            "default": "intake",
+            "pattern": "^intake$",
+            "title": "Resource",
+            "type": "string"
           },
           "saved_view_id": {
             "title": "Saved View Id",
@@ -5049,6 +5074,8 @@
             "type": "integer"
           },
           "visibility": {
+            "default": "PRIVATE",
+            "pattern": "^(PRIVATE|ROLE|TENANT)$",
             "title": "Visibility",
             "type": "string"
           }
@@ -5056,7 +5083,6 @@
         "required": [
           "name",
           "query",
-          "visibility",
           "saved_view_id",
           "owner_subject_id",
           "created_at",
@@ -5068,6 +5094,8 @@
       "SavedViewRequest": {
         "properties": {
           "name": {
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
@@ -5077,15 +5105,10 @@
             "type": "object"
           },
           "resource": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Resource"
+            "default": "intake",
+            "pattern": "^intake$",
+            "title": "Resource",
+            "type": "string"
           },
           "shared_role": {
             "anyOf": [
@@ -5099,14 +5122,15 @@
             "title": "Shared Role"
           },
           "visibility": {
+            "default": "PRIVATE",
+            "pattern": "^(PRIVATE|ROLE|TENANT)$",
             "title": "Visibility",
             "type": "string"
           }
         },
         "required": [
           "name",
-          "query",
-          "visibility"
+          "query"
         ],
         "title": "SavedViewRequest",
         "type": "object"
@@ -5254,12 +5278,15 @@
         "type": "object"
       },
       "SlaPauseRequest": {
+        "additionalProperties": false,
         "properties": {
           "expected_resume_at": {
             "title": "Expected Resume At",
             "type": "string"
           },
           "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           }
@@ -5357,6 +5384,7 @@
             "type": "array"
           },
           "reason": {
+            "minLength": 20,
             "title": "Reason",
             "type": "string"
           },
@@ -5795,6 +5823,7 @@
             "type": "string"
           },
           "reason": {
+            "minLength": 20,
             "title": "Reason",
             "type": "string"
           },
@@ -5826,8 +5855,10 @@
         "type": "object"
       },
       "UrlIntakeRequest": {
+        "additionalProperties": false,
         "properties": {
           "original_url": {
+            "maxLength": 4096,
             "title": "Original Url",
             "type": "string"
           },
@@ -6674,33 +6705,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -6708,7 +6725,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RiskReasonCommand"
+                "$ref": "#/components/schemas/ReasonCommand"
               }
             }
           },
@@ -6818,33 +6835,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -6852,7 +6855,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RiskReasonCommand"
+                "$ref": "#/components/schemas/ReasonCommand"
               }
             }
           },
@@ -6962,33 +6965,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -11402,33 +11391,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -11546,33 +11521,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -11681,33 +11642,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -11816,33 +11763,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -11951,33 +11884,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -12086,17 +12005,10 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           }
         ],
@@ -12229,6 +12141,150 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "match_outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Match Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "submitted_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Submitted By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "needs_review",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Needs Review"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assigned_area_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assigned Area Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "heat_zone_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Heat Zone Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
           }
         ],
         "responses": {
@@ -12326,17 +12382,10 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           }
         ],
@@ -12556,33 +12605,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -12700,33 +12735,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -12844,33 +12865,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -12988,33 +12995,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -13132,33 +13125,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -13276,33 +13255,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -15109,33 +15074,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -16303,33 +16254,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -30725,33 +30662,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -30953,17 +30876,10 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           }
         ],
@@ -32140,33 +32056,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -32284,33 +32186,19 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "If-Match",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "title": "If-Match",
+              "type": "string"
             }
           }
         ],
@@ -32318,7 +32206,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RiskReasonCommand"
+                "$ref": "#/components/schemas/ReasonCommand"
               }
             }
           },

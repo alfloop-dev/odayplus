@@ -270,9 +270,32 @@ def install_error_handlers(app: Any) -> None:
 
     def _is_v1(request: Request) -> bool:
         path = request.url.path
-        if path.startswith("/api/v1/operator") or path.startswith("/v1/operator"):
-            return False
-        return path.startswith("/api/v1") or path.startswith("/v1")
+        intake_prefixes = (
+            "/api/v1/intakes",
+            "/api/v1/intake-batches",
+            "/api/v1/jobs",
+            "/api/v1/saved-views",
+            "/api/v1/match-cases",
+            "/api/v1/identity/",
+            "/api/v1/promotion-decisions",
+            "/api/v1/assignments",
+            "/api/v1/sla-instances",
+            "/api/v1/identity-decisions",
+            "/v1/intakes",
+            "/v1/intake-batches",
+            "/v1/saved-views",
+            "/v1/match-cases",
+            "/v1/identity/",
+            "/v1/promotion-decisions",
+            "/v1/assignments",
+            "/v1/sla-instances",
+            "/v1/identity-decisions",
+        )
+        if path.startswith(intake_prefixes):
+            if path.startswith(("/api/v1/jobs", "/v1/jobs")) and not path.endswith("/retry"):
+                return False
+            return True
+        return False
 
 
     def map_to_api_error(status_code: int, detail: Any, correlation_id: str | None) -> dict[str, Any]:
@@ -482,4 +505,3 @@ def install_error_handlers(app: Any) -> None:
                 detail=encoded,
             ),
         )
-

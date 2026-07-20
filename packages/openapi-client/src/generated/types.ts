@@ -1026,7 +1026,8 @@ export type ReviewDecisionRequest = {
 /** RiskReasonCommand */
 export type RiskReasonCommand = {
   incident_or_change_id?: string | null;
-  risk_acknowledged?: boolean | null;
+  reason: string;
+  risk_acknowledged: boolean;
 };
 
 /** Override a role's workspace grants (high-risk, audited). */
@@ -1040,20 +1041,20 @@ export type SavedView = {
   name: string;
   owner_subject_id: string;
   query: Record<string, unknown>;
-  resource?: string | null;
+  resource?: string;
   saved_view_id: string;
   shared_role?: string | null;
   version: number;
-  visibility: string;
+  visibility?: string;
 };
 
 /** SavedViewRequest */
 export type SavedViewRequest = {
   name: string;
   query: Record<string, unknown>;
-  resource?: string | null;
+  resource?: string;
   shared_role?: string | null;
-  visibility: string;
+  visibility?: string;
 };
 
 /** ScopeContext */

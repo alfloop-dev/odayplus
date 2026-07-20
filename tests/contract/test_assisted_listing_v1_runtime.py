@@ -7,6 +7,7 @@ from apps.api.oday_api.main import create_app
 HEADERS = {
     "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
     "X-Subject-Id": "test-user",
+    "X-Roles": "expansion_user",
 }
 
 

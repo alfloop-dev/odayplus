@@ -12,7 +12,7 @@ from shared.audit import InMemoryAuditLog
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator, ConfigDict
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -69,10 +69,18 @@ else:
         region_id: Optional[str] = None
 
     class UrlIntakeRequest(BaseModel):
-        original_url: str
+        model_config = ConfigDict(extra="forbid")
+        original_url: str = Field(..., max_length=4096)
         scope: ScopeContext
         owner_subject_id: Optional[str] = None
         purpose: Optional[str] = None
+
+        @field_validator("original_url")
+        @classmethod
+        def validate_uri(cls, v: str) -> str:
+            if "://" not in v:
+                raise ValueError("invalid URI scheme")
+            return v
 
     class IntakeSubmissionReceipt(BaseModel):
         intake_id: str
@@ -196,9 +204,9 @@ else:
     class CorrectionRequest(BaseModel):
         field_path: str
         corrected_value: Any
-        reason: str
+        reason: str = Field(..., min_length=3, max_length=2000)
         risk_acknowledged: Optional[bool] = None
-        expected_effective_value_sha256: Optional[str] = None
+        expected_effective_value_sha256: Optional[str] = Field(None, pattern=r"^[a-f0-9]{64}$")
 
     class CorrectionReceipt(BaseModel):
         correction_id: str
@@ -213,7 +221,7 @@ else:
         owner_subject_id: str
         owner_role: str
         due_at: str
-        reason: str
+        reason: str = Field(..., min_length=3)
         handoff_note: Optional[str] = None
 
     class AssignmentReceipt(BaseModel):
@@ -225,14 +233,16 @@ else:
         audit_event_id: str
 
     class AssignmentTransferRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
         target_owner_subject_id: str
         target_owner_role: str
-        reason: str
-        handoff_note: str
+        reason: str = Field(..., min_length=3, max_length=4000)
+        handoff_note: str = Field(..., min_length=3, max_length=4000)
         due_at: Optional[str] = None
 
     class SlaPauseRequest(BaseModel):
-        reason: str
+        model_config = ConfigDict(extra="forbid")
+        reason: str = Field(..., min_length=3, max_length=4000)
         expected_resume_at: str
 
     class SlaReceipt(BaseModel):
@@ -248,7 +258,7 @@ else:
 
     class MatchDecisionRequest(BaseModel):
         decision_type: str
-        reason: str
+        reason: str = Field(..., min_length=3, max_length=4000)
         requested_second_reviewer_id: Optional[str] = None
         risk_acknowledged: bool
         target_listing_id: Optional[str] = None
@@ -270,7 +280,7 @@ else:
     class MergeRequest(BaseModel):
         source_property_ids: List[str]
         target_property_id: str
-        reason: str
+        reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
         candidate_reassignment_plan: Optional[List[CandidateReassignment]] = None
         expected_property_versions: Optional[Dict[str, int]] = None
@@ -282,20 +292,20 @@ else:
     class SplitRequest(BaseModel):
         source_property_id: str
         partitions: List[IdentityPartition]
-        reason: str
+        reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
         source_property_version: Optional[int] = None
 
     class UnmergeRequest(BaseModel):
         original_decision_id: str
         replacement_edges: List[IdentityPartition]
-        reason: str
+        reason: str = Field(..., min_length=20)
         risk_acknowledged: Optional[bool] = None
 
     class PromotionRequest(BaseModel):
-        target_format_code: str
-        reason: str
-        gate_snapshot_sha256: str
+        target_format_code: str = Field(..., min_length=1, max_length=64)
+        reason: str = Field(..., min_length=3, max_length=4000)
+        gate_snapshot_sha256: str = Field(..., pattern=r"^[a-f0-9]{64}$")
         requested_reviewer_id: Optional[str] = None
         risk_acknowledged: bool
 
@@ -313,24 +323,25 @@ else:
         site_score_job_id: Optional[str] = None
 
     class ReviewDecisionRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
         decision: str
-        reason: str
+        reason: str = Field(..., min_length=3, max_length=4000)
         requested_changes: Optional[List[str]] = None
         risk_acknowledged: bool
 
     class SavedViewRequest(BaseModel):
-        name: str
+        name: str = Field(..., min_length=1, max_length=120)
         query: dict
-        resource: Optional[str] = None
+        resource: str = Field("intake", pattern="^intake$")
         shared_role: Optional[str] = None
-        visibility: str
+        visibility: str = Field("PRIVATE", pattern="^(PRIVATE|ROLE|TENANT)$")
 
     class SavedView(BaseModel):
-        name: str
+        name: str = Field(..., min_length=1, max_length=120)
         query: dict
-        resource: Optional[str] = None
+        resource: str = Field("intake", pattern="^intake$")
         shared_role: Optional[str] = None
-        visibility: str
+        visibility: str = Field("PRIVATE", pattern="^(PRIVATE|ROLE|TENANT)$")
         saved_view_id: str
         owner_subject_id: str
         created_at: str
@@ -350,13 +361,14 @@ else:
         version: int
         correlation_id: str
 
-    class RiskReasonCommand(BaseModel):
-        reason: str
-        risk_acknowledged: bool
-        incident_or_change_id: Optional[str] = None
-
     class ReasonCommand(BaseModel):
-        reason: str
+        model_config = ConfigDict(extra="forbid")
+        reason: str = Field(..., min_length=3, max_length=4000)
+
+    class RiskReasonCommand(ReasonCommand):
+        model_config = ConfigDict(extra="forbid")
+        risk_acknowledged: bool
+        incident_or_change_id: Optional[str] = Field(None, max_length=200)
 
 
     class ListingImportPayload(BaseModel):
@@ -515,8 +527,12 @@ else:
             q: Optional[str] = None,
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
-            if cursor and cursor != "end":
-                raise HTTPException(400, "invalid or expired cursor")
+            offset = 0
+            if cursor:
+                try:
+                    offset = int(cursor)
+                except ValueError:
+                    raise HTTPException(400, "invalid or expired cursor")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -566,7 +582,7 @@ else:
                 else:
                     tenant_items = [v for v in tenant_items if v.get("state") != "NEEDS_REVIEW"]
 
-            items = tenant_items[:page_size]
+            items = tenant_items[offset : offset + page_size]
 
             summaries = []
             for value in items:
@@ -589,7 +605,7 @@ else:
 
             return IntakePage(
                 items=summaries,
-                next_cursor=None,
+                next_cursor=str(offset + page_size) if offset + page_size < len(tenant_items) else None,
                 page_size=page_size,
                 total_count=len(tenant_items),
                 total_count_accuracy="exact",
@@ -861,8 +877,6 @@ else:
             if current is None:
                 raise HTTPException(404, "intake not found")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -888,6 +902,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 current["version"] += 1
                 ts = now()
                 cid = str(uuid4())
@@ -948,8 +963,6 @@ else:
             if current is None:
                 raise HTTPException(404, "intake not found")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -972,6 +985,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 current["version"] += 1
                 aid = str(uuid4())
                 audit_event_id = str(uuid4())
@@ -1030,8 +1044,6 @@ else:
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, job["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1048,6 +1060,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, job["version"])
                 job["attempt"] += 1
                 job["version"] += 1
                 job["status"] = "QUEUED"
@@ -1164,8 +1177,6 @@ else:
             if current.get("state") != "READY":
                 raise HTTPException(409, "WORKFLOW_STATE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1189,6 +1200,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 did = str(uuid4())
                 current["version"] += 1
                 current["updated_at"] = now()
@@ -1269,8 +1281,6 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
-            require_version(if_match, 1)
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1289,6 +1299,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, 1)
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
@@ -1322,8 +1333,6 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
-            require_version(if_match, 1)
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1342,6 +1351,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, 1)
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
@@ -1375,8 +1385,6 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
-            require_version(if_match, 1)
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1395,6 +1403,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, 1)
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
@@ -1428,8 +1437,6 @@ else:
             key: str = Header(..., alias="Idempotency-Key"),
             if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
-            require_version(if_match, 1)
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1448,6 +1455,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, 1)
                 did = str(uuid4())
                 value = {
                     "decision_id": did,
@@ -1518,8 +1526,6 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1541,6 +1547,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
                 tr = receipt("SUBMITTED", "CANCELLED", updated["version"])
                 return tr, 200
@@ -1570,8 +1577,6 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1596,6 +1601,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 from_state = current.get("state", "SUBMITTED")
                 updated = generic_mutate(active.intakes, intake_id, "QUARANTINED", actor_id)
                 tr = receipt(from_state, "QUARANTINED", updated["version"])
@@ -1626,8 +1632,6 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1653,6 +1657,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 from_state = current.get("state", "QUARANTINED")
                 updated = generic_mutate(active.intakes, intake_id, "SUBMITTED", actor_id)
                 tr = receipt(from_state, "SUBMITTED", updated["version"])
@@ -1689,8 +1694,6 @@ else:
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
@@ -1710,6 +1713,7 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
                 return updated, 200
 
@@ -1744,8 +1748,6 @@ else:
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
@@ -1765,6 +1767,7 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 current["owner_subject_id"] = body.target_owner_subject_id
                 updated = generic_mutate(active.assignments, assignment_id, "ASSIGNED", actor_id)
                 return updated, 200
@@ -1800,8 +1803,6 @@ else:
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
@@ -1821,6 +1822,7 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
                 return updated, 200
 
@@ -1844,7 +1846,10 @@ else:
             if_match: str = Header(..., alias="If-Match"),
         ) -> SlaReceipt:
             current = active.slas.get(sla_instance_id)
-            if current is None:
+            if current is not None:
+                if current.get("tenant_id") != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            else:
                 current = {
                     "sla_instance_id": sla_instance_id,
                     "state": "ACTIVE",
@@ -1853,10 +1858,9 @@ else:
                     "version": 1,
                     "audit_event_id": str(uuid4()),
                     "correlation_id": str(uuid4()),
+                    "tenant_id": tenant_id,
                 }
                 active.slas[sla_instance_id] = current
-
-            require_version(if_match, current["version"])
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -1870,6 +1874,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
                 updated["active_pause_interval_id"] = str(uuid4())
                 return updated, 200
@@ -1896,8 +1901,8 @@ else:
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
-
-            require_version(if_match, current["version"])
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -1911,6 +1916,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.slas, sla_instance_id, "ACTIVE", actor_id)
                 updated["active_pause_interval_id"] = None
                 return updated, 200
@@ -1942,8 +1948,6 @@ else:
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1964,6 +1968,7 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
                 updated = generic_mutate(active.promotions, promotion_decision_id, to_state, actor_id)
                 updated["reviewer_subject_id"] = actor_id
@@ -1995,8 +2000,6 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -2018,6 +2021,7 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
                 return updated, 200
@@ -2048,8 +2052,6 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            require_version(if_match, current["version"])
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -2068,6 +2070,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                require_version(if_match, current["version"])
                 updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
                 return updated, 202
 

@@ -234,7 +234,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     promo_payload = {
         "target_format_code": "FORMAT-A",
         "reason": "Promoting standard listing",
-        "gate_snapshot_sha256": "abc123sha",
+        "gate_snapshot_sha256": "a000000000000000000000000000000000000000000000000000000000000000",
         "risk_acknowledged": True
     }
     resp_promo = client.post(
@@ -368,7 +368,7 @@ def test_saved_views_operations(client: TestClient) -> None:
     view_payload = {
         "name": "My Active Intakes",
         "query": {"state": "SUBMITTED"},
-        "visibility": "private"
+        "visibility": "PRIVATE"
     }
 
     # 1. createSavedView
