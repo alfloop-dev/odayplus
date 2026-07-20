@@ -1591,7 +1591,25 @@ class NetworkListingService:
         self._sync_listing_to_repo(listing["id"])
 
     def list_candidates(self) -> list[dict[str, Any]]:
-        return self._state["candidates"]
+        cands = list(self._state["candidates"])
+        if hasattr(self, "_listing_repository") and self._listing_repository:
+            for draft in self._listing_repository.list_candidates():
+                # Handle draft being either a CandidateSiteDraft or a dictionary
+                if hasattr(draft, "candidate_site"):
+                    listing_id = draft.candidate_site.listing_id
+                    c_id = draft.candidate_site.candidate_site_id
+                    status = draft.candidate_site.site_status
+                else:
+                    listing_id = draft.get("listingId") or draft.get("listing_id")
+                    c_id = draft.get("candidateSiteId") or draft.get("id")
+                    status = draft.get("status")
+                if not any(c.get("listingId") == listing_id or c.get("listing_id") == listing_id for c in cands):
+                    cands.append({
+                        "id": c_id,
+                        "listingId": listing_id,
+                        "status": status,
+                    })
+        return cands
 
     def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
         for cand in self._state["candidates"]:
@@ -1629,8 +1647,10 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
-        # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        allowed_roles = {
+            "expansionManager", "expansion-manager", "siteReviewer", "site_reviewer",
+            "expansionUser", "expansion-user", "expansion_user"
+        }
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
 
@@ -1663,8 +1683,7 @@ class NetworkListingService:
         before_candidate_count = len(self._state["candidates"])
 
         # Enforce segregation of duties & run reviewed promotion saga
-        proposer_id = intake.get("submitter") or "operator-expansion-staff"
-        reviewer_id = actor_name or "operator-expansion-manager"
+        proposer_id = actor_name or intake.get("submitter") or "operator-expansion-staff"
 
         import hashlib
         gate_snap = str(listing.get("fitScore", 0))
@@ -1707,73 +1726,34 @@ class NetworkListingService:
                 raise NetworkListingConflict(str(exc)) from exc
             raise NetworkListingPolicyError(str(exc)) from exc
 
-        # 2. Review & Approve (which automatically executes the saga)
-        reviewer_actor = Actor(
-            actor_id=reviewer_id,
-            role=PrincipalRole.EXPANSION_MANAGER,
-            tenant_id=listing.get("tenantId") or "tenant-a",
-        )
-        reviewer_context = TransitionContext(
-            actor=reviewer_actor,
-            idempotency_key=f"review-{governed_key}",
-            correlation_id=correlation_id,
-            risk_acknowledged=risk_acknowledged,
-            reason=reason_text,
-            version_before=promo_record["version"],
-        )
-
-        try:
-            promo_record = promo_service.review_promotion(
-                promotion_decision_id=promo_record["promotion_decision_id"],
-                decision="APPROVE",
-                reason=reason_text,
-                risk_acknowledged=risk_acknowledged,
-                context=reviewer_context,
-            )
-        except Exception as exc:
-            if "SELF_REVIEW_DENIED" in str(exc):
-                raise NetworkListingConflict("SELF_REVIEW_DENIED") from exc
-            raise NetworkListingPolicyError(str(exc)) from exc
-
-        candidate = self.get_candidate(promo_record["candidate_site_id"])
-        listing_updated = self.get_listing(promo_record["listing_id"])
-
-        result = {
-            "listing": _copy(listing_updated),
-            "candidate": _copy(candidate),
-            "created": True,
-        }
-
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
-            "action": "intake.promote",
+            "actorName": proposer_id,
+            "action": "intake.promote_request",
             "targetId": intake_id,
-            "message": f"Promoted target listing {target_listing_id} to candidate. Reason: {reason_text}",
+            "message": f"Requested promotion of target listing {target_listing_id}. Reason: {reason_text}",
             "correlationId": correlation_id,
             "metadata": {
                 "targetListingId": target_listing_id,
-                "candidateId": promo_record["candidate_site_id"],
                 "reason": reason_text,
-                "before": {
-                    "listingStatus": before_listing_status,
-                    "candidateCount": before_candidate_count,
-                },
-                "after": {
-                    "listingStatus": result["listing"]["status"],
-                    "candidateCount": len(self._state["candidates"]),
-                },
                 "riskSummary": risk_summary_text,
                 "riskAcknowledged": True,
-                "effectSummary": (
-                    f"Promote listing {target_listing_id} to candidate {promo_record['candidate_site_id']}."
-                ),
             }
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+
+        result = {
+            "promotion_decision_id": promo_record["promotion_decision_id"],
+            "intake_id": promo_record["intake_id"],
+            "listing_id": promo_record["listing_id"],
+            "status": promo_record["status"],
+            "version": promo_record["version"],
+            "created": False,
+        }
+
         self._save_idempotency("promote_intake", governed_key, result)
         return result
 

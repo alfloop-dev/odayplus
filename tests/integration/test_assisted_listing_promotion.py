@@ -74,47 +74,74 @@ def test_promotion_saga_golden_flow() -> None:
     target_listing_id = intake["matchResult"]["targetListingId"]
     assert target_listing_id is not None
 
-    # 3. Promote the intake (reviewer is manager, proposer was staff -> segregation of duties satisfied)
+    # 3. Promote the intake (Propose step)
     promote_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={
-            "actorRoleId": "expansionManager",
-            "actorName": "operator-expansion-manager",
+            "actorRoleId": "expansionUser",
+            "actorName": "operator-expansion-staff",
             "reason": "Suitable location for expansion",
             "riskSummary": "Promoting creates a new candidate site",
             "riskAcknowledged": True,
         },
         headers={
-            **MANAGER_HEADERS,
+            **STAFF_HEADERS,
             "X-Correlation-Id": "corr-promote-exec",
             "Idempotency-Key": "idem-promote-exec",
         },
     )
     assert promote_resp.status_code == 200, promote_resp.text
     result = promote_resp.json()
-    assert result["created"] is True
-    assert result["candidate"]["status"] == "ready"
-    assert result["listing"]["status"] == "candidate"
-    assert result["listing"]["candidateId"] == result["candidate"]["id"]
+    assert result["created"] is False
+    assert result["status"] == "PENDING_REVIEW"
+    promo_decision_id = result["promotion_decision_id"]
+
+    # 3b. Review & Approve step (by a separate manager)
+    review_resp = client.post(
+        f"/api/v1/promotion-decisions/{promo_decision_id}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "Approved location fit",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **MANAGER_HEADERS,
+            "Idempotency-Key": "idem-promote-review-exec",
+            "If-Match": f'W/"{result["version"]}"',
+        },
+    )
+    assert review_resp.status_code == 200, review_resp.text
+    reviewed_data = review_resp.json()
+    assert reviewed_data["status"] == "COMPLETED"
+    assert reviewed_data["reviewer_subject_id"] == "operator-expansion-manager"
+    candidate_id = reviewed_data["candidate_site_id"]
+    assert candidate_id is not None
+
+    # Get candidates to verify it was saved in listing repository
+    cand_resp = client.get("/api/v1/listings/candidates", headers=MANAGER_HEADERS)
+    assert cand_resp.status_code == 200
+    cands = cand_resp.json()["candidates"]
+    candidate = next(c for c in cands if c["candidateSiteId"] == candidate_id)
+    assert candidate["status"] == "CANDIDATE"
 
     # 4. Idempotency test (promoting the same intake with same key should return same result)
     replay_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={
-            "actorRoleId": "expansionManager",
-            "actorName": "operator-expansion-manager",
+            "actorRoleId": "expansionUser",
+            "actorName": "operator-expansion-staff",
             "reason": "Suitable location for expansion",
             "riskSummary": "Promoting creates a new candidate site",
             "riskAcknowledged": True,
         },
         headers={
-            **MANAGER_HEADERS,
+            **STAFF_HEADERS,
             "X-Correlation-Id": "corr-promote-exec",
             "Idempotency-Key": "idem-promote-exec",
         },
     )
     assert replay_resp.status_code == 200, replay_resp.text
-    assert replay_resp.json()["candidate"]["id"] == result["candidate"]["id"]
+    assert replay_resp.json()["promotion_decision_id"] == promo_decision_id
 
     # 5. Duplicate promotion prevention
     # If we submit another intake for the same listing, and try to promote it, it should fail
@@ -158,14 +185,14 @@ def test_promotion_saga_golden_flow() -> None:
     dup_promote_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{dup_intake_id}/promote",
         json={
-            "actorRoleId": "expansionManager",
-            "actorName": "operator-expansion-manager",
+            "actorRoleId": "expansionUser",
+            "actorName": "operator-expansion-staff",
             "reason": "Suitable location",
             "riskSummary": "Creating candidate site",
             "riskAcknowledged": True,
         },
         headers={
-            **MANAGER_HEADERS,
+            **STAFF_HEADERS,
             "X-Correlation-Id": "corr-promote-dup-exec",
             "Idempotency-Key": "idem-promote-dup-exec",
         },
@@ -213,13 +240,12 @@ def test_promotion_saga_segregation_of_duties() -> None:
     intake = decide_resp.json()
     assert intake["matchResult"]["targetListingId"] is not None
 
-    # Try to promote the intake with the SAME manager (self-review)
-    # This should fail with 403 Forbidden (SELF_REVIEW_DENIED)
+    # Request promotion with manager actorName
     promote_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={
             "actorRoleId": "expansionManager",
-            "actorName": "operator-expansion-manager",  # same actor
+            "actorName": "operator-expansion-manager",  # proposer is manager
             "reason": "Suitable location",
             "riskSummary": "Creating candidate site",
             "riskAcknowledged": True,
@@ -230,5 +256,24 @@ def test_promotion_saga_segregation_of_duties() -> None:
             "Idempotency-Key": "idem-promote-segg-exec",
         },
     )
-    assert promote_resp.status_code == 403
-    assert "SELF_REVIEW_DENIED" in promote_resp.text
+    assert promote_resp.status_code == 200
+    promo_data = promote_resp.json()
+    promo_decision_id = promo_data["promotion_decision_id"]
+
+    # Try to approve the promotion with the SAME manager (self-review)
+    # This should fail with 403 Forbidden (SELF_REVIEW_DENIED)
+    review_resp = client.post(
+        f"/api/v1/promotion-decisions/{promo_decision_id}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "Manager trying to self-approve",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **MANAGER_HEADERS,  # same actor subject "operator-expansion-manager"
+            "Idempotency-Key": f"idem-review-segg-{uuid4()}",
+            "If-Match": f'W/"{promo_data["version"]}"',
+        },
+    )
+    assert review_resp.status_code == 403
+    assert "SELF_REVIEW_DENIED" in review_resp.text

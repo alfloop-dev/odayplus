@@ -47,6 +47,59 @@ def test_promotion_api_contract_flow() -> None:
     # Transition the intake state to READY in store to satisfy the promotion prerequisite
     store = AssistedIntakeStore._instances[-1]
     store.intakes[intake_id]["state"] = "READY"
+    target_listing_id = "L-GOLD-99"
+    store.intakes[intake_id]["matchResult"] = {
+        "targetListingId": target_listing_id,
+        "confidence": 0.95,
+        "contradictorySignals": [],
+    }
+
+    # Seed the listing repository
+    repository = getattr(app.state, "listing_repository", None)
+    if repository is None:
+        from modules.listing.infrastructure.repositories import InMemoryListingRepository
+        repository = InMemoryListingRepository()
+        app.state.listing_repository = repository
+
+    from shared.domain.models import Listing, AddressLocation
+    from modules.listing.domain.models import ListingDedupKey
+
+    address = AddressLocation(
+        address_id="A-99",
+        raw_address="100 Synthetic Way",
+        normalized_address="100 Synthetic Way",
+        geocode_confidence=1.0,
+        h3_res_9="HZ-01",
+    )
+    listing = Listing(
+        listing_id=target_listing_id,
+        source_listing_id=target_listing_id,
+        source_id="S-99",
+        listing_status="watching",
+        address_id="A-99",
+        rent_amount=50000.0,
+        currency="TWD",
+        area_ping=25.0,
+        floor=1,
+        frontage_m=5.0,
+        depth_m=12.0,
+        corner_flag=False,
+        parking_flag=False,
+        utility_electricity_flag=True,
+        utility_drainage_flag=True,
+        utility_gas_flag=False,
+        available_from="2026-08-01",
+        snapshot_id="SN-99",
+        confidence=1.0,
+    )
+    key = ListingDedupKey(
+        source_id="S-99",
+        source_listing_id=target_listing_id,
+        normalized_address="100 Synthetic Way",
+        rent_amount=50000.0,
+        area_ping=25.0,
+    )
+    repository.save_listing(listing, address, key)
 
     # 2. Request promotion (None -> REQUESTED -> VALIDATING)
     promo_payload = {
@@ -97,5 +150,7 @@ def test_promotion_api_contract_flow() -> None:
     )
     assert review_resp.status_code == 200, review_resp.text
     reviewed_data = review_resp.json()
-    assert reviewed_data["status"] == "APPROVED"
+    assert reviewed_data["status"] == "COMPLETED"
     assert reviewed_data["reviewer_subject_id"] == ACTOR_A_REVIEWER
+    assert reviewed_data["candidate_site_id"] is not None
+    assert reviewed_data["site_score_job_id"] is not None

@@ -77,7 +77,7 @@ class CandidateSiteDraft:
             "feasibilityFlags": list(self.feasibility_flags),
             "heatZone": self.heat_zone_id,
             "listingSource": self.listing_source,
-            "status": self.status.value,
+            "status": getattr(self.status, "value", self.status),
         }
 
 

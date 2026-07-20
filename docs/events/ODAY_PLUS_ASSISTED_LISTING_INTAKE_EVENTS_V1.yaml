@@ -319,7 +319,7 @@ payloads:
   PromotionChangedV1:
     required: [promotion_decision_id, intake_id, listing_id, status, version]
   CandidateCreatedV1:
-    required: [candidate_site_id, property_id, listing_id, target_format_code, version]
+    required: [candidate_site_id, property_id, source_listing_id, target_format_code, version]
   JobDeadLetteredV1:
     required: [job_id, job_type, checkpoint, attempt, error_code, dead_lettered_at]
   AuditRecordedV1:
