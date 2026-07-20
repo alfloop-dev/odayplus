@@ -189,3 +189,23 @@ execution sequence and closeout criteria.
 LLM-Agent: Antigravity6
 Task-ID: ODP-FIN-LIVE-001
 Reviewer: Antigravity7
+
+
+## R5 / Hardening Readiness Status (2026-07-16, ODP-FIN-LIVE-001)
+
+This is a residual-risk acceptance for a deterministic-mock-stack milestone. It is
+**NOT** a production-readiness attestation. It makes no "full product-grade
+correctness" or "zero vulnerabilities" claim, and does not attest on behalf of any
+reviewer or release owner.
+
+**NOT READY for production.** The following R5/hardening tasks remain incomplete at
+the time of writing and gate any production-go decision:
+
+- `ODP-OC-R5-003` — incomplete
+- `ODP-PGAP-RELIABILITY-001` — incomplete
+
+Verification is limited to deterministic commands run in this repo (e.g.
+`python3 scripts/e2e/check_product_release_gate.py`, `python3 -m pytest`). Live
+external-provider, live map tile/geocoder, and remote-staging proofs remain
+**absent** and fail-closed, as tabled above. No `file://` worktree-local paths are
+cited as evidence; only repo-relative paths and committed artifacts are authoritative.
