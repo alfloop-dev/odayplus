@@ -8,7 +8,7 @@ type PageProps = {
 export default async function IntakeRoutePage({ params, searchParams }: PageProps) {
   const { intakeId } = await params;
   const resolvedSearchParams = await searchParams;
-  
+
   const query = new URLSearchParams();
   for (const [key, val] of Object.entries(resolvedSearchParams)) {
     if (val !== undefined) {
@@ -19,9 +19,9 @@ export default async function IntakeRoutePage({ params, searchParams }: PageProp
       }
     }
   }
-  
+
   query.set("selected", intakeId);
   query.set("dialog", "detail");
-  
+
   redirect(`/w/expansion/listings?${query.toString()}`);
 }

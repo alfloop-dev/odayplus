@@ -67,7 +67,7 @@ export default function ListingsPage() {
             </Link>
           ))}
         </nav>
-        
+
         {/* Render the actual Assisted Intake experience */}
         <AssistedIntakeSection activeRoleId={activeRoleId} selectedHeatZoneId={heatZoneId} />
       </section>

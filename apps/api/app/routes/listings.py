@@ -2819,7 +2819,7 @@ else:
                     current["due_at"] = body.due_at
                 updated = generic_mutate(active.assignments, assignment_id, "TRANSFERRED", actor_id)
                 updated["audit_event_id"] = str(uuid4())
-                
+
                 # Update parent intake
                 intake = active.intakes.get(updated.get("intake_id", ""))
                 if intake:
@@ -2978,7 +2978,7 @@ else:
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
                 updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
-                
+
                 # Update parent intake
                 intake = active.intakes.get(updated.get("intake_id", ""))
                 if intake:
@@ -3057,7 +3057,7 @@ else:
                 updated["active_pause_interval_id"] = None
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
-                
+
                 # Update parent intake
                 intake = active.intakes.get(updated.get("intake_id", ""))
                 if intake:
