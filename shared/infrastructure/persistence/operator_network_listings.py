@@ -73,4 +73,3 @@ class DurableAssistedIntakeRepository:
             self._PROMOTIONS,
         ):
             self._store.delete_collection(collection)
-
