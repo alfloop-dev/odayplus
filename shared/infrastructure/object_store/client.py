@@ -89,20 +89,27 @@ def check_bucket_residency(residency_mode: str, bucket: str) -> None:
     Checks if bucket is explicitly allowed for the given residency_mode.
     """
     mode = (residency_mode or "").strip().upper()
+    if mode not in RESIDENCY_APPROVED_BUCKETS:
+        raise ResidencyDeniedError(f"RESIDENCY_DENIED: Unknown residency mode {mode!r}")
     
-    # Load allowed buckets from environment or static mapping
     allowed_set = set()
-    env_buckets = os.environ.get("ODP_RESIDENCY_APPROVED_BUCKETS")
-    if env_buckets:
-        allowed_set.update(b.strip() for b in env_buckets.split(",") if b.strip())
+    # Check mode-specific env first, e.g. ODP_RESIDENCY_APPROVED_BUCKETS_TW_ONLY
+    env_buckets_mode = os.environ.get(f"ODP_RESIDENCY_APPROVED_BUCKETS_{mode}")
+    if env_buckets_mode:
+        allowed_set.update(b.strip() for b in env_buckets_mode.split(",") if b.strip())
+    else:
+        # Fallback to general env
+        env_buckets = os.environ.get("ODP_RESIDENCY_APPROVED_BUCKETS")
+        if env_buckets:
+            allowed_set.update(b.strip() for b in env_buckets.split(",") if b.strip())
     
     # Fallback/default mapping
-    if mode in RESIDENCY_APPROVED_BUCKETS:
-        allowed_set.update(RESIDENCY_APPROVED_BUCKETS[mode])
+    allowed_set.update(RESIDENCY_APPROVED_BUCKETS[mode])
         
-    # If the mode is unknown OR the bucket is not in the allowlist, fail-closed!
-    if not allowed_set or bucket not in allowed_set:
+    # If the bucket is not in the allowlist, fail-closed!
+    if bucket not in allowed_set:
         raise ResidencyDeniedError(f"RESIDENCY_DENIED: Bucket {bucket!r} is not allowed for residency mode {mode!r}")
+
 
 
 class InMemoryObjectStore:

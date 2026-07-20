@@ -261,6 +261,7 @@ class SourceSnapshotService:
 
         # 3. Object Store Write Precedes SQL Metadata commit
         raw_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/raw"
+        raw_created = False
         try:
             raw_uri, raw_gen = self.object_store.upload_object(
                 tenant_id=tenant_id,
@@ -270,6 +271,7 @@ class SourceSnapshotService:
                 content_type=media_type,
                 if_generation_match=0,
             )
+            raw_created = True
         except ValueError as exc:
             if "Precondition Failed" in str(exc):
                 # Object already uploaded in a previous attempt. Ignore.
@@ -282,6 +284,7 @@ class SourceSnapshotService:
             else:
                 raise exc
 
+        redacted_created = False
         redacted_uri = None
         if redacted_data is not None:
             redacted_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/redacted"
@@ -294,6 +297,7 @@ class SourceSnapshotService:
                     content_type=media_type,
                     if_generation_match=0,
                 )
+                redacted_created = True
             except ValueError as exc:
                 if "Precondition Failed" in str(exc):
                     redacted_uri = f"gs://{bucket}/{redacted_key}"
@@ -329,6 +333,18 @@ class SourceSnapshotService:
             }
             return snapshot_id
 
+        # Make the insert genuinely idempotent: check if it exists first
+        try:
+            existing = self._execute(
+                "SELECT source_snapshot_id FROM intake.source_snapshots WHERE source_snapshot_id = %s",
+                (snapshot_id,),
+                tenant_id=tenant_id,
+            )
+            if existing:
+                return snapshot_id
+        except Exception:
+            pass
+
         try:
             sql = """
                 INSERT INTO intake.source_snapshots (
@@ -338,6 +354,7 @@ class SourceSnapshotService:
                     capture_method, retention_class, legal_hold, legal_hold_id, encryption_key_ref,
                     object_generation, residency_mode, purge_after
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_snapshot_id) DO NOTHING
             """
             self._execute(
                 sql,
@@ -394,12 +411,13 @@ class SourceSnapshotService:
                 }
                 return snapshot_id
 
-            # Compensating delete: remove raw and redacted objects from GCS on SQL failure
-            try:
-                self.object_store.delete_object(tenant_id, raw_uri)
-            except Exception:
-                pass
-            if redacted_uri:
+            # Only compensate for objects this call actually created
+            if raw_created:
+                try:
+                    self.object_store.delete_object(tenant_id, raw_uri)
+                except Exception:
+                    pass
+            if redacted_uri and redacted_created:
                 try:
                     self.object_store.delete_object(tenant_id, redacted_uri)
                 except Exception:
@@ -412,6 +430,7 @@ class SourceSnapshotService:
                 exc,
             )
             raise exc
+
 
         return snapshot_id
 
@@ -832,14 +851,34 @@ def build_source_snapshot_service(persistence: Any, doc_store: Any = None) -> So
                 return tenant_meta.get("residency_mode", "TW_ONLY")
         return "TW_ONLY"
 
-    if os.environ.get("ODP_OBJECT_STORE") == "gcs":
+    # Default to the real GCS store if credentials/token or explicit gcs setting is present.
+    # Fail closed when explicit gcs is requested but no credentials exist.
+    has_gcs_credentials = bool(
+        os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
+        or os.environ.get("ODP_AUDIT_WORM_GCS_TOKEN", "").strip()
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    )
+    explicit_store = os.environ.get("ODP_OBJECT_STORE")
+
+    if explicit_store == "gcs":
+        if not has_gcs_credentials:
+            raise RuntimeError(
+                "GcsObjectStore explicitly configured via ODP_OBJECT_STORE but no GCS credentials/tokens found in environment."
+            )
         object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
-    else:
+    elif explicit_store == "in_memory":
         object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
+    else:
+        # Implicit selection based on credential availability
+        if has_gcs_credentials:
+            object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
+        else:
+            object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
 
     return SourceSnapshotService(
         db_conn=db_conn,
         object_store=object_store,
         document_store=doc_store,
     )
+
 

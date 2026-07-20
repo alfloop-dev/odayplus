@@ -13,9 +13,23 @@ Successfully implemented and hardened source snapshot provenance, residency, leg
 ## 2. Verification Results
 
 ### Pytest Security & Integration Tests
-All 10 integration, residency security, and PostgreSQL tests passed successfully.
+The test suite consists of 10 tests. The 2 PostgreSQL integration tests are marked with `@pytest.mark.requires_live_env`. They execute against a live PostgreSQL 16 database if `INTAKE_TEST_DATABASE_URL` is set, or if `pgserver` (a python wrapper around ephemeral PostgreSQL binaries) is available locally. Otherwise, they skip automatically.
+
+#### Default CI/Reviewer Environment (No Live PostgreSQL Engine)
 Command run:
 ```bash
+uv run pytest tests/integration/test_assisted_listing_snapshots.py tests/security/test_assisted_listing_snapshot_residency.py
+```
+Output:
+```text
+........s.s                                                              [100%]
+8 passed, 2 skipped in 1.45s
+```
+
+#### Ephemeral/Live PostgreSQL Environment (with pgserver/live DB)
+Command run:
+```bash
+# Executed in a container or local env with PostgreSQL binaries or pgserver installed
 uv run pytest tests/integration/test_assisted_listing_snapshots.py tests/security/test_assisted_listing_snapshot_residency.py
 ```
 Output:
@@ -45,3 +59,4 @@ Output:
 ```text
 No issues found in local changes.
 ```
+

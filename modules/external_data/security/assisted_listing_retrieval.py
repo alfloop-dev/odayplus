@@ -529,8 +529,6 @@ def is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
 
 
 def _resolve_host(host: str) -> Sequence[str]:
-    if "synthetic.example" in host:
-        return ("93.184.216.34",)
     return tuple(
         sorted(
             {
@@ -540,6 +538,7 @@ def _resolve_host(host: str) -> Sequence[str]:
             }
         )
     )
+
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
