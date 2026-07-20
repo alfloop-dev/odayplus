@@ -392,18 +392,20 @@ def install_error_handlers(app: Any) -> None:
             contract_correlation_id = str(uuid4())
 
         occurred_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        return {
+        payload = {
             "code": code,
             "message": detail_str,
             "retryable": retryable,
             "correlation_id": contract_correlation_id,
             "reason_code": None,
-            "field_errors": field_errors or None,
             "current_version": None,
             "retry_after_seconds": 30 if code == "BACKPRESSURE_ACTIVE" else None,
             "occurred_at": occurred_at,
             "next_action": next_action
         }
+        if field_errors:
+            payload["field_errors"] = field_errors
+        return payload
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:

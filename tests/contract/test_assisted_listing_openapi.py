@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from fastapi.testclient import TestClient
 from uuid import uuid4
+
+from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from scripts.generate_assisted_listing_intake_client import ARTIFACT, CLIENT, build
@@ -19,6 +20,140 @@ EXPECTED_OPERATIONS = {
     "resumeSla", "getIdentityDecision", "reviewIdentityDecision",
     "requestIdentityDecisionReversal",
 }
+
+HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+SCHEMA_METADATA = {
+    "title", "description", "example", "examples", "default",
+    "readOnly", "writeOnly", "deprecated",
+}
+
+
+def _resolve_refs(node: Any, document: dict[str, Any]) -> Any:
+    if isinstance(node, dict):
+        if "$ref" in node:
+            resolved: Any = document
+            for part in node["$ref"].removeprefix("#/").split("/"):
+                resolved = resolved[part]
+            siblings = {key: value for key, value in node.items() if key != "$ref"}
+            return _resolve_refs({**resolved, **siblings}, document)
+        return {key: _resolve_refs(value, document) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_resolve_refs(value, document) for value in node]
+    return node
+
+
+def _merge_schema(base: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in addition.items():
+        if key == "required":
+            merged[key] = sorted(set(merged.get(key, [])) | set(value))
+        elif key == "properties":
+            merged[key] = {**merged.get(key, {}), **value}
+        elif key == "type" and key in merged:
+            left = merged[key] if isinstance(merged[key], list) else [merged[key]]
+            right = value if isinstance(value, list) else [value]
+            merged[key] = sorted(set(left) | set(right))
+        else:
+            merged[key] = value
+    return merged
+
+
+def _canonical_schema(schema: Any) -> Any:
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            return [_canonical_schema(item) for item in schema]
+        return schema
+
+    canonical = {
+        key: _canonical_schema(value)
+        for key, value in schema.items()
+        if key not in SCHEMA_METADATA
+    }
+    if "allOf" in canonical:
+        parts = canonical.pop("allOf")
+        for part in parts:
+            canonical = _merge_schema(canonical, part)
+
+    if "anyOf" in canonical:
+        variants = canonical["anyOf"]
+        non_null = [variant for variant in variants if variant != {"type": "null"}]
+        if len(non_null) == 1 and len(non_null) != len(variants):
+            canonical.pop("anyOf")
+            canonical = _merge_schema(canonical, non_null[0])
+            # An unconstrained schema already admits null; adding type:null
+            # would incorrectly narrow Optional[Any] to null-only.
+            if non_null[0]:
+                current_type = canonical.get("type")
+                types = current_type if isinstance(current_type, list) else [current_type]
+                canonical["type"] = sorted({value for value in types if value} | {"null"})
+                if "enum" in canonical and None not in canonical["enum"]:
+                    canonical["enum"] = [*canonical["enum"], None]
+
+    if canonical.pop("nullable", False):
+        current_type = canonical.get("type")
+        types = current_type if isinstance(current_type, list) else [current_type]
+        canonical["type"] = sorted({value for value in types if value} | {"null"})
+        if "enum" in canonical and None not in canonical["enum"]:
+            canonical["enum"] = [*canonical["enum"], None]
+    if isinstance(canonical.get("type"), list):
+        canonical["type"] = sorted(canonical["type"])
+        if len(canonical["type"]) == 1:
+            canonical["type"] = canonical["type"][0]
+    if "required" in canonical:
+        canonical["required"] = sorted(canonical["required"])
+    if "enum" in canonical:
+        canonical["enum"] = sorted(canonical["enum"], key=lambda value: str(value))
+    return canonical
+
+
+def _schema(document: dict[str, Any], schema: Any) -> Any:
+    return _canonical_schema(_resolve_refs(schema, document))
+
+
+def _assert_schema_equal(
+    contract_document: dict[str, Any],
+    contract_schema: Any,
+    live_document: dict[str, Any],
+    live_schema: Any,
+    location: str,
+    *,
+    ignore_live_null: bool = False,
+) -> None:
+    contract_value = _schema(contract_document, contract_schema)
+    live_value = _schema(live_document, live_schema)
+    if ignore_live_null and isinstance(live_value, dict):
+        live_types = live_value.get("type")
+        if isinstance(live_types, list) and "null" in live_types:
+            live_value["type"] = [value for value in live_types if value != "null"]
+            if len(live_value["type"]) == 1:
+                live_value["type"] = live_value["type"][0]
+        if isinstance(live_value.get("enum"), list) and None in live_value["enum"]:
+            live_value["enum"] = [value for value in live_value["enum"] if value is not None]
+
+    def assert_contains(contract_node: Any, live_node: Any, path: str) -> None:
+        if isinstance(contract_node, dict):
+            assert isinstance(live_node, dict), f"{location}: {path} is not an object schema"
+            for key, contract_child in contract_node.items():
+                assert key in live_node, f"{location}: missing {path}.{key}"
+                if key == "properties":
+                    for property_name, property_schema in contract_child.items():
+                        assert property_name in live_node[key], (
+                            f"{location}: missing {path}.properties.{property_name}"
+                        )
+                        assert_contains(
+                            property_schema,
+                            live_node[key][property_name],
+                            f"{path}.properties.{property_name}",
+                        )
+                else:
+                    assert_contains(contract_child, live_node[key], f"{path}.{key}")
+            return
+        if isinstance(contract_node, list):
+            assert live_node == contract_node, f"{location}: value drift at {path}"
+            return
+        assert live_node == contract_node, f"{location}: value drift at {path}"
+
+    assert_contains(contract_value, live_value, "schema")
 
 
 def test_committed_artifact_is_the_effective_five_overlay_bundle() -> None:
@@ -38,97 +173,80 @@ def test_every_approved_operation_reaches_generated_client() -> None:
         assert f'"/api{path}"' in text
 
 
-def test_live_runtime_serves_every_effective_operation() -> None:
+def test_live_runtime_request_and_response_schema_match_every_effective_operation() -> None:
     artifact = json.loads(ARTIFACT.read_text())
     app = create_app()
     live = app.openapi()
     live_paths = live["paths"]
 
-    # 1. Path-by-path / Operation-by-operation detailed schema comparison
-    def resolve_ref(spec: Any, doc: dict) -> Any:
-        if isinstance(spec, dict):
-            if "$ref" in spec:
-                ref_path = spec["$ref"]
-                parts = ref_path.lstrip("#/").split("/")
-                resolved = doc
-                for part in parts:
-                    resolved = resolved[part]
-                return resolve_ref(resolved, doc)
-            return {k: resolve_ref(v, doc) for k, v in spec.items()}
-        elif isinstance(spec, list):
-            return [resolve_ref(item, doc) for item in spec]
-        return spec
-
-    def normalize(schema: Any) -> Any:
-        if not isinstance(schema, dict):
-            if isinstance(schema, list):
-                return [normalize(x) for x in schema]
-            return schema
-        res = {}
-        for k, v in schema.items():
-            if k in {"title", "description", "example", "examples"}:
-                continue
-            res[k] = normalize(v)
-        # Normalize anyOf nullability
-        if "anyOf" in res:
-            any_of = res["anyOf"]
-            non_null = [x for x in any_of if x != {"type": "null"}]
-            has_null = len(non_null) < len(any_of)
-            if has_null and len(non_null) == 1:
-                res.pop("anyOf")
-                res.update(non_null[0])
-                if "type" in res:
-                    if isinstance(res["type"], list):
-                        if "null" not in res["type"]:
-                            res["type"] = list(res["type"]) + ["null"]
-                    else:
-                        res["type"] = [res["type"], "null"]
-                else:
-                    res["type"] = ["object", "null"]
-        if "type" in res and isinstance(res["type"], list):
-            if len(res["type"]) == 1:
-                res["type"] = res["type"][0]
-        return res
-
     for path, path_item in artifact["paths"].items():
         live_path = f"/api{path}"
         assert live_path in live_paths, f"runtime missing path {live_path}"
         for method, op in path_item.items():
-            if method not in {"get", "post", "put", "patch", "delete"}:
+            if method not in HTTP_METHODS:
                 continue
             assert method in live_paths[live_path], f"runtime missing method {method.upper()} {live_path}"
-            
-            # Resolve and compare requestBody schemas if present
-            if "requestBody" in op:
-                live_op = live_paths[live_path][method]
-                assert "requestBody" in live_op, f"runtime missing requestBody on {method.upper()} {live_path}"
-                
-                spec_rb = resolve_ref(op["requestBody"], artifact)
-                live_rb = resolve_ref(live_op["requestBody"], live)
-                
-                spec_content = resolve_ref(spec_rb.get("content", {}).get("application/json", {}).get("schema", {}), artifact)
-                live_content = resolve_ref(live_rb.get("content", {}).get("application/json", {}).get("schema", {}), live)
-                
-                if spec_content.get("properties"):
-                    assert "properties" in live_content, f"properties missing in runtime requestBody schema for {method.upper()} {live_path}"
-                    spec_props = normalize(spec_content["properties"])
-                    live_props = normalize(live_content["properties"])
-                    for prop_name, spec_prop in spec_props.items():
-                        assert prop_name in live_props, f"property {prop_name} missing in runtime requestBody schema for {method.upper()} {live_path}"
+            live_op = live_paths[live_path][method]
+            operation_id = op["operationId"]
+            assert live_op["operationId"] == operation_id
 
-            # Resolve and compare responses
+            contract_parameters = {
+                (parameter["in"], parameter["name"]): parameter
+                for parameter in _resolve_refs(op.get("parameters", []), artifact)
+            }
+            live_parameters = {
+                (parameter["in"], parameter["name"]): parameter
+                for parameter in _resolve_refs(live_op.get("parameters", []), live)
+            }
+            assert set(contract_parameters) <= set(live_parameters), (
+                f"runtime parameters drifted for {operation_id}"
+            )
+            for key, contract_parameter in contract_parameters.items():
+                live_parameter = live_parameters[key]
+                assert bool(live_parameter.get("required")) == bool(contract_parameter.get("required")), (
+                    f"required parameter drift at {operation_id} {key}"
+                )
+                _assert_schema_equal(
+                    artifact,
+                    contract_parameter.get("schema", {}),
+                    live,
+                    live_parameter.get("schema", {}),
+                    f"parameter schema drift at {operation_id} {key}",
+                    ignore_live_null=not contract_parameter.get("required", False),
+                )
+
+            if "requestBody" in op:
+                assert "requestBody" in live_op, f"runtime missing requestBody on {method.upper()} {live_path}"
+                contract_body = _resolve_refs(op["requestBody"], artifact)
+                live_body = _resolve_refs(live_op["requestBody"], live)
+                assert bool(live_body.get("required")) == bool(contract_body.get("required"))
+                _assert_schema_equal(
+                    artifact,
+                    contract_body["content"]["application/json"]["schema"],
+                    live,
+                    live_body["content"]["application/json"]["schema"],
+                    f"request body schema drift at {operation_id}",
+                )
+
             for status, resp in op.get("responses", {}).items():
-                try:
-                    status_int = int(status)
-                except ValueError:
-                    status_int = 200
-                if status_int < 400:
-                    live_op = live_paths[live_path][method]
-                    if status in {"200", "201", "202", "207"}:
-                        if not ({"200", "201", "202", "207"} & set(live_op["responses"])):
-                            assert status in live_op["responses"], f"runtime missing response status {status} for {method.upper()} {live_path}"
-                    else:
-                        assert status in live_op["responses"], f"runtime missing response status {status} for {method.upper()} {live_path}"
+                assert status in live_op["responses"], (
+                    f"runtime missing response {status} for {operation_id}"
+                )
+                contract_response = _resolve_refs(resp, artifact)
+                live_response = _resolve_refs(live_op["responses"][status], live)
+                contract_schema = contract_response.get("content", {}).get("application/json", {}).get("schema")
+                live_schema = live_response.get("content", {}).get("application/json", {}).get("schema")
+                assert (contract_schema is None) == (live_schema is None), (
+                    f"response content drift at {operation_id} {status}"
+                )
+                if contract_schema is not None:
+                    _assert_schema_equal(
+                        artifact,
+                        contract_schema,
+                        live,
+                        live_schema,
+                        f"response schema drift at {operation_id} {status}",
+                    )
 
     # 2. Schema Negative validation tests in live runtime
     client = TestClient(app)

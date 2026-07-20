@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
+import re
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
 from modules.listing import InMemoryListingRepository, ListingPipeline
@@ -27,11 +31,6 @@ else:
     # ---------------------------------------------------------------------------
     # Pydantic Schemas from openapi-effective.json
     # ---------------------------------------------------------------------------
-    from enum import Enum
-    import re
-    from uuid import UUID
-    from datetime import datetime
-
     def check_uuid(v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
@@ -320,8 +319,11 @@ else:
         retryable: bool
         correlation_id: UuidString
         reason_code: Optional[str] = None
-        field_errors: List[FieldError] = None
+        field_errors: List[FieldError] = Field(default_factory=list)
         current_version: Optional[int] = None
+        current_owner_subject_id: Optional[UuidString] = None
+        current_state: Optional[str] = None
+        retry_with_etag: Optional[str] = None
         retry_after_seconds: Optional[int] = Field(None, ge=0)
         occurred_at: DateTimeString
         next_action: Optional[Literal[
@@ -489,7 +491,7 @@ else:
         target_property_id: UuidString
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Literal[True]
-        candidate_reassignment_plan: Optional[List[CandidateReassignment]] = None
+        candidate_reassignment_plan: List[CandidateReassignment] = None
         expected_property_versions: Dict[str, int] = None
 
         @field_validator("source_property_ids")
@@ -664,8 +666,11 @@ else:
         audit_log: InMemoryAuditLog | None = None,
     ) -> APIRouter:
         """Implement the approved ODP assisted-intake `/api/v1` contract."""
+        from modules.listing.application.intake_authorization import (
+            authorize_intake_action,
+            mask_intake,
+        )
         from shared.auth import Principal, Role
-        from modules.listing.application.intake_authorization import authorize_intake_action, mask_intake
 
         active = store or AssistedIntakeStore()
         active_audit_log = audit_log or InMemoryAuditLog()
@@ -742,11 +747,6 @@ else:
             import re
             if not (16 <= len(key) <= 128) or not re.match(r"^[A-Za-z0-9._:-]+$", key):
                 raise HTTPException(422, "invalid Idempotency-Key format")
-
-        import base64
-        import hmac
-        import hashlib
-        import json
 
         CURSOR_SECRET = b"oday-plus-secret-key-12345"
 
@@ -1265,11 +1265,6 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            if current.get("state") not in {
-                "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"
-            }:
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1295,6 +1290,10 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") not in {
+                    "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"
+                }:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 current["version"] += 1
                 ts = now()
@@ -1335,7 +1334,7 @@ else:
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "proposeCorrection", make)
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return CorrectionReceipt(**val)
 
         @router.put(
@@ -1368,7 +1367,6 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -1422,7 +1420,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "assignIntake", make)
             response.status_code = code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -1456,11 +1454,6 @@ else:
             intake = active.intakes.get(job.get("intake_id", ""))
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            if job.get("status") not in {"FAILED", "DEAD_LETTER"}:
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-            if body.checkpoint.value != job.get("checkpoint"):
-                raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1477,6 +1470,10 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if job.get("status") not in {"FAILED", "DEAD_LETTER"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                if body.checkpoint.value != job.get("checkpoint"):
+                    raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
                 require_version(if_match, job["version"])
                 job["attempt"] += 1
                 job["version"] += 1
@@ -1605,9 +1602,6 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            if current.get("state") != "READY":
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -1631,6 +1625,8 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") != "READY":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 did = str(uuid4())
                 current["version"] += 1
@@ -1662,6 +1658,8 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestCandidatePromotion", make)
             response.status_code = code
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
 
         @router.get(
@@ -1672,6 +1670,7 @@ else:
         )
         def get_promotion(
             promotion_decision_id: UuidString,
+            request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
             if promotion_decision_id not in active.promotions:
@@ -1680,6 +1679,20 @@ else:
 
             if val.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={
+                    "tenant_id": tenant_id,
+                    "owner": val.get("proposer"),
+                    "submitter": val.get("proposer"),
+                },
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
 
             return PromotionDecisionReceipt(**val)
 
@@ -1691,6 +1704,7 @@ else:
         )
         def get_identity(
             decision_id: UuidString,
+            request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> DecisionReceipt:
             if decision_id not in active.decisions:
@@ -1699,6 +1713,20 @@ else:
 
             if val.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={
+                    "tenant_id": tenant_id,
+                    "owner": val.get("proposer"),
+                    "submitter": val.get("proposer"),
+                },
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
 
             return DecisionReceipt(**val)
 
@@ -1972,14 +2000,6 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            if current.get("state") not in {
-                "SUBMITTED", "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW"
-            }:
-                raise HTTPException(
-                    409,
-                    f"WORKFLOW_STATE_DENIED: cannot cancel intake in state {current.get('state')}",
-                )
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -2001,6 +2021,13 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") not in {
+                    "SUBMITTED", "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW"
+                }:
+                    raise HTTPException(
+                        409,
+                        f"WORKFLOW_STATE_DENIED: cannot cancel intake in state {current.get('state')}",
+                    )
                 require_version(if_match, current["version"])
                 from_state = current.get("state", "SUBMITTED")
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
@@ -2009,7 +2036,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "cancelIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -2035,15 +2062,8 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            if current.get("state") != "NEEDS_REVIEW":
-                raise HTTPException(
-                    409,
-                    f"WORKFLOW_STATE_DENIED: cannot quarantine intake in state {current.get('state')}",
-                )
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -2062,6 +2082,11 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") != "NEEDS_REVIEW":
+                    raise HTTPException(
+                        409,
+                        f"WORKFLOW_STATE_DENIED: cannot quarantine intake in state {current.get('state')}",
+                    )
                 require_version(if_match, current["version"])
                 from_state = current.get("state", "SUBMITTED")
                 updated = generic_mutate(active.intakes, intake_id, "QUARANTINED", actor_id)
@@ -2070,7 +2095,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "quarantineIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -2095,21 +2120,6 @@ else:
                 raise HTTPException(404, "intake not found")
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-
-            from_state = current.get("state")
-            if from_state == "QUARANTINED":
-                to_state = "CHECKING_SOURCE_POLICY"
-            elif from_state == "FAILED":
-                job = active.jobs.get(current.get("job_id", ""))
-                checkpoint = job.get("checkpoint") if job else None
-                if checkpoint not in {"RETRIEVING", "PARSING"}:
-                    raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
-                to_state = checkpoint
-            else:
-                raise HTTPException(
-                    409,
-                    f"WORKFLOW_STATE_DENIED: cannot reopen intake in state {from_state}",
-                )
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -2136,6 +2146,20 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                from_state = current.get("state")
+                if from_state == "QUARANTINED":
+                    to_state = "CHECKING_SOURCE_POLICY"
+                elif from_state == "FAILED":
+                    job = active.jobs.get(current.get("job_id", ""))
+                    checkpoint = job.get("checkpoint") if job else None
+                    if checkpoint not in {"RETRIEVING", "PARSING"}:
+                        raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
+                    to_state = checkpoint
+                else:
+                    raise HTTPException(
+                        409,
+                        f"WORKFLOW_STATE_DENIED: cannot reopen intake in state {from_state}",
+                    )
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.intakes, intake_id, to_state, actor_id)
                 tr = receipt(from_state, to_state, updated["version"], actor_id)
@@ -2143,7 +2167,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reopenIntake", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
 
         @router.post(
@@ -2166,9 +2190,6 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            if current.get("status") not in {"ASSIGNED", "ESCALATED"}:
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -2196,13 +2217,15 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") not in {"ASSIGNED", "ESCALATED"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
                 return updated, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "claimAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -2225,9 +2248,6 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            if current.get("status") not in {"ASSIGNED", "CLAIMED"}:
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -2255,6 +2275,8 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") not in {"ASSIGNED", "CLAIMED"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 current["owner_subject_id"] = body.target_owner_subject_id
                 if body.due_at is not None:
@@ -2264,7 +2286,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "transferAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -2287,9 +2309,6 @@ else:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
-            if current.get("status") not in {"CLAIMED", "ESCALATED"}:
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -2317,13 +2336,15 @@ else:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") not in {"CLAIMED", "ESCALATED"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
                 return updated, 200
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "completeAssignment", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -2348,9 +2369,6 @@ else:
                 raise HTTPException(404, "SLA instance not found")
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            if current.get("state") not in {"ON_TRACK", "DUE_SOON", "OVERDUE"}:
-                raise HTTPException(409, "SLA_PAUSE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -2363,6 +2381,8 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") not in {"ON_TRACK", "DUE_SOON", "OVERDUE"}:
+                    raise HTTPException(409, "SLA_PAUSE_DENIED")
                 require_version(if_match, current["version"])
                 current["state_before_pause"] = current["state"]
                 updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
@@ -2371,7 +2391,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "pauseSla", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return SlaReceipt(**val)
 
         @router.post(
@@ -2396,9 +2416,6 @@ else:
                 raise HTTPException(404, "SLA instance not found")
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            if current.get("state") != "PAUSED":
-                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -2411,6 +2428,8 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("state") != "PAUSED":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 resume_state = current.pop("state_before_pause", "ON_TRACK")
                 updated = generic_mutate(active.slas, sla_instance_id, resume_state, actor_id)
@@ -2419,7 +2438,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "resumeSla", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return SlaReceipt(**val)
 
         @router.post(
@@ -2446,13 +2465,14 @@ else:
             if current is None:
                 raise HTTPException(404, "promotion decision not found")
 
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
             intake = active.intakes.get(current["intake_id"])
             if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             actor_id = principal.subject_id
 
             if current.get("proposer") == actor_id:
@@ -2470,6 +2490,8 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") != "PENDING_REVIEW":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
                 updated = generic_mutate(active.promotions, promotion_decision_id, to_state, actor_id)
@@ -2478,7 +2500,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewPromotionDecision", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
 
         @router.post(
@@ -2507,10 +2529,8 @@ else:
 
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             actor_id = principal.subject_id
 
             if current.get("proposer") == actor_id:
@@ -2529,6 +2549,8 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") != "PENDING_REVIEW":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
@@ -2536,7 +2558,7 @@ else:
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "reviewIdentityDecision", make)
             response.status_code = 200 if was_replayed else code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
         @router.post(
@@ -2562,7 +2584,6 @@ else:
 
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -2581,13 +2602,15 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") != "EXECUTED":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
                 return updated, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "requestIdentityDecisionReversal", make)
             response.status_code = code
-            response.headers["ETag"] = f'W/"{current["version"]}"'
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
         return router

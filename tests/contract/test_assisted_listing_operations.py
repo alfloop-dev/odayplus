@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
+import json
+import re
 from uuid import uuid4
 
-from apps.api.oday_api.main import create_app
+import pytest
+from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator, FormatChecker
+
 from apps.api.app.routes.listings import AssistedIntakeStore
+from apps.api.oday_api.main import create_app
+from scripts.generate_assisted_listing_intake_client import ARTIFACT
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -15,6 +20,58 @@ ACTOR_C = "00000000-0000-0000-0000-000000000103"
 ACTOR_B = "00000000-0000-0000-0000-000000000104"
 OWNER_STEWARD = "00000000-0000-0000-0000-000000000105"
 BRAND_X = "00000000-0000-0000-0000-000000000201"
+
+EFFECTIVE_OPENAPI = json.loads(ARTIFACT.read_text())
+RUNTIME_SUCCESS_OPERATIONS: set[str] = set()
+
+
+def _resolve_contract(node: object) -> object:
+    if isinstance(node, dict):
+        if "$ref" in node:
+            resolved: object = EFFECTIVE_OPENAPI
+            for part in node["$ref"].removeprefix("#/").split("/"):
+                assert isinstance(resolved, dict)
+                resolved = resolved[part]
+            return _resolve_contract(resolved)
+        return {key: _resolve_contract(value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_resolve_contract(value) for value in node]
+    return node
+
+
+def _contract_operation(method: str, path: str) -> dict | None:
+    for template, path_item in EFFECTIVE_OPENAPI["paths"].items():
+        segments = ["[^/]+" if part.startswith("{") else re.escape(part) for part in template.split("/")]
+        pattern = "^/api" + "/".join(segments) + "$"
+        if re.fullmatch(pattern, path):
+            return path_item.get(method.lower())
+    return None
+
+
+class ContractTestClient(TestClient):
+    """Validate every exercised declared response against the effective bundle."""
+
+    def request(self, method: str, url: str, **kwargs):  # type: ignore[no-untyped-def]
+        response = super().request(method, url, **kwargs)
+        operation = _contract_operation(method, response.request.url.path)
+        if operation is None:
+            return response
+
+        status = str(response.status_code)
+        declared = operation.get("responses", {}).get(status)
+        if declared is not None:
+            resolved_response = _resolve_contract(declared)
+            assert isinstance(resolved_response, dict)
+            schema = resolved_response.get("content", {}).get("application/json", {}).get("schema")
+            if schema is not None:
+                resolved_schema = _resolve_contract(schema)
+                Draft202012Validator(
+                    resolved_schema,
+                    format_checker=FormatChecker(),
+                ).validate(response.json())
+        if response.status_code < 400:
+            RUNTIME_SUCCESS_OPERATIONS.add(operation["operationId"])
+        return response
 
 # Standard headers for authenticating as tenant-a
 HEADERS_A = {
@@ -54,7 +111,7 @@ HEADERS_B = {
 @pytest.fixture
 def client() -> TestClient:
     app = create_app()
-    return TestClient(app)
+    return ContractTestClient(app)
 
 
 def _store_with_intake(intake_id: str) -> AssistedIntakeStore:
@@ -97,7 +154,6 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 
     receipt = resp.json()
     intake_id = receipt["intake_id"]
-    job_id = receipt["job_id"]
     version = receipt["version"]
     assert intake_id is not None
     assert receipt["state"] == "SUBMITTED"
@@ -181,7 +237,6 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assign_receipt = resp_assign.json()
     assert assign_receipt["status"] == "ASSIGNED"
     assert assign_receipt["owner_subject_id"] == OWNER_STEWARD
-    assignment_id = assign_receipt["assignment_id"]
     new_version = assign_receipt["version"]
 
     store = _store_with_intake(intake_id)
@@ -601,6 +656,11 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
     assert resp_rev.json()["status"] == "APPROVED"
     version_after_rev = resp_rev.headers["ETag"].strip('W/"')
 
+    # Execution is owned by the identity service; reversal is only legal once
+    # that durable graph mutation has reached EXECUTED.
+    latest_store = AssistedIntakeStore._instances[-1]
+    latest_store.decisions[decision_id]["status"] = "EXECUTED"
+
     # 4. requestIdentityDecisionReversal
     resp_reverse = client.post(
         f"/api/v1/identity-decisions/{decision_id}/actions/reverse",
@@ -679,3 +739,42 @@ def test_identity_graph_mutations(client: TestClient) -> None:
     )
     assert resp_unmerge.status_code == 202
     assert resp_unmerge.json()["status"] == "PENDING_REVIEW"
+
+
+def test_stateful_idempotency_replay_returns_the_original_receipt(client: TestClient) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={"original_url": "https://example.com/replay", "scope": {"tenant_id": TENANT_A}},
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-replay-setup-{uuid4()}"},
+    )
+    intake_id = submitted.json()["intake_id"]
+    command = {"reason": "Duplicate submission replay verification"}
+    headers = {
+        **HEADERS_A,
+        "Idempotency-Key": f"idem-stateful-replay-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+
+    first = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json=command,
+        headers=headers,
+    )
+    replayed = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json=command,
+        headers=headers,
+    )
+
+    assert first.status_code == replayed.status_code == 200
+    assert replayed.json() == first.json()
+    assert replayed.headers["ETag"] == first.headers["ETag"]
+
+
+def test_every_effective_operation_has_a_schema_valid_runtime_response() -> None:
+    assert RUNTIME_SUCCESS_OPERATIONS == {
+        operation["operationId"]
+        for path_item in EFFECTIVE_OPENAPI["paths"].values()
+        for method, operation in path_item.items()
+        if method in {"get", "post", "put", "patch", "delete"}
+    }
