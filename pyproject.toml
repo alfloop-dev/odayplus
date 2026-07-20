@@ -49,6 +49,11 @@ select = ["E", "F", "I", "UP", "B"]
 # rather than failing on legacy style.
 ignore = ["E501", "E402"]
 
+[tool.ruff.lint.per-file-ignores]
+# FastAPI routes use callable defaults (Query/Header) -> B008; keep `str, Enum`
+# for stable OpenAPI enum serialization that the contract test pins -> UP042.
+"apps/api/app/routes/listings.py" = ["B008", "UP042"]
+
 [tool.pytest.ini_options]
 testpaths = [
     ".orchestrator",

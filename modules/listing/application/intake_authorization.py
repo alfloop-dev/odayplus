@@ -137,7 +137,6 @@ def authorize_intake_action(
         "privacy-officer",
         "privacyOfficer",
     )
-    is_roleless = len(principal.roles) == 0
 
     # Deny platform admin from accessing business data
     if is_admin and not (is_manager or is_staff or is_steward):

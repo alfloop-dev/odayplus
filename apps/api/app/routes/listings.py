@@ -7,7 +7,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
@@ -31,16 +31,16 @@ else:
     # ---------------------------------------------------------------------------
     # Pydantic Schemas from openapi-effective.json
     # ---------------------------------------------------------------------------
-    def check_uuid(v: Optional[str]) -> Optional[str]:
+    def check_uuid(v: str | None) -> str | None:
         if v is None:
             return None
         try:
             UUID(v)
             return v
         except (TypeError, ValueError):
-            raise ValueError("badly formed hexadecimal UUID string")
+            raise ValueError("badly formed hexadecimal UUID string") from None
 
-    def check_datetime(v: Optional[str]) -> Optional[str]:
+    def check_datetime(v: str | None) -> str | None:
         if v is None:
             return None
         try:
@@ -49,9 +49,9 @@ else:
                 raise ValueError
             return v
         except ValueError:
-            raise ValueError("invalid date-time format")
+            raise ValueError("invalid date-time format") from None
 
-    def check_uri(v: Optional[str]) -> Optional[str]:
+    def check_uri(v: str | None) -> str | None:
         if v is None:
             return None
         if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]+$", v):
@@ -254,16 +254,16 @@ else:
 
     class ScopeContext(BaseModel):
         tenant_id: UuidString
-        assigned_area_id: Optional[UuidString] = None
-        brand_id: Optional[UuidString] = None
-        heat_zone_id: Optional[UuidString] = None
-        region_id: Optional[UuidString] = None
+        assigned_area_id: UuidString | None = None
+        brand_id: UuidString | None = None
+        heat_zone_id: UuidString | None = None
+        region_id: UuidString | None = None
 
     class UrlIntakeRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         original_url: IntakeUriString
         scope: ScopeContext
-        owner_subject_id: Optional[UuidString] = None
+        owner_subject_id: UuidString | None = None
         purpose: str = Field(None, min_length=3, max_length=500)
 
     class IntakeSubmissionReceipt(BaseModel):
@@ -273,23 +273,23 @@ else:
         job_id: UuidString
         correlation_id: UuidString
         submitted_at: DateTimeString
-        duplicate_hint: Optional[str] = None
+        duplicate_hint: str | None = None
 
     class ManualIntakeRow(BaseModel):
         address_raw: str
-        area_ping: Optional[float] = Field(None, ge=0)
+        area_ping: float | None = Field(None, ge=0)
         currency: str = "TWD"
-        floor: Optional[str] = None
-        original_url: Optional[UriString] = None
-        rent_amount: Optional[float] = Field(None, ge=0)
+        floor: str | None = None
+        original_url: UriString | None = None
+        rent_amount: float | None = Field(None, ge=0)
         source_id: str = "manual.operator"
-        source_listing_id: Optional[str] = None
+        source_listing_id: str | None = None
 
     class BatchIntakeRequest(BaseModel):
         batch_id: UuidString
         method: BatchIntakeMethod
         scope: ScopeContext
-        rows: List[ManualIntakeRow] = Field(..., min_length=1, max_length=1000)
+        rows: list[ManualIntakeRow] = Field(..., min_length=1, max_length=1000)
 
     class FieldError(BaseModel):
         field: str
@@ -318,67 +318,64 @@ else:
         message: str
         retryable: bool
         correlation_id: UuidString
-        reason_code: Optional[str] = None
-        field_errors: List[FieldError] = Field(default_factory=list)
-        current_version: Optional[int] = None
-        current_owner_subject_id: Optional[UuidString] = None
-        current_state: Optional[str] = None
-        retry_with_etag: Optional[str] = None
-        retry_after_seconds: Optional[int] = Field(None, ge=0)
+        reason_code: str | None = None
+        field_errors: list[FieldError] = Field(default_factory=list)
+        current_version: int | None = None
+        current_owner_subject_id: UuidString | None = None
+        current_state: str | None = None
+        retry_with_etag: str | None = None
+        retry_after_seconds: int | None = Field(None, ge=0)
         occurred_at: DateTimeString
-        next_action: Optional[Literal[
-            "RETRY", "REFRESH", "CORRECT_INPUT", "REQUEST_ACCESS",
-            "CONTACT_SUPPORT", "WAIT",
-        ]]
+        next_action: Literal["RETRY", "REFRESH", "CORRECT_INPUT", "REQUEST_ACCESS", "CONTACT_SUPPORT", "WAIT"] | None
 
     class BatchRowReceipt(BaseModel):
         row_index: int = Field(..., ge=1)
         status: BatchRowStatus
-        intake_id: Optional[UuidString] = None
-        client_row_id: Optional[str] = None
-        error: Optional[ApiError] = None
+        intake_id: UuidString | None = None
+        client_row_id: str | None = None
+        error: ApiError | None = None
 
     class BatchIntakeReceipt(BaseModel):
         batch_id: UuidString
         submitted_at: DateTimeString
         accepted_count: int
         rejected_count: int
-        rows: List[BatchRowReceipt]
+        rows: list[BatchRowReceipt]
         correlation_id: UuidString
 
     class IntakeSummary(BaseModel):
         intake_id: UuidString
         state: IntakeState
         intake_method: IntakeMethod
-        source_id: Optional[str] = None
-        match_outcome: Optional[MatchOutcome] = None
+        source_id: str | None = None
+        match_outcome: MatchOutcome | None = None
         submitted_by: UuidString = None
-        assigned_to: Optional[UuidString] = None
-        due_at: Optional[DateTimeString] = None
+        assigned_to: UuidString | None = None
+        due_at: DateTimeString | None = None
         submitted_at: DateTimeString
         updated_at: DateTimeString
         version: int
         scope: ScopeContext
-        masked_fields: List[str] = Field(default_factory=list)
+        masked_fields: list[str] = Field(default_factory=list)
 
     class FieldValue(BaseModel):
         field_path: str
         classification: FieldClassification
         masked: bool
-        parsed: Optional[Any] = None
-        normalized: Optional[Any] = None
-        corrected: Optional[Any] = None
-        effective: Optional[Any] = None
-        confidence: Optional[float] = Field(None, ge=0, le=1)
-        mask_reason_code: Optional[str] = None
+        parsed: Any | None = None
+        normalized: Any | None = None
+        corrected: Any | None = None
+        effective: Any | None = None
+        confidence: float | None = Field(None, ge=0, le=1)
+        mask_reason_code: str | None = None
 
     class TransitionReceipt(BaseModel):
         transition_id: UuidString
-        from_state: Optional[str]
+        from_state: str | None
         to_state: str
         occurred_at: DateTimeString
         actor: str
-        reason_code: Optional[str] = None
+        reason_code: str | None = None
         version_after: int
 
     class AuditReference(BaseModel):
@@ -386,22 +383,22 @@ else:
         action: str
         occurred_at: DateTimeString
         result: AuditResult
-        reason_code: Optional[str] = None
+        reason_code: str | None = None
 
     class IntakeDetail(IntakeSummary):
-        original_url: Optional[str]
-        canonical_url: Optional[str]
-        policy_state: Optional[SourcePolicyState]
-        source_snapshot_id: Optional[UuidString] = None
-        parser_run_id: Optional[UuidString] = None
-        match_case_id: Optional[UuidString] = None
-        processing_history: List[TransitionReceipt]
-        fields: List[FieldValue]
-        audit: List[AuditReference]
+        original_url: str | None
+        canonical_url: str | None
+        policy_state: SourcePolicyState | None
+        source_snapshot_id: UuidString | None = None
+        parser_run_id: UuidString | None = None
+        match_case_id: UuidString | None = None
+        processing_history: list[TransitionReceipt]
+        fields: list[FieldValue]
+        audit: list[AuditReference]
 
     class IntakePage(BaseModel):
-        items: List[IntakeSummary]
-        next_cursor: Optional[str] = None
+        items: list[IntakeSummary]
+        next_cursor: str | None = None
         page_size: int
         query_fingerprint: str
         snapshot_time: DateTimeString
@@ -413,7 +410,7 @@ else:
         corrected_value: Any
         reason: str = Field(..., min_length=3, max_length=2000)
         risk_acknowledged: bool = False
-        expected_effective_value_sha256: Optional[str] = Field(None, pattern=r"^[a-f0-9]{64}$")
+        expected_effective_value_sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
 
     class CorrectionReceipt(BaseModel):
         correction_id: UuidString
@@ -422,14 +419,14 @@ else:
         version: int
         audit_event_id: UuidString
         correlation_id: UuidString
-        listing_revision_id: Optional[UuidString] = None
+        listing_revision_id: UuidString | None = None
 
     class AssignmentRequest(BaseModel):
         owner_subject_id: UuidString
         owner_role: str
         due_at: DateTimeString
         reason: str = Field(..., min_length=3)
-        handoff_note: Optional[str] = None
+        handoff_note: str | None = None
 
     class AssignmentReceipt(BaseModel):
         assignment_id: UuidString
@@ -445,7 +442,7 @@ else:
         target_owner_role: str
         reason: str = Field(..., min_length=3, max_length=4000)
         handoff_note: str = Field(..., min_length=3, max_length=4000)
-        due_at: Optional[DateTimeString] = None
+        due_at: DateTimeString | None = None
 
     class SlaPauseRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -460,70 +457,70 @@ else:
         version: int = Field(..., ge=1)
         audit_event_id: UuidString
         correlation_id: UuidString
-        due_soon_at: Optional[DateTimeString] = None
-        active_pause_interval_id: Optional[UuidString] = None
+        due_soon_at: DateTimeString | None = None
+        active_pause_interval_id: UuidString | None = None
 
     class MatchDecisionRequest(BaseModel):
         decision_type: DecisionType
         reason: str = Field(..., min_length=3, max_length=4000)
-        requested_second_reviewer_id: Optional[UuidString] = None
+        requested_second_reviewer_id: UuidString | None = None
         risk_acknowledged: bool = False
-        target_listing_id: Optional[UuidString] = None
-        target_property_id: Optional[UuidString] = None
+        target_listing_id: UuidString | None = None
+        target_property_id: UuidString | None = None
 
     class DecisionReceipt(BaseModel):
         decision_id: UuidString
         status: DecisionStatus
-        resource_versions: Dict[str, int]
-        job_id: Optional[UuidString] = None
+        resource_versions: dict[str, int]
+        job_id: UuidString | None = None
         audit_event_id: UuidString
         correlation_id: UuidString
 
     class CandidateReassignment(BaseModel):
         candidate_site_id: UuidString
         disposition: CandidateDisposition
-        target_property_id: Optional[UuidString] = None
+        target_property_id: UuidString | None = None
 
     class MergeRequest(BaseModel):
-        source_property_ids: List[UuidString] = Field(
+        source_property_ids: list[UuidString] = Field(
             ..., min_length=1, json_schema_extra={"uniqueItems": True}
         )
         target_property_id: UuidString
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Literal[True]
-        candidate_reassignment_plan: List[CandidateReassignment] = None
-        expected_property_versions: Dict[str, int] = None
+        candidate_reassignment_plan: list[CandidateReassignment] = None
+        expected_property_versions: dict[str, int] = None
 
         @field_validator("source_property_ids")
         @classmethod
-        def require_unique_sources(cls, v: List[str]) -> List[str]:
+        def require_unique_sources(cls, v: list[str]) -> list[str]:
             if len(set(v)) != len(v):
                 raise ValueError("source_property_ids must contain unique values")
             return v
 
     class IdentityPartition(BaseModel):
-        target_property_id: Optional[UuidString]
-        source_identity_edge_ids: List[UuidString] = Field(
+        target_property_id: UuidString | None
+        source_identity_edge_ids: list[UuidString] = Field(
             ..., min_length=1, json_schema_extra={"uniqueItems": True}
         )
 
         @field_validator("source_identity_edge_ids")
         @classmethod
-        def require_unique_edges(cls, v: List[str]) -> List[str]:
+        def require_unique_edges(cls, v: list[str]) -> list[str]:
             if len(set(v)) != len(v):
                 raise ValueError("source_identity_edge_ids must contain unique values")
             return v
 
     class SplitRequest(BaseModel):
         source_property_id: UuidString
-        partitions: List[IdentityPartition] = Field(..., min_length=2)
+        partitions: list[IdentityPartition] = Field(..., min_length=2)
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Literal[True]
         source_property_version: int = None
 
     class UnmergeRequest(BaseModel):
         original_decision_id: UuidString
-        replacement_edges: List[IdentityPartition] = Field(..., min_length=1)
+        replacement_edges: list[IdentityPartition] = Field(..., min_length=1)
         reason: str = Field(..., min_length=20)
         risk_acknowledged: Literal[True]
 
@@ -531,7 +528,7 @@ else:
         target_format_code: str = Field(..., min_length=1, max_length=64)
         reason: str = Field(..., min_length=3, max_length=4000)
         gate_snapshot_sha256: str = Field(..., pattern=r"^[a-f0-9]{64}$")
-        requested_reviewer_id: Optional[UuidString] = None
+        requested_reviewer_id: UuidString | None = None
         risk_acknowledged: bool = False
 
     class PromotionDecisionReceipt(BaseModel):
@@ -543,22 +540,22 @@ else:
         version: int = Field(..., ge=1)
         audit_event_id: UuidString
         correlation_id: UuidString
-        candidate_site_id: Optional[UuidString] = None
-        reviewer_subject_id: Optional[UuidString] = None
-        site_score_job_id: Optional[UuidString] = None
+        candidate_site_id: UuidString | None = None
+        reviewer_subject_id: UuidString | None = None
+        site_score_job_id: UuidString | None = None
 
     class ReviewDecisionRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         decision: ReviewDecision
         reason: str = Field(..., min_length=3, max_length=4000)
-        requested_changes: List[str] = None
+        requested_changes: list[str] = None
         risk_acknowledged: bool = False
 
     class SavedViewRequest(BaseModel):
         name: str = Field(..., min_length=1, max_length=120)
         query: dict
         resource: Literal["intake"]
-        shared_role: Optional[str] = None
+        shared_role: str | None = None
         visibility: SavedViewVisibility = SavedViewVisibility.PRIVATE
 
     class SavedView(SavedViewRequest):
@@ -588,7 +585,7 @@ else:
     class RiskReasonCommand(ReasonCommand):
         model_config = ConfigDict(extra="forbid")
         risk_acknowledged: Literal[True]
-        incident_or_change_id: Optional[str] = Field(None, max_length=200)
+        incident_or_change_id: str | None = Field(None, max_length=200)
 
     class ListingImportPayload(BaseModel):
         records: list[dict[str, Any]] = Field(default_factory=list)
@@ -703,7 +700,7 @@ else:
                 check_uuid(principal.subject_id)
                 check_uuid(tenant_id)
             except ValueError:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required")
+                raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required") from None
             return tenant_id
 
         def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -803,7 +800,7 @@ else:
                 data["offset"] = int(data["offset"])
                 return data
             except Exception:
-                raise HTTPException(400, "invalid or expired cursor")
+                raise HTTPException(400, "invalid or expired cursor") from None
 
         def receipt(
             resource: str,
@@ -824,17 +821,17 @@ else:
         )
         def list_intakes(
             request: Request,
-            cursor: Optional[str] = Query(None, max_length=2048),
+            cursor: str | None = Query(None, max_length=2048),
             page_size: int = Query(50, ge=1, le=200),
-            sort: Optional[IntakeSort] = None,
-            status: Optional[List[IntakeState]] = Query(None),
-            source_id: Optional[List[str]] = Query(None),
-            match_outcome: Optional[List[MatchOutcome]] = Query(None),
-            submitted_by: Optional[UuidString] = None,
-            needs_review: Optional[bool] = None,
-            assigned_area_id: Optional[UuidString] = None,
-            heat_zone_id: Optional[UuidString] = None,
-            q: Optional[str] = Query(None, max_length=200),
+            sort: IntakeSort | None = None,
+            status: list[IntakeState] | None = Query(None),
+            source_id: list[str] | None = Query(None),
+            match_outcome: list[MatchOutcome] | None = Query(None),
+            submitted_by: UuidString | None = None,
+            needs_review: bool | None = None,
+            assigned_area_id: UuidString | None = None,
+            heat_zone_id: UuidString | None = None,
+            q: str | None = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
             sort_value = (sort or IntakeSort.SUBMITTED_AT_DESC).value
@@ -1497,13 +1494,13 @@ else:
         @router.get(
             "/saved-views",
             operation_id="listSavedViews",
-            response_model=List[SavedView],
+            response_model=list[SavedView],
             responses=api_error_responses(403),
         )
         def list_saved_views(
             request: Request,
             tenant_id: str = Depends(require_actor),
-        ) -> List[SavedView]:
+        ) -> list[SavedView]:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
 
