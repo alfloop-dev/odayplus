@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -881,15 +881,14 @@ class NetworkListingService:
 
         from modules.external_data.application.assisted_intake import (
             PARSER_VERSION,
+            RetrievalFailure,
             content_fingerprint,
             effective_fields,
             match_listing,
             normalize_url,
             parse_snapshot,
             resolve_source_policy,
-            retrieve,
             validate_url,
-            RetrievalFailure,
         )
         from modules.external_data.security import redact_sensitive_snapshot
 
@@ -1471,13 +1470,12 @@ class NetworkListingService:
 
 
         from modules.external_data.application.assisted_intake import (
+            RetrievalFailure,
             content_fingerprint,
             effective_fields,
             match_listing,
             parse_snapshot,
             resolve_source_policy,
-            retrieve,
-            RetrievalFailure,
         )
         from modules.external_data.security import redact_sensitive_snapshot
 
@@ -1539,7 +1537,10 @@ class NetworkListingService:
                     raw=redacted_raw,
                 )
             else:
-                from modules.external_data.application.assisted_intake import RetrievalResult, RetrievalFailure
+                from modules.external_data.application.assisted_intake import (
+                    RetrievalFailure,
+                    RetrievalResult,
+                )
                 retrieval = RetrievalResult(
                     snapshot_id="FAILED",
                     captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -1798,9 +1799,10 @@ class NetworkListingService:
         )
 
     def _get_snapshot_service(self) -> Any:
-        from modules.external_data.application.source_snapshots import SourceSnapshotService
-        from shared.infrastructure.object_store.client import InMemoryObjectStore, GcsObjectStore
         import os
+
+        from modules.external_data.application.source_snapshots import SourceSnapshotService
+        from shared.infrastructure.object_store.client import GcsObjectStore, InMemoryObjectStore
 
         doc_store = None
         db_conn = None
