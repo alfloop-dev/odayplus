@@ -604,6 +604,102 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
     assert retried.json()["status"] == "QUEUED"
 
 
+def test_retry_exact_replay_precedes_mutable_ownership_authorization(
+    client: TestClient,
+) -> None:
+    staff_headers = {
+        "x-subject-id": ACTOR_A,
+        "x-tenant-id": TENANT_A,
+        "x-roles": "expansion_user",
+    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/staff-retry-replay",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **staff_headers,
+            "Idempotency-Key": f"idem-retry-replay-setup-{uuid4()}",
+        },
+    )
+    receipt = submitted.json()
+    store = _store_with_intake(receipt["intake_id"])
+    job = store.jobs[receipt["job_id"]]
+    intake = store.intakes[receipt["intake_id"]]
+    job["status"] = "FAILED"
+    job["checkpoint"] = "PARSING"
+    intake["state"] = "FAILED"
+    retry_body = {
+        "checkpoint": "PARSING",
+        "reason": "Retry and preserve the immutable accepted receipt",
+    }
+    retry_headers = {
+        **staff_headers,
+        "Idempotency-Key": f"idem-retry-replay-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+
+    first = client.post(
+        f"/api/v1/jobs/{receipt['job_id']}/retry",
+        json=retry_body,
+        headers=retry_headers,
+    )
+    assert first.status_code == 202
+
+    # Ownership is mutable after acceptance. It must not invalidate replay of
+    # the exact prior command and receipt for the same actor.
+    intake["submitted_by"] = ACTOR_C
+    intake["assigned_to"] = ACTOR_C
+    replayed = client.post(
+        f"/api/v1/jobs/{receipt['job_id']}/retry",
+        json=retry_body,
+        headers=retry_headers,
+    )
+
+    assert replayed.status_code == 202
+    assert replayed.json() == first.json()
+
+
+def test_retry_orphan_job_fails_closed_for_same_tenant_staff(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/orphan-retry",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-orphan-retry-setup-{uuid4()}",
+        },
+    )
+    receipt = submitted.json()
+    store = _store_with_intake(receipt["intake_id"])
+    store.jobs[receipt["job_id"]]["status"] = "FAILED"
+    store.jobs[receipt["job_id"]]["checkpoint"] = "PARSING"
+    del store.intakes[receipt["intake_id"]]
+
+    response = client.post(
+        f"/api/v1/jobs/{receipt['job_id']}/retry",
+        json={
+            "checkpoint": "PARSING",
+            "reason": "Attempt to retry a job without its authorization resource",
+        },
+        headers={
+            "x-subject-id": ACTOR_C,
+            "x-tenant-id": TENANT_A,
+            "x-roles": "expansion_user",
+            "Idempotency-Key": f"idem-orphan-retry-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "DEPENDENCY_CONFLICT"
+
+
 def test_saved_views_operations(client: TestClient) -> None:
     view_payload = {
         "name": "My Active Intakes",

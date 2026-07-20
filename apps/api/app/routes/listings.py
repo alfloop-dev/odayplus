@@ -1577,7 +1577,7 @@ else:
                     "description": "Assignment updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 428),
+                **api_error_responses(403, 409, 422, 428),
             },
         )
         def assign(
@@ -1709,10 +1709,31 @@ else:
 
             if job.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            intake = active.intakes.get(job.get("intake_id", ""))
-            if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            actor_id = principal.subject_id
+
+            # Exact replay is an immutable receipt lookup. It must precede
+            # authorization that depends on mutable intake ownership/state, or
+            # a lost successful response can turn into a later 403.
+            prior = load_replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "retryJob",
+                resource_id=job_id,
+            )
+            if prior is not None:
+                val, code = prior
+                response.status_code = code
+                return JobReceipt(**val)
+
+            intake_id = job.get("intake_id")
+            intake = active.intakes.get(intake_id) if intake_id else None
+            if intake is None:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT: retry job has no linked intake")
+            if intake.get("scope", {}).get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
@@ -1724,8 +1745,6 @@ else:
                 audit_log=active_audit_log,
                 correlation_id=correlation_id,
             )
-
-            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 if job.get("status") not in {"FAILED", "DEAD_LETTER"}:
@@ -1796,7 +1815,10 @@ else:
             operation_id="createSavedView",
             status_code=201,
             response_model=SavedView,
-            responses=api_error_responses(409, idempotency_conflict=True),
+            responses={
+                **api_error_responses(403, 422),
+                **api_error_responses(409, idempotency_conflict=True),
+            },
         )
         def create_saved_view(
             body: SavedViewRequest,

@@ -6,7 +6,7 @@ from apps.api.oday_api.main import create_app
 
 NETWORK_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }

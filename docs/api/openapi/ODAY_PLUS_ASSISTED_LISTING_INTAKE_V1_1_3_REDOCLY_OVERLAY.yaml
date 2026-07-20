@@ -50,7 +50,10 @@ actions:
   - target: $.paths['/v1/identity/unmerge'].post
     update: {summary: Propose or execute an identity unmerge}
   - target: $.paths['/v1/intakes/{intake_id}/assignment'].put
-    update: {summary: Assign an intake}
+    update:
+      summary: Assign an intake
+      responses:
+        '422': {$ref: '#/components/responses/ValidationError'}
   - target: $.paths['/v1/jobs/{job_id}/retry'].post
     update: {summary: Retry a job from a durable checkpoint}
   - target: $.paths['/v1/saved-views'].get
@@ -59,7 +62,11 @@ actions:
       responses:
         '403': {$ref: '#/components/responses/Forbidden'}
   - target: $.paths['/v1/saved-views'].post
-    update: {summary: Create a saved intake view}
+    update:
+      summary: Create a saved intake view
+      responses:
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   - target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
     update: {summary: Request candidate-site promotion}
   - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get

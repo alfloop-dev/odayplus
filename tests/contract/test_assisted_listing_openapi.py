@@ -263,7 +263,12 @@ def test_live_runtime_request_and_response_schema_match_every_effective_operatio
 
     # Negative Test 1: UUID format validation failure in query parameter
     resp_uuid = client.get("/api/v1/intakes", params={"submitted_by": "invalid-uuid"}, headers=HEADERS_A)
-    assert resp_uuid.status_code == 422, "UUID parameter validation bypass"
+    assert resp_uuid.status_code == 400, "UUID query validation bypass"
+
+    # Negative Test 1b: malformed GET identifiers follow the declared 404
+    # resource contract instead of leaking FastAPI's undeclared 422.
+    resp_path_uuid = client.get("/api/v1/intakes/invalid-uuid", headers=HEADERS_A)
+    assert resp_path_uuid.status_code == 404, "UUID path validation bypass"
 
     # Negative Test 2: Date-time format validation failure in request body
     intake_id = str(uuid4())
@@ -324,7 +329,7 @@ def test_live_runtime_request_and_response_schema_match_every_effective_operatio
         },
         headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-{uuid4()}", "If-Match": "1"}
     )
-    assert resp_ifmatch.status_code == 400, "If-Match format validation bypass"
+    assert resp_ifmatch.status_code == 422, "If-Match format validation bypass"
 
     # Negative Test 7: Missing If-Match
     resp_ifmatch_missing = client.put(

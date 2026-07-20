@@ -13,7 +13,7 @@ from shared.auth import Principal
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }
@@ -338,6 +338,7 @@ def test_promote_intake_contract_test() -> None:
         headers={
             **HEADERS,
             "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
             "x-operator-role": "expansion-staff",
         },
     )
@@ -383,6 +384,7 @@ def _ready_intake_id(client) -> str:
         headers={
             **HEADERS,
             "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
             "x-operator-role": "expansion-staff",
         },
     )

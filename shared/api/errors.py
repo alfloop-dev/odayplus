@@ -354,6 +354,9 @@ def install_error_handlers(app: Any) -> None:
         elif "OWNER_CONFLICT" in detail_str:
             code = "OWNER_CONFLICT"
             next_action = "REFRESH"
+        elif "DEPENDENCY_CONFLICT" in detail_str:
+            code = "DEPENDENCY_CONFLICT"
+            next_action = "CONTACT_SUPPORT"
         elif "VERSION_CONFLICT" in detail_str or "version conflict" in detail_str:
             code = "VERSION_CONFLICT"
             next_action = "REFRESH"
@@ -482,17 +485,18 @@ def install_error_handlers(app: Any) -> None:
         from fastapi.encoders import jsonable_encoder
         encoded = jsonable_encoder(exc.errors())
 
-        # Missing If-Match is a 428 precondition failure; a present but
-        # malformed weak ETag is a 400 request-format failure.
+        # Missing If-Match is a 428 precondition failure. A present but
+        # malformed weak ETag is request validation and therefore follows the
+        # declared 422 ApiError contract used by versioned mutations.
         for error in encoded:
             loc = error.get("loc", [])
             if len(loc) >= 2 and str(loc[0]) == "header" and str(loc[1]).lower() == "if-match":
                 if _is_v1(request):
                     if error.get("type") != "missing":
                         return JSONResponse(
-                            status_code=400,
+                            status_code=422,
                             content=map_to_api_error(
-                                400,
+                                422,
                                 "invalid If-Match format; expected W/\"<version>\"",
                                 _correlation_id(request),
                             ),
@@ -513,9 +517,28 @@ def install_error_handlers(app: Any) -> None:
                     )
 
         if _is_v1(request):
+            # Preserve the approved operation-specific negative contracts:
+            # malformed inbox filters are a bad request, while malformed GET
+            # resource identifiers are indistinguishable from an absent
+            # resource. Mutation validation uses the declared 422 response.
+            locations = {
+                str(error.get("loc", [""])[0])
+                for error in encoded
+                if error.get("loc")
+            }
+            if request.method == "GET" and "path" in locations:
+                validation_status = 404
+            elif request.method == "GET" and "query" in locations:
+                validation_status = 400
+            else:
+                validation_status = 422
             return JSONResponse(
-                status_code=422,
-                content=map_to_api_error(422, encoded, _correlation_id(request)),
+                status_code=validation_status,
+                content=map_to_api_error(
+                    validation_status,
+                    encoded,
+                    _correlation_id(request),
+                ),
             )
         message, details = _summarize_detail(encoded)
         return JSONResponse(

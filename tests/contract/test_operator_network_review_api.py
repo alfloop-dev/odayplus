@@ -28,7 +28,7 @@ REVIEWER_HEADERS = {
 # Expansion holds sitescore VIEW/EXECUTE only (may submit, not decide).
 EXPANSION_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user",
+    "x-roles": "site_reviewer",
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }

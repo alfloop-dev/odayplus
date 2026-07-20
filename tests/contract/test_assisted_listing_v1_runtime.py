@@ -66,26 +66,46 @@ def test_if_match_and_assignment_contract() -> None:
     assert ok.json()["status"] == "ASSIGNED"
 
 
-def test_local_operator_role_header_cannot_grant_a_role() -> None:
-    response = TestClient(create_app()).post(
-        "/api/v1/intakes/url",
+def _manager_only_listing_merge(
+    client: TestClient,
+    *,
+    headers: dict[str, str],
+    key: str,
+):
+    return client.post(
+        "/api/v1/operator/network-listings/listings/L-2029/merge",
         headers={
-            "X-Tenant-Id": HEADERS["X-Tenant-Id"],
-            "X-Subject-Id": HEADERS["X-Subject-Id"],
+            **headers,
             "X-Operator-Role": "expansion-manager",
-            "Idempotency-Key": "forged-local-role-1",
+            "Idempotency-Key": key,
         },
         json={
-            "original_url": "https://example.test/listing/forged-local-role",
-            "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
+            "targetListingId": "L-2025",
+            "reason": "Attempt a manager-only listing merge",
+            "riskSummary": "Merging listings changes canonical property identity.",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
         },
     )
 
+
+def test_local_expansion_user_cannot_forge_manager_role() -> None:
+    response = _manager_only_listing_merge(
+        TestClient(create_app()),
+        headers={
+            "X-Tenant-Id": "tenant-a",
+            "X-Subject-Id": "operator-expansion-staff",
+            "X-Roles": "expansion_user",
+        },
+        key="forged-local-manager-role-1",
+    )
+
     assert response.status_code == 403
-    assert response.json()["code"] == "ROLE_DENIED"
+    assert response.json()["error"]["code"] == "forbidden"
+    assert "outside principal roles" in response.json()["detail"]
 
 
-def test_live_operator_role_header_cannot_expand_verified_claims(monkeypatch) -> None:
+def test_live_expansion_user_cannot_forge_manager_role(monkeypatch) -> None:
     issuer = "https://idp.assisted-intake.test"
     audience = "assisted-intake-api"
     signing_key = SigningKey(
@@ -108,29 +128,25 @@ def test_live_operator_role_header_cannot_expand_verified_claims(monkeypatch) ->
             "aud": audience,
             "iat": now.timestamp(),
             "exp": (now + timedelta(hours=1)).timestamp(),
-            "tenant_id": HEADERS["X-Tenant-Id"],
-            "roles": [],
+            "tenant_id": "tenant-a",
+            "roles": ["expansion_user"],
         },
         signing_key,
     )
     try:
-        response = TestClient(create_app()).post(
-            "/api/v1/intakes/url",
+        response = _manager_only_listing_merge(
+            TestClient(create_app()),
             headers={
                 "Authorization": f"Bearer {token}",
-                "X-Operator-Role": "expansion-manager",
-                "Idempotency-Key": "forged-live-role-1",
             },
-            json={
-                "original_url": "https://example.test/listing/forged-live-role",
-                "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
-            },
+            key="forged-live-manager-role-1",
         )
     finally:
         auth_dependencies.reset_default_boundary()
 
     assert response.status_code == 403
-    assert response.json()["code"] == "ROLE_DENIED"
+    assert response.json()["error"]["code"] == "forbidden"
+    assert "outside principal roles" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

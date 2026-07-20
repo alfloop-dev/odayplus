@@ -153,7 +153,7 @@ def test_role_workspace_grant_survives_restart_and_still_authorizes(db_path: str
 
     expansion_headers = {
         "x-subject-id": "operator-expansion-manager",
-        "x-roles": "expansion_user",
+        "x-roles": "site_reviewer",
         "x-tenant-id": "tenant-a",
     }
     search = after.get("/api/v1/operator/shell/search?q=", headers=expansion_headers).json()
