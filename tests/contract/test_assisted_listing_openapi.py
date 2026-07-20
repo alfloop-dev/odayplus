@@ -6,7 +6,6 @@ from apps.api.oday_api.main import create_app
 from scripts.generate_assisted_listing_intake_client import ARTIFACT, CLIENT, build
 from scripts.openapi.generate_client import render
 
-
 EXPECTED_OPERATIONS = {
     "listIntakes", "submitUrlIntake", "submitIntakeBatch", "getIntake",
     "proposeCorrection", "decideMatchCase", "mergeProperties", "splitProperty",
@@ -53,7 +52,8 @@ def test_high_impact_operations_declare_replay_and_concurrency() -> None:
     assert parameters["IfMatch"]["required"] is True
     for item in artifact["paths"].values():
         for method, operation in item.items():
-            if method not in {"post", "put", "patch", "delete"}: continue
+            if method not in {"post", "put", "patch", "delete"}:
+                continue
             refs = {p.get("$ref", "") for p in operation.get("parameters", [])}
             if any(ref.endswith("/IfMatch") for ref in refs):
                 assert any(ref.endswith("/IdempotencyKey") for ref in refs)

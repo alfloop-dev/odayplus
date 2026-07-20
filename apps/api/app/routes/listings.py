@@ -188,14 +188,16 @@ else:
         @router.get("/intakes/{intake_id}", dependencies=[Depends(require_actor)])
         def get_intake(intake_id: str, response: Response) -> dict[str, Any]:
             value = active.intakes.get(intake_id)
-            if value is None: raise HTTPException(404, "intake not found")
+            if value is None:
+                raise HTTPException(404, "intake not found")
             response.headers["ETag"] = f'"{value["version"]}"'
             return value
 
         def mutate(collection: dict[str, dict[str, Any]], resource_id: str, action: str,
                    body: dict[str, Any], key: str | None, if_match: str | None) -> dict[str, Any]:
             current = collection.get(resource_id)
-            if current is None: raise HTTPException(404, "resource not found")
+            if current is None:
+                raise HTTPException(404, "resource not found")
             require_version(if_match, int(current.get("version", 1)))
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] = int(current.get("version", 1)) + 1
@@ -207,9 +209,11 @@ else:
         @router.post("/intakes/{intake_id}/corrections", status_code=201, dependencies=[Depends(require_actor)])
         def correct(intake_id: str, body: dict[str, Any], key: str | None = Header(None, alias="Idempotency-Key"), if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
             current = active.intakes.get(intake_id)
-            if current is None: raise HTTPException(404, "intake not found")
+            if current is None:
+                raise HTTPException(404, "intake not found")
             require_version(if_match, current["version"])
-            if not all(k in body for k in ("field_path", "corrected_value", "reason")): raise HTTPException(422, "invalid correction")
+            if not all(k in body for k in ("field_path", "corrected_value", "reason")):
+                raise HTTPException(422, "invalid correction")
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] += 1
                 return {"correction_id": str(uuid4()), "status": "ACCEPTED", "intake_id": intake_id,
@@ -219,21 +223,26 @@ else:
         @router.put("/intakes/{intake_id}/assignment", dependencies=[Depends(require_actor)])
         def assign(intake_id: str, body: dict[str, Any], key: str | None = Header(None, alias="Idempotency-Key"), if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
             current = active.intakes.get(intake_id)
-            if current is None: raise HTTPException(404, "intake not found")
+            if current is None:
+                raise HTTPException(404, "intake not found")
             require_version(if_match, current["version"])
             def make() -> tuple[dict[str, Any], int]:
-                aid = str(uuid4()); current["version"] += 1
+                aid = str(uuid4())
+                current["version"] += 1
                 value = {"assignment_id": aid, "status": "ASSIGNED", "owner_subject_id": body.get("owner_subject_id"), "due_at": body.get("due_at"), "version": 1, "audit_event_id": str(uuid4())}
-                active.assignments[aid] = value; return value, 200
+                active.assignments[aid] = value
+                return value, 200
             return replay(key, body, make)[0]
 
         @router.post("/jobs/{job_id}/retry", status_code=202, dependencies=[Depends(require_actor)])
         def retry_job(job_id: str, body: dict[str, Any], key: str | None = Header(None, alias="Idempotency-Key"), if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
             job = active.jobs.get(job_id)
-            if job is None: raise HTTPException(404, "job not found")
+            if job is None:
+                raise HTTPException(404, "job not found")
             require_version(if_match, job["version"])
             def make() -> tuple[dict[str, Any], int]:
-                job.update(status="QUEUED", checkpoint=body.get("checkpoint"), attempt=job["attempt"]+1, version=job["version"]+1); return job, 202
+                job.update(status="QUEUED", checkpoint=body.get("checkpoint"), attempt=job["attempt"]+1, version=job["version"]+1)
+                return job, 202
             return replay(key, body, make)[0]
 
         @router.get("/saved-views", dependencies=[Depends(require_actor)])
@@ -242,63 +251,104 @@ else:
         @router.post("/saved-views", status_code=201, dependencies=[Depends(require_actor)])
         def create_saved_view(body: dict[str, Any], key: str | None = Header(None, alias="Idempotency-Key")) -> dict[str, Any]:
             def make() -> tuple[dict[str, Any], int]:
-                value = {"saved_view_id": str(uuid4()), **body}; active.saved_views.append(value); return value, 201
+                value = {"saved_view_id": str(uuid4()), **body}
+                active.saved_views.append(value)
+                return value, 201
             return replay(key, body, make)[0]
 
         @router.post("/intakes/{intake_id}/promotion-requests", status_code=202, dependencies=[Depends(require_actor)])
         def promote(intake_id: str, body: dict[str, Any], key: str | None = Header(None, alias="Idempotency-Key"), if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
             current = active.intakes.get(intake_id)
-            if current is None: raise HTTPException(404, "intake not found")
+            if current is None:
+                raise HTTPException(404, "intake not found")
             require_version(if_match, current["version"])
             def make() -> tuple[dict[str, Any], int]:
-                did = str(uuid4()); value = {"promotion_decision_id": did, "intake_id": intake_id, "listing_id": str(uuid4()), "status": "PENDING_REVIEW", "decision_type": "PROMOTION", "version": 1, "audit_event_id": str(uuid4()), "correlation_id": str(uuid4())}; active.promotions[did] = value; return value, 202
+                did = str(uuid4())
+                value = {"promotion_decision_id": did, "intake_id": intake_id, "listing_id": str(uuid4()), "status": "PENDING_REVIEW", "decision_type": "PROMOTION", "version": 1, "audit_event_id": str(uuid4()), "correlation_id": str(uuid4())}
+                active.promotions[did] = value
+                return value, 202
             return replay(key, body, make)[0]
 
-        @router.get("/promotion-decisions/{resource_id}", dependencies=[Depends(require_actor)])
-        def get_promotion(resource_id: str) -> dict[str, Any]:
-            if resource_id not in active.promotions: raise HTTPException(404, "promotion decision not found")
-            return active.promotions[resource_id]
+        @router.get("/promotion-decisions/{promotion_decision_id}", dependencies=[Depends(require_actor)])
+        def get_promotion(promotion_decision_id: str) -> dict[str, Any]:
+            if promotion_decision_id not in active.promotions:
+                raise HTTPException(404, "promotion decision not found")
+            return active.promotions[promotion_decision_id]
 
-        @router.get("/identity-decisions/{resource_id}", dependencies=[Depends(require_actor)])
-        def get_identity(resource_id: str) -> dict[str, Any]:
-            if resource_id not in active.decisions: raise HTTPException(404, "identity decision not found")
-            return active.decisions[resource_id]
+        @router.get("/identity-decisions/{decision_id}", dependencies=[Depends(require_actor)])
+        def get_identity(decision_id: str) -> dict[str, Any]:
+            if decision_id not in active.decisions:
+                raise HTTPException(404, "identity decision not found")
+            return active.decisions[decision_id]
 
         # Uniform state-command endpoints. Their payloads remain unmodified and are
         # covered by the effective OpenAPI; this handler only owns concurrency/replay.
-        for path, name, collection, action in [
-            ("/intakes/{resource_id}/actions/cancel", "cancelIntake", active.intakes, "cancelled"),
-            ("/intakes/{resource_id}/actions/quarantine", "quarantineIntake", active.intakes, "quarantined"),
-            ("/intakes/{resource_id}/actions/reopen", "reopenIntake", active.intakes, "reopened"),
-            ("/assignments/{resource_id}/actions/claim", "claimAssignment", active.assignments, "claimed"),
-            ("/assignments/{resource_id}/actions/transfer", "transferAssignment", active.assignments, "transferred"),
-            ("/assignments/{resource_id}/actions/complete", "completeAssignment", active.assignments, "completed"),
-            ("/sla-instances/{resource_id}/actions/pause", "pauseSla", active.slas, "paused"),
-            ("/sla-instances/{resource_id}/actions/resume", "resumeSla", active.slas, "resumed"),
-            ("/promotion-decisions/{resource_id}/actions/review", "reviewPromotionDecision", active.promotions, "reviewed"),
-            ("/identity-decisions/{resource_id}/actions/review", "reviewIdentityDecision", active.decisions, "reviewed"),
-            ("/identity-decisions/{resource_id}/actions/reverse", "requestIdentityDecisionReversal", active.decisions, "reversal_requested"),
-        ]:
-            def command(resource_id: str, body: dict[str, Any] | None = None,
+        def make_intake_command(collection: Any, action: str):
+            def command(intake_id: str, body: dict[str, Any] | None = None,
                         key: str | None = Header(None, alias="Idempotency-Key"),
-                        if_match: str | None = Header(None, alias="If-Match"),
-                        _collection: Any = collection, _action: str = action) -> dict[str, Any]:
-                return mutate(_collection, resource_id, _action, body or {}, key, if_match)
-            router.add_api_route(path, command, methods=["POST"], operation_id=name)
+                        if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
+                return mutate(collection, intake_id, action, body or {}, key, if_match)
+            return command
+
+        def make_assignment_command(collection: Any, action: str):
+            def command(assignment_id: str, body: dict[str, Any] | None = None,
+                        key: str | None = Header(None, alias="Idempotency-Key"),
+                        if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
+                return mutate(collection, assignment_id, action, body or {}, key, if_match)
+            return command
+
+        def make_sla_command(collection: Any, action: str):
+            def command(sla_instance_id: str, body: dict[str, Any] | None = None,
+                        key: str | None = Header(None, alias="Idempotency-Key"),
+                        if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
+                return mutate(collection, sla_instance_id, action, body or {}, key, if_match)
+            return command
+
+        def make_promotion_command(collection: Any, action: str):
+            def command(promotion_decision_id: str, body: dict[str, Any] | None = None,
+                        key: str | None = Header(None, alias="Idempotency-Key"),
+                        if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
+                return mutate(collection, promotion_decision_id, action, body or {}, key, if_match)
+            return command
+
+        def make_decision_command(collection: Any, action: str):
+            def command(decision_id: str, body: dict[str, Any] | None = None,
+                        key: str | None = Header(None, alias="Idempotency-Key"),
+                        if_match: str | None = Header(None, alias="If-Match")) -> dict[str, Any]:
+                return mutate(collection, decision_id, action, body or {}, key, if_match)
+            return command
+
+        for path, name, collection, action, maker in [
+            ("/intakes/{intake_id}/actions/cancel", "cancelIntake", active.intakes, "cancelled", make_intake_command),
+            ("/intakes/{intake_id}/actions/quarantine", "quarantineIntake", active.intakes, "quarantined", make_intake_command),
+            ("/intakes/{intake_id}/actions/reopen", "reopenIntake", active.intakes, "reopened", make_intake_command),
+            ("/assignments/{assignment_id}/actions/claim", "claimAssignment", active.assignments, "claimed", make_assignment_command),
+            ("/assignments/{assignment_id}/actions/transfer", "transferAssignment", active.assignments, "transferred", make_assignment_command),
+            ("/assignments/{assignment_id}/actions/complete", "completeAssignment", active.assignments, "completed", make_assignment_command),
+            ("/sla-instances/{sla_instance_id}/actions/pause", "pauseSla", active.slas, "paused", make_sla_command),
+            ("/sla-instances/{sla_instance_id}/actions/resume", "resumeSla", active.slas, "resumed", make_sla_command),
+            ("/promotion-decisions/{promotion_decision_id}/actions/review", "reviewPromotionDecision", active.promotions, "reviewed", make_promotion_command),
+            ("/identity-decisions/{decision_id}/actions/review", "reviewIdentityDecision", active.decisions, "reviewed", make_decision_command),
+            ("/identity-decisions/{decision_id}/actions/reverse", "requestIdentityDecisionReversal", active.decisions, "reversal_requested", make_decision_command),
+        ]:
+            router.add_api_route(path, maker(collection, action), methods=["POST"], operation_id=name)
 
         for path, name, action in [
-            ("/match-cases/{resource_id}/decisions", "decideMatchCase", "match_decision"),
+            ("/match-cases/{match_case_id}/decisions", "decideMatchCase", "match_decision"),
             ("/identity/merge", "mergeProperties", "merge"),
             ("/identity/split", "splitProperty", "split"),
             ("/identity/unmerge", "unmergeProperty", "unmerge"),
         ]:
-            def identity_command(resource_id: str = "identity", body: dict[str, Any] | None = None,
+            def identity_command(match_case_id: str = "identity", body: dict[str, Any] | None = None,
                                  key: str | None = Header(None, alias="Idempotency-Key"),
                                  if_match: str | None = Header(None, alias="If-Match"),
                                  _action: str = action) -> dict[str, Any]:
                 require_version(if_match)
                 def make() -> tuple[dict[str, Any], int]:
-                    did = str(uuid4()); value = {"decision_id": did, "status": "ACCEPTED", "resource_versions": {}, "job_id": str(uuid4()), "audit_event_id": str(uuid4()), "correlation_id": str(uuid4())}; active.decisions[did] = {**value, "version": 1, "action": _action}; return value, 202
+                    did = str(uuid4())
+                    value = {"decision_id": did, "status": "ACCEPTED", "resource_versions": {}, "job_id": str(uuid4()), "audit_event_id": str(uuid4()), "correlation_id": str(uuid4())}
+                    active.decisions[did] = {**value, "version": 1, "action": _action}
+                    return value, 202
                 return replay(key, body or {}, make)[0]
             router.add_api_route(path, identity_command, methods=["POST"], operation_id=name, status_code=202)
 
