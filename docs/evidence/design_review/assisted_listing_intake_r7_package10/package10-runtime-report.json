@@ -1,0 +1,242 @@
+{
+  "errors": [],
+  "source": {
+    "title": "Oday Plus 營運管理後台 · Operator Console R7",
+    "lang": "zh-Hant",
+    "width": 1440
+  },
+  "standalone": {
+    "title": "",
+    "lang": "",
+    "width": 1440
+  },
+  "mobile": {
+    "viewportWidth": 390,
+    "documentWidth": 493,
+    "bodyWidth": 493,
+    "overflowing": [
+      {
+        "label": "通知4待核准4林\n營運主管\n▾登出",
+        "left": 20,
+        "right": 493,
+        "width": 473
+      },
+      {
+        "label": "今日工作\nToday門市營運\nStore Ops營收成長\n限Growth展店與店",
+        "left": 20,
+        "right": 465,
+        "width": 445
+      },
+      {
+        "label": "林\n營運主管\n▾",
+        "left": 340,
+        "right": 449,
+        "width": 109
+      },
+      {
+        "label": "林\n營運主管\n▾",
+        "left": 340,
+        "right": 449,
+        "width": 109
+      },
+      {
+        "label": "提交現場回報 →",
+        "left": 340,
+        "right": 427,
+        "width": 87
+      },
+      {
+        "label": "治理稽核\nGovern",
+        "left": 389,
+        "right": 465,
+        "width": 76
+      },
+      {
+        "label": "提交現場回報",
+        "left": 340,
+        "right": 412,
+        "width": 72
+      },
+      {
+        "label": "建立處置 →",
+        "left": 340,
+        "right": 403,
+        "width": 63
+      },
+      {
+        "label": "判斷成效 →",
+        "left": 340,
+        "right": 403,
+        "width": 63
+      },
+      {
+        "label": "建立處置 →",
+        "left": 340,
+        "right": 403,
+        "width": 63
+      },
+      {
+        "label": "治理稽核",
+        "left": 401,
+        "right": 453,
+        "width": 52
+      },
+      {
+        "label": "治理稽核",
+        "left": 401,
+        "right": 453,
+        "width": 52
+      }
+    ]
+  },
+  "dialog": {
+    "triggerText": "＋ 從網址新增物件（帶入本區）",
+    "initialFocus": {
+      "tag": "INPUT",
+      "label": "物件頁網址",
+      "placeholder": "https://www.591.com.tw/rent-detail-XXXXXXXX.html"
+    },
+    "controls": [
+      {
+        "tag": "BUTTON",
+        "name": "關閉對話框"
+      },
+      {
+        "tag": "INPUT",
+        "name": "物件頁網址"
+      },
+      {
+        "tag": "SELECT",
+        "name": "HeatZone 或指定區域"
+      },
+      {
+        "tag": "BUTTON",
+        "name": "取消"
+      },
+      {
+        "tag": "BUTTON",
+        "name": "送出 URL"
+      }
+    ],
+    "focusAfterEscape": {
+      "tag": "BODY",
+      "text": "O+Oday PlusOPERATOR CONSOLE · R7POC DEMO · R7今日工作\nToday門市營運\n限Store Ops營收成長\n限Grow",
+      "label": null
+    }
+  },
+  "axe": {
+    "violationCount": 2,
+    "violations": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "nodes": 125,
+        "samples": [
+          {
+            "target": [
+              "button[title=\"Today\"] > span[data-dc-tpl=\"23\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.42 (foreground color: #7a83ac, background color: #181e38, font size: 6.4pt (8.5px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(2) > span[data-dc-tpl=\"20\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.01 (foreground color: #5e6890, background color: #181e38, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(2) > span[data-dc-tpl=\"23\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.05 (foreground color: #454f76, background color: #181e38, font size: 6.4pt (8.5px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(3) > span[data-dc-tpl=\"20\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.01 (foreground color: #5e6890, background color: #181e38, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(3) > span[data-dc-tpl=\"23\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.05 (foreground color: #454f76, background color: #181e38, font size: 6.4pt (8.5px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(5) > span[data-dc-tpl=\"20\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.01 (foreground color: #5e6890, background color: #181e38, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"19\"]:nth-child(5) > span[data-dc-tpl=\"23\"] > .sc-interp"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.05 (foreground color: #454f76, background color: #181e38, font size: 6.4pt (8.5px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "button[data-dc-tpl=\"61\"]"
+            ],
+            "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.74 (foreground color: #9a7a2a, background color: #fbf6e9, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1"
+          }
+        ]
+      },
+      {
+        "id": "region",
+        "impact": "moderate",
+        "nodes": 50,
+        "samples": [
+          {
+            "target": [
+              "div[data-dc-tpl=\"11\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "input[data-dc-tpl=\"25\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "div[data-dc-tpl=\"59\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "div[data-dc-tpl=\"697\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "div[data-dc-tpl=\"706\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "span[data-dc-tpl=\"722\"]"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "span[data-dc-tpl=\"726\"]:nth-child(3)"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "span[data-dc-tpl=\"726\"]:nth-child(5)"
+            ],
+            "summary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          }
+        ]
+      }
+    ]
+  }
+}
