@@ -190,6 +190,8 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         brand_ids=_split(headers.get("x-brand-ids")),
         region_ids=_split(headers.get("x-region-ids")),
         store_ids=_split(headers.get("x-store-ids")),
+        assigned_area_ids=_split(headers.get("x-assigned-area-ids")),
+        heat_zone_ids=_split(headers.get("x-heat-zone-ids")),
     )
     return Principal(subject_id=subject, roles=frozenset(roles), scope=scope)
 

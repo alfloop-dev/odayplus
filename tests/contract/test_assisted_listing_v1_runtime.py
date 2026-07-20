@@ -49,7 +49,11 @@ def test_if_match_and_assignment_contract() -> None:
     url = f'/api/v1/intakes/{intake["intake_id"]}/assignment'
     body = {"owner_subject_id": "00000000-0000-0000-0000-000000000003", "owner_role": "reviewer",
             "due_at": "2026-07-19T00:00:00Z", "reason": "triage"}
-    manager_headers = {**HEADERS, "X-Operator-Role": "expansion-manager"}
+    manager_headers = {
+        **HEADERS,
+        "X-Roles": "site_reviewer",
+        "X-Operator-Role": "expansion-manager",
+    }
     assert client.put(url, headers={**manager_headers, "Idempotency-Key": "assign-idempotency-key-1"}, json=body).status_code == 428
     ok = client.put(url, headers={**manager_headers, "Idempotency-Key": "assign-idempotency-key-1", "If-Match": 'W/"1"'}, json=body)
     assert ok.status_code == 200

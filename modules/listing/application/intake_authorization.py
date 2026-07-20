@@ -22,6 +22,44 @@ from shared.auth import (
 )
 
 
+_SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("brand", ("brand_id", "brandId")),
+    ("region", ("region_id", "regionId")),
+    ("assigned_area", ("assigned_area_id", "assignedAreaId")),
+    ("heat_zone", ("heat_zone_id", "heatZoneId")),
+)
+
+
+def _resource_scope_value(resource: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    nested = resource.get("scope")
+    for source in (resource, nested if isinstance(nested, dict) else {}):
+        for key in keys:
+            value = source.get(key)
+            if value is not None:
+                return value
+    return None
+
+
+def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> bool:
+    """Return whether every non-empty principal intake scope contains resource.
+
+    Intake scope is represented both as a nested ``scope`` object in the v1 API
+    and as flat camelCase fields in Operator Console resources.  Missing resource
+    metadata fails closed whenever the principal is restricted on that axis.
+    """
+
+    checks = {
+        "brand": principal.scope.permits_brand,
+        "region": principal.scope.permits_region,
+        "assigned_area": principal.scope.permits_assigned_area,
+        "heat_zone": principal.scope.permits_heat_zone,
+    }
+    return all(
+        checks[axis](_resource_scope_value(resource, keys))
+        for axis, keys in _SCOPE_AXIS_KEYS
+    )
+
+
 def authorize_intake_action(
     principal: Principal,
     action: str,
@@ -97,14 +135,13 @@ def authorize_intake_action(
 
     # 2. Tenant Isolation
     if resource is not None:
-        resource_tenant = resource.get("tenantId") or resource.get("tenant_id")
-        if resource_tenant and principal.tenant_id and principal.tenant_id != resource_tenant:
+        resource_tenant = _resource_scope_value(resource, ("tenant_id", "tenantId"))
+        if resource_tenant and principal.tenant_id != resource_tenant:
             _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
 
     # 3. Brand/Region/Area/HeatZone scope
     if resource is not None:
-        zone_id = resource.get("heatZoneId") or resource.get("heat_zone_id")
-        if zone_id and not principal.scope.permits_region(zone_id):
+        if not intake_resource_in_scope(principal, resource):
             _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
@@ -191,14 +228,6 @@ def authorize_intake_action(
 
         if not (is_staff or is_manager or is_steward or is_privacy):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
-
-        # Identity-affecting corrections proposer reviewer check (segregation)
-        if is_identity_affecting:
-            # Proposer cannot be the reviewer
-            if is_steward and resource is not None:
-                proposer = resource.get("submitter") or resource.get("proposed_by")
-                if proposer == principal.subject_id:
-                    _raise_and_audit(status_code=403, detail="SELF_REVIEW_DENIED")
 
     elif action == "decide":
         # Check risk acknowledgement for decide

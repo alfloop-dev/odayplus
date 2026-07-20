@@ -653,6 +653,7 @@ else:
 
         def __init__(self) -> None:
             self.intakes: dict[str, dict[str, Any]] = {}
+            self.corrections: dict[str, dict[str, Any]] = {}
             self.assignments: dict[str, dict[str, Any]] = {}
             self.jobs: dict[str, dict[str, Any]] = {}
             self.decisions: dict[str, dict[str, Any]] = {}
@@ -672,6 +673,7 @@ else:
         """Implement the approved ODP assisted-intake `/api/v1` contract."""
         from modules.listing.application.intake_authorization import (
             authorize_intake_action,
+            intake_resource_in_scope,
             mask_intake,
         )
         from shared.auth import Principal, Role
@@ -707,6 +709,16 @@ else:
                 for code in codes
             }
 
+        def response_headers(*names: str) -> dict[str, dict[str, Any]]:
+            schemas = {
+                "ETag": {"type": "string", "example": 'W/"7"'},
+                "Idempotency-Replayed": {"type": "boolean"},
+            }
+            return {
+                name: {"schema": schemas[name]}
+                for name in names
+            }
+
         def now() -> str:
             return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -715,7 +727,28 @@ else:
             return principal_from_headers(request.headers)
 
         def get_operator_role_id(request: Request) -> str | None:
-            return request.headers.get("x-operator-role") or request.headers.get("x-roles")
+            # Only a server-selected role written by an authentication/
+            # authorization dependency is trusted.  The standalone v1 intake
+            # routes derive grants from the authenticated principal itself and
+            # therefore normally return None here.
+            return getattr(request.state, "operator_role_id", None)
+
+        def intake_auth_resource(value: dict[str, Any]) -> dict[str, Any]:
+            resource = dict(value)
+            scope = value.get("scope")
+            if isinstance(scope, dict):
+                resource["tenant_id"] = scope.get("tenant_id")
+            resource["submitter"] = value.get("submitted_by") or value.get("submitter")
+            resource["owner"] = value.get("assigned_to") or value.get("owner")
+            return resource
+
+        def require_intake_scope(principal: Principal, value: dict[str, Any]) -> None:
+            if not intake_resource_in_scope(principal, value):
+                raise HTTPException(403, "SCOPE_DENIED")
+
+        def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
+            intake_id = value.get("intake_id")
+            return active.intakes.get(intake_id) if intake_id else None
 
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
@@ -811,6 +844,47 @@ else:
             import re
             if not (16 <= len(key) <= 128) or not re.match(r"^[A-Za-z0-9._:-]+$", key):
                 raise HTTPException(422, "invalid Idempotency-Key format")
+
+        def is_identity_affecting_field(field_path: str) -> bool:
+            normalized = re.sub(r"[^a-z0-9]", "", field_path.lower())
+            return normalized in {
+                "providerlistingid",
+                "address",
+                "addressraw",
+                "rent",
+                "rentamount",
+                "area",
+                "areaping",
+            }
+
+        def apply_correction(
+            intake: dict[str, Any],
+            *,
+            field_path: str,
+            corrected_value: Any,
+            actor_id: str,
+        ) -> None:
+            intake["version"] += 1
+            ts = now()
+            intake["updated_at"] = ts
+            intake.setdefault("processing_history", []).append({
+                "transition_id": str(uuid4()),
+                "from_state": intake["state"],
+                "to_state": intake["state"],
+                "occurred_at": ts,
+                "actor": actor_id,
+                "version_after": intake["version"],
+            })
+            fields = intake.setdefault("fields", [])
+            intake["fields"] = [
+                field for field in fields if field.get("field_path") != field_path
+            ]
+            intake["fields"].append({
+                "field_path": field_path,
+                "corrected": corrected_value,
+                "classification": "INTERNAL",
+                "masked": False,
+            })
 
         def encode_cursor(
             tenant_id: str,
@@ -955,6 +1029,7 @@ else:
                 v for v in active.intakes.values()
                 if v.get("scope", {}).get("tenant_id") == tenant_id
                 and v.get("submitted_at", "") <= snapshot_time
+                and intake_resource_in_scope(principal, v)
             ]
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -1066,7 +1141,16 @@ else:
             status_code=202,
             response_model=IntakeSubmissionReceipt,
             responses={
-                200: {"model": IntakeSubmissionReceipt, "description": "Idempotent replay"},
+                202: {
+                    "model": IntakeSubmissionReceipt,
+                    "description": "Intake accepted",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                200: {
+                    "model": IntakeSubmissionReceipt,
+                    "description": "Idempotent replay",
+                    "headers": response_headers("Idempotency-Replayed"),
+                },
                 **api_error_responses(403, 409, 422),
             },
         )
@@ -1088,7 +1172,7 @@ else:
             authorize_intake_action(
                 principal,
                 "submit_url",
-                resource={"tenant_id": body.scope.tenant_id, "heat_zone_id": body.scope.heat_zone_id},
+                resource={"scope": body.scope.model_dump()},
                 operator_role_id=operator_role_id,
                 audit_log=active_audit_log,
                 correlation_id=correlation_id,
@@ -1186,7 +1270,7 @@ else:
             authorize_intake_action(
                 principal,
                 "submit_csv",
-                resource={"tenant_id": body.scope.tenant_id, "heat_zone_id": body.scope.heat_zone_id},
+                resource={"scope": body.scope.model_dump()},
                 operator_role_id=operator_role_id,
                 audit_log=active_audit_log,
                 correlation_id=correlation_id,
@@ -1269,7 +1353,14 @@ else:
             "/intakes/{intake_id}",
             operation_id="getIntake",
             response_model=IntakeDetail,
-            responses=api_error_responses(403, 404),
+            responses={
+                200: {
+                    "model": IntakeDetail,
+                    "description": "Intake detail",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 404),
+            },
         )
         def get_intake(
             intake_id: UuidString,
@@ -1287,10 +1378,7 @@ else:
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            resource_for_auth = dict(value)
-            resource_for_auth["tenant_id"] = value.get("scope", {}).get("tenant_id")
-            resource_for_auth["submitter"] = value.get("submitted_by")
-            resource_for_auth["owner"] = value.get("assigned_to")
+            resource_for_auth = intake_auth_resource(value)
 
             authorize_intake_action(
                 principal,
@@ -1335,7 +1423,14 @@ else:
             operation_id="proposeCorrection",
             status_code=201,
             response_model=CorrectionReceipt,
-            responses=api_error_responses(409, 422, 428),
+            responses={
+                201: {
+                    "model": CorrectionReceipt,
+                    "description": "Correction proposed",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                **api_error_responses(409, 422, 428),
+            },
         )
         def correct(
             intake_id: UuidString,
@@ -1361,11 +1456,8 @@ else:
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            is_identity_affecting = body.field_path in {"providerListingId", "address", "rent", "areaPing"}
-            resource_for_auth = dict(current)
-            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
-            resource_for_auth["submitter"] = current.get("submitted_by")
-            resource_for_auth["owner"] = current.get("assigned_to")
+            is_identity_affecting = is_identity_affecting_field(body.field_path)
+            resource_for_auth = intake_auth_resource(current)
 
             authorize_intake_action(
                 principal,
@@ -1382,40 +1474,64 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("state") not in {
-                    "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"
-                }:
+                allowed_states = (
+                    {"NEEDS_REVIEW"}
+                    if is_identity_affecting
+                    else {"AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"}
+                )
+                if current.get("state") not in allowed_states:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
-                current["version"] += 1
-                ts = now()
                 cid = str(uuid4())
                 correlation_id_str = str(uuid4())
                 audit_event_id = str(uuid4())
 
-                current["processing_history"].append({
-                    "transition_id": str(uuid4()),
-                    "from_state": current["state"],
-                    "to_state": current["state"],
-                    "occurred_at": ts,
-                    "actor": actor_id,
-                    "version_after": current["version"],
-                })
-
-                field_value = {
-                    "field_path": body.field_path,
-                    "corrected": body.corrected_value,
-                    "classification": "INTERNAL",
-                    "masked": False,
-                }
-
-                fields_list = current.setdefault("fields", [])
-                current["fields"] = [f for f in fields_list if f.get("field_path") != body.field_path]
-                current["fields"].append(field_value)
+                if is_identity_affecting:
+                    # The first actor only creates a reviewable proposal.  The
+                    # correction is applied by reviewIdentityDecision after an
+                    # independent actor approves it.
+                    current["version"] += 1
+                    current["updated_at"] = now()
+                    correction = {
+                        "correction_id": cid,
+                        "status": "PENDING_REVIEW",
+                        "intake_id": intake_id,
+                        "tenant_id": tenant_id,
+                        "scope": copy.deepcopy(current.get("scope", {})),
+                        "field_path": body.field_path,
+                        "corrected_value": copy.deepcopy(body.corrected_value),
+                        "proposer": actor_id,
+                        "intake_version": current["version"],
+                    }
+                    active.corrections[cid] = correction
+                    active.decisions[cid] = {
+                        "decision_id": cid,
+                        "status": "PENDING_REVIEW",
+                        "resource_versions": {"intake": current["version"]},
+                        "job_id": None,
+                        "audit_event_id": audit_event_id,
+                        "correlation_id": correlation_id_str,
+                        "version": 1,
+                        "action": "identity_correction",
+                        "tenant_id": tenant_id,
+                        "scope": copy.deepcopy(current.get("scope", {})),
+                        "intake_id": intake_id,
+                        "correction_id": cid,
+                        "proposer": actor_id,
+                    }
+                    status_value = "PENDING_REVIEW"
+                else:
+                    apply_correction(
+                        current,
+                        field_path=body.field_path,
+                        corrected_value=body.corrected_value,
+                        actor_id=actor_id,
+                    )
+                    status_value = "APPLIED"
 
                 receipt_val = {
                     "correction_id": cid,
-                    "status": "APPLIED",
+                    "status": status_value,
                     "intake_id": intake_id,
                     "version": current["version"],
                     "audit_event_id": audit_event_id,
@@ -1442,7 +1558,14 @@ else:
             operation_id="assignIntake",
             status_code=200,
             response_model=AssignmentReceipt,
-            responses=api_error_responses(403, 409, 428),
+            responses={
+                200: {
+                    "model": AssignmentReceipt,
+                    "description": "Assignment updated",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 428),
+            },
         )
         def assign(
             intake_id: UuidString,
@@ -1467,6 +1590,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
+            require_intake_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -1582,7 +1706,7 @@ else:
             authorize_intake_action(
                 principal,
                 "reopen_failed",
-                resource=intake,
+                resource=intake_auth_resource(intake) if intake is not None else None,
                 operator_role_id=operator_role_id,
                 audit_log=active_audit_log,
                 correlation_id=correlation_id,
@@ -1735,10 +1859,7 @@ else:
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            resource_for_auth = dict(current)
-            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
-            resource_for_auth["submitter"] = current.get("submitted_by")
-            resource_for_auth["owner"] = current.get("assigned_to")
+            resource_for_auth = intake_auth_resource(current)
 
             authorize_intake_action(
                 principal,
@@ -1803,11 +1924,19 @@ else:
             "/promotion-decisions/{promotion_decision_id}",
             operation_id="getPromotionDecision",
             response_model=PromotionDecisionReceipt,
-            responses=api_error_responses(403, 404),
+            responses={
+                200: {
+                    "model": PromotionDecisionReceipt,
+                    "description": "Promotion decision",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 404),
+            },
         )
         def get_promotion(
             promotion_decision_id: UuidString,
             request: Request,
+            response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
             if promotion_decision_id not in active.promotions:
@@ -1818,30 +1947,46 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
+            intake = linked_intake(val)
+            resource = (
+                intake_auth_resource(intake)
+                if intake is not None
+                else {
+                    "tenant_id": tenant_id,
+                    "scope": val.get("scope", {}),
+                    "owner": val.get("proposer"),
+                    "submitter": val.get("proposer"),
+                }
+            )
             authorize_intake_action(
                 principal,
                 "view",
-                resource={
-                    "tenant_id": tenant_id,
-                    "owner": val.get("proposer"),
-                    "submitter": val.get("proposer"),
-                },
+                resource=resource,
                 operator_role_id=get_operator_role_id(request),
                 audit_log=active_audit_log,
                 correlation_id=request.headers.get("x-correlation-id"),
             )
 
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
 
         @router.get(
             "/identity-decisions/{decision_id}",
             operation_id="getIdentityDecision",
             response_model=DecisionReceipt,
-            responses=api_error_responses(403, 404),
+            responses={
+                200: {
+                    "model": DecisionReceipt,
+                    "description": "Identity decision",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 404),
+            },
         )
         def get_identity(
             decision_id: UuidString,
             request: Request,
+            response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> DecisionReceipt:
             if decision_id not in active.decisions:
@@ -1852,19 +1997,27 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
+            intake = linked_intake(val)
+            resource = (
+                intake_auth_resource(intake)
+                if intake is not None
+                else {
+                    "tenant_id": tenant_id,
+                    "scope": val.get("scope", {}),
+                    "owner": val.get("proposer"),
+                    "submitter": val.get("proposer"),
+                }
+            )
             authorize_intake_action(
                 principal,
                 "view",
-                resource={
-                    "tenant_id": tenant_id,
-                    "owner": val.get("proposer"),
-                    "submitter": val.get("proposer"),
-                },
+                resource=resource,
                 operator_role_id=get_operator_role_id(request),
                 audit_log=active_audit_log,
                 correlation_id=request.headers.get("x-correlation-id"),
             )
 
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
         @router.post(
@@ -1872,7 +2025,14 @@ else:
             operation_id="decideMatchCase",
             status_code=201,
             response_model=DecisionReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                201: {
+                    "model": DecisionReceipt,
+                    "description": "Match decision proposed",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def decide_match_case(
             match_case_id: UuidString,
@@ -1928,6 +2088,7 @@ else:
                 resource_id=match_case_id,
             )
             response.status_code = code
+            response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
         @router.post(
@@ -2149,10 +2310,7 @@ else:
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            resource_for_auth = dict(current)
-            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
-            resource_for_auth["submitter"] = current.get("submitted_by")
-            resource_for_auth["owner"] = current.get("assigned_to")
+            resource_for_auth = intake_auth_resource(current)
 
             authorize_intake_action(
                 principal,
@@ -2217,6 +2375,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
+            require_intake_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -2286,10 +2445,7 @@ else:
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            resource_for_auth = dict(current)
-            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
-            resource_for_auth["submitter"] = current.get("submitted_by")
-            resource_for_auth["owner"] = current.get("assigned_to")
+            resource_for_auth = intake_auth_resource(current)
 
             action_name = "reopen_quarantine" if current.get("state") == "QUARANTINED" else "reopen_failed"
 
@@ -2309,6 +2465,34 @@ else:
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state")
                 if from_state == "QUARANTINED":
+                    pending = current.get("pending_quarantine_release")
+                    if pending is None:
+                        require_version(if_match, current["version"])
+                        current["version"] += 1
+                        current["updated_at"] = now()
+                        current["pending_quarantine_release"] = {
+                            "proposal_id": str(uuid4()),
+                            "proposer": actor_id,
+                            "reason": body.reason,
+                            "proposed_at": now(),
+                        }
+                        current.setdefault("processing_history", []).append({
+                            "transition_id": str(uuid4()),
+                            "from_state": "QUARANTINED",
+                            "to_state": "QUARANTINED",
+                            "occurred_at": now(),
+                            "actor": actor_id,
+                            "reason_code": "SECOND_ACTOR_REQUIRED",
+                            "version_after": current["version"],
+                        })
+                        return receipt(
+                            "QUARANTINED",
+                            "QUARANTINED",
+                            current["version"],
+                            actor_id,
+                        ), 200
+                    if pending.get("proposer") == actor_id:
+                        raise HTTPException(403, "SELF_REVIEW_DENIED")
                     to_state = "CHECKING_SOURCE_POLICY"
                 elif from_state == "FAILED":
                     job = active.jobs.get(current.get("job_id", ""))
@@ -2323,6 +2507,8 @@ else:
                     )
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.intakes, intake_id, to_state, actor_id)
+                if from_state == "QUARANTINED":
+                    updated.pop("pending_quarantine_release", None)
                 tr = receipt(from_state, to_state, updated["version"], actor_id)
                 return tr, 200
 
@@ -2370,6 +2556,9 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
+            intake = linked_intake(current)
+            if intake is not None:
+                require_intake_scope(principal, intake)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -2381,6 +2570,20 @@ else:
 
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
+
+            prior = load_replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "claimAssignment",
+                resource_id=assignment_id,
+            )
+            if prior is not None:
+                val, _ = prior
+                response.status_code = 200
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
 
             if (is_staff or is_steward) and current.get("owner_subject_id") != actor_id:
                 raise HTTPException(403, "OWNERSHIP_REQUIRED")
@@ -2440,6 +2643,9 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
+            intake = linked_intake(current)
+            if intake is not None:
+                require_intake_scope(principal, intake)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -2523,6 +2729,9 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
+            intake = linked_intake(current)
+            if intake is not None:
+                require_intake_scope(principal, intake)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -2699,6 +2908,8 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
+            if intake is not None:
+                require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
 
@@ -2765,6 +2976,9 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            intake = linked_intake(current)
+            if intake is not None:
+                require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
 
@@ -2788,7 +3002,32 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
+                correction = None
+                correction_intake = None
+                if current.get("action") == "identity_correction":
+                    correction = active.corrections.get(current.get("correction_id", ""))
+                    correction_intake = linked_intake(current)
+                    if correction is None or correction_intake is None:
+                        raise HTTPException(409, "DEPENDENCY_CONFLICT")
+                    if correction.get("status") != "PENDING_REVIEW":
+                        raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                    if correction_intake.get("version") != correction.get("intake_version"):
+                        raise HTTPException(409, "VERSION_CONFLICT")
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
+                if correction is not None and correction_intake is not None:
+                    if body.decision == ReviewDecision.APPROVE:
+                        apply_correction(
+                            correction_intake,
+                            field_path=correction["field_path"],
+                            corrected_value=correction["corrected_value"],
+                            actor_id=actor_id,
+                        )
+                        correction["status"] = "APPLIED"
+                        correction["reviewer"] = actor_id
+                        updated["resource_versions"]["intake"] = correction_intake["version"]
+                    else:
+                        correction["status"] = "REJECTED"
+                        correction["reviewer"] = actor_id
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -2828,6 +3067,9 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            intake = linked_intake(current)
+            if intake is not None:
+                require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 

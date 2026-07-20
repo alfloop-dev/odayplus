@@ -120,10 +120,7 @@ def create_network_listings_sub_router(
         return principal
 
     def get_operator_role_id(request: Request) -> str | None:
-        val = getattr(request.state, "operator_role_id", None)
-        if val is None:
-            val = request.headers.get("x-operator-role")
-        return val
+        return getattr(request.state, "operator_role_id", None)
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
