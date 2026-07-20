@@ -1,61 +1,31 @@
 # ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE
 
-- doc_id: ODP-UXD-003-ADD-002-RESPONSE
-- responds_to: ODP-UXD-003-ADD-002 v1.0.0（system design baseline ODP-SD-INTAKE-001 v0.2.1）
+- doc_id: ODP-UXD-003-ADD-002-RESPONSE（Package 10）
+- responds_to: ODP-UXD-003-ADD-002 v1.0.0 · Package 9 修正指令（2026-07-20）
 - engineering_task: ODP-INTAKE-UX-001
-- design_owner: Product Design（本 POC 環境）
-- canonical_artifact: **互動原型 `Oday Plus Operator Console.dc.html`（R6 · DEMO_STATE_VERSION oday-plus-r6-20260718）**
-  — 本環境不產出 Figma；原型即 canonical design package 的等價物。frame = 原型內可到達的實際狀態。
-- updated_at: 2026-07-18
+- canonical_artifact: 互動原型 **Oday Plus Operator Console.dc.html（R7 · DEMO_STATE_VERSION oday-plus-r7-20260720）** — 本專案以 Claude Design 互動原型為 canonical visual-design package（產品方 2026-07-18 決議，Package 10 沿用；不提交 Figma）。
+- runnable_artifact: **oday-plus-console-r7-standalone.html** — 由同一 R7 source 打包，見下方 checksum。
+- updated_at: 2026-07-20（rev 2 — 修正 heal 版本閘：__healed 升為 r7＋intake 種子指紋檢查，舊 hot-reload session 會重灌 R7 種子並保留使用者新建收件 id≥3011）
 
-## 1. Route / Screen / Frame index
+## Checksums（SHA-256）
 
-| Screen ID | 原型位置 | 到達方式 |
-|---|---|---|
-| UX-SCR-EXP-003 Listing Inbox | Network → 物件雷達 → URL 收件佇列（filter chips＋owner/SLA 欄） | 主導航 |
-| UX-SCR-EXP-003A Add From URL | 佇列「＋ 從網址新增物件」modal；Find Areas 區域面板帶入本區 | 送出成功 → intake detail deep link |
-| UX-SCR-EXP-003B Processing Detail | durable page `/w/expansion/listings/intake/:id`（頂欄下全頁，非 drawer） | 佇列列點擊／送件後自動導向；離開可返回 |
-| UX-SCR-EXP-003C Parsed Data Review | Detail 內「解析資料覆核」（來源值/正規化值/人工修正/有效值/低信心/遮罩） | 修正 → 原因 dialog |
-| UX-SCR-EXP-003D Duplicate & Revision Review | Detail 內「比對結果 MATCH REVIEW」side-by-side ＋ 變更摘要（SR 可讀） | IN-3002（REVISION）、IN-3003（POSSIBLE_MATCH） |
-| UX-SCR-EXP-003E Assisted Entry | Detail 內補錄表單（IN-3004） | 可離開再返回，輸入保留 |
-| UX-SCR-EXP-003F Promotion & SiteScore | Detail 內 CANDIDATE PROMOTION section（receipt/job/replay） | IN-3001 create 後 |
+- source（Oday Plus Operator Console.dc.html）:
+  `cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d`
+- standalone（oday-plus-console-r7-standalone.html）:
+  `1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f`
+- Package ZIP：本環境的 ZIP 由平台下載時即時產生，無法預先計算 zip-level checksum；以上兩個 file-level SHA-256 為版本一致性依據（zip 內容即此兩檔＋docs/）。
+- 一致性 probe（source＝standalone 皆通過）：R7 版本字串 ✓ · 無「系統排程／每日掃描／掃物件／來源掃描」✓ · EXACT_DUPLICATE 短路徑 ✓ · canonical codes ✓ · seq ink:3011 ✓ · data-screen-label ✓。
 
-## 2. 六條核心 flow（§7）在原型的走法
+## VDR 逐項回覆
 
-1. **NEW**：從網址新增（貼 591 URL）→ 階段模擬 → READY/NEW → 建立新物件 → receipt RCPT-CRT-*。種子 IN-3001。
-2. **EXACT_DUPLICATE**：貼既有 canonical URL（如 L-2024 的 591 網址）→ 識別檢查於擷取前攔截 → 開啟既有物件。
-3. **REVISION**：IN-3002 → 比對 preview（租金 -7.8%）→ 加入既有物件版本 → **首次寫入回 409 VERSION_CONFLICT（輸入保留，重新整理 v3 後成功）** → RCPT-REV-*。
-4. **POSSIBLE_MATCH**：IN-3003 → 一致/矛盾訊號 → 關鍵決策僅展店主管/資料管理員可執行（staff 顯示停用原因）→ 四動作分離、原因必填、絕不自動合併。
-5. **ASSISTED_ENTRY_ONLY**：IN-3004 → 不擷取說明 → 人工補錄（必填地址/租金/坪數）→ 比對 → NEW。
-6. **Promotion**：IN-3001 建立物件後提出 promotion → 驗證 → 待第二人核准（**提出者見 SELF_REVIEW_DENIED**）→ 展店主管核准（原因＋風險確認）→ CANDIDATE_CREATED（commit 後才顯示 CS-ID＋receipt）→ SCORE_QUEUED → **首次必 SCORE_FAILED（Candidate 仍在）** → 授權重放（同 idempotency key）→ COMPLETED。
+- **VDR-001（自動掃描暗示）：已修正。** 來源卡改「核准來源（URL 送件）／最近收件」；591＝SRC-591 v4（效期 2026-12-31，僅限使用者送件之單頁）、樂屋＝SRC-RKY v2（效期 2026-10-31）；僅合作 feed 顯示「核准 feed（推送）· SRC-FEED v3 · 效期 2027-03-31」；Today 卡、Govern 資料源列、追蹤／搜尋條件 toast 全部改寫（「新收件將優先比對此區」等）。證據：Network 物件雷達來源卡＋grep 無「掃描／排程」字樣（probe ✓）。
+- **VDR-003（Tablet／Mobile）：已修正。** 移除 min-width:1280/1240 固定值（root min-width 依 viewport 動態為 0）；斷點 <760 mobile、760–1159 tablet、≥1160 desktop。Mobile：URL 送件、佇列（列可點）、狀態追蹤、認領、簡單確認、receipt 檢視全可操作；解析欄位改堆疊 lineage 卡；REVISION 比對改變更欄位摘要列表；僅 POSSIBLE_MATCH side-by-side 顯示 inline DESKTOP_REQUIRED 卡（保留 deep link 與輸入，無全畫面遮罩）。Tablet：雷達改二欄、stepper 3 欄、詳情全功能。驗收尺寸 1440／1024／390 無頁面級水平溢出（intake 流程）。
+- **VDR-004（Accessibility）：已修正。** 全部 dialog：role=dialog＋aria-modal＋aria-label＋開啟 initial focus＋Tab focus trap＋關閉 focus return；Esc 明確行為（決策確認 dialog 不受 Esc 關閉並提示，其餘 Esc 關閉）。所有 intake 輸入含 aria-label；「×」按鈕 aria-label=關閉對話框（×17）；「修正」按鈕帶欄位名 accessible name。佇列 role=list＋列 tabIndex=0＋Enter/Space 開啟＋逐列 aria-label 摘要＋排序說明（無互動排序，aria-sort 以文字聲明 descending）。動態階段有 aria-live=polite live region；toast 容器 role=status。錯誤訊息 role=alert＋tabIndex=-1 自動聚焦並指名關聯欄位。html lang=zh-Hant、document.title、prefers-reduced-motion 覆蓋、focus-visible outline。對比：主要灰階文字 token 全域調深（#8A93A8→#6E7891 ≈4.6:1、#98A1B3→#6B7590 ≈4.9:1、#B6BDCC→#737D97 ≈4.5:1），body 文字 #1C2333／#3A4362／#5A6478 均 ≥7:1（WCAG 2.2 AA）。
+- **VDR-005（Durable route）：已修正。** 送件成功（含 EXACT_DUPLICATE 攔截）立即寫入 location.hash=#intake/IN-xxxx；hashchange 監聽支援 browser back/forward；reload／direct open 由 hash 還原同一筆 detail；Inbox filters（inkF）、選取（selIntake）、detail 開啟狀態（inkView）持久化於 session state，重載可恢復；receipt／compare 區塊隨 intake 資料還原。非僅 component state。
+- **VDR-006（交付決議）：已接受並記錄。** Claude Design 互動原型＝canonical package（產品方決議 2026-07-18，Package 10 確認沿用）。Reviewer status：Product ✅（使用者本人，2026-07-20 指令即審查依據）；System Design ⏳ 待指派；Frontend ⏳ 待指派；Accessibility ⏳ 待指派（VDR-004 證據已備）；QA ⏳ 待指派（P0 驗收步驟見下）。
+- **VDR-007（Transfer／Pause／WORM）：已修正。** Transfer：必填 target＋handoff note、無 resume time、成功後顯示新 owner／version bump／receipt（RCPT-ASG-xxxx-T，寫入 Audit 與時間軸）；IN-3003（ESCALATED）首次轉交觸發 409 OWNER_CONFLICT — 顯示目前 owner／版本、輸入保留、重新整理後可重送。Pause：必填核准原因＋resume time（顯示且可編輯，非隱藏預設），成功後 SLA=PAUSED＋歷程＋receipt（RCPT-ASG-xxxx-P）。WORM Evidence 面板 11 列：WORM state／purpose binding／classification／access expiry（IN-3008=PURPOSE_EXPIRED）／retention+legal hold（IN-3005=LEGAL_HOLD）／masking（受限角色=FIELD_MASKED）／export（受限=EXPORT_DENIED 403；privacy=purpose-bound）／verification（快照雜湊）／actor·role·time／snapshot·parser lineage／evidence receipt＋correlation ID。
+- **VDR-009（版本一致）：已修正。** standalone 於本輪由 R7 source 重新打包（先修正殘留文案再 build）；上方兩組 SHA-256 與 probe 表為 checksum evidence；舊 R6 standalone 已刪除，package 不含兩套 UI。
 
-補充失敗恢復：IN-3006（驗證牆 429 可重試）、IN-3010（PARSE-SCHEMA-DRIFT → DLQ → 資料管理員 mapping 修正 replay）、IN-3007（AUTH_REQUIRED）、IN-3008（SOURCE_BLOCKED 結案）、IN-3009（CANCELLED terminal）、IN-3005（POLICY_UNKNOWN fail-closed）。
+## P0 可實測驗收（runnable artifact）
 
-## 3. Canonical state 覆蓋
-
-原型內「狀態矩陣」（收件佇列右上）逐格列出：intake stages ×12（含 CANCELLED；QUARANTINED/FAILED 標示受控可重開）、source policy ×5、match ×5、assignment ×6、SLA ×6（文字＋圖標 ●▲✕∥）、decision ×10、job ×7（attempt/timeout/checkpoint/DLQ/replay）、error/conflict contract ×15（428/409×6/403×3/422×2/429/schema-drift/stale），並標註哪些可在原型實測。
-
-## 4. Role × permission（§5）
-
-六個 intake 角色全數可由右上角色選單切換實測：展店經理＝Expansion staff、**展店主管（新增）**＝manager/second actor、**資料管理員（新增）**＝steward（DLQ replay）、PM／稽核＝Governance reviewer（唯讀＋denial reason）、**個資保護官（新增）**、**受限使用者（新增）**＝唯讀＋租金/押金 FIELD_MASKED（保留結構）。前端隱藏不等於授權 — 唯讀與越權操作均顯示 403 SCOPE_DENIED／REVIEW_REQUIRED 文字原因。
-
-## 5. Component inventory
-
-重用：PageHeader／FilterBar（chips）／Table（佇列）／Modal（003A、修正、決策、promotion）／Timeline／status pill／EmptyState／Toast（僅輕量確認）。
-新元件（本次引入，均以既有 tokens 構成）：IntakeStageTimeline（真實階段，無百分比）、FieldLineageRow（source→normalized→corrected→effective＋低信心/遮罩）、ListingCompareTable（▲變更＋SR 摘要）、MatchEvidencePanel（一致/矛盾訊號）、AssignmentSlaSummary、DurableReceiptPanel、MaskedField、PromotionStateRail、JobStatusRow、StateMatrixSheet。無新增色票；狀態色沿用既有 semantic tones。
-
-## 6. Responsive / A11y 決策
-
-Desktop-first；detail 頁尾與狀態矩陣載明 responsive contract：tablet 可送件/狀態/補錄/單純核准；mobile 送件/追蹤/簡單確認，POSSIBLE_MATCH 與欄位比對顯示 desktop-required（保留 deep link 與輸入）。所有狀態文字＋icon/pattern；比對含螢幕閱讀器變更摘要；ESC 不會關閉 detail page（durable）；錯誤含 code/corr/時間/可重試性/下一步且不以 Toast 承載。
-
-## 7. Accepted / Modified / Deferred
-
-- Accepted：§4 non-goals 全數（無爬蟲暗示、無憑證、無 auto-merge、無 auto-promotion、真實階段無百分比）；§8 全部畫面；§9–10 狀態與錯誤契約；§11 視覺原則（neutral base、compact inbox、無新色票）。
-- **替代交付決議（正式）**：本專案環境無 Figma；產品方（使用者）於 2026-07-18 確認以「升級互動原型 R6 作為 canonical design package 等價物＋完整 canonical 矩陣逐格呈現＋本 Response 文件完整版」替代 §15 Figma deliverables。frame ↔ 狀態對照由原型 data-screen-label 與狀態矩陣承擔。
-- Modified：Figma package → 互動原型＋本文件（依上述決議）。
-- 已實作（原 DEFER 轉正）：transfer（handoff note 必填）與 pause（原因＋恢復時間）表單；WORM evidence 列（狀態／purpose binding／保存期／審計提示）；`#intake/:id` hash deep link（重新整理保留 detail）；dialog semantics（role=dialog／aria-modal／aria-label＋表單 aria-label）；mobile desktop-required fallback（<760px 遮罩，保留 deep link）。
-- DEFER（POC 不阻塞）：完整 focus trap／focus return（owner: FE，gate: production build）；真實 URL router（hash 模擬）；tablet 專屬 frames（僅契約說明）；WORM evidence 深頁（列層級呈現）。上述 DEFER 未在 UI 宣稱已上線。
-
-## 8. Reviewers
-
-Product／System Design／Frontend／Accessibility：待使用者指派（POC 環境單一設計者）。
+1. 佇列送 591 URL → hash 立即為 #intake/IN-3011+ → reload 仍在同筆 → back 返回雷達。2. 貼 L-2024 既有 URL → EXACT_DUPLICATE，階段僅 3 步。3. IN-3002 加入版本 → 409 → 重新整理 → 成功＋RCPT-REV。4. IN-3003 轉交 → 409 OWNER_CONFLICT → 重新整理 → RCPT-ASG。5. 切受限使用者 → FIELD_MASKED＋EXPORT_DENIED。6. 390px 寬：送件／追蹤／認領／receipt 可操作，POSSIBLE_MATCH 比對顯示 DESKTOP_REQUIRED 卡。7. Tab 進入任一 dialog → focus 受困於 dialog，關閉後回原按鈕；決策 dialog 按 Esc 不關閉。

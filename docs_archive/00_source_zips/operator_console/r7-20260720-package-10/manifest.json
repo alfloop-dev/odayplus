@@ -1,0 +1,84 @@
+{
+  "schema": "oday-plus.operator-console-design-archive-manifest.v1",
+  "archived_at": "2026-07-20T00:00:00Z",
+  "source_filename": "Oday Plus 營運管理後台 (10).zip",
+  "source_path_encoded": "/home/lupin/oday-plus/Oday%20Plus%20%E7%87%9F%E9%81%8B%E7%AE%A1%E7%90%86%E5%BE%8C%E5%8F%B0%20%2810%29.zip",
+  "source_path_decoded": "/home/lupin/oday-plus/Oday Plus 營運管理後台 (10).zip",
+  "archive_integrity": {
+    "copy_matches_source": true,
+    "unzip_test": "passed",
+    "size_bytes": 5142475,
+    "sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+    "md5": "7a63bfcf58883e27419bcfaa8a1d231f"
+  },
+  "design_identity": {
+    "version": "R7",
+    "demo_state_version": "oday-plus-r7-20260720",
+    "canonical_design_tool": "Claude Design",
+    "screen_label_count": 40,
+    "previous_screen_label_count": 41,
+    "added_screen_label_count": 0,
+    "removed_screen_label_count": 1
+  },
+  "review": {
+    "document": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md",
+    "supersedes": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_002.md",
+    "disposition": "APPROVED_WITH_CONDITIONS",
+    "conditions": [
+      "VDC-001",
+      "VDC-002",
+      "VDC-003",
+      "VDC-004",
+      "VDC-005"
+    ],
+    "evidence_root": "docs/evidence/design_review/assisted_listing_intake_r7_package10"
+  },
+  "files": [
+    {
+      "path": "extracted/.thumbnail",
+      "size_bytes": 218368,
+      "sha256": "ab12f4dc8714442d1d6b856bbbf4d6eb24853efdb721602c5f38025098af7d72"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console R7 Design Summary.dc.html",
+      "size_bytes": 19619,
+      "sha256": "5fb1d02b91879f0538f1b81be091116c8c52884f3590995ae82e1467fb6ef22e"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console.dc.html",
+      "size_bytes": 586129,
+      "sha256": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+      "md5": "1b6159afca4d632a6b0cafb3ec69c72d"
+    },
+    {
+      "path": "extracted/docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE.md",
+      "size_bytes": 6417,
+      "sha256": "894dd734154df2d0f0c71cb874908cb3988b291d8fb78ebb5774d750f1fd6b42"
+    },
+    {
+      "path": "extracted/oday-map.js",
+      "size_bytes": 4629,
+      "sha256": "528949f5fdd73d4a8ead3dc3a5491b416ebf7c43a42a6f347728326e5d2f15db"
+    },
+    {
+      "path": "extracted/oday-plus-console-r7-standalone.html",
+      "size_bytes": 6954340,
+      "sha256": "1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f",
+      "md5": "d555ad3e0aba3cd02f7c3f7b7b96d354"
+    },
+    {
+      "path": "extracted/support.js",
+      "size_bytes": 66404,
+      "sha256": "c60c49083997f51a592df118c0068475337afd20b8cfd8e1cd9d5eb0c7e254f6"
+    }
+  ],
+  "comparison_to_package_9": {
+    "package_9_zip_sha256": "601a55b29f1097c6c50938f30e1acbdf4c9dc7f1ff9dfbc07021b00ac6f12abd",
+    "comparison": "r7_resubmission_closes_p0_design_blockers_with_binding_implementation_conditions",
+    "removed_screen_labels": [
+      "Mobile Desktop-Required Fallback"
+    ],
+    "source_policy_banned_copy_count": 0,
+    "source_and_standalone_r7": true
+  }
+}
