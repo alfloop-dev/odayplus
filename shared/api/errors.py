@@ -268,8 +268,118 @@ def install_error_handlers(app: Any) -> None:
     def _correlation_id(request: Request) -> str | None:
         return getattr(request.state, "correlation_id", None)
 
+    def _is_v1(request: Request) -> bool:
+        path = request.url.path
+        if path.startswith("/api/v1/operator") or path.startswith("/v1/operator"):
+            return False
+        return path.startswith("/api/v1") or path.startswith("/v1")
+
+
+    def map_to_api_error(status_code: int, detail: Any, correlation_id: str | None) -> dict[str, Any]:
+        code = "INTERNAL_ERROR"
+        next_action = None
+        retryable = False
+        field_errors = []
+
+        detail_str = ""
+        if isinstance(detail, str):
+            detail_str = detail
+        elif isinstance(detail, list):
+            parts = []
+            for issue in detail:
+                if isinstance(issue, dict):
+                    loc = [str(x) for x in issue.get("loc", []) if x != "body"]
+                    field = ".".join(loc)
+                    msg = str(issue.get("msg", ""))
+                    code_str = str(issue.get("type", ""))
+                    field_errors.append({
+                        "field": field or "body",
+                        "code": "FIELD_REQUIRED" if "missing" in code_str else "VALIDATION_FAILED",
+                        "message": msg
+                    })
+                    parts.append(f"{field}: {msg}" if field and msg else msg)
+            detail_str = "; ".join(p for p in parts if p) or "Validation failed"
+        elif isinstance(detail, dict):
+            detail_str = str(detail.get("message") or detail.get("detail") or "Request failed")
+
+        if "AUTHENTICATION_REQUIRED" in detail_str or "principal not authenticated" in detail_str or status_code == 401:
+            code = "AUTHENTICATION_REQUIRED"
+            next_action = "CONTACT_SUPPORT"
+        elif "ROLE_DENIED" in detail_str or status_code == 403:
+            code = "ROLE_DENIED"
+            next_action = "REQUEST_ACCESS"
+            if "TENANT_SCOPE_DENIED" in detail_str:
+                code = "TENANT_SCOPE_DENIED"
+            elif "SCOPE_DENIED" in detail_str:
+                code = "SCOPE_DENIED"
+            elif "OWNERSHIP_REQUIRED" in detail_str:
+                code = "OWNERSHIP_REQUIRED"
+            elif "ASSIGNMENT_SCOPE_DENIED" in detail_str:
+                code = "ASSIGNMENT_SCOPE_DENIED"
+            elif "SELF_REVIEW_DENIED" in detail_str:
+                code = "SELF_REVIEW_DENIED"
+        elif "RISK_ACKNOWLEDGEMENT_REQUIRED" in detail_str or "risk summary is required" in detail_str or "risk acknowledgement is required" in detail_str:
+            code = "RISK_ACKNOWLEDGEMENT_REQUIRED"
+            next_action = "CORRECT_INPUT"
+        elif "LEGAL_HOLD_CONFLICT" in detail_str:
+            code = "LEGAL_HOLD_CONFLICT"
+            next_action = "CONTACT_SUPPORT"
+        elif "WORKFLOW_STATE_DENIED" in detail_str:
+            code = "WORKFLOW_STATE_DENIED"
+            next_action = "REFRESH"
+        elif "VERSION_CONFLICT" in detail_str or "version conflict" in detail_str:
+            code = "VERSION_CONFLICT"
+            next_action = "REFRESH"
+        elif "SECOND_ACTOR_REQUIRED" in detail_str:
+            code = "SECOND_ACTOR_REQUIRED"
+            next_action = "CONTACT_SUPPORT"
+        elif "idempotency key was used with another payload" in detail_str:
+            code = "IDEMPOTENCY_KEY_REUSED"
+            next_action = "CORRECT_INPUT"
+        elif "Idempotency-Key is required" in detail_str:
+            code = "VALIDATION_FAILED"
+            next_action = "CORRECT_INPUT"
+        elif "If-Match is required" in detail_str or "If-Match header" in detail_str:
+            code = "PRECONDITION_REQUIRED"
+            next_action = "CORRECT_INPUT"
+        elif "not found" in detail_str or status_code == 404:
+            code = "RESOURCE_NOT_FOUND"
+            next_action = "REFRESH"
+        elif "cursor" in detail_str:
+            code = "CURSOR_INVALID"
+            next_action = "REFRESH"
+        elif status_code == 422:
+            code = "VALIDATION_FAILED"
+            next_action = "CORRECT_INPUT"
+        elif status_code == 409:
+            code = "VERSION_CONFLICT"
+            next_action = "REFRESH"
+        elif status_code == 503:
+            code = "BACKPRESSURE_ACTIVE"
+            next_action = "WAIT"
+            retryable = True
+
+        occurred_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return {
+            "code": code,
+            "message": detail_str,
+            "retryable": retryable,
+            "correlation_id": correlation_id or "00000000-0000-0000-0000-000000000000",
+            "reason_code": None,
+            "field_errors": field_errors or None,
+            "current_version": None,
+            "retry_after_seconds": 30 if code == "BACKPRESSURE_ACTIVE" else None,
+            "occurred_at": occurred_at,
+            "next_action": next_action
+        }
+
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        if _is_v1(request):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=map_to_api_error(exc.status_code, exc.message, _correlation_id(request)),
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=error_response_body(
@@ -283,6 +393,12 @@ def install_error_handlers(app: Any) -> None:
 
     @app.exception_handler(HTTPException)
     async def _handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
+        if _is_v1(request):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=map_to_api_error(exc.status_code, exc.detail, _correlation_id(request)),
+                headers=getattr(exc, "headers", None),
+            )
         code, next_action = _STATUS_MAP.get(exc.status_code, _FALLBACK)
         message, details = _summarize_detail(exc.detail)
         return JSONResponse(
@@ -293,29 +409,13 @@ def install_error_handlers(app: Any) -> None:
                 next_action=next_action,
                 correlation_id=_correlation_id(request),
                 details=details,
-                # The route's own detail, unchanged — see error_response_body.
                 detail=exc.detail,
             ),
-            # 401 carries WWW-Authenticate; dropping it would break the
-            # challenge contract for authenticating clients.
             headers=getattr(exc, "headers", None),
         )
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
-        """Unhandled exceptions must honour the declared 500 contract.
-
-        ``ERROR_RESPONSES`` declares ``500: ErrorResponse`` on every versioned
-        operation, so the generated client is told a 500 carries the envelope.
-        Without this handler Starlette returns a plain-text "Internal Server
-        Error" and the contract is a lie exactly when a caller most needs the
-        correlation ID to find the failure in the audit log.
-
-        The exception is logged at ERROR with the correlation ID before the
-        envelope is returned, so nothing is swallowed, and ``str(exc)`` is
-        deliberately *not* surfaced -- an unhandled error's text may carry
-        internals a caller must not see.
-        """
         correlation_id = _correlation_id(request)
         logger.exception(
             "Unhandled exception on %s %s (correlation_id=%s)",
@@ -323,6 +423,11 @@ def install_error_handlers(app: Any) -> None:
             request.url.path,
             correlation_id,
         )
+        if _is_v1(request):
+            return JSONResponse(
+                status_code=500,
+                content=map_to_api_error(500, "Internal server error", correlation_id),
+            )
         return JSONResponse(
             status_code=500,
             content=error_response_body(
@@ -337,13 +442,34 @@ def install_error_handlers(app: Any) -> None:
     async def _handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        # jsonable_encoder: raw errors() can embed ValueError/bytes in `ctx`,
-        # which JSONResponse cannot serialise. This is the same normalisation
-        # FastAPI's own default validation handler applies, so `detail` keeps
-        # the exact array shape clients already parse.
         from fastapi.encoders import jsonable_encoder
-
         encoded = jsonable_encoder(exc.errors())
+
+        # Check if the validation error is due to a missing If-Match header
+        for error in encoded:
+            loc = error.get("loc", [])
+            if len(loc) >= 2 and str(loc[0]) == "header" and str(loc[1]).lower() == "if-match":
+                if _is_v1(request):
+                    return JSONResponse(
+                        status_code=428,
+                        content=map_to_api_error(428, "Precondition Required: If-Match header is required", _correlation_id(request)),
+                    )
+                else:
+                    return JSONResponse(
+                        status_code=428,
+                        content=error_response_body(
+                            code=ErrorCode.VALIDATION_FAILED,
+                            message="Precondition Required: If-Match header is required",
+                            next_action="Provide the If-Match header.",
+                            correlation_id=_correlation_id(request),
+                        )
+                    )
+
+        if _is_v1(request):
+            return JSONResponse(
+                status_code=422,
+                content=map_to_api_error(422, encoded, _correlation_id(request)),
+            )
         message, details = _summarize_detail(encoded)
         return JSONResponse(
             status_code=422,
@@ -356,3 +482,4 @@ def install_error_handlers(app: Any) -> None:
                 detail=encoded,
             ),
         )
+

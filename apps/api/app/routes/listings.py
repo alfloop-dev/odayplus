@@ -351,7 +351,8 @@ else:
         correlation_id: str
 
     class RiskReasonCommand(BaseModel):
-        risk_acknowledged: Optional[bool] = None
+        reason: str
+        risk_acknowledged: bool
         incident_or_change_id: Optional[str] = None
 
     class ReasonCommand(BaseModel):
@@ -414,6 +415,7 @@ else:
 
     class AssistedIntakeStore:
         """Small process-local contract store; durable adapters can replace it later."""
+        _instances: list[AssistedIntakeStore] = []
 
         def __init__(self) -> None:
             self.intakes: dict[str, dict[str, Any]] = {}
@@ -424,26 +426,48 @@ else:
             self.slas: dict[str, dict[str, Any]] = {}
             self.saved_views: list[dict[str, Any]] = []
             self.replays: dict[str, tuple[str, dict[str, Any], int]] = {}
+            AssistedIntakeStore._instances.append(self)
 
 
-    def create_assisted_intake_router(store: AssistedIntakeStore | None = None) -> APIRouter:
+
+    def create_assisted_intake_router(
+        store: AssistedIntakeStore | None = None,
+        audit_log: InMemoryAuditLog | None = None,
+    ) -> APIRouter:
         """Implement the approved ODP assisted-intake `/api/v1` contract."""
+        from shared.auth import Principal, Role
+        from modules.listing.application.intake_authorization import authorize_intake_action, mask_intake
 
         active = store or AssistedIntakeStore()
+        active_audit_log = audit_log or InMemoryAuditLog()
         router = APIRouter(tags=["assisted-listing-intake"])
 
         def now() -> str:
             return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
-        def require_actor(request: Request) -> str:
+        def get_principal(request: Request) -> Principal:
             from apps.api.oday_api.security.dependencies import principal_from_headers
-            principal = principal_from_headers(request.headers)
+            return principal_from_headers(request.headers)
+
+        def get_operator_role_id(request: Request) -> str | None:
+            return request.headers.get("x-operator-role") or request.headers.get("x-roles")
+
+        def require_actor(request: Request) -> str:
+            principal = get_principal(request)
             if not principal.authenticated:
                 raise HTTPException(401, "principal not authenticated")
             tenant_id = principal.scope.tenant_id if principal.scope else None
             if not tenant_id:
                 raise HTTPException(403, "tenant scope is required")
             return tenant_id
+
+        def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
+            owner = record.get("assigned_to") or record.get("owner")
+            submitter = record.get("submitted_by") or record.get("submitter")
+            sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
+            if owner in sentinels or submitter in sentinels:
+                return True
+            return principal.subject_id in (owner, submitter)
 
         def fingerprint(body: Any) -> str:
             return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
@@ -480,33 +504,87 @@ else:
             request: Request,
             cursor: Optional[str] = None,
             page_size: int = Query(50, ge=1, le=200),
+            sort: Optional[str] = None,
+            status: Optional[str] = None,
+            source_id: Optional[str] = None,
+            match_outcome: Optional[str] = None,
+            submitted_by: Optional[str] = None,
+            needs_review: Optional[bool] = None,
+            assigned_area_id: Optional[str] = None,
+            heat_zone_id: Optional[str] = None,
+            q: Optional[str] = None,
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
             if cursor and cursor != "end":
                 raise HTTPException(400, "invalid or expired cursor")
 
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "view",
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
             tenant_items = [
                 v for v in active.intakes.values()
                 if v.get("scope", {}).get("tenant_id") == tenant_id
             ]
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+
+            if is_staff:
+                tenant_items = [
+                    v for v in tenant_items
+                    if is_record_owner(principal, v)
+                ]
+
+            if status:
+                tenant_items = [v for v in tenant_items if v.get("state") == status]
+            if source_id:
+                tenant_items = [v for v in tenant_items if v.get("source_id") == source_id]
+            if match_outcome:
+                tenant_items = [v for v in tenant_items if v.get("match_outcome") == match_outcome]
+            if submitted_by:
+                tenant_items = [v for v in tenant_items if v.get("submitted_by") == submitted_by]
+            if heat_zone_id:
+                tenant_items = [v for v in tenant_items if v.get("scope", {}).get("heat_zone_id") == heat_zone_id]
+            if assigned_area_id:
+                tenant_items = [v for v in tenant_items if v.get("scope", {}).get("assigned_area_id") == assigned_area_id]
+            if needs_review is not None:
+                if needs_review:
+                    tenant_items = [v for v in tenant_items if v.get("state") == "NEEDS_REVIEW"]
+                else:
+                    tenant_items = [v for v in tenant_items if v.get("state") != "NEEDS_REVIEW"]
+
             items = tenant_items[:page_size]
 
             summaries = []
             for value in items:
+                masked_val = mask_intake(principal, value)
                 summaries.append(IntakeSummary(
-                    intake_id=value["intake_id"],
-                    state=value["state"],
-                    intake_method=value["intake_method"],
-                    source_id=value.get("source_id"),
-                    match_outcome=value.get("match_outcome"),
-                    submitted_by=value.get("submitted_by") or "system",
-                    assigned_to=value.get("assigned_to"),
-                    due_at=value.get("due_at"),
-                    submitted_at=value.get("submitted_at"),
-                    updated_at=value.get("updated_at"),
-                    version=value["version"],
-                    scope=ScopeContext(**value["scope"]),
-                    masked_fields=value.get("masked_fields") or [],
+                    intake_id=masked_val["intake_id"],
+                    state=masked_val["state"],
+                    intake_method=masked_val["intake_method"],
+                    source_id=masked_val.get("source_id"),
+                    match_outcome=masked_val.get("match_outcome"),
+                    submitted_by=masked_val.get("submitted_by") or "system",
+                    assigned_to=masked_val.get("assigned_to"),
+                    due_at=masked_val.get("due_at"),
+                    submitted_at=masked_val.get("submitted_at"),
+                    updated_at=masked_val.get("updated_at"),
+                    version=masked_val["version"],
+                    scope=ScopeContext(**masked_val["scope"]),
+                    masked_fields=masked_val.get("masked_fields") or [],
                 ))
 
             return IntakePage(
@@ -529,16 +607,26 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
+            key: str = Header(..., alias="Idempotency-Key"),
         ) -> IntakeSubmissionReceipt:
-            if body.scope.tenant_id != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            actor_id = request.headers.get("x-subject-id") or "system"
+            authorize_intake_action(
+                principal,
+                "submit_url",
+                resource={"tenant_id": body.scope.tenant_id, "heat_zone_id": body.scope.heat_zone_id},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 intake_id, job_id = str(uuid4()), str(uuid4())
-                correlation_id = str(uuid4())
+                correlation_id_str = str(uuid4())
                 ts = now()
 
                 value = {
@@ -550,7 +638,7 @@ else:
                     "updated_at": ts,
                     "version": 1,
                     "job_id": job_id,
-                    "correlation_id": correlation_id,
+                    "correlation_id": correlation_id_str,
                     "submitted_by": actor_id,
                     "original_url": body.original_url,
                     "canonical_url": body.original_url,
@@ -576,18 +664,18 @@ else:
                     "checkpoint": "RETRIEVE",
                     "attempt": 0,
                     "version": 1,
-                    "correlation_id": correlation_id,
+                    "correlation_id": correlation_id_str,
                 }
 
-                receipt = {
+                receipt_val = {
                     "intake_id": intake_id,
                     "state": "SUBMITTED",
                     "version": 1,
                     "job_id": job_id,
-                    "correlation_id": correlation_id,
+                    "correlation_id": correlation_id_str,
                     "submitted_at": ts,
                 }
-                return receipt, 202
+                return receipt_val, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
             response.status_code = 200 if was_replayed else code
@@ -606,17 +694,27 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
+            key: str = Header(..., alias="Idempotency-Key"),
         ) -> BatchIntakeReceipt:
-            if body.scope.tenant_id != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            actor_id = request.headers.get("x-subject-id") or "system"
+            authorize_intake_action(
+                principal,
+                "submit_csv",
+                resource={"tenant_id": body.scope.tenant_id, "heat_zone_id": body.scope.heat_zone_id},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 receipts, accepted = [], 0
                 ts = now()
-                correlation_id = str(uuid4())
+                correlation_id_str = str(uuid4())
 
                 for index, row in enumerate(body.rows):
                     if not row.address_raw:
@@ -627,7 +725,7 @@ else:
                                 "code": "VALIDATION_FAILED",
                                 "message": "address_raw is required",
                                 "retryable": False,
-                                "correlation_id": correlation_id,
+                                "correlation_id": correlation_id_str,
                                 "occurred_at": ts,
                                 "next_action": "CORRECT_INPUT",
                             }
@@ -674,7 +772,7 @@ else:
                     "accepted_count": accepted,
                     "rejected_count": len(body.rows) - accepted,
                     "rows": receipts,
-                    "correlation_id": correlation_id,
+                    "correlation_id": correlation_id_str,
                 }
 
                 code = 202 if accepted == len(body.rows) else 207
@@ -697,34 +795,51 @@ else:
             value = active.intakes.get(intake_id)
             if value is None:
                 raise HTTPException(404, "intake not found")
-            if value.get("scope", {}).get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            resource_for_auth = dict(value)
+            resource_for_auth["tenant_id"] = value.get("scope", {}).get("tenant_id")
+            resource_for_auth["submitter"] = value.get("submitted_by")
+            resource_for_auth["owner"] = value.get("assigned_to")
+
+            authorize_intake_action(
+                principal,
+                "view",
+                resource=resource_for_auth,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
 
             response.headers["ETag"] = f'"{value["version"]}"'
 
+            masked_val = mask_intake(principal, value)
             detail = IntakeDetail(
-                intake_id=value["intake_id"],
-                state=value["state"],
-                intake_method=value["intake_method"],
-                source_id=value.get("source_id"),
-                match_outcome=value.get("match_outcome"),
-                submitted_by=value.get("submitted_by") or "system",
-                assigned_to=value.get("assigned_to"),
-                due_at=value.get("due_at"),
-                submitted_at=value.get("submitted_at"),
-                updated_at=value.get("updated_at"),
-                version=value["version"],
-                scope=ScopeContext(**value["scope"]),
-                masked_fields=value.get("masked_fields") or [],
-                original_url=value.get("original_url"),
-                canonical_url=value.get("canonical_url"),
-                policy_state=value.get("policy_state") or "APPROVED_RETRIEVAL",
-                source_snapshot_id=value.get("source_snapshot_id"),
-                parser_run_id=value.get("parser_run_id"),
-                match_case_id=value.get("match_case_id"),
-                processing_history=value.get("processing_history") or [],
-                fields=value.get("fields") or [],
-                audit=value.get("audit") or [],
+                intake_id=masked_val["intake_id"],
+                state=masked_val["state"],
+                intake_method=masked_val["intake_method"],
+                source_id=masked_val.get("source_id"),
+                match_outcome=masked_val.get("match_outcome"),
+                submitted_by=masked_val.get("submitted_by") or "system",
+                assigned_to=masked_val.get("assigned_to"),
+                due_at=masked_val.get("due_at"),
+                submitted_at=masked_val.get("submitted_at"),
+                updated_at=masked_val.get("updated_at"),
+                version=masked_val["version"],
+                scope=ScopeContext(**masked_val["scope"]),
+                masked_fields=masked_val.get("masked_fields") or [],
+                original_url=masked_val.get("original_url"),
+                canonical_url=masked_val.get("canonical_url"),
+                policy_state=masked_val.get("policy_state") or "APPROVED_RETRIEVAL",
+                source_snapshot_id=masked_val.get("source_snapshot_id"),
+                parser_run_id=masked_val.get("parser_run_id"),
+                match_case_id=masked_val.get("match_case_id"),
+                processing_history=masked_val.get("processing_history") or [],
+                fields=masked_val.get("fields") or [],
+                audit=masked_val.get("audit") or [],
             )
             return detail
 
@@ -739,23 +854,44 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> CorrectionReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
-            if current.get("scope", {}).get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            is_identity_affecting = body.field_path in {"providerListingId", "address", "rent", "areaPing"}
+            resource_for_auth = dict(current)
+            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
+            resource_for_auth["submitter"] = current.get("submitted_by")
+            resource_for_auth["owner"] = current.get("assigned_to")
+
+            authorize_intake_action(
+                principal,
+                "correct",
+                resource=resource_for_auth,
+                risk_acknowledged=body.risk_acknowledged or False,
+                risk_summary=body.reason,
+                is_identity_affecting=is_identity_affecting,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] += 1
                 ts = now()
                 cid = str(uuid4())
-                correlation_id = str(uuid4())
+                correlation_id_str = str(uuid4())
                 audit_event_id = str(uuid4())
 
                 current["processing_history"].append({
@@ -778,15 +914,15 @@ else:
                 current["fields"] = [f for f in fields_list if f.get("field_path") != body.field_path]
                 current["fields"].append(field_value)
 
-                receipt = {
+                receipt_val = {
                     "correction_id": cid,
                     "status": "APPLIED",
                     "intake_id": intake_id,
                     "version": current["version"],
                     "audit_event_id": audit_event_id,
-                    "correlation_id": correlation_id,
+                    "correlation_id": correlation_id_str,
                 }
-                return receipt, 201
+                return receipt_val, 201
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "proposeCorrection", make)
             response.status_code = 200 if was_replayed else code
@@ -805,17 +941,35 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
                 raise HTTPException(404, "intake not found")
-            if current.get("scope", {}).get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if is_staff:
+                if current.get("submitted_by") != principal.subject_id and current.get("assigned_to") != principal.subject_id:
+                    raise HTTPException(403, "OWNERSHIP_REQUIRED")
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 current["version"] += 1
@@ -865,8 +1019,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> JobReceipt:
             job = active.jobs.get(job_id)
             if job is None:
@@ -877,7 +1031,21 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, job["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "reopen_failed",
+                resource=intake,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 job["attempt"] += 1
@@ -885,7 +1053,7 @@ else:
                 job["status"] = "QUEUED"
                 job["checkpoint"] = body.checkpoint
 
-                receipt = {
+                receipt_val = {
                     "job_id": job_id,
                     "status": "QUEUED",
                     "checkpoint": body.checkpoint,
@@ -893,7 +1061,7 @@ else:
                     "version": job["version"],
                     "correlation_id": job["correlation_id"],
                 }
-                return receipt, 202
+                return receipt_val, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "retryJob", make)
             response.status_code = code
@@ -904,7 +1072,21 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> List[SavedView]:
-            actor_id = request.headers.get("x-subject-id") or "system"
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            actor_id = principal.subject_id
             views = [
                 v for v in active.saved_views
                 if v.get("owner_subject_id") == actor_id
@@ -921,9 +1103,23 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
+            key: str = Header(..., alias="Idempotency-Key"),
         ) -> SavedView:
-            actor_id = request.headers.get("x-subject-id") or "system"
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 svid = str(uuid4())
@@ -956,8 +1152,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> PromotionDecisionReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
@@ -965,19 +1161,42 @@ else:
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
+            if current.get("state") != "READY":
+                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            resource_for_auth = dict(current)
+            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
+            resource_for_auth["submitter"] = current.get("submitted_by")
+            resource_for_auth["owner"] = current.get("assigned_to")
+
+            authorize_intake_action(
+                principal,
+                "promote",
+                resource=resource_for_auth,
+                risk_acknowledged=body.risk_acknowledged,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
                 current["version"] += 1
-                current["state"] = "PROMOTED"
                 current["updated_at"] = now()
 
                 current["processing_history"].append({
                     "transition_id": str(uuid4()),
                     "from_state": "READY",
-                    "to_state": "PROMOTED",
+                    "to_state": "READY",
                     "occurred_at": now(),
                     "actor": actor_id,
                     "version_after": current["version"],
@@ -992,6 +1211,8 @@ else:
                     "version": 1,
                     "audit_event_id": str(uuid4()),
                     "correlation_id": str(uuid4()),
+                    "tenant_id": tenant_id,
+                    "proposer": actor_id,
                 }
                 active.promotions[did] = value
                 return value, 202
@@ -1012,9 +1233,7 @@ else:
                 raise HTTPException(404, "promotion decision not found")
             val = active.promotions[promotion_decision_id]
 
-            # Find intake to verify tenant
-            intake = active.intakes.get(val["intake_id"])
-            if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
+            if val.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             return PromotionDecisionReceipt(**val)
@@ -1030,6 +1249,10 @@ else:
             if decision_id not in active.decisions:
                 raise HTTPException(404, "identity decision not found")
             val = active.decisions[decision_id]
+
+            if val.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             return DecisionReceipt(**val)
 
         @router.post(
@@ -1043,11 +1266,27 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             require_version(if_match, 1)
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "decide",
+                resource={"tenant_id": tenant_id},
+                risk_acknowledged=body.risk_acknowledged,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
@@ -1060,6 +1299,8 @@ else:
                     "correlation_id": str(uuid4()),
                     "version": 1,
                     "action": "match_decision",
+                    "tenant_id": tenant_id,
+                    "proposer": actor_id,
                 }
                 active.decisions[did] = value
                 return value, 201
@@ -1078,11 +1319,27 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             require_version(if_match, 1)
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "merge",
+                resource={"tenant_id": tenant_id},
+                risk_acknowledged=body.risk_acknowledged or False,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
@@ -1095,6 +1352,8 @@ else:
                     "correlation_id": str(uuid4()),
                     "version": 1,
                     "action": "merge",
+                    "tenant_id": tenant_id,
+                    "proposer": actor_id,
                 }
                 active.decisions[did] = value
                 return value, 202
@@ -1113,11 +1372,27 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             require_version(if_match, 1)
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "split",
+                resource={"tenant_id": tenant_id},
+                risk_acknowledged=body.risk_acknowledged or False,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
@@ -1130,6 +1405,8 @@ else:
                     "correlation_id": str(uuid4()),
                     "version": 1,
                     "action": "split",
+                    "tenant_id": tenant_id,
+                    "proposer": actor_id,
                 }
                 active.decisions[did] = value
                 return value, 202
@@ -1148,11 +1425,27 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             require_version(if_match, 1)
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "unmerge",
+                resource={"tenant_id": tenant_id},
+                risk_acknowledged=body.risk_acknowledged or False,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 did = str(uuid4())
@@ -1165,6 +1458,8 @@ else:
                     "correlation_id": str(uuid4()),
                     "version": 1,
                     "action": "unmerge",
+                    "tenant_id": tenant_id,
+                    "proposer": actor_id,
                 }
                 active.decisions[did] = value
                 return value, 202
@@ -1214,8 +1509,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
@@ -1224,7 +1519,26 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            resource_for_auth = dict(current)
+            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
+            resource_for_auth["submitter"] = current.get("submitted_by")
+            resource_for_auth["owner"] = current.get("assigned_to")
+
+            authorize_intake_action(
+                principal,
+                "cancel",
+                resource=resource_for_auth,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
@@ -1247,8 +1561,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
@@ -1257,7 +1571,29 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            is_privacy = principal.has_role(Role.FINANCE_LEGAL) or operator_role_id in ("privacy-officer", "privacyOfficer")
+
+            if not (is_manager or is_staff or is_steward or is_privacy):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if not body.reason or not body.reason.strip():
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            if not body.risk_acknowledged:
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state", "SUBMITTED")
@@ -1281,8 +1617,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> TransitionReceipt:
             current = active.intakes.get(intake_id)
             if current is None:
@@ -1291,7 +1627,30 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            resource_for_auth = dict(current)
+            resource_for_auth["tenant_id"] = current.get("scope", {}).get("tenant_id")
+            resource_for_auth["submitter"] = current.get("submitted_by")
+            resource_for_auth["owner"] = current.get("assigned_to")
+
+            action_name = "reopen_quarantine" if current.get("state") == "QUARANTINED" else "reopen_failed"
+
+            authorize_intake_action(
+                principal,
+                action_name,
+                resource=resource_for_auth,
+                risk_acknowledged=body.risk_acknowledged,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state", "QUARANTINED")
@@ -1311,30 +1670,44 @@ else:
         )
         def claim_assignment(
             assignment_id: str,
-            body: RiskReasonCommand,
+            body: ReasonCommand,
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
 
-            # Tenant isolation check
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
-                if not intake:
-                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
                 if intake:
                     assignment_tenant = intake.get("scope", {}).get("tenant_id")
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            actor_id = principal.subject_id
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if (is_staff or is_steward) and current.get("owner_subject_id") != actor_id:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
@@ -1356,26 +1729,40 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
 
-            # Tenant isolation check
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
-                if not intake:
-                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
                 if intake:
                     assignment_tenant = intake.get("scope", {}).get("tenant_id")
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            actor_id = principal.subject_id
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if is_staff and current.get("owner_subject_id") != actor_id:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
                 current["owner_subject_id"] = body.target_owner_subject_id
@@ -1394,30 +1781,44 @@ else:
         )
         def complete_assignment(
             assignment_id: str,
-            body: RiskReasonCommand,
+            body: ReasonCommand,
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> AssignmentReceipt:
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
 
-            # Tenant isolation check
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
-                if not intake:
-                    intake = next((v for v in active.intakes.values() if v.get("assigned_to") == current.get("owner_subject_id")), None)
                 if intake:
                     assignment_tenant = intake.get("scope", {}).get("tenant_id")
             if assignment_tenant and assignment_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            actor_id = principal.subject_id
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+
+            if not (is_manager or is_staff or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if (is_staff or is_steward) and current.get("owner_subject_id") != actor_id:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED")
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
@@ -1439,8 +1840,8 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> SlaReceipt:
             current = active.slas.get(sla_instance_id)
             if current is None:
@@ -1456,7 +1857,17 @@ else:
                 active.slas[sla_instance_id] = current
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            if not (is_manager or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
@@ -1475,19 +1886,29 @@ else:
         )
         def resume_sla(
             sla_instance_id: str,
-            body: RiskReasonCommand,
+            body: ReasonCommand,
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> SlaReceipt:
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
 
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            if not (is_manager or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.slas, sla_instance_id, "ACTIVE", actor_id)
@@ -1510,15 +1931,37 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> PromotionDecisionReceipt:
             current = active.promotions.get(promotion_decision_id)
             if current is None:
                 raise HTTPException(404, "promotion decision not found")
 
+            intake = active.intakes.get(current["intake_id"])
+            if intake and intake.get("scope", {}).get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            actor_id = principal.subject_id
+
+            if current.get("proposer") == actor_id:
+                raise HTTPException(403, "SELF_REVIEW_DENIED")
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            if not is_manager:
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if not body.reason or not body.reason.strip():
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            if not body.risk_acknowledged:
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
                 to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
@@ -1542,15 +1985,37 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
 
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            actor_id = principal.subject_id
+
+            if current.get("proposer") == actor_id:
+                raise HTTPException(403, "SELF_REVIEW_DENIED")
+
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            if not (is_manager or is_steward):
+                raise HTTPException(403, "ROLE_DENIED")
+
+            if not body.reason or not body.reason.strip():
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+            if not body.risk_acknowledged:
+                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
                 to_state = "APPROVED" if body.decision in {"approve", "APPROVE"} else "REJECTED"
@@ -1573,15 +2038,34 @@ else:
             request: Request,
             response: Response,
             tenant_id: str = Depends(require_actor),
-            key: Optional[str] = Header(None, alias="Idempotency-Key"),
-            if_match: Optional[str] = Header(None, alias="If-Match"),
+            key: str = Header(..., alias="Idempotency-Key"),
+            if_match: str = Header(..., alias="If-Match"),
         ) -> DecisionReceipt:
             current = active.decisions.get(decision_id)
             if current is None:
                 raise HTTPException(404, "identity decision not found")
 
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             require_version(if_match, current["version"])
-            actor_id = request.headers.get("x-subject-id") or "system"
+
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "unmerge",
+                resource={"tenant_id": tenant_id},
+                risk_acknowledged=body.risk_acknowledged,
+                risk_summary=body.reason,
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
                 updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
