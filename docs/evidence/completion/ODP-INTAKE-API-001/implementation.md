@@ -17,12 +17,19 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   idempotency-key, and exact weak `If-Match` constraints before route logic.
 - Tenant isolation fails closed for intake, job, assignment, saved-view,
   promotion, and identity-decision resources. Read paths retain role/ownership
-  authorization and field masking. An unassigned record has no implicit staff
-  owner: only its actual submitter or assignee satisfies the ownership gate on
-  list, detail, and mutation paths. Canonical v1 `fields[]` values are masked
-  from `parsed`, `normalized`, `corrected`, and `effective` according to their
-  declared classification, including `RESTRICTED` fields for principals with
-  the default confidential clearance.
+  authorization and field masking. Intake authorization derives roles only
+  from the authenticated principal (or a server-selected role already written
+  to request state); a raw `X-Operator-Role` cannot elevate either the local
+  development principal or a live bearer-token principal. Brand, region,
+  assigned-area, and HeatZone restrictions are parsed from local headers and
+  verified claims, then applied to nested/flat resources on create, list,
+  detail, and mutation paths. Missing metadata fails closed for any restricted
+  axis. An unassigned record has no implicit staff owner: only its actual
+  submitter or assignee satisfies the ownership gate on list, detail, and
+  mutation paths. Canonical v1 `fields[]` values are masked from `parsed`,
+  `normalized`, `corrected`, and `effective` according to their declared
+  classification, including `RESTRICTED` fields for principals with the
+  default confidential clearance.
 - List pagination uses a 24-hour HMAC-signed keyset cursor bound to tenant,
   filters, sort, snapshot, sort tuple, and last resource identifier. Deployed
   replicas configure `ODP_INTAKE_CURSOR_SIGNING_KEY`; local/test processes use
@@ -31,6 +38,11 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   inserted after the snapshot cannot shift an offset or duplicate a row.
 - Lifecycle guards enforce the approved cancel, quarantine, reopen, correction,
   assignment, SLA, promotion-review, identity-review, and reversal transitions.
+  Identity-affecting address/provider/rent/area corrections remain pending
+  until a different authorized subject approves the linked identity decision;
+  the correction is not applied during proposal. A quarantine release likewise
+  records a first-actor proposal while remaining `QUARANTINED`, rejects
+  self-review, and transitions only after an independent second actor approves.
 - Idempotent mutation replay stores an immutable receipt snapshot and returns
   the original status/body and stable ETag without re-running a now-invalid
   state transition. Later assignment claim/transfer/complete mutations cannot
@@ -42,6 +54,12 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   path resource ID, so the same key and body may be applied independently to
   two different authorized resources without replaying the first resource's
   receipt.
+- `claimAssignment` resolves an exact actor/tenant/operation/resource-scoped
+  replay before mutable current-owner checks. A lost claim response therefore
+  replays the original immutable body and ETag after a later transfer changes
+  ownership. Staff retry authorization receives the canonical intake ownership
+  fields, allowing Expansion staff to retry their own failed intake without
+  granting access to another subject's job.
 - Assignment authorization preserves staff ownership rules without granting
   queue-routing authority: Expansion staff cannot assign an owned intake to a
   different subject. The target owner of a transferred assignment can claim it
@@ -50,9 +68,12 @@ The task implements the approved Assisted Listing Intake v1 HTTP surface at
   intake; the server returns the declared `409 OWNER_CONFLICT` instead.
 - Batch intake reports schema-valid partial success without hiding rejected-row
   errors, and all API errors use the effective `ApiError` wire schema.
-- Contract tests compare parameters, request bodies, and every declared response
-  schema for all 27 operations. Exercised runtime responses are independently
-  validated against the effective bundle with UUID/date-time format checking.
+- Contract tests compare parameters, request bodies, exact response-status sets,
+  response headers, and exact request/response schemas for all 27 operations.
+  Exercised runtime responses are independently validated against the effective
+  bundle with UUID/date-time format checking, and every declared success header
+  must be present on the actual response. The live FastAPI artifact and generated
+  shared TypeScript types are regenerated from those exact declarations.
 - Effective artifact and generated-client drift remain byte-for-byte pinned.
 
 ## Composition boundary

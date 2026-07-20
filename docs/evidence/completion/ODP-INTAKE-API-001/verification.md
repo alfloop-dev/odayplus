@@ -144,3 +144,46 @@ Verified on 2026-07-20 after regeneration:
 - `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
 - `uv run ruff check apps/api/app/routes/listings.py modules/listing/application/intake_authorization.py shared/api/errors.py tests/contract/test_assisted_listing_operations.py` —
   PASS.
+
+## Fourth changes-requested remediation
+
+Reviewer follow-up at `d39500fe` was implemented at authorization/runtime
+anchors `f02d1cd6` and `71873ce6`, then generated-artifact anchor `3806ed73`:
+
+- the v1 and Operator compatibility handlers no longer consume a raw
+  `X-Operator-Role`; local and live JWT regressions verify that the header
+  cannot grant `expansion-manager` to a principal with no platform role;
+- brand, region, assigned-area, and HeatZone scope axes are represented in the
+  canonical principal, parsed from local headers and verified claims, and
+  enforced against nested or flat intake resources on create/read/mutate/list;
+- identity-affecting provider/address/rent/area corrections and quarantine
+  release now require an independent second actor, with explicit self-review
+  denial and no first-actor application/release;
+- `claimAssignment` exact replay precedes mutable ownership checks, while
+  `retryJob` receives normalized ownership fields so Expansion staff can retry
+  their own failed intake;
+- `decideMatchCase`, promotion/identity GETs, and all other declared mutation
+  receipts expose their required ETags; runtime drift tests now require exact
+  per-operation status sets, response headers, and schemas rather than schema
+  subsets;
+- the live FastAPI artifact and generated shared TypeScript types were refreshed
+  after the exact response declarations changed.
+
+Verified on 2026-07-20 after `3806ed73`:
+
+- `uv run python scripts/build_validate_assisted_listing_intake_openapi.py --json` —
+  PASS, effective OpenAPI 1.1.3 with all five overlays in manifest order.
+- `uv run python scripts/generate_assisted_listing_intake_client.py` — PASS;
+  the effective 1.1.3 artifact and its dedicated generated client remained
+  unchanged.
+- `uv run pytest -q tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py tests/security/test_api_auth_wiring.py tests/security/test_assisted_listing_intake_authorization_matrix.py tests/security/test_opsboard_auth_boundary.py` —
+  PASS (113 tests: 56 assisted-intake contract tests and 57 auth/security tests).
+- `uv run python scripts/openapi/check_drift.py --base-ref origin/dev` — PASS;
+  the live artifact/client are fresh with 27 additive and zero breaking changes.
+- `uv run pytest -q tests/contract/test_openapi_artifact_and_client.py` — PASS
+  (17 live-artifact and generated-client checks).
+- `npm run typecheck --workspace=@oday-plus/openapi-client` — PASS.
+- `uv run ruff check apps/api/app/routes/listings.py apps/api/app/routes/operator_modules/network_listings.py apps/api/oday_api/main.py apps/api/oday_api/security/dependencies.py modules/listing/application/intake_authorization.py modules/opsboard/auth/claims.py shared/api/versioning.py shared/auth/identity.py tests/contract/test_assisted_listing_openapi.py tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_v1_runtime.py tests/security/test_opsboard_auth_boundary.py` —
+  PASS.
+- `git diff --check origin/dev...HEAD` and `git diff --check` — PASS before
+  this evidence-only commit.
