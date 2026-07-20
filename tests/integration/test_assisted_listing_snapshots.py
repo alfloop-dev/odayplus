@@ -73,7 +73,7 @@ def test_source_policy_gates(memory_store, workflow_service) -> None:
 
 def test_create_snapshot_success(memory_store, workflow_service, base_context) -> None:
     service = SourceSnapshotService(db_conn=None, object_store=memory_store, intake_workflow_service=workflow_service)
-    
+
     tenant_id = "00000000-0000-0000-0000-000000000001"
     intake_id = "IN-123"
     source_id = "src-591"
@@ -129,7 +129,7 @@ def test_create_snapshot_success(memory_store, workflow_service, base_context) -
 
 def test_create_snapshot_policy_fail(memory_store, workflow_service, base_context) -> None:
     service = SourceSnapshotService(db_conn=None, object_store=memory_store, intake_workflow_service=workflow_service)
-    
+
     tenant_id = "00000000-0000-0000-0000-000000000001"
     intake_id = "IN-123"
     source_id = "blocked-src"
@@ -181,7 +181,7 @@ def test_create_snapshot_policy_fail(memory_store, workflow_service, base_contex
 
 def test_reconciliation_missing_object(memory_store, workflow_service, base_context) -> None:
     service = SourceSnapshotService(db_conn=None, object_store=memory_store, intake_workflow_service=workflow_service)
-    
+
     tenant_id = "00000000-0000-0000-0000-000000000001"
     intake_id = "IN-456"
     source_id = "src-591"
@@ -245,7 +245,7 @@ def test_reconciliation_missing_object(memory_store, workflow_service, base_cont
 
 def test_reconciliation_orphan_object(memory_store, workflow_service) -> None:
     service = SourceSnapshotService(db_conn=None, object_store=memory_store, intake_workflow_service=workflow_service)
-    
+
     tenant_id = "00000000-0000-0000-0000-000000000001"
     bucket = "taiwan-snapshots"
 
