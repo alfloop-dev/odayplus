@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import hashlib
 import json
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -90,7 +90,7 @@ else:
         """Implement the approved ODP assisted-intake `/api/v1` contract."""
 
         active = store or AssistedIntakeStore()
-        router = APIRouter(prefix="/api/v1", tags=["assisted-listing-intake"])
+        router = APIRouter(tags=["assisted-listing-intake"])
 
         def now() -> str:
             return datetime.now(UTC).isoformat().replace("+00:00", "Z")
