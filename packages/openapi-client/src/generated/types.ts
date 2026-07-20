@@ -61,8 +61,6 @@ export type AdLiftIncrementalityJobPayload = {
 export type ApiError = {
   code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
   correlation_id: string;
-  current_owner_subject_id?: string | null;
-  current_state?: string | null;
   current_version?: number | null;
   field_errors?: FieldError[];
   message: string;
@@ -70,7 +68,6 @@ export type ApiError = {
   occurred_at: string;
   reason_code?: string | null;
   retry_after_seconds?: number | null;
-  retry_with_etag?: string | null;
   retryable: boolean;
 };
 
@@ -195,6 +192,23 @@ export type ClosePayload = {
   follow_up?: boolean;
   follow_up_kind?: string | null;
   reason?: string;
+};
+
+/** ConflictError */
+export type ConflictError = {
+  code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
+  correlation_id: string;
+  current_owner_subject_id?: string | null;
+  current_state?: string | null;
+  current_version?: number | null;
+  field_errors?: FieldError[];
+  message: string;
+  next_action: "RETRY" | "REFRESH" | "CORRECT_INPUT" | "REQUEST_ACCESS" | "CONTACT_SUPPORT" | "WAIT" | null;
+  occurred_at: string;
+  reason_code?: string | null;
+  retry_after_seconds?: number | null;
+  retry_with_etag?: string | null;
+  retryable: boolean;
 };
 
 /** CorrectionReceipt */
@@ -470,6 +484,11 @@ export type FranchiseeReportRequest = {
   category: string;
   message: string;
   storeId?: string | null;
+};
+
+/** HTTPValidationError */
+export type HTTPValidationError = {
+  detail?: ValidationError[];
 };
 
 /** HeatZoneScoreJobPayload */
@@ -1246,6 +1265,15 @@ export type UrlIntakeRequest = {
   owner_subject_id?: string | null;
   purpose?: string;
   scope: ScopeContext;
+};
+
+/** ValidationError */
+export type ValidationError = {
+  ctx?: Record<string, unknown>;
+  input?: unknown;
+  loc: (string | number)[];
+  msg: string;
+  type: string;
 };
 
 /** ConflictCheckPayload */

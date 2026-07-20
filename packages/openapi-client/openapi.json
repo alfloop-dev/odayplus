@@ -224,29 +224,6 @@
             "title": "Correlation Id",
             "type": "string"
           },
-          "current_owner_subject_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Owner Subject Id"
-          },
-          "current_state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current State"
-          },
           "current_version": {
             "anyOf": [
               {
@@ -315,17 +292,6 @@
               }
             ],
             "title": "Retry After Seconds"
-          },
-          "retry_with_etag": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retry With Etag"
           },
           "retryable": {
             "title": "Retryable",
@@ -872,6 +838,183 @@
           "disposition"
         ],
         "title": "ClosePayload",
+        "type": "object"
+      },
+      "ConflictError": {
+        "properties": {
+          "code": {
+            "enum": [
+              "AUTHENTICATION_REQUIRED",
+              "ROLE_DENIED",
+              "TENANT_SCOPE_DENIED",
+              "SCOPE_DENIED",
+              "OWNERSHIP_REQUIRED",
+              "ASSIGNMENT_SCOPE_DENIED",
+              "SOURCE_SCOPE_DENIED",
+              "FIELD_MASKED",
+              "DATA_CLASSIFICATION_DENIED",
+              "PURPOSE_REQUIRED",
+              "PRECONDITION_REQUIRED",
+              "VERSION_CONFLICT",
+              "WORKFLOW_STATE_DENIED",
+              "OWNER_CONFLICT",
+              "SECOND_ACTOR_REQUIRED",
+              "SELF_REVIEW_DENIED",
+              "RISK_ACKNOWLEDGEMENT_REQUIRED",
+              "SOURCE_POLICY_DENIED",
+              "SOURCE_POLICY_UNKNOWN",
+              "SOURCE_AUTH_REQUIRED",
+              "LEGAL_HOLD_CONFLICT",
+              "RETENTION_NOT_REACHED",
+              "RESIDENCY_DENIED",
+              "EXPORT_APPROVAL_REQUIRED",
+              "PURGE_APPROVAL_REQUIRED",
+              "QUARANTINE_RELEASE_DENIED",
+              "PROMOTION_APPROVAL_REQUIRED",
+              "RESTRICTED_EXPORT_DENIED",
+              "BREAK_GLASS_DENIED",
+              "DEPENDENCY_CONFLICT",
+              "DUPLICATE_CANDIDATE",
+              "IDEMPOTENCY_KEY_REUSED",
+              "RETRY_BUDGET_EXHAUSTED",
+              "CHECKPOINT_UNAVAILABLE",
+              "JOB_FENCE_REJECTED",
+              "SLA_PAUSE_DENIED",
+              "DECISION_INCOMPLETE",
+              "BACKPRESSURE_ACTIVE",
+              "RATE_LIMITED",
+              "RESOURCE_NOT_FOUND",
+              "VALIDATION_FAILED",
+              "FIELD_REQUIRED",
+              "CURSOR_INVALID",
+              "CURSOR_EXPIRED",
+              "INTERNAL_ERROR"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "current_owner_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Owner Subject Id"
+          },
+          "current_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current State"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
+          },
+          "field_errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Field Errors",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "enum": [
+                  "RETRY",
+                  "REFRESH",
+                  "CORRECT_INPUT",
+                  "REQUEST_ACCESS",
+                  "CONTACT_SUPPORT",
+                  "WAIT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "retry_with_etag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry With Etag"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "correlation_id",
+          "occurred_at",
+          "next_action"
+        ],
+        "title": "ConflictError",
         "type": "object"
       },
       "CorrectionReceipt": {
@@ -2130,6 +2273,19 @@
           "message"
         ],
         "title": "FranchiseeReportRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
         "type": "object"
       },
       "HeatZoneScoreJobPayload": {
@@ -6177,6 +6333,46 @@
         "title": "UrlIntakeRequest",
         "type": "object"
       },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
       "apps__api__app__routes__interventions__ConflictCheckPayload": {
         "properties": {
           "actor": {
@@ -7027,27 +7223,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Assignment updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -7059,21 +7243,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -7098,16 +7272,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Claim Assignment",
@@ -7172,27 +7336,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Assignment updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -7204,21 +7356,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -7243,16 +7385,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Complete Assignment",
@@ -7317,27 +7449,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Assignment updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -7349,21 +7469,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -7388,16 +7498,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Transfer Assignment",
@@ -11624,27 +11724,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Identity decision",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -11665,36 +11753,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflicting state or idempotency replay conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Get Identity",
@@ -11759,27 +11817,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Reversal requested",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -11791,21 +11837,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -11830,16 +11866,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Reverse Identity",
@@ -11904,7 +11930,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Review committed",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              }
+            }
           },
           "202": {
             "content": {
@@ -11914,27 +11948,15 @@
                 }
               }
             },
-            "description": "Review queued"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Review queued",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -11946,21 +11968,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -11985,16 +11997,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Review Identity",
@@ -12051,26 +12053,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -12081,21 +12063,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -12120,16 +12092,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Merge Properties",
@@ -12186,26 +12148,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -12216,21 +12158,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -12255,16 +12187,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Split Property",
@@ -12321,26 +12243,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -12351,21 +12253,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -12390,16 +12282,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Unmerge Property",
@@ -12456,46 +12338,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server-derived authorization denied"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -12525,16 +12367,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Submit Batch",
@@ -12755,16 +12587,6 @@
             },
             "description": "Assisted intake API error"
           },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -12774,46 +12596,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflicting state or idempotency replay conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "List Intakes",
@@ -12858,7 +12640,14 @@
                 }
               }
             },
-            "description": "Idempotent replay"
+            "description": "Idempotent replay",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
           },
           "202": {
             "content": {
@@ -12868,27 +12657,20 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Intake accepted",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -12899,16 +12681,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
           },
           "409": {
             "content": {
@@ -12929,16 +12701,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Submit Url",
@@ -12971,27 +12733,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Intake detail",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13012,36 +12762,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflicting state or idempotency replay conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Get Intake",
@@ -13106,27 +12826,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Transition committed",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13138,21 +12846,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -13177,16 +12875,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Cancel Intake",
@@ -13251,27 +12939,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Transition committed",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13283,21 +12959,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -13322,16 +12988,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Quarantine Intake",
@@ -13396,27 +13052,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Transition committed",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13428,21 +13072,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -13467,16 +13101,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Reopen Intake",
@@ -13541,27 +13165,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Assignment updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13573,35 +13185,15 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
             "description": "Assisted intake API error"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
           },
           "428": {
             "content": {
@@ -13612,16 +13204,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Assign",
@@ -13686,53 +13268,26 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Correction proposed",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server-derived authorization denied"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
+            }
           },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -13757,16 +13312,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Correct",
@@ -13831,27 +13376,20 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Promotion review requested",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -13863,21 +13401,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -13911,17 +13439,15 @@
                 }
               }
             },
-            "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
+            "description": "Rate limited",
+            "headers": {
+              "Retry-After": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "minimum": 1,
+                  "type": "integer"
                 }
               }
-            },
-            "description": "Unexpected server error"
+            }
           },
           "503": {
             "content": {
@@ -13931,7 +13457,15 @@
                 }
               }
             },
-            "description": "Assisted intake API error"
+            "description": "Backpressure active",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Promote",
@@ -15687,26 +15221,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -15717,21 +15231,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -15756,16 +15260,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Retry Job",
@@ -16880,27 +16374,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Match decision proposed",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -16912,21 +16394,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -16951,16 +16423,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Decide Match Case",
@@ -31169,27 +30631,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Promotion decision",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -31210,36 +30660,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflicting state or idempotency replay conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Get Promotion",
@@ -31304,7 +30724,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Review committed",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              }
+            }
           },
           "202": {
             "content": {
@@ -31314,27 +30742,15 @@
                 }
               }
             },
-            "description": "Review queued"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "Review queued",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -31346,21 +30762,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -31385,16 +30791,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Review Promotion",
@@ -31421,26 +30817,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
           "403": {
             "content": {
               "application/json": {
@@ -31450,46 +30826,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflicting state or idempotency replay conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "List Saved Views",
@@ -31534,46 +30870,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server-derived authorization denied"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -31583,26 +30879,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Create Saved View",
@@ -32726,27 +32002,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "SLA updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -32758,21 +32022,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -32797,16 +32051,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Pause Sla",
@@ -32871,27 +32115,15 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
+            "description": "SLA updated",
+            "headers": {
+              "ETag": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "example": "W/\"7\"",
+                  "type": "string"
                 }
               }
-            },
-            "description": "Invalid request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Missing or invalid identity"
+            }
           },
           "403": {
             "content": {
@@ -32903,21 +32135,11 @@
             },
             "description": "Assisted intake API error"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "409": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ConflictError"
                 }
               }
             },
@@ -32942,16 +32164,6 @@
               }
             },
             "description": "Assisted intake API error"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unexpected server error"
           }
         },
         "summary": "Resume Sla",
