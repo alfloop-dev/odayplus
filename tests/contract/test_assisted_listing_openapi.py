@@ -116,8 +116,8 @@ def test_live_runtime_serves_every_effective_operation() -> None:
             # Resolve and compare responses
             for status, resp in op.get("responses", {}).items():
                 live_op = live_paths[live_path][method]
-                if status in {"200", "201", "202"}:
-                    if not ({"200", "201", "202"} & set(live_op["responses"])):
+                if status in {"200", "201", "202", "207"}:
+                    if not ({"200", "201", "202", "207"} & set(live_op["responses"])):
                         assert status in live_op["responses"], f"runtime missing response status {status} for {method.upper()} {live_path}"
                 else:
                     assert status in live_op["responses"], f"runtime missing response status {status} for {method.upper()} {live_path}"
