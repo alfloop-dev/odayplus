@@ -376,7 +376,7 @@ export function AssistedIntakeSection({
       }
 
       setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
-      
+
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
         applyRecord(getResult.value);
@@ -443,7 +443,7 @@ export function AssistedIntakeSection({
       );
 
       setToast(`已成功轉交收件！`);
-      
+
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
         applyRecord(getResult.value);
@@ -506,7 +506,7 @@ export function AssistedIntakeSection({
       );
 
       setToast(`SLA 已暫停！`);
-      
+
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
         applyRecord(getResult.value);
@@ -563,7 +563,7 @@ export function AssistedIntakeSection({
       );
 
       setToast(`SLA 已恢復計時！`);
-      
+
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
         applyRecord(getResult.value);
