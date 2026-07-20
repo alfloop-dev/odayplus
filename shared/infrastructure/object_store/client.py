@@ -46,6 +46,10 @@ class ObjectStore(Protocol):
         """Return metadata of object (generation, size, sha256, content_type)."""
         ...
 
+    def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
+        """List all object keys in the bucket."""
+        ...
+
 
 def parse_gs_uri(uri: str) -> tuple[str, str]:
     """Parse gs://bucket/key URI into (bucket, key)."""
@@ -83,11 +87,10 @@ class InMemoryObjectStore:
     def _enforce_residency(self, tenant_id: str, bucket: str) -> None:
         residency = self._get_residency(tenant_id)
         if residency == "TW_ONLY":
-            # If the tenant is TW_ONLY, they can only write to Taiwan buckets.
-            # We assume buckets NOT containing "taiwan" or "tw" are outside TW
-            # if they contain "apac" or "dr" or "us" or "eu".
             normalized = bucket.lower()
-            if any(x in normalized for x in ("apac", "dr", "us", "eu", "global")) and not any(x in normalized for x in ("taiwan", "tw")):
+            has_tw = ("taiwan" in normalized) or ("tw" in normalized)
+            has_disallowed = any(x in normalized for x in ("apac", "dr", "us", "eu", "global", "singapore", "japan", "frankfurt", "tokyo", "seoul", "hongkong", "hk"))
+            if not has_tw or has_disallowed:
                 raise ResidencyDeniedError("RESIDENCY_DENIED")
 
     def upload_object(
@@ -154,6 +157,11 @@ class InMemoryObjectStore:
             "content_type": obj["content_type"],
         }
 
+    def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
+        self._enforce_residency(tenant_id, bucket)
+        bucket_data = self._objects.get(bucket, {})
+        return list(bucket_data.keys())
+
 
 class GcsObjectStore:
     """Production GCS object store client utilizing urllib.request.
@@ -174,7 +182,9 @@ class GcsObjectStore:
         residency = self._get_residency(tenant_id)
         if residency == "TW_ONLY":
             normalized = bucket.lower()
-            if any(x in normalized for x in ("apac", "dr", "us", "eu", "global")) and not any(x in normalized for x in ("taiwan", "tw")):
+            has_tw = ("taiwan" in normalized) or ("tw" in normalized)
+            has_disallowed = any(x in normalized for x in ("apac", "dr", "us", "eu", "global", "singapore", "japan", "frankfurt", "tokyo", "seoul", "hongkong", "hk"))
+            if not has_tw or has_disallowed:
                 raise ResidencyDeniedError("RESIDENCY_DENIED")
 
     def _get_token(self) -> str:
@@ -320,3 +330,28 @@ class GcsObjectStore:
             raise OSError(f"GCS head failed: {exc.read().decode('utf-8')}") from exc
         except Exception as exc:
             raise OSError(f"GCS head failed: {exc}") from exc
+
+    def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
+        self._enforce_residency(tenant_id, bucket)
+        token = self._get_token()
+
+        endpoint = (
+            "https://storage.googleapis.com/storage/v1/b/"
+            f"{urllib.parse.quote(bucket, safe='')}/o"
+        )
+        request = urllib.request.Request(
+            endpoint,
+            method="GET",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+                body = json.loads(response.read().decode("utf-8"))
+                items = body.get("items", [])
+                return [item["name"] for item in items if "name" in item]
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return []
+            raise OSError(f"GCS list failed: {exc.read().decode('utf-8')}") from exc
+        except Exception as exc:
+            raise OSError(f"GCS list failed: {exc}") from exc

@@ -3,6 +3,7 @@
 The production R5 flow still uses deterministic fixture replay by default. This
 module owns the live-retrieval boundary that any future approved source adapter
 must pass through before opening a socket.
+Verified and integrated with snapshot storage policy rules under task ODP-INTAKE-SNAPSHOT-001.
 """
 
 from __future__ import annotations

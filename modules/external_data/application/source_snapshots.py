@@ -51,6 +51,8 @@ class SourceSnapshotService:
         if self.db_conn is None:
             return True
         conn_str = str(type(self.db_conn)).lower()
+        if "psycopg" in conn_str or "postgres" in conn_str:
+            return False
         return "sqlite" in conn_str or hasattr(self.db_conn, "row_factory")
 
     def _execute(self, sql: str, params: tuple = (), tenant_id: str | None = None) -> list[dict[str, Any]]:
@@ -77,8 +79,14 @@ class SourceSnapshotService:
             # PostgreSQL
             cur = self.db_conn.cursor()
             if tenant_id:
-                cur.execute("SET LOCAL app.tenant_id = %s", (tenant_id,))
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
             cur.execute(sql, params)
+            try:
+                if hasattr(self.db_conn, "commit"):
+                    if getattr(self.db_conn, "autocommit", False) is False:
+                        self.db_conn.commit()
+            except Exception:
+                pass
             try:
                 if cur.description:
                     columns = [col[0] for col in cur.description]
@@ -154,8 +162,8 @@ class SourceSnapshotService:
             return source["retrieval_mode"]
 
         sql = """
-            SELECT retrieval_mode, kill_switch, production_enabled 
-            FROM intake.source_registry 
+            SELECT retrieval_mode, kill_switch, production_enabled
+            FROM intake.source_registry
             WHERE source_id = %s
         """
         res = self._execute(sql, (source_id,))
@@ -212,7 +220,10 @@ class SourceSnapshotService:
         residency = self._get_tenant_residency_mode(tenant_id)
         if residency == "TW_ONLY":
             normalized_bucket = bucket.lower()
-            if any(x in normalized_bucket for x in ("apac", "dr", "us", "eu", "global")) and not any(x in normalized_bucket for x in ("taiwan", "tw")):
+            # Enforce approved TW buckets by default and deny everything else
+            has_tw = ("taiwan" in normalized_bucket) or ("tw" in normalized_bucket)
+            has_disallowed = any(x in normalized_bucket for x in ("apac", "dr", "us", "eu", "global", "singapore", "japan", "frankfurt", "tokyo", "seoul", "hongkong", "hk"))
+            if not has_tw or has_disallowed:
                 raise ResidencyDeniedError("RESIDENCY_DENIED")
 
         content_sha256 = hashlib.sha256(raw_data).hexdigest()
@@ -313,14 +324,19 @@ class SourceSnapshotService:
         return snapshot_id
 
     def verify_snapshot_integrity(self, tenant_id: str, snapshot_id: str, context: Any = None) -> bool:
-        """Verify SQL metadata against actual GCS object HEAD. Quarantine on failure."""
+        """Verify SQL metadata against actual GCS object bytes. Quarantine on failure."""
         if self.db_conn is None:
             snapshot = self._in_memory_snapshots.get(snapshot_id)
             if not snapshot:
                 return False
             # Check in-memory object store
             try:
-                self.object_store.head_object(tenant_id, snapshot["raw_object_uri"])
+                raw_bytes = self.object_store.download_object(tenant_id, snapshot["raw_object_uri"])
+                actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                expected_sha256 = snapshot["content_sha256"]
+                if actual_sha256 != expected_sha256:
+                    self._quarantine_integrity_failure(tenant_id, snapshot_id, snapshot["intake_id"], "CHECKSUM_MISMATCH", context, expected_sha256, actual_sha256)
+                    return False
                 return True
             except Exception:
                 # Quarantined
@@ -328,8 +344,8 @@ class SourceSnapshotService:
                 return False
 
         sql = """
-            SELECT intake_id, raw_object_uri, redacted_object_uri, content_sha256, byte_length 
-            FROM intake.source_snapshots 
+            SELECT intake_id, raw_object_uri, redacted_object_uri, content_sha256, byte_length
+            FROM intake.source_snapshots
             WHERE tenant_id = %s AND source_snapshot_id = %s
         """
         res = self._execute(sql, (tenant_id, snapshot_id), tenant_id=tenant_id)
@@ -343,29 +359,30 @@ class SourceSnapshotService:
         expected_sha256 = row["content_sha256"].strip()
         expected_size = int(row["byte_length"])
 
-        # Check raw object
+        # Check raw object by downloading and re-hashing bytes (AC1)
         try:
-            meta = self.object_store.head_object(tenant_id, raw_uri)
-            # Verify size
-            if meta["size"] != expected_size:
-                self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "CHECKSUM_MISMATCH", context, expected_size, meta["size"])
+            raw_bytes = self.object_store.download_object(tenant_id, raw_uri)
+            actual_size = len(raw_bytes)
+            if actual_size != expected_size:
+                self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "CHECKSUM_MISMATCH", context, expected_size, actual_size)
                 return False
-            # Verify SHA-256 if present
-            if meta.get("sha256") and meta["sha256"] != expected_sha256:
-                self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "CHECKSUM_MISMATCH", context, expected_sha256, meta["sha256"])
+
+            actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+            if actual_sha256 != expected_sha256:
+                self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "CHECKSUM_MISMATCH", context, expected_sha256, actual_sha256)
                 return False
         except FileNotFoundError:
             self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "MISSING_EVIDENCE", context)
             return False
         except Exception as exc:
-            logger.error("Error heading object: %s", exc)
+            logger.error("Error verifying raw object: %s", exc)
             self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "MISSING_EVIDENCE", context)
             return False
 
         # Check redacted object if configured
         if redacted_uri:
             try:
-                self.object_store.head_object(tenant_id, redacted_uri)
+                self.object_store.download_object(tenant_id, redacted_uri)
             except FileNotFoundError:
                 self._quarantine_integrity_failure(tenant_id, snapshot_id, intake_id, "MISSING_EVIDENCE", context)
                 return False
@@ -393,61 +410,93 @@ class SourceSnapshotService:
             finding_type,
         )
 
-        # 2. Insert into workflow.reconciliation_findings
-        finding_id = str(uuid.uuid4())
-        expected_json = json.dumps({"val": expected})
-        actual_json = json.dumps({"val": actual})
-
+        # 2. Insert into workflow.reconciliation_findings (idempotently)
         if self.db_conn is None:
-            self._in_memory_findings[finding_id] = {
-                "finding_id": finding_id,
-                "migration_id": "ODP-INTAKE-SNAPSHOT-001",
-                "tenant_id": tenant_id,
-                "source_kind": "snapshot",
-                "source_id": snapshot_id,
-                "finding_type": finding_type,
-                "severity": "BLOCKING",
-                "status": "OPEN",
-            }
-        else:
-            # Handle array parameter format for target_ids depending on DB
-            is_sqlite = self._is_sqlite()
-            if is_sqlite:
-                target_ids_val = json.dumps([snapshot_id])
-            else:
-                target_ids_val = [snapshot_id]
-
-            sql = """
-                INSERT INTO workflow.reconciliation_findings (
-                    finding_id, migration_id, tenant_id, source_kind, source_id,
-                    target_ids, finding_type, severity, expected, actual,
-                    owner_role, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            self._execute(
-                sql,
-                (
-                    finding_id,
-                    "ODP-INTAKE-SNAPSHOT-001",
-                    tenant_id,
-                    "snapshot",
-                    snapshot_id,
-                    target_ids_val,
-                    finding_type,
-                    "BLOCKING",
-                    expected_json,
-                    actual_json,
-                    "DATA_STEWARD",
-                    "OPEN",
-                ),
-                tenant_id=tenant_id,
+            is_duplicate = any(
+                f.get("source_id") == snapshot_id and
+                f.get("finding_type") == finding_type and
+                f.get("status") == "OPEN"
+                for f in self._in_memory_findings.values()
             )
+        else:
+            sql_check = """
+                SELECT finding_id FROM workflow.reconciliation_findings
+                WHERE source_id = %s AND finding_type = %s AND status = 'OPEN' AND tenant_id = %s
+            """
+            res = self._execute(sql_check, (snapshot_id, finding_type, tenant_id), tenant_id=tenant_id)
+            is_duplicate = len(res) > 0
 
-        # 3. Quarantine intake
-        if self.intake_workflow_service and context:
+        if not is_duplicate:
+            finding_id = str(uuid.uuid4())
+            expected_json = json.dumps({"val": expected})
+            actual_json = json.dumps({"val": actual})
+
+            if self.db_conn is None:
+                self._in_memory_findings[finding_id] = {
+                    "finding_id": finding_id,
+                    "migration_id": "ODP-INTAKE-SNAPSHOT-001",
+                    "tenant_id": tenant_id,
+                    "source_kind": "snapshot",
+                    "source_id": snapshot_id,
+                    "finding_type": finding_type,
+                    "severity": "BLOCKING",
+                    "status": "OPEN",
+                }
+            else:
+                # Handle array parameter format for target_ids depending on DB
+                is_sqlite = self._is_sqlite()
+                if is_sqlite:
+                    target_ids_val = json.dumps([snapshot_id])
+                else:
+                    target_ids_val = [snapshot_id]
+
+                sql = """
+                    INSERT INTO workflow.reconciliation_findings (
+                        finding_id, migration_id, tenant_id, source_kind, source_id,
+                        target_ids, finding_type, severity, expected, actual,
+                        owner_role, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                self._execute(
+                    sql,
+                    (
+                        finding_id,
+                        "ODP-INTAKE-SNAPSHOT-001",
+                        tenant_id,
+                        "snapshot",
+                        snapshot_id,
+                        target_ids_val,
+                        finding_type,
+                        "BLOCKING",
+                        expected_json,
+                        actual_json,
+                        "DATA_STEWARD",
+                        "OPEN",
+                    ),
+                    tenant_id=tenant_id,
+                )
+
+        # 3. Quarantine intake (Always fire quarantine when service is configured)
+        if self.intake_workflow_service:
+            if context is None:
+                from modules.listing.domain.intake_states import (
+                    Actor,
+                    PrincipalRole,
+                    TransitionContext,
+                )
+                actor = Actor(
+                    actor_id="system-reconciler",
+                    role=PrincipalRole.SVC_INTAKE,
+                    tenant_id=tenant_id,
+                )
+                context = TransitionContext(
+                    actor=actor,
+                    correlation_id=f"reconcile-{uuid.uuid4().hex[:12]}",
+                    idempotency_key=f"reconcile-idem-{uuid.uuid4().hex[:12]}",
+                )
             self.intake_workflow_service.quarantine_retrieval(intake_id, "INTEGRITY_FAILED", context)
 
-    def reconcile_snapshots(self, tenant_id: str, bucket: str) -> dict[str, Any]:
+    def reconcile_snapshots(self, tenant_id: str, bucket: str, context: Any = None) -> dict[str, Any]:
         """Verify GCS and SQL metadata consistency. Detect missing snapshots and orphans."""
         reconciled_count = 0
         missing_count = 0
@@ -461,8 +510,8 @@ class SourceSnapshotService:
             ]
         else:
             sql = """
-                SELECT source_snapshot_id, intake_id, raw_object_uri, redacted_object_uri 
-                FROM intake.source_snapshots 
+                SELECT source_snapshot_id, intake_id, raw_object_uri, redacted_object_uri
+                FROM intake.source_snapshots
                 WHERE tenant_id = %s
             """
             sql_snapshots = self._execute(sql, (tenant_id,), tenant_id=tenant_id)
@@ -476,68 +525,187 @@ class SourceSnapshotService:
 
         # Verify SQL snapshots against GCS
         for snap in sql_snapshots:
-            ok = self.verify_snapshot_integrity(tenant_id, snap["source_snapshot_id"])
+            ok = self.verify_snapshot_integrity(tenant_id, snap["source_snapshot_id"], context=context)
             reconciled_count += 1
             if not ok:
                 missing_count += 1
 
         # 2. Scan GCS bucket to detect orphans (Objects in GCS but not in SQL)
-        # Note: If InMemoryObjectStore, we can access its internal structures.
-        gcs_keys = []
-        if "InMemoryObjectStore" in str(type(self.object_store)):
-            # Scan keys in InMemoryStore
-            bucket_data = getattr(self.object_store, "_objects", {}).get(bucket, {})
-            gcs_keys = list(bucket_data.keys())
-        else:
-            # GcsObjectStore scan - not implemented in minimal API block, we skip or handle gracefully
-            pass
+        try:
+            gcs_keys = self.object_store.list_objects(tenant_id, bucket)
+        except Exception as exc:
+            logger.error("Failed to list objects in GCS bucket %s: %s", bucket, exc)
+            gcs_keys = []
 
         for key in gcs_keys:
             uri = f"gs://{bucket}/{key}"
             if uri not in registered_uris:
                 # Detected Orphan GCS Object
                 orphan_count += 1
-                finding_id = str(uuid.uuid4())
-                if self.db_conn is None:
-                    self._in_memory_findings[finding_id] = {
-                        "finding_id": finding_id,
-                        "migration_id": "ODP-INTAKE-SNAPSHOT-001",
-                        "tenant_id": tenant_id,
-                        "source_kind": "snapshot",
-                        "source_id": uri,
-                        "finding_type": "ORPHAN_REFERENCE",
-                        "severity": "WARNING",
-                        "status": "OPEN",
-                    }
-                else:
-                    is_sqlite = self._is_sqlite()
-                    target_ids_val = json.dumps([]) if is_sqlite else []
 
-                    sql = """
-                        INSERT INTO workflow.reconciliation_findings (
-                            finding_id, migration_id, tenant_id, source_kind, source_id,
-                            target_ids, finding_type, severity, owner_role, status
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """
-                    self._execute(
-                        sql,
-                        (
-                            finding_id,
-                            "ODP-INTAKE-SNAPSHOT-001",
-                            tenant_id,
-                            "snapshot",
-                            uri,
-                            target_ids_val,
-                            "ORPHAN_REFERENCE",
-                            "WARNING",
-                            "DATA_STEWARD",
-                            "OPEN",
-                        ),
-                        tenant_id=tenant_id,
+                # Check duplicate
+                if self.db_conn is None:
+                    is_duplicate = any(
+                        f.get("source_id") == uri and
+                        f.get("finding_type") == "ORPHAN_REFERENCE" and
+                        f.get("status") == "OPEN"
+                        for f in self._in_memory_findings.values()
                     )
+                else:
+                    sql_check = """
+                        SELECT finding_id FROM workflow.reconciliation_findings
+                        WHERE source_id = %s AND finding_type = 'ORPHAN_REFERENCE' AND status = 'OPEN' AND tenant_id = %s
+                    """
+                    res = self._execute(sql_check, (uri, tenant_id), tenant_id=tenant_id)
+                    is_duplicate = len(res) > 0
+
+                if not is_duplicate:
+                    finding_id = str(uuid.uuid4())
+                    if self.db_conn is None:
+                        self._in_memory_findings[finding_id] = {
+                            "finding_id": finding_id,
+                            "migration_id": "ODP-INTAKE-SNAPSHOT-001",
+                            "tenant_id": tenant_id,
+                            "source_kind": "snapshot",
+                            "source_id": uri,
+                            "finding_type": "ORPHAN_REFERENCE",
+                            "severity": "WARNING",
+                            "status": "OPEN",
+                        }
+                    else:
+                        is_sqlite = self._is_sqlite()
+                        target_ids_val = json.dumps([]) if is_sqlite else []
+
+                        sql = """
+                            INSERT INTO workflow.reconciliation_findings (
+                                finding_id, migration_id, tenant_id, source_kind, source_id,
+                                target_ids, finding_type, severity, owner_role, status
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """
+                        self._execute(
+                            sql,
+                            (
+                                finding_id,
+                                "ODP-INTAKE-SNAPSHOT-001",
+                                tenant_id,
+                                "snapshot",
+                                uri,
+                                target_ids_val,
+                                "ORPHAN_REFERENCE",
+                                "WARNING",
+                                "DATA_STEWARD",
+                                "OPEN",
+                            ),
+                            tenant_id=tenant_id,
+                        )
 
         return {
             "reconciled": reconciled_count,
             "missing": missing_count,
             "orphans": orphan_count,
         }
+
+    def get_snapshot(self, tenant_id: str, snapshot_id: str) -> dict[str, Any] | None:
+        """Retrieve snapshot metadata by ID."""
+        if self.db_conn is None:
+            snapshot = self._in_memory_snapshots.get(snapshot_id)
+            if snapshot and snapshot.get("tenant_id") == tenant_id:
+                return snapshot
+            return None
+
+        sql = """
+            SELECT source_snapshot_id, tenant_id, intake_id, source_id,
+                   original_url, canonical_url, raw_object_uri, redacted_object_uri,
+                   content_sha256, media_type, byte_length, captured_at, observed_at,
+                   stored_at, capture_method, retention_class, legal_hold, legal_hold_id,
+                   encryption_key_ref, version
+            FROM intake.source_snapshots
+            WHERE tenant_id = %s AND source_snapshot_id = %s
+        """
+        res = self._execute(sql, (tenant_id, snapshot_id), tenant_id=tenant_id)
+        if not res:
+            return None
+        return res[0]
+
+    def get_snapshot_for_export(self, tenant_id: str, snapshot_id: str, destination_residency: str) -> dict[str, Any]:
+        """Fetch snapshot details for export, enforcing residency and export restrictions."""
+        snapshot = self.get_snapshot(tenant_id, snapshot_id)
+        if not snapshot:
+            raise ValueError(f"Snapshot {snapshot_id} not found")
+
+        # Enforce residency: if tenant is TW_ONLY, destination must be TW_ONLY
+        tenant_residency = self._get_tenant_residency_mode(tenant_id)
+        if tenant_residency == "TW_ONLY" and destination_residency != "TW_ONLY":
+            from modules.listing.domain.intake_states import DenialCode, DomainValidationError
+            raise DomainValidationError(
+                DenialCode.RESIDENCY_DENIED,
+                "Destination residency violates tenant residency policy."
+            )
+
+        # Enforce export restrictions: if snapshot has active legal hold, block export
+        if snapshot.get("legal_hold"):
+            from modules.listing.domain.intake_states import DenialCode, DomainValidationError
+            raise DomainValidationError(
+                DenialCode.LEGAL_HOLD_CONFLICT,
+                f"Export blocked: snapshot {snapshot_id} is under active legal hold."
+            )
+
+        return snapshot
+
+    def get_correction_lineage(self, tenant_id: str, intake_id: str) -> list[dict[str, Any]]:
+        """Retrieve all snapshots for a given intake, ordered by captured_at to show lineage."""
+        if self.db_conn is None:
+            snaps = [
+                s for s in self._in_memory_snapshots.values()
+                if s.get("tenant_id") == tenant_id and s.get("intake_id") == intake_id
+            ]
+            return sorted(snaps, key=lambda s: s.get("captured_at"))
+
+        sql = """
+            SELECT source_snapshot_id, tenant_id, intake_id, source_id,
+                   raw_object_uri, content_sha256, captured_at, version
+            FROM intake.source_snapshots
+            WHERE tenant_id = %s AND intake_id = %s
+            ORDER BY captured_at ASC
+        """
+        return self._execute(sql, (tenant_id, intake_id), tenant_id=tenant_id)
+
+    def delete_snapshot(self, tenant_id: str, snapshot_id: str) -> None:
+        """Delete a snapshot and its GCS objects, enforcing legal hold checks."""
+        snapshot = self.get_snapshot(tenant_id, snapshot_id)
+        if not snapshot:
+            raise ValueError(f"Snapshot {snapshot_id} not found")
+
+        # Enforce legal hold: cannot delete if legal_hold is True
+        if snapshot.get("legal_hold"):
+            from modules.listing.domain.intake_states import DenialCode, DomainValidationError
+            raise DomainValidationError(
+                DenialCode.LEGAL_HOLD_CONFLICT,
+                f"Delete conflict: snapshot {snapshot_id} is under active legal hold."
+            )
+
+        # Proceed to delete GCS objects
+        raw_uri = snapshot.get("raw_object_uri")
+        if raw_uri:
+            try:
+                self.object_store.delete_object(tenant_id, raw_uri)
+            except FileNotFoundError:
+                pass
+
+        redacted_uri = snapshot.get("redacted_object_uri")
+        if redacted_uri:
+            try:
+                self.object_store.delete_object(tenant_id, redacted_uri)
+            except FileNotFoundError:
+                pass
+
+        # Delete database entry
+        if self.db_conn is None:
+            if snapshot_id in self._in_memory_snapshots:
+                del self._in_memory_snapshots[snapshot_id]
+        else:
+            sql = """
+                DELETE FROM intake.source_snapshots
+                WHERE tenant_id = %s AND source_snapshot_id = %s
+            """
+            self._execute(sql, (tenant_id, snapshot_id), tenant_id=tenant_id)

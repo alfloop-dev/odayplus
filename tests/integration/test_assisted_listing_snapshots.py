@@ -270,23 +270,22 @@ def test_reconciliation_orphan_object(memory_store, workflow_service) -> None:
     assert finding["source_id"] == f"gs://{bucket}/snapshots/orphan-snap-999/raw"
 
 
-# --- PostgreSQL integration tests ---
 @pytest.mark.requires_live_env
 def test_postgres_snapshot_integration(intake_db) -> None:
     """Exercise snapshot storage and query paths on real PostgreSQL 16."""
     from shared.infrastructure.object_store.client import InMemoryObjectStore
 
     store = InMemoryObjectStore()
-    service = SourceSnapshotService(db_conn=intake_db, object_store=store)
+    with intake_db.connect(autocommit=True) as conn:
+        service = SourceSnapshotService(db_conn=conn, object_store=store)
 
-    tenant_id = "00000000-0000-0000-0000-000000000001"
-    intake_id = "00000000-0000-0000-0000-000000000002"
-    source_id = "src-pg-1"
+        tenant_id = "00000000-0000-0000-0000-000000000001"
+        intake_id = "00000000-0000-0000-0000-000000000002"
+        source_id = "src-pg-1"
 
-    # Pre-populate registry and intake table to satisfy foreign keys
-    with intake_db.connect() as conn:
+        # Pre-populate registry and intake table to satisfy foreign keys
         cur = conn.cursor()
-        cur.execute("SET LOCAL app.tenant_id = %s", (tenant_id,))
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
         cur.execute(
             """
             INSERT INTO intake.source_registry (
@@ -299,35 +298,37 @@ def test_postgres_snapshot_integration(intake_db) -> None:
         cur.execute(
             """
             INSERT INTO intake.intakes (
-                intake_id, tenant_id, source_id, canonical_url, stage, version
-            ) VALUES (%s, %s, %s, %s, %s, %s)
+                intake_id, tenant_id, source_id, canonical_url, original_url, processing_state, version,
+                submitter_subject_id, intake_method, correlation_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (intake_id, tenant_id, source_id, "https://pg.com/list", "SUBMITTED", 1)
+            (
+                intake_id, tenant_id, source_id, "https://pg.com/list", "https://pg.com/list", "SUBMITTED", 1,
+                "00000000-0000-0000-0000-000000000000", "URL", "00000000-0000-0000-0000-000000000000"
+            )
         )
 
-    # 1. Create snapshot successfully
-    snapshot_id = service.create_snapshot(
-        tenant_id=tenant_id,
-        intake_id=intake_id,
-        source_id=source_id,
-        raw_data=b"pg raw html data",
-        original_url="https://pg.com/list?utm=123",
-        canonical_url="https://pg.com/list",
-        media_type="text/html",
-        capture_method="SERVER_RETRIEVAL",
-        retention_class="STANDARD",
-        encryption_key_ref="kms://key-pg",
-        observed_at=datetime.now(UTC),
-        captured_at=datetime.now(UTC),
-        bucket="taiwan-snapshots",
-    )
+        # 1. Create snapshot successfully
+        snapshot_id = service.create_snapshot(
+            tenant_id=tenant_id,
+            intake_id=intake_id,
+            source_id=source_id,
+            raw_data=b"pg raw html data",
+            original_url="https://pg.com/list?utm=123",
+            canonical_url="https://pg.com/list",
+            media_type="text/html",
+            capture_method="SERVER_RETRIEVAL",
+            retention_class="STANDARD",
+            encryption_key_ref="kms://key-pg",
+            observed_at=datetime.now(UTC),
+            captured_at=datetime.now(UTC),
+            bucket="taiwan-snapshots",
+        )
 
-    assert snapshot_id is not None
+        assert snapshot_id is not None
 
-    # Verify query works and metadata is saved correctly in Postgres
-    with intake_db.connect() as conn:
-        cur = conn.cursor()
-        cur.execute("SET LOCAL app.tenant_id = %s", (tenant_id,))
+        # Verify query works and metadata is saved correctly in Postgres
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
         cur.execute(
             "SELECT byte_length, content_sha256 FROM intake.source_snapshots WHERE source_snapshot_id = %s",
             (snapshot_id,)
