@@ -59,15 +59,18 @@ export type AdLiftIncrementalityJobPayload = {
 
 /** ApiError */
 export type ApiError = {
-  code: string;
+  code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
   correlation_id: string;
+  current_owner_subject_id?: string | null;
+  current_state?: string | null;
   current_version?: number | null;
-  field_errors?: FieldError[] | null;
+  field_errors?: FieldError[];
   message: string;
-  next_action?: string | null;
+  next_action: "RETRY" | "REFRESH" | "CORRECT_INPUT" | "REQUEST_ACCESS" | "CONTACT_SUPPORT" | "WAIT" | null;
   occurred_at: string;
   reason_code?: string | null;
   retry_after_seconds?: number | null;
+  retry_with_etag?: string | null;
   retryable: boolean;
 };
 
@@ -211,7 +214,7 @@ export type CorrectionRequest = {
   expected_effective_value_sha256?: string | null;
   field_path: string;
   reason: string;
-  risk_acknowledged?: boolean | null;
+  risk_acknowledged?: boolean;
 };
 
 /** CorrectionStatus */
@@ -479,7 +482,7 @@ export type HeatZoneScoreJobPayload = {
 /** IdentityPartition */
 export type IdentityPartition = {
   source_identity_edge_ids: string[];
-  target_property_id?: string | null;
+  target_property_id: string | null;
 };
 
 /** IngestionRunPayload */
@@ -514,28 +517,31 @@ export type IntakeDecidePayload = {
 /** IntakeDetail */
 export type IntakeDetail = {
   assigned_to?: string | null;
-  audit?: AuditReference[];
-  canonical_url?: string | null;
+  audit: AuditReference[];
+  canonical_url: string | null;
   due_at?: string | null;
-  fields?: FieldValue[];
+  fields: FieldValue[];
   intake_id: string;
-  intake_method: string;
-  masked_fields?: string[] | null;
+  intake_method: IntakeMethod;
+  masked_fields?: string[];
   match_case_id?: string | null;
   match_outcome?: MatchOutcome | null;
-  original_url?: string | null;
+  original_url: string | null;
   parser_run_id?: string | null;
-  policy_state?: SourcePolicyState | null;
-  processing_history?: TransitionReceipt[];
+  policy_state: SourcePolicyState | null;
+  processing_history: TransitionReceipt[];
   scope: ScopeContext;
   source_id?: string | null;
   source_snapshot_id?: string | null;
   state: IntakeState;
   submitted_at: string;
-  submitted_by: string;
+  submitted_by?: string;
   updated_at: string;
   version: number;
 };
+
+/** IntakeMethod */
+export type IntakeMethod = "URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT";
 
 /** IntakePage */
 export type IntakePage = {
@@ -545,7 +551,7 @@ export type IntakePage = {
   query_fingerprint: string;
   snapshot_time: string;
   total_count: number;
-  total_count_accuracy?: string;
+  total_count_accuracy?: TotalCountAccuracy;
 };
 
 /** Promotion carries no extra fields beyond the risk disclosure. */
@@ -556,6 +562,9 @@ export type IntakePromotePayload = {
   riskAcknowledged?: boolean;
   riskSummary?: string | null;
 };
+
+/** IntakeSort */
+export type IntakeSort = "submitted_at_desc" | "updated_at_desc" | "due_at_asc" | "status_asc";
 
 /** IntakeState */
 export type IntakeState = "SUBMITTED" | "CHECKING_IDENTITY" | "CHECKING_SOURCE_POLICY" | "AWAITING_ASSISTED_ENTRY" | "RETRIEVING" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "READY" | "QUARANTINED" | "FAILED" | "CANCELLED";
@@ -584,14 +593,14 @@ export type IntakeSummary = {
   assigned_to?: string | null;
   due_at?: string | null;
   intake_id: string;
-  intake_method: string;
-  masked_fields?: string[] | null;
+  intake_method: IntakeMethod;
+  masked_fields?: string[];
   match_outcome?: MatchOutcome | null;
   scope: ScopeContext;
   source_id?: string | null;
   state: IntakeState;
   submitted_at: string;
-  submitted_by: string;
+  submitted_by?: string;
   updated_at: string;
   version: number;
 };
@@ -643,11 +652,11 @@ export type ListingImportPayload = {
 export type ManualIntakeRow = {
   address_raw: string;
   area_ping?: number | null;
-  currency?: string | null;
+  currency?: string;
   floor?: string | null;
   original_url?: string | null;
   rent_amount?: number | null;
-  source_id?: string | null;
+  source_id?: string;
   source_listing_id?: string | null;
 };
 
@@ -656,20 +665,20 @@ export type MatchDecisionRequest = {
   decision_type: DecisionType;
   reason: string;
   requested_second_reviewer_id?: string | null;
-  risk_acknowledged: boolean;
+  risk_acknowledged?: boolean;
   target_listing_id?: string | null;
   target_property_id?: string | null;
 };
 
 /** MatchOutcome */
-export type MatchOutcome = "NEW" | "REVISION" | "POSSIBLE_MATCH" | "EXACT_DUPLICATE";
+export type MatchOutcome = "NEW" | "EXACT_DUPLICATE" | "REVISION" | "POSSIBLE_MATCH" | "QUARANTINED";
 
 /** MergeRequest */
 export type MergeRequest = {
-  candidate_reassignment_plan?: CandidateReassignment[] | null;
-  expected_property_versions?: Record<string, number> | null;
+  candidate_reassignment_plan?: CandidateReassignment[];
+  expected_property_versions?: Record<string, number>;
   reason: string;
-  risk_acknowledged?: boolean | null;
+  risk_acknowledged: true;
   source_property_ids: string[];
   target_property_id: string;
 };
@@ -956,7 +965,7 @@ export type PromotionRequest = {
   gate_snapshot_sha256: string;
   reason: string;
   requested_reviewer_id?: string | null;
-  risk_acknowledged: boolean;
+  risk_acknowledged?: boolean;
   target_format_code: string;
 };
 
@@ -1038,7 +1047,7 @@ export type RetryRequest = {
 };
 
 /** ReviewDecision */
-export type ReviewDecision = "APPROVE" | "REJECT" | "RETURN";
+export type ReviewDecision = "APPROVE" | "REJECT";
 
 /** POST /operator/network-reviews/{review_id}/decide. */
 export type ReviewDecisionPayload = {
@@ -1055,15 +1064,15 @@ export type ReviewDecisionPayload = {
 export type ReviewDecisionRequest = {
   decision: ReviewDecision;
   reason: string;
-  requested_changes?: string[] | null;
-  risk_acknowledged: boolean;
+  requested_changes?: string[];
+  risk_acknowledged?: boolean;
 };
 
 /** RiskReasonCommand */
 export type RiskReasonCommand = {
   incident_or_change_id?: string | null;
   reason: string;
-  risk_acknowledged: boolean;
+  risk_acknowledged: true;
 };
 
 /** Override a role's workspace grants (high-risk, audited). */
@@ -1077,7 +1086,7 @@ export type SavedView = {
   name: string;
   owner_subject_id: string;
   query: Record<string, unknown>;
-  resource?: string;
+  resource: "intake";
   saved_view_id: string;
   shared_role?: string | null;
   version: number;
@@ -1088,7 +1097,7 @@ export type SavedView = {
 export type SavedViewRequest = {
   name: string;
   query: Record<string, unknown>;
-  resource?: string;
+  resource: "intake";
   shared_role?: string | null;
   visibility?: SavedViewVisibility;
 };
@@ -1154,9 +1163,9 @@ export type SourcePolicyState = "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "
 export type SplitRequest = {
   partitions: IdentityPartition[];
   reason: string;
-  risk_acknowledged?: boolean | null;
+  risk_acknowledged: true;
   source_property_id: string;
-  source_property_version?: number | null;
+  source_property_version?: number;
 };
 
 /** StoreOpsCameraPurposePayload */
@@ -1202,6 +1211,9 @@ export type ThresholdPayload = {
   warning_min_value?: number | null;
 };
 
+/** TotalCountAccuracy */
+export type TotalCountAccuracy = "EXACT" | "ESTIMATED";
+
 /** POST /operator/growth/actions/{id}/transition — lifecycle advance. */
 export type TransitionActionPayload = {
   actorName?: string | null;
@@ -1212,7 +1224,7 @@ export type TransitionActionPayload = {
 /** TransitionReceipt */
 export type TransitionReceipt = {
   actor: string;
-  from_state?: string | null;
+  from_state: string | null;
   occurred_at: string;
   reason_code?: string | null;
   to_state: string;
@@ -1225,14 +1237,14 @@ export type UnmergeRequest = {
   original_decision_id: string;
   reason: string;
   replacement_edges: IdentityPartition[];
-  risk_acknowledged?: boolean | null;
+  risk_acknowledged: true;
 };
 
 /** UrlIntakeRequest */
 export type UrlIntakeRequest = {
   original_url: string;
   owner_subject_id?: string | null;
-  purpose?: string | null;
+  purpose?: string;
   scope: ScopeContext;
 };
 

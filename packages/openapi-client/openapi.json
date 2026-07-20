@@ -169,12 +169,83 @@
       "ApiError": {
         "properties": {
           "code": {
+            "enum": [
+              "AUTHENTICATION_REQUIRED",
+              "ROLE_DENIED",
+              "TENANT_SCOPE_DENIED",
+              "SCOPE_DENIED",
+              "OWNERSHIP_REQUIRED",
+              "ASSIGNMENT_SCOPE_DENIED",
+              "SOURCE_SCOPE_DENIED",
+              "FIELD_MASKED",
+              "DATA_CLASSIFICATION_DENIED",
+              "PURPOSE_REQUIRED",
+              "PRECONDITION_REQUIRED",
+              "VERSION_CONFLICT",
+              "WORKFLOW_STATE_DENIED",
+              "OWNER_CONFLICT",
+              "SECOND_ACTOR_REQUIRED",
+              "SELF_REVIEW_DENIED",
+              "RISK_ACKNOWLEDGEMENT_REQUIRED",
+              "SOURCE_POLICY_DENIED",
+              "SOURCE_POLICY_UNKNOWN",
+              "SOURCE_AUTH_REQUIRED",
+              "LEGAL_HOLD_CONFLICT",
+              "RETENTION_NOT_REACHED",
+              "RESIDENCY_DENIED",
+              "EXPORT_APPROVAL_REQUIRED",
+              "PURGE_APPROVAL_REQUIRED",
+              "QUARANTINE_RELEASE_DENIED",
+              "PROMOTION_APPROVAL_REQUIRED",
+              "RESTRICTED_EXPORT_DENIED",
+              "BREAK_GLASS_DENIED",
+              "DEPENDENCY_CONFLICT",
+              "DUPLICATE_CANDIDATE",
+              "IDEMPOTENCY_KEY_REUSED",
+              "RETRY_BUDGET_EXHAUSTED",
+              "CHECKPOINT_UNAVAILABLE",
+              "JOB_FENCE_REJECTED",
+              "SLA_PAUSE_DENIED",
+              "DECISION_INCOMPLETE",
+              "BACKPRESSURE_ACTIVE",
+              "RATE_LIMITED",
+              "RESOURCE_NOT_FOUND",
+              "VALIDATION_FAILED",
+              "FIELD_REQUIRED",
+              "CURSOR_INVALID",
+              "CURSOR_EXPIRED",
+              "INTERNAL_ERROR"
+            ],
             "title": "Code",
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
+          },
+          "current_owner_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Owner Subject Id"
+          },
+          "current_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current State"
           },
           "current_version": {
             "anyOf": [
@@ -188,18 +259,11 @@
             "title": "Current Version"
           },
           "field_errors": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/FieldError"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Field Errors"
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Field Errors",
+            "type": "array"
           },
           "message": {
             "title": "Message",
@@ -208,6 +272,14 @@
           "next_action": {
             "anyOf": [
               {
+                "enum": [
+                  "RETRY",
+                  "REFRESH",
+                  "CORRECT_INPUT",
+                  "REQUEST_ACCESS",
+                  "CONTACT_SUPPORT",
+                  "WAIT"
+                ],
                 "type": "string"
               },
               {
@@ -217,6 +289,7 @@
             "title": "Next Action"
           },
           "occurred_at": {
+            "format": "date-time",
             "title": "Occurred At",
             "type": "string"
           },
@@ -234,6 +307,7 @@
           "retry_after_seconds": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -241,6 +315,17 @@
               }
             ],
             "title": "Retry After Seconds"
+          },
+          "retry_with_etag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry With Etag"
           },
           "retryable": {
             "title": "Retryable",
@@ -252,7 +337,8 @@
           "message",
           "retryable",
           "correlation_id",
-          "occurred_at"
+          "occurred_at",
+          "next_action"
         ],
         "title": "ApiError",
         "type": "object"
@@ -376,18 +462,22 @@
       "AssignmentReceipt": {
         "properties": {
           "assignment_id": {
+            "format": "uuid",
             "title": "Assignment Id",
             "type": "string"
           },
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "due_at": {
+            "format": "date-time",
             "title": "Due At",
             "type": "string"
           },
           "owner_subject_id": {
+            "format": "uuid",
             "title": "Owner Subject Id",
             "type": "string"
           },
@@ -413,6 +503,7 @@
       "AssignmentRequest": {
         "properties": {
           "due_at": {
+            "format": "date-time",
             "title": "Due At",
             "type": "string"
           },
@@ -432,6 +523,7 @@
             "type": "string"
           },
           "owner_subject_id": {
+            "format": "uuid",
             "title": "Owner Subject Id",
             "type": "string"
           },
@@ -467,6 +559,7 @@
           "due_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -492,6 +585,7 @@
             "type": "string"
           },
           "target_owner_subject_id": {
+            "format": "uuid",
             "title": "Target Owner Subject Id",
             "type": "string"
           }
@@ -512,10 +606,12 @@
             "type": "string"
           },
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "occurred_at": {
+            "format": "date-time",
             "title": "Occurred At",
             "type": "string"
           },
@@ -570,10 +666,12 @@
             "type": "integer"
           },
           "batch_id": {
+            "format": "uuid",
             "title": "Batch Id",
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
@@ -589,6 +687,7 @@
             "type": "array"
           },
           "submitted_at": {
+            "format": "date-time",
             "title": "Submitted At",
             "type": "string"
           }
@@ -607,6 +706,7 @@
       "BatchIntakeRequest": {
         "properties": {
           "batch_id": {
+            "format": "uuid",
             "title": "Batch Id",
             "type": "string"
           },
@@ -617,6 +717,7 @@
             "items": {
               "$ref": "#/components/schemas/ManualIntakeRow"
             },
+            "maxItems": 1000,
             "minItems": 1,
             "title": "Rows",
             "type": "array"
@@ -660,6 +761,7 @@
           "intake_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -669,6 +771,7 @@
             "title": "Intake Id"
           },
           "row_index": {
+            "minimum": 1.0,
             "title": "Row Index",
             "type": "integer"
           },
@@ -704,6 +807,7 @@
       "CandidateReassignment": {
         "properties": {
           "candidate_site_id": {
+            "format": "uuid",
             "title": "Candidate Site Id",
             "type": "string"
           },
@@ -713,6 +817,7 @@
           "target_property_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -772,24 +877,29 @@
       "CorrectionReceipt": {
         "properties": {
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "correction_id": {
+            "format": "uuid",
             "title": "Correction Id",
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
           "intake_id": {
+            "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "listing_revision_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -845,15 +955,9 @@
             "type": "string"
           },
           "risk_acknowledged": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk Acknowledged"
+            "default": false,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1040,20 +1144,24 @@
       "DecisionReceipt": {
         "properties": {
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
           "decision_id": {
+            "format": "uuid",
             "title": "Decision Id",
             "type": "string"
           },
           "job_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -1764,6 +1872,8 @@
           "confidence": {
             "anyOf": [
               {
+                "maximum": 1.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -2062,15 +2172,18 @@
         "properties": {
           "source_identity_edge_ids": {
             "items": {
+              "format": "uuid",
               "type": "string"
             },
             "minItems": 1,
             "title": "Source Identity Edge Ids",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "target_property_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2081,6 +2194,7 @@
           }
         },
         "required": [
+          "target_property_id",
           "source_identity_edge_ids"
         ],
         "title": "IdentityPartition",
@@ -2255,6 +2369,7 @@
           "assigned_to": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2284,6 +2399,7 @@
           "due_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2300,30 +2416,24 @@
             "type": "array"
           },
           "intake_id": {
+            "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "intake_method": {
-            "title": "Intake Method",
-            "type": "string"
+            "$ref": "#/components/schemas/IntakeMethod"
           },
           "masked_fields": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Masked Fields"
+            "items": {
+              "type": "string"
+            },
+            "title": "Masked Fields",
+            "type": "array"
           },
           "match_case_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2356,6 +2466,7 @@
           "parser_run_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2398,6 +2509,7 @@
           "source_snapshot_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2410,14 +2522,17 @@
             "$ref": "#/components/schemas/IntakeState"
           },
           "submitted_at": {
+            "format": "date-time",
             "title": "Submitted At",
             "type": "string"
           },
           "submitted_by": {
+            "format": "uuid",
             "title": "Submitted By",
             "type": "string"
           },
           "updated_at": {
+            "format": "date-time",
             "title": "Updated At",
             "type": "string"
           },
@@ -2430,14 +2545,30 @@
           "intake_id",
           "state",
           "intake_method",
-          "submitted_by",
           "submitted_at",
           "updated_at",
           "version",
-          "scope"
+          "scope",
+          "original_url",
+          "canonical_url",
+          "policy_state",
+          "processing_history",
+          "fields",
+          "audit"
         ],
         "title": "IntakeDetail",
         "type": "object"
+      },
+      "IntakeMethod": {
+        "enum": [
+          "URL",
+          "MANUAL",
+          "CSV",
+          "APPROVED_FEED",
+          "OPERATOR_SNAPSHOT"
+        ],
+        "title": "IntakeMethod",
+        "type": "string"
       },
       "IntakePage": {
         "properties": {
@@ -2468,17 +2599,18 @@
             "type": "string"
           },
           "snapshot_time": {
+            "format": "date-time",
             "title": "Snapshot Time",
             "type": "string"
           },
           "total_count": {
+            "minimum": 0.0,
             "title": "Total Count",
             "type": "integer"
           },
           "total_count_accuracy": {
-            "default": "EXACT",
-            "title": "Total Count Accuracy",
-            "type": "string"
+            "$ref": "#/components/schemas/TotalCountAccuracy",
+            "default": "EXACT"
           }
         },
         "required": [
@@ -2542,6 +2674,16 @@
         "title": "IntakePromotePayload",
         "type": "object"
       },
+      "IntakeSort": {
+        "enum": [
+          "submitted_at_desc",
+          "updated_at_desc",
+          "due_at_asc",
+          "status_asc"
+        ],
+        "title": "IntakeSort",
+        "type": "string"
+      },
       "IntakeState": {
         "enum": [
           "SUBMITTED",
@@ -2563,6 +2705,7 @@
       "IntakeSubmissionReceipt": {
         "properties": {
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
@@ -2578,10 +2721,12 @@
             "title": "Duplicate Hint"
           },
           "intake_id": {
+            "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "job_id": {
+            "format": "uuid",
             "title": "Job Id",
             "type": "string"
           },
@@ -2589,10 +2734,12 @@
             "$ref": "#/components/schemas/IntakeState"
           },
           "submitted_at": {
+            "format": "date-time",
             "title": "Submitted At",
             "type": "string"
           },
           "version": {
+            "minimum": 1.0,
             "title": "Version",
             "type": "integer"
           }
@@ -2654,6 +2801,7 @@
           "assigned_to": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2665,6 +2813,7 @@
           "due_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2674,26 +2823,19 @@
             "title": "Due At"
           },
           "intake_id": {
+            "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "intake_method": {
-            "title": "Intake Method",
-            "type": "string"
+            "$ref": "#/components/schemas/IntakeMethod"
           },
           "masked_fields": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Masked Fields"
+            "items": {
+              "type": "string"
+            },
+            "title": "Masked Fields",
+            "type": "array"
           },
           "match_outcome": {
             "anyOf": [
@@ -2723,14 +2865,17 @@
             "$ref": "#/components/schemas/IntakeState"
           },
           "submitted_at": {
+            "format": "date-time",
             "title": "Submitted At",
             "type": "string"
           },
           "submitted_by": {
+            "format": "uuid",
             "title": "Submitted By",
             "type": "string"
           },
           "updated_at": {
+            "format": "date-time",
             "title": "Updated At",
             "type": "string"
           },
@@ -2743,7 +2888,6 @@
           "intake_id",
           "state",
           "intake_method",
-          "submitted_by",
           "submitted_at",
           "updated_at",
           "version",
@@ -2886,10 +3030,12 @@
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
           "job_id": {
+            "format": "uuid",
             "title": "Job Id",
             "type": "string"
           },
@@ -2959,6 +3105,7 @@
           "area_ping": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -2968,15 +3115,9 @@
             "title": "Area Ping"
           },
           "currency": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Currency"
+            "default": "TWD",
+            "title": "Currency",
+            "type": "string"
           },
           "floor": {
             "anyOf": [
@@ -2992,6 +3133,7 @@
           "original_url": {
             "anyOf": [
               {
+                "format": "uri",
                 "type": "string"
               },
               {
@@ -3003,6 +3145,7 @@
           "rent_amount": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -3012,15 +3155,9 @@
             "title": "Rent Amount"
           },
           "source_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Id"
+            "default": "manual.operator",
+            "title": "Source Id",
+            "type": "string"
           },
           "source_listing_id": {
             "anyOf": [
@@ -3054,6 +3191,7 @@
           "requested_second_reviewer_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -3063,12 +3201,14 @@
             "title": "Requested Second Reviewer Id"
           },
           "risk_acknowledged": {
+            "default": false,
             "title": "Risk Acknowledged",
             "type": "boolean"
           },
           "target_listing_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -3080,6 +3220,7 @@
           "target_property_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -3091,8 +3232,7 @@
         },
         "required": [
           "decision_type",
-          "reason",
-          "risk_acknowledged"
+          "reason"
         ],
         "title": "MatchDecisionRequest",
         "type": "object"
@@ -3100,9 +3240,10 @@
       "MatchOutcome": {
         "enum": [
           "NEW",
+          "EXACT_DUPLICATE",
           "REVISION",
           "POSSIBLE_MATCH",
-          "EXACT_DUPLICATE"
+          "QUARANTINED"
         ],
         "title": "MatchOutcome",
         "type": "string"
@@ -3110,32 +3251,18 @@
       "MergeRequest": {
         "properties": {
           "candidate_reassignment_plan": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/CandidateReassignment"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Reassignment Plan"
+            "items": {
+              "$ref": "#/components/schemas/CandidateReassignment"
+            },
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
           },
           "expected_property_versions": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "integer"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Property Versions"
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
           },
           "reason": {
             "minLength": 20,
@@ -3143,25 +3270,22 @@
             "type": "string"
           },
           "risk_acknowledged": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk Acknowledged"
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
           },
           "source_property_ids": {
             "items": {
+              "format": "uuid",
               "type": "string"
             },
             "minItems": 1,
             "title": "Source Property Ids",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "target_property_id": {
+            "format": "uuid",
             "title": "Target Property Id",
             "type": "string"
           }
@@ -3169,7 +3293,8 @@
         "required": [
           "source_property_ids",
           "target_property_id",
-          "reason"
+          "reason",
+          "risk_acknowledged"
         ],
         "title": "MergeRequest",
         "type": "object"
@@ -4519,12 +4644,14 @@
       "PromotionDecisionReceipt": {
         "properties": {
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "candidate_site_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -4534,6 +4661,7 @@
             "title": "Candidate Site Id"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
@@ -4541,20 +4669,24 @@
             "$ref": "#/components/schemas/PromotionDecisionType"
           },
           "intake_id": {
+            "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "listing_id": {
+            "format": "uuid",
             "title": "Listing Id",
             "type": "string"
           },
           "promotion_decision_id": {
+            "format": "uuid",
             "title": "Promotion Decision Id",
             "type": "string"
           },
           "reviewer_subject_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -4566,6 +4698,7 @@
           "site_score_job_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -4578,6 +4711,7 @@
             "$ref": "#/components/schemas/PromotionStatus"
           },
           "version": {
+            "minimum": 1.0,
             "title": "Version",
             "type": "integer"
           }
@@ -4619,6 +4753,7 @@
           "requested_reviewer_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -4628,6 +4763,7 @@
             "title": "Requested Reviewer Id"
           },
           "risk_acknowledged": {
+            "default": false,
             "title": "Risk Acknowledged",
             "type": "boolean"
           },
@@ -4641,8 +4777,7 @@
         "required": [
           "target_format_code",
           "reason",
-          "gate_snapshot_sha256",
-          "risk_acknowledged"
+          "gate_snapshot_sha256"
         ],
         "title": "PromotionRequest",
         "type": "object"
@@ -4978,6 +5113,7 @@
             "type": "boolean"
           },
           "reason": {
+            "minLength": 3,
             "title": "Reason",
             "type": "string"
           },
@@ -4997,8 +5133,7 @@
       "ReviewDecision": {
         "enum": [
           "APPROVE",
-          "REJECT",
-          "RETURN"
+          "REJECT"
         ],
         "title": "ReviewDecision",
         "type": "string"
@@ -5076,28 +5211,21 @@
             "type": "string"
           },
           "requested_changes": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Requested Changes"
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Changes",
+            "type": "array"
           },
           "risk_acknowledged": {
+            "default": false,
             "title": "Risk Acknowledged",
             "type": "boolean"
           }
         },
         "required": [
           "decision",
-          "reason",
-          "risk_acknowledged"
+          "reason"
         ],
         "title": "ReviewDecisionRequest",
         "type": "object"
@@ -5124,6 +5252,7 @@
             "type": "string"
           },
           "risk_acknowledged": {
+            "const": true,
             "title": "Risk Acknowledged",
             "type": "boolean"
           }
@@ -5155,6 +5284,7 @@
       "SavedView": {
         "properties": {
           "created_at": {
+            "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
@@ -5165,6 +5295,7 @@
             "type": "string"
           },
           "owner_subject_id": {
+            "format": "uuid",
             "title": "Owner Subject Id",
             "type": "string"
           },
@@ -5174,12 +5305,12 @@
             "type": "object"
           },
           "resource": {
-            "default": "intake",
-            "pattern": "^intake$",
+            "const": "intake",
             "title": "Resource",
             "type": "string"
           },
           "saved_view_id": {
+            "format": "uuid",
             "title": "Saved View Id",
             "type": "string"
           },
@@ -5206,6 +5337,7 @@
         "required": [
           "name",
           "query",
+          "resource",
           "saved_view_id",
           "owner_subject_id",
           "created_at",
@@ -5228,8 +5360,7 @@
             "type": "object"
           },
           "resource": {
-            "default": "intake",
-            "pattern": "^intake$",
+            "const": "intake",
             "title": "Resource",
             "type": "string"
           },
@@ -5251,7 +5382,8 @@
         },
         "required": [
           "name",
-          "query"
+          "query",
+          "resource"
         ],
         "title": "SavedViewRequest",
         "type": "object"
@@ -5270,6 +5402,7 @@
           "assigned_area_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -5281,6 +5414,7 @@
           "brand_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -5292,6 +5426,7 @@
           "heat_zone_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -5303,6 +5438,7 @@
           "region_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -5312,6 +5448,7 @@
             "title": "Region Id"
           },
           "tenant_id": {
+            "format": "uuid",
             "title": "Tenant Id",
             "type": "string"
           }
@@ -5411,6 +5548,7 @@
         "additionalProperties": false,
         "properties": {
           "expected_resume_at": {
+            "format": "date-time",
             "title": "Expected Resume At",
             "type": "string"
           },
@@ -5433,6 +5571,7 @@
           "active_pause_interval_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -5442,20 +5581,24 @@
             "title": "Active Pause Interval Id"
           },
           "audit_event_id": {
+            "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
           "correlation_id": {
+            "format": "uuid",
             "title": "Correlation Id",
             "type": "string"
           },
           "due_at": {
+            "format": "date-time",
             "title": "Due At",
             "type": "string"
           },
           "due_soon_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -5465,10 +5608,12 @@
             "title": "Due Soon At"
           },
           "paused_duration_seconds": {
+            "minimum": 0.0,
             "title": "Paused Duration Seconds",
             "type": "integer"
           },
           "sla_instance_id": {
+            "format": "uuid",
             "title": "Sla Instance Id",
             "type": "string"
           },
@@ -5476,6 +5621,7 @@
             "$ref": "#/components/schemas/SlaState"
           },
           "version": {
+            "minimum": 1.0,
             "title": "Version",
             "type": "integer"
           }
@@ -5531,36 +5677,25 @@
             "type": "string"
           },
           "risk_acknowledged": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk Acknowledged"
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
           },
           "source_property_id": {
+            "format": "uuid",
             "title": "Source Property Id",
             "type": "string"
           },
           "source_property_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Property Version"
+            "title": "Source Property Version",
+            "type": "integer"
           }
         },
         "required": [
           "source_property_id",
           "partitions",
-          "reason"
+          "reason",
+          "risk_acknowledged"
         ],
         "title": "SplitRequest",
         "type": "object"
@@ -5867,6 +6002,14 @@
         "title": "ThresholdPayload",
         "type": "object"
       },
+      "TotalCountAccuracy": {
+        "enum": [
+          "EXACT",
+          "ESTIMATED"
+        ],
+        "title": "TotalCountAccuracy",
+        "type": "string"
+      },
       "TransitionActionPayload": {
         "description": "POST /operator/growth/actions/{id}/transition — lifecycle advance.",
         "properties": {
@@ -5921,6 +6064,7 @@
             "title": "From State"
           },
           "occurred_at": {
+            "format": "date-time",
             "title": "Occurred At",
             "type": "string"
           },
@@ -5940,6 +6084,7 @@
             "type": "string"
           },
           "transition_id": {
+            "format": "uuid",
             "title": "Transition Id",
             "type": "string"
           },
@@ -5950,6 +6095,7 @@
         },
         "required": [
           "transition_id",
+          "from_state",
           "to_state",
           "occurred_at",
           "actor",
@@ -5961,6 +6107,7 @@
       "UnmergeRequest": {
         "properties": {
           "original_decision_id": {
+            "format": "uuid",
             "title": "Original Decision Id",
             "type": "string"
           },
@@ -5978,21 +6125,16 @@
             "type": "array"
           },
           "risk_acknowledged": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk Acknowledged"
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
           }
         },
         "required": [
           "original_decision_id",
           "replacement_edges",
-          "reason"
+          "reason",
+          "risk_acknowledged"
         ],
         "title": "UnmergeRequest",
         "type": "object"
@@ -6001,6 +6143,7 @@
         "additionalProperties": false,
         "properties": {
           "original_url": {
+            "format": "uri",
             "maxLength": 4096,
             "title": "Original Url",
             "type": "string"
@@ -6008,6 +6151,7 @@
           "owner_subject_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -6017,15 +6161,10 @@
             "title": "Owner Subject Id"
           },
           "purpose": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Purpose"
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Purpose",
+            "type": "string"
           },
           "scope": {
             "$ref": "#/components/schemas/ScopeContext"
@@ -6834,13 +6973,14 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/claim": {
       "post": {
-        "operationId": "claim_assignment_api_v1_assignments__assignment_id__actions_claim_post",
+        "operationId": "claimAssignment",
         "parameters": [
           {
             "in": "path",
             "name": "assignment_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Assignment Id",
               "type": "string"
             }
@@ -6850,6 +6990,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -6859,6 +7002,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -6909,11 +7053,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -6929,21 +7073,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -6964,13 +7118,14 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/complete": {
       "post": {
-        "operationId": "complete_assignment_api_v1_assignments__assignment_id__actions_complete_post",
+        "operationId": "completeAssignment",
         "parameters": [
           {
             "in": "path",
             "name": "assignment_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Assignment Id",
               "type": "string"
             }
@@ -6980,6 +7135,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -6989,6 +7147,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -7039,11 +7198,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -7059,21 +7218,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -7094,13 +7263,14 @@
     },
     "/api/v1/assignments/{assignment_id}/actions/transfer": {
       "post": {
-        "operationId": "transfer_assignment_api_v1_assignments__assignment_id__actions_transfer_post",
+        "operationId": "transferAssignment",
         "parameters": [
           {
             "in": "path",
             "name": "assignment_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Assignment Id",
               "type": "string"
             }
@@ -7110,6 +7280,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -7119,6 +7292,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -7169,11 +7343,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -7189,21 +7363,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -11418,13 +11602,14 @@
     },
     "/api/v1/identity-decisions/{decision_id}": {
       "get": {
-        "operationId": "get_identity_api_v1_identity_decisions__decision_id__get",
+        "operationId": "getIdentityDecision",
         "parameters": [
           {
             "in": "path",
             "name": "decision_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Decision Id",
               "type": "string"
             }
@@ -11465,21 +11650,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Resource not found"
+            "description": "Assisted intake API error"
           },
           "409": {
             "content": {
@@ -11520,13 +11705,14 @@
     },
     "/api/v1/identity-decisions/{decision_id}/actions/reverse": {
       "post": {
-        "operationId": "reverse_identity_api_v1_identity_decisions__decision_id__actions_reverse_post",
+        "operationId": "requestIdentityDecisionReversal",
         "parameters": [
           {
             "in": "path",
             "name": "decision_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Decision Id",
               "type": "string"
             }
@@ -11536,6 +11722,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -11545,6 +11734,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -11595,11 +11785,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -11615,21 +11805,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -11650,13 +11850,14 @@
     },
     "/api/v1/identity-decisions/{decision_id}/actions/review": {
       "post": {
-        "operationId": "review_identity_api_v1_identity_decisions__decision_id__actions_review_post",
+        "operationId": "reviewIdentityDecision",
         "parameters": [
           {
             "in": "path",
             "name": "decision_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Decision Id",
               "type": "string"
             }
@@ -11666,6 +11867,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -11675,6 +11879,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -11701,6 +11906,16 @@
             },
             "description": "Successful Response"
           },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionReceipt"
+                }
+              }
+            },
+            "description": "Review queued"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -11725,11 +11940,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -11745,21 +11960,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -11780,13 +12005,16 @@
     },
     "/api/v1/identity/merge": {
       "post": {
-        "operationId": "merge_properties_api_v1_identity_merge_post",
+        "operationId": "mergeProperties",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -11796,6 +12024,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -11846,11 +12075,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -11866,21 +12095,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -11901,13 +12140,16 @@
     },
     "/api/v1/identity/split": {
       "post": {
-        "operationId": "split_property_api_v1_identity_split_post",
+        "operationId": "splitProperty",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -11917,6 +12159,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -11967,11 +12210,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -11987,21 +12230,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -12022,13 +12275,16 @@
     },
     "/api/v1/identity/unmerge": {
       "post": {
-        "operationId": "unmerge_property_api_v1_identity_unmerge_post",
+        "operationId": "unmergeProperty",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -12038,6 +12294,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -12088,11 +12345,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -12108,21 +12365,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -12143,13 +12410,16 @@
     },
     "/api/v1/intake-batches": {
       "post": {
-        "operationId": "submit_batch_api_v1_intake_batches_post",
+        "operationId": "submitIntakeBatch",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -12166,6 +12436,16 @@
           "required": true
         },
         "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchIntakeReceipt"
+                }
+              }
+            },
+            "description": "All rows accepted"
+          },
           "207": {
             "content": {
               "application/json": {
@@ -12220,21 +12500,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -12255,7 +12545,7 @@
     },
     "/api/v1/intakes": {
       "get": {
-        "operationId": "list_intakes_api_v1_intakes_get",
+        "operationId": "listIntakes",
         "parameters": [
           {
             "in": "query",
@@ -12264,6 +12554,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 2048,
                   "type": "string"
                 },
                 {
@@ -12292,7 +12583,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/IntakeSort"
                 },
                 {
                   "type": "null"
@@ -12365,6 +12656,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "format": "uuid",
                   "type": "string"
                 },
                 {
@@ -12397,6 +12689,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "format": "uuid",
                   "type": "string"
                 },
                 {
@@ -12413,6 +12706,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "format": "uuid",
                   "type": "string"
                 },
                 {
@@ -12455,11 +12749,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Invalid request"
+            "description": "Assisted intake API error"
           },
           "401": {
             "content": {
@@ -12475,11 +12769,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -12530,13 +12824,16 @@
     },
     "/api/v1/intakes/url": {
       "post": {
-        "operationId": "submit_url_api_v1_intakes_url_post",
+        "operationId": "submitUrlIntake",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -12553,6 +12850,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSubmissionReceipt"
+                }
+              }
+            },
+            "description": "Idempotent replay"
+          },
           "202": {
             "content": {
               "application/json": {
@@ -12587,11 +12894,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -12607,21 +12914,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -12642,13 +12949,14 @@
     },
     "/api/v1/intakes/{intake_id}": {
       "get": {
-        "operationId": "get_intake_api_v1_intakes__intake_id__get",
+        "operationId": "getIntake",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -12689,21 +12997,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Resource not found"
+            "description": "Assisted intake API error"
           },
           "409": {
             "content": {
@@ -12744,13 +13052,14 @@
     },
     "/api/v1/intakes/{intake_id}/actions/cancel": {
       "post": {
-        "operationId": "cancel_intake_api_v1_intakes__intake_id__actions_cancel_post",
+        "operationId": "cancelIntake",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -12760,6 +13069,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -12769,6 +13081,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -12819,11 +13132,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -12839,21 +13152,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -12874,13 +13197,14 @@
     },
     "/api/v1/intakes/{intake_id}/actions/quarantine": {
       "post": {
-        "operationId": "quarantine_intake_api_v1_intakes__intake_id__actions_quarantine_post",
+        "operationId": "quarantineIntake",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -12890,6 +13214,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -12899,6 +13226,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -12949,11 +13277,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -12969,21 +13297,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -13004,13 +13342,14 @@
     },
     "/api/v1/intakes/{intake_id}/actions/reopen": {
       "post": {
-        "operationId": "reopen_intake_api_v1_intakes__intake_id__actions_reopen_post",
+        "operationId": "reopenIntake",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -13020,6 +13359,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -13029,6 +13371,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -13079,11 +13422,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -13099,21 +13442,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -13134,13 +13487,14 @@
     },
     "/api/v1/intakes/{intake_id}/assignment": {
       "put": {
-        "operationId": "assign_api_v1_intakes__intake_id__assignment_put",
+        "operationId": "assignIntake",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -13150,6 +13504,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -13159,6 +13516,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -13209,11 +13567,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -13229,11 +13587,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
@@ -13244,6 +13602,16 @@
               }
             },
             "description": "Validation failed"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -13264,13 +13632,14 @@
     },
     "/api/v1/intakes/{intake_id}/corrections": {
       "post": {
-        "operationId": "correct_api_v1_intakes__intake_id__corrections_post",
+        "operationId": "proposeCorrection",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -13280,6 +13649,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -13289,6 +13661,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -13359,21 +13732,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -13394,13 +13777,14 @@
     },
     "/api/v1/intakes/{intake_id}/promotion-requests": {
       "post": {
-        "operationId": "promote_api_v1_intakes__intake_id__promotion_requests_post",
+        "operationId": "requestCandidatePromotion",
         "parameters": [
           {
             "in": "path",
             "name": "intake_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Intake Id",
               "type": "string"
             }
@@ -13410,6 +13794,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -13419,6 +13806,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -13469,11 +13857,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -13489,21 +13877,41 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -13514,6 +13922,16 @@
               }
             },
             "description": "Unexpected server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Promote",
@@ -15213,13 +15631,14 @@
     },
     "/api/v1/jobs/{job_id}/retry": {
       "post": {
-        "operationId": "retry_job_api_v1_jobs__job_id__retry_post",
+        "operationId": "retryJob",
         "parameters": [
           {
             "in": "path",
             "name": "job_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Job Id",
               "type": "string"
             }
@@ -15229,6 +15648,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -15238,6 +15660,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -15288,11 +15711,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -15308,21 +15731,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -16393,13 +16826,14 @@
     },
     "/api/v1/match-cases/{match_case_id}/decisions": {
       "post": {
-        "operationId": "decide_match_case_api_v1_match_cases__match_case_id__decisions_post",
+        "operationId": "decideMatchCase",
         "parameters": [
           {
             "in": "path",
             "name": "match_case_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Match Case Id",
               "type": "string"
             }
@@ -16409,6 +16843,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -16418,6 +16855,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -16468,11 +16906,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -16488,21 +16926,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -30699,13 +31147,14 @@
     },
     "/api/v1/promotion-decisions/{promotion_decision_id}": {
       "get": {
-        "operationId": "get_promotion_api_v1_promotion_decisions__promotion_decision_id__get",
+        "operationId": "getPromotionDecision",
         "parameters": [
           {
             "in": "path",
             "name": "promotion_decision_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Promotion Decision Id",
               "type": "string"
             }
@@ -30746,21 +31195,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Resource not found"
+            "description": "Assisted intake API error"
           },
           "409": {
             "content": {
@@ -30801,13 +31250,14 @@
     },
     "/api/v1/promotion-decisions/{promotion_decision_id}/actions/review": {
       "post": {
-        "operationId": "review_promotion_api_v1_promotion_decisions__promotion_decision_id__actions_review_post",
+        "operationId": "reviewPromotionDecision",
         "parameters": [
           {
             "in": "path",
             "name": "promotion_decision_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Promotion Decision Id",
               "type": "string"
             }
@@ -30817,6 +31267,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -30826,6 +31279,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -30852,6 +31306,16 @@
             },
             "description": "Successful Response"
           },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotionDecisionReceipt"
+                }
+              }
+            },
+            "description": "Review queued"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -30876,11 +31340,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -30896,21 +31360,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -30931,7 +31405,7 @@
     },
     "/api/v1/saved-views": {
       "get": {
-        "operationId": "list_saved_views_api_v1_saved_views_get",
+        "operationId": "listSavedViews",
         "responses": {
           "200": {
             "content": {
@@ -30940,7 +31414,7 @@
                   "items": {
                     "$ref": "#/components/schemas/SavedView"
                   },
-                  "title": "Response List Saved Views Api V1 Saved Views Get",
+                  "title": "Response Listsavedviews",
                   "type": "array"
                 }
               }
@@ -30971,11 +31445,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -31024,13 +31498,16 @@
         ]
       },
       "post": {
-        "operationId": "create_saved_view_api_v1_saved_views_post",
+        "operationId": "createSavedView",
         "parameters": [
           {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -31101,11 +31578,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
@@ -32195,13 +32672,14 @@
     },
     "/api/v1/sla-instances/{sla_instance_id}/actions/pause": {
       "post": {
-        "operationId": "pause_sla_api_v1_sla_instances__sla_instance_id__actions_pause_post",
+        "operationId": "pauseSla",
         "parameters": [
           {
             "in": "path",
             "name": "sla_instance_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Sla Instance Id",
               "type": "string"
             }
@@ -32211,6 +32689,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -32220,6 +32701,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -32270,11 +32752,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -32290,21 +32772,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
@@ -32325,13 +32817,14 @@
     },
     "/api/v1/sla-instances/{sla_instance_id}/actions/resume": {
       "post": {
-        "operationId": "resume_sla_api_v1_sla_instances__sla_instance_id__actions_resume_post",
+        "operationId": "resumeSla",
         "parameters": [
           {
             "in": "path",
             "name": "sla_instance_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Sla Instance Id",
               "type": "string"
             }
@@ -32341,6 +32834,9 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -32350,6 +32846,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
               "type": "string"
             }
@@ -32400,11 +32897,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Server-derived authorization denied"
+            "description": "Assisted intake API error"
           },
           "404": {
             "content": {
@@ -32420,21 +32917,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Conflicting state or idempotency replay conflict"
+            "description": "Assisted intake API error"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             },
-            "description": "Validation failed"
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           },
           "500": {
             "content": {
