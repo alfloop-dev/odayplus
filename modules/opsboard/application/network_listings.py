@@ -69,6 +69,12 @@ class AssistedIntakeRepository(Protocol):
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None: ...
 
+    def get_promotion(self, promo_id: str) -> dict[str, Any] | None: ...
+
+    def save_promotion(self, promo: dict[str, Any]) -> None: ...
+
+    def list_promotions(self) -> list[dict[str, Any]]: ...
+
     def clear(self) -> None: ...
 
 
@@ -84,6 +90,7 @@ class InMemoryAssistedIntakeRepository:
     idempotency: dict[tuple[str, str], IntakeIdempotencyRecord] = field(default_factory=dict)
     listing_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     candidate_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    promotions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def list_intakes(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.intakes.values()]
@@ -109,11 +116,21 @@ class InMemoryAssistedIntakeRepository:
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
         self.candidate_metadata[candidate_id] = copy.deepcopy(metadata)
 
+    def get_promotion(self, promo_id: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self.promotions.get(promo_id))
+
+    def save_promotion(self, promo: dict[str, Any]) -> None:
+        self.promotions[promo["promotion_decision_id"]] = copy.deepcopy(promo)
+
+    def list_promotions(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.promotions.values()]
+
     def clear(self) -> None:
         self.intakes.clear()
         self.idempotency.clear()
         self.listing_metadata.clear()
         self.candidate_metadata.clear()
+        self.promotions.clear()
 
 
 class NetworkListingNotFound(RuntimeError):
@@ -1559,6 +1576,47 @@ class NetworkListingService:
         self._save_intake(intake)
         return _copy(intake)
 
+    # Adapter methods for PromotionService
+    def get_listing(self, listing_id: str) -> dict[str, Any] | None:
+        try:
+            return self._listing(listing_id)
+        except NetworkListingNotFound:
+            return None
+
+    def save_listing(self, listing: dict[str, Any], address: Any = None, key: Any = None) -> None:
+        for i, lst in enumerate(self._state["listings"]):
+            if lst["id"] == listing["id"]:
+                self._state["listings"][i] = listing
+                break
+        self._sync_listing_to_repo(listing["id"])
+
+    def list_candidates(self) -> list[dict[str, Any]]:
+        return self._state["candidates"]
+
+    def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        for cand in self._state["candidates"]:
+            if cand["id"] == candidate_id:
+                return cand
+        return None
+
+    def save_candidate(self, candidate: dict[str, Any]) -> None:
+        for i, cand in enumerate(self._state["candidates"]):
+            if cand["id"] == candidate["id"]:
+                self._state["candidates"][i] = candidate
+                self._sync_candidate_to_repo(candidate["id"])
+                return
+        self._state["candidates"].append(candidate)
+        self._sync_candidate_to_repo(candidate["id"])
+
+    def get_listing_intake(self, intake_id: str) -> dict[str, Any] | None:
+        try:
+            return self._listing_intake(intake_id)
+        except NetworkListingNotFound:
+            return None
+
+    def save_intake(self, intake: dict[str, Any]) -> None:
+        self._save_intake(intake)
+
     def promote_intake(
         self,
         *,
@@ -1604,13 +1662,87 @@ class NetworkListingService:
         before_listing_status = listing.get("status")
         before_candidate_count = len(self._state["candidates"])
 
-        result = self.convert_listing(
-            listing_id=target_listing_id,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            idempotency_key=f"promote-intake-{intake_id}",
-            correlation_id=correlation_id,
+        # Enforce segregation of duties & run reviewed promotion saga
+        proposer_id = intake.get("submitter") or "operator-expansion-staff"
+        reviewer_id = actor_name or "operator-expansion-manager"
+
+        import hashlib
+        gate_snap = str(listing.get("fitScore", 0))
+        gate_snapshot_sha256 = hashlib.sha256(gate_snap.encode()).hexdigest()
+
+        from modules.listing.application.promotion import PromotionService
+        from modules.listing.domain.intake_states import Actor, PrincipalRole, TransitionContext
+
+        promo_service = PromotionService(
+            promotion_repository=self._intakes,
+            listing_repository=self,
+            intake_repository=self,
+            outbox_repository=getattr(self._listing_repository, "outbox_repository", None),
         )
+
+        # 1. Propose
+        proposer_actor = Actor(
+            actor_id=proposer_id,
+            role=PrincipalRole.EXPANSION_STAFF,
+            tenant_id=listing.get("tenantId") or "tenant-a",
+        )
+        proposer_context = TransitionContext(
+            actor=proposer_actor,
+            idempotency_key=governed_key,
+            correlation_id=correlation_id,
+            risk_acknowledged=risk_acknowledged,
+            reason=reason_text,
+        )
+
+        try:
+            promo_record = promo_service.request_promotion(
+                intake_id=intake_id,
+                target_format_code="FORMAT-A",
+                reason=reason_text,
+                gate_snapshot_sha256=gate_snapshot_sha256,
+                context=proposer_context,
+            )
+        except Exception as exc:
+            if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
+                raise NetworkListingConflict(str(exc)) from exc
+            raise NetworkListingPolicyError(str(exc)) from exc
+
+        # 2. Review & Approve (which automatically executes the saga)
+        reviewer_actor = Actor(
+            actor_id=reviewer_id,
+            role=PrincipalRole.EXPANSION_MANAGER,
+            tenant_id=listing.get("tenantId") or "tenant-a",
+        )
+        reviewer_context = TransitionContext(
+            actor=reviewer_actor,
+            idempotency_key=f"review-{governed_key}",
+            correlation_id=correlation_id,
+            risk_acknowledged=risk_acknowledged,
+            reason=reason_text,
+            version_before=promo_record["version"],
+        )
+
+        try:
+            promo_record = promo_service.review_promotion(
+                promotion_decision_id=promo_record["promotion_decision_id"],
+                decision="APPROVE",
+                reason=reason_text,
+                risk_acknowledged=risk_acknowledged,
+                context=reviewer_context,
+            )
+        except Exception as exc:
+            if "SELF_REVIEW_DENIED" in str(exc):
+                raise NetworkListingConflict("SELF_REVIEW_DENIED") from exc
+            raise NetworkListingPolicyError(str(exc)) from exc
+
+        candidate = self.get_candidate(promo_record["candidate_site_id"])
+        listing_updated = self.get_listing(promo_record["listing_id"])
+
+        result = {
+            "listing": _copy(listing_updated),
+            "candidate": _copy(candidate),
+            "created": True,
+        }
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -1623,7 +1755,7 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "metadata": {
                 "targetListingId": target_listing_id,
-                "candidateId": result["candidate"]["id"],
+                "candidateId": promo_record["candidate_site_id"],
                 "reason": reason_text,
                 "before": {
                     "listingStatus": before_listing_status,
@@ -1636,7 +1768,7 @@ class NetworkListingService:
                 "riskSummary": risk_summary_text,
                 "riskAcknowledged": True,
                 "effectSummary": (
-                    f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}."
+                    f"Promote listing {target_listing_id} to candidate {promo_record['candidate_site_id']}."
                 ),
             }
         }

@@ -3063,6 +3063,7 @@ else:
                 resource_id=promotion_decision_id,
             )
             response.status_code = 200 if was_replayed else code
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
 

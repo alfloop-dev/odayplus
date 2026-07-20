@@ -26,6 +26,7 @@ class DurableAssistedIntakeRepository:
     _IDEMPOTENCY = "operator.idempotency_cache"
     _LISTING_META = "operator.listing_metadata"
     _CANDIDATE_META = "operator.candidate_metadata"
+    _PROMOTIONS = "operator.promotions"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -54,11 +55,22 @@ class DurableAssistedIntakeRepository:
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
         self._store.put(self._CANDIDATE_META, candidate_id, metadata)
 
+    def get_promotion(self, promo_id: str) -> dict[str, Any] | None:
+        return self._store.get(self._PROMOTIONS, promo_id)
+
+    def save_promotion(self, promo: dict[str, Any]) -> None:
+        self._store.put(self._PROMOTIONS, promo["promotion_decision_id"], promo)
+
+    def list_promotions(self) -> list[dict[str, Any]]:
+        return self._store.list_all(self._PROMOTIONS)
+
     def clear(self) -> None:
         for collection in (
             self._INTAKES,
             self._IDEMPOTENCY,
             self._LISTING_META,
             self._CANDIDATE_META,
+            self._PROMOTIONS,
         ):
             self._store.delete_collection(collection)
+
