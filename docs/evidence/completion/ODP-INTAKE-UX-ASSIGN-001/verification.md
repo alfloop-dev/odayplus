@@ -35,4 +35,3 @@ git diff --check origin/dev...HEAD
 - `apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx`
 - `docs/evidence/completion/ODP-INTAKE-UX-ASSIGN-001/summary.md`
 - `docs/evidence/completion/ODP-INTAKE-UX-ASSIGN-001/verification.md`
-

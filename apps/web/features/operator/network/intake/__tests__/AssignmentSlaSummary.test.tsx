@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
+import { act, useState } from "react";
+import { createRoot } from "react-dom/client";
 import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
 import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
 import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
@@ -439,147 +441,261 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
     });
   });
 
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
   describe("Mounted Dialog Interaction & State Flow Tests", () => {
-    it("proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version", () => {
-      let currentVersion = 3;
-      const submittedPayloads: any[] = [];
-      const clientCalls: any[] = [];
-
-      const mockClientTransfer = (asgId: string, payload: any, options: any) => {
-        clientCalls.push({ asgId, payload, options });
-        return Promise.resolve({
-          assignment_id: asgId,
-          status: "TRANSFERRED",
-          owner_subject_id: payload.target_owner_subject_id,
-          version: currentVersion,
-          audit_event_id: "AUD-TRANSFER-REFRESHED-004",
-        });
+    function setupContainer() {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      return {
+        container,
+        root,
+        cleanup() {
+          act(() => {
+            root.unmount();
+          });
+          container.remove();
+        },
       };
+    }
 
-      // 1. Initial render with 409 conflict error on v3
-      const htmlInitial = renderToString(
+    function setInputValue(element: HTMLElement, value: string | boolean) {
+      act(() => {
+        if (element instanceof HTMLInputElement && element.type === "checkbox") {
+          if (element.checked !== value) {
+            element.click();
+          }
+        } else if (element instanceof HTMLInputElement) {
+          const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+          if (valueSetter) {
+            valueSetter.call(element, value);
+          } else {
+            element.value = value as string;
+          }
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (element instanceof HTMLTextAreaElement) {
+          const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+          if (valueSetter) {
+            valueSetter.call(element, value);
+          } else {
+            element.value = value as string;
+          }
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (element instanceof HTMLSelectElement) {
+          const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+          if (valueSetter) {
+            valueSetter.call(element, value);
+          } else {
+            element.value = value as string;
+          }
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+    }
+
+    function clickElement(element: HTMLElement) {
+      act(() => {
+        element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+    }
+
+    function TransferTestHarness({
+      initialRecord,
+      initialError,
+      refreshedRecord,
+      onSubmitSpy,
+    }: {
+      initialRecord: AssistedIntake;
+      initialError: IntakeApiError | null;
+      refreshedRecord: AssistedIntake;
+      onSubmitSpy: (payload: any, options: { ifMatch: string }) => void;
+    }) {
+      const [record, setRecord] = useState<AssistedIntake>(initialRecord);
+      const [error, setError] = useState<IntakeApiError | null>(initialError);
+
+      return (
         <TransferIntakeDialog
           busy={false}
-          error={conflictError}
-          onClose={vi.fn()}
-          onSubmit={vi.fn()}
-          record={{ ...sampleIntakeRecord, version: 3 }}
-          onConflictRefresh={vi.fn()}
-        />
-      );
-
-      expect(htmlInitial).toContain("409 OWNER_CONFLICT");
-      expect(htmlInitial).toContain('data-testid="transfer-conflict-panel"');
-      expect(htmlInitial).toContain('data-testid="transfer-record-version"');
-
-      // 2. Refresh updates record to v4 and clears error
-      const refreshedRecord: AssistedIntake = {
-        ...sampleIntakeRecord,
-        owner: "周育安（資料管理員）",
-        version: 4,
-      };
-
-      const htmlRefreshed = renderToString(
-        <TransferIntakeDialog
-          busy={false}
-          error={null}
-          onClose={vi.fn()}
-          onSubmit={(payload) => {
-            submittedPayloads.push(payload);
-            mockClientTransfer("ASG-TEST-001", payload, {
-              ifMatch: `W/"${refreshedRecord.version}"`,
-            });
+          error={error}
+          onClose={() => {}}
+          onConflictRefresh={() => {
+            setRecord(refreshedRecord);
+            setError(null);
           }}
-          record={refreshedRecord}
-          onConflictRefresh={vi.fn()}
+          onSubmit={(payload) => {
+            onSubmitSpy(payload, { ifMatch: `W/"${record.version}"` });
+          }}
+          record={record}
         />
       );
+    }
 
-      expect(htmlRefreshed).not.toContain("409 OWNER_CONFLICT");
-      expect(htmlRefreshed).toContain("周育安（資料管理員）");
-      expect(htmlRefreshed).toContain('data-testid="transfer-record-version"');
+    function PauseTestHarness({
+      initialRecord,
+      initialError,
+      refreshedRecord,
+      onSubmitSpy,
+    }: {
+      initialRecord: AssistedIntake;
+      initialError: IntakeApiError | null;
+      refreshedRecord: AssistedIntake;
+      onSubmitSpy: (payload: any, options: { ifMatch: string }) => void;
+    }) {
+      const [record, setRecord] = useState<AssistedIntake>(initialRecord);
+      const [error, setError] = useState<IntakeApiError | null>(initialError);
 
-      // 3. Resubmit using the refreshed version v4
-      const draftPayload = {
-        target_owner_subject_id: "actor-steward",
-        target_owner_role: "data-steward",
-        handoff_note: "Preserved draft handoff note across 409 refresh",
-        riskSummary: "Risk summary text",
-        riskAcknowledged: true,
-      };
+      return (
+        <PauseSlaDialog
+          busy={false}
+          error={error}
+          onClose={() => {}}
+          onConflictRefresh={() => {
+            setRecord(refreshedRecord);
+            setError(null);
+          }}
+          onSubmit={(payload) => {
+            onSubmitSpy(payload, { ifMatch: `W/"${record.version}"` });
+          }}
+          record={record}
+        />
+      );
+    }
 
-      mockClientTransfer("ASG-TEST-001", draftPayload, {
-        ifMatch: `W/"${refreshedRecord.version}"`,
+    it("proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version", () => {
+      const { container, root, cleanup } = setupContainer();
+      const onSubmitSpy = vi.fn();
+
+      const record_v3: AssistedIntake = { ...sampleIntakeRecord, owner: "許庭瑜（展店）", version: 3 };
+      const record_v4: AssistedIntake = { ...sampleIntakeRecord, owner: "周育安（資料管理員）", version: 4 };
+
+      act(() => {
+        root.render(
+          <TransferTestHarness
+            initialError={conflictError}
+            initialRecord={record_v3}
+            onSubmitSpy={onSubmitSpy}
+            refreshedRecord={record_v4}
+          />
+        );
       });
 
-      expect(clientCalls.length).toBe(1);
-      expect(clientCalls[0].options).toEqual({ ifMatch: 'W/"4"' });
-      expect(clientCalls[0].payload.handoff_note).toBe("Preserved draft handoff note across 409 refresh");
+      // Assert initial mounted state with 409 conflict banner
+      expect(container.querySelector('[data-testid="transfer-conflict-panel"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v3");
+
+      // Enter user draft inputs on mounted component DOM
+      const targetSelect = container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement;
+      const handoffTextarea = container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement;
+      const riskCheckbox = container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement;
+
+      setInputValue(targetSelect, "actor-steward");
+      setInputValue(handoffTextarea, "Preserved draft handoff note across 409 refresh");
+      setInputValue(riskCheckbox, true);
+
+      expect(targetSelect.value).toBe("actor-steward");
+      expect(handoffTextarea.value).toBe("Preserved draft handoff note across 409 refresh");
+      expect(riskCheckbox.checked).toBe(true);
+
+      // Trigger conflict refresh button click on mounted instance
+      const refreshBtn = container.querySelector('[data-testid="transfer-conflict-refresh-btn"]') as HTMLButtonElement;
+      clickElement(refreshBtn);
+
+      // Assert component re-rendered same instance: conflict panel cleared, record updated to v4/new owner, and draft inputs preserved
+      expect(container.querySelector('[data-testid="transfer-conflict-panel"]')).toBeNull();
+      expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v4");
+      expect(container.querySelector('[data-testid="transfer-record-owner"]')?.textContent).toBe("周育安（資料管理員）");
+
+      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("actor-steward");
+      expect((container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement).value).toBe("Preserved draft handoff note across 409 refresh");
+      expect((container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement).checked).toBe(true);
+
+      // Submit preserved draft on mounted component
+      const submitBtn = container.querySelector('[data-testid="transfer-submit-btn"]') as HTMLButtonElement;
+      clickElement(submitBtn);
+
+      // Assert submission payload has preserved draft and refreshed version in If-Match
+      expect(onSubmitSpy).toHaveBeenCalledTimes(1);
+      expect(onSubmitSpy).toHaveBeenCalledWith(
+        {
+          target_owner_subject_id: "actor-steward",
+          target_owner_role: "data-steward",
+          handoff_note: "Preserved draft handoff note across 409 refresh",
+          riskSummary: expect.any(String),
+          riskAcknowledged: true,
+        },
+        { ifMatch: 'W/"4"' }
+      );
+
+      cleanup();
     });
 
     it("proves PauseSlaDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version", () => {
-      const clientCalls: any[] = [];
-      const mockClientPause = (slaId: string, payload: any, options: any) => {
-        clientCalls.push({ slaId, payload, options });
-        return Promise.resolve({
-          sla_instance_id: slaId,
-          state: "PAUSED",
-          due_at: payload.expected_resume_at,
-          version: 4,
-          audit_event_id: "AUD-PAUSE-REFRESHED-004",
-        });
-      };
+      const { container, root, cleanup } = setupContainer();
+      const onSubmitSpy = vi.fn();
 
-      const record_v3: AssistedIntake = { ...sampleIntakeRecord, version: 3 };
+      const record_v3: AssistedIntake = { ...sampleIntakeRecord, owner: "許庭瑜（展店）", version: 3 };
+      const record_v4: AssistedIntake = { ...sampleIntakeRecord, owner: "周育安（資料管理員）", version: 4 };
 
-      const htmlConflict = renderToString(
-        <PauseSlaDialog
-          busy={false}
-          error={conflictError}
-          onClose={vi.fn()}
-          onSubmit={vi.fn()}
-          record={record_v3}
-          onConflictRefresh={vi.fn()}
-        />
-      );
-
-      expect(htmlConflict).toContain("409 OWNER_CONFLICT");
-      expect(htmlConflict).toContain('data-testid="pause-conflict-panel"');
-
-      const record_v4: AssistedIntake = { ...sampleIntakeRecord, version: 4, owner: "周育安（資料管理員）" };
-
-      const htmlRefreshed = renderToString(
-        <PauseSlaDialog
-          busy={false}
-          error={null}
-          onClose={vi.fn()}
-          onSubmit={(payload) => {
-            mockClientPause("SLA-TEST-001", payload, {
-              ifMatch: `W/"${record_v4.version}"`,
-            });
-          }}
-          record={record_v4}
-          onConflictRefresh={vi.fn()}
-        />
-      );
-
-      expect(htmlRefreshed).not.toContain("409 OWNER_CONFLICT");
-      expect(htmlRefreshed).toContain('data-testid="pause-record-version"');
-
-      const draftPausePayload = {
-        reason: "Waiting for landlord lease proof (preserved across 409)",
-        expected_resume_at: "2026-07-25T09:00:00.000Z",
-        riskSummary: "Pause risk summary",
-        riskAcknowledged: true,
-      };
-
-      mockClientPause("SLA-TEST-001", draftPausePayload, {
-        ifMatch: `W/"${record_v4.version}"`,
+      act(() => {
+        root.render(
+          <PauseTestHarness
+            initialError={conflictError}
+            initialRecord={record_v3}
+            onSubmitSpy={onSubmitSpy}
+            refreshedRecord={record_v4}
+          />
+        );
       });
 
-      expect(clientCalls.length).toBe(1);
-      expect(clientCalls[0].options).toEqual({ ifMatch: 'W/"4"' });
-      expect(clientCalls[0].payload.reason).toBe("Waiting for landlord lease proof (preserved across 409)");
+      // Assert initial mounted state with 409 conflict banner
+      expect(container.querySelector('[data-testid="pause-conflict-panel"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="pause-record-version"]')?.textContent).toBe("v3");
+
+      // Enter user draft inputs on mounted component DOM
+      const reasonTextarea = container.querySelector('[data-testid="pause-reason-input"]') as HTMLTextAreaElement;
+      const resumeTimeInput = container.querySelector('[data-testid="pause-resume-time-input"]') as HTMLInputElement;
+      const riskCheckbox = container.querySelector('[data-testid="pause-risk-ack"]') as HTMLInputElement;
+
+      setInputValue(reasonTextarea, "Waiting for landlord lease proof (preserved across 409)");
+      setInputValue(resumeTimeInput, "2026-07-25T09:00");
+      setInputValue(riskCheckbox, true);
+
+      expect(reasonTextarea.value).toBe("Waiting for landlord lease proof (preserved across 409)");
+      expect(resumeTimeInput.value).toBe("2026-07-25T09:00");
+      expect(riskCheckbox.checked).toBe(true);
+
+      // Trigger conflict refresh button click on mounted instance
+      const refreshBtn = container.querySelector('[data-testid="pause-conflict-refresh-btn"]') as HTMLButtonElement;
+      clickElement(refreshBtn);
+
+      // Assert component re-rendered same instance: conflict panel cleared, record updated to v4, and draft inputs preserved
+      expect(container.querySelector('[data-testid="pause-conflict-panel"]')).toBeNull();
+      expect(container.querySelector('[data-testid="pause-record-version"]')?.textContent).toBe("v4");
+
+      expect((container.querySelector('[data-testid="pause-reason-input"]') as HTMLTextAreaElement).value).toBe("Waiting for landlord lease proof (preserved across 409)");
+      expect((container.querySelector('[data-testid="pause-resume-time-input"]') as HTMLInputElement).value).toBe("2026-07-25T09:00");
+      expect((container.querySelector('[data-testid="pause-risk-ack"]') as HTMLInputElement).checked).toBe(true);
+
+      // Submit preserved draft on mounted component
+      const submitBtn = container.querySelector('[data-testid="pause-submit-btn"]') as HTMLButtonElement;
+      clickElement(submitBtn);
+
+      // Assert submission payload has preserved draft and refreshed version in If-Match
+      expect(onSubmitSpy).toHaveBeenCalledTimes(1);
+      expect(onSubmitSpy).toHaveBeenCalledWith(
+        {
+          reason: "Waiting for landlord lease proof (preserved across 409)",
+          expected_resume_at: new Date("2026-07-25T09:00").toISOString(),
+          riskSummary: expect.any(String),
+          riskAcknowledged: true,
+        },
+        { ifMatch: 'W/"4"' }
+      );
+
+      cleanup();
     });
   });
 });
