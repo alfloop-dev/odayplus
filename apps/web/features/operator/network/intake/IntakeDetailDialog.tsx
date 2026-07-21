@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { AssistedIntake, IntakeFieldCell } from "@oday-plus/openapi-client";
+import type { AssignmentReceipt, AssistedIntake, IntakeFieldCell, SlaReceipt } from "@oday-plus/openapi-client";
 import { ASSISTED_ENTRY_REQUIRED_FIELDS } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
@@ -39,6 +39,8 @@ export function IntakeDetailDialog({
   onOpenFix,
   onRetry,
   record,
+  assignmentReceipt,
+  slaReceipt,
   onClaimAssignment,
   onOpenTransfer,
   onOpenPause,
@@ -59,6 +61,8 @@ export function IntakeDetailDialog({
   onOpenFix: (fieldKey: string) => void;
   onRetry: () => void;
   record: AssistedIntake;
+  assignmentReceipt?: AssignmentReceipt;
+  slaReceipt?: SlaReceipt;
   onClaimAssignment?: () => void;
   onOpenTransfer?: () => void;
   onOpenPause?: () => void;
@@ -377,8 +381,8 @@ export function IntakeDetailDialog({
         {/* Durable Receipts Panel */}
         <DurableReceiptPanel
           record={record}
-          assignmentReceipt={(record as any).assignmentReceipt}
-          slaReceipt={(record as any).slaReceiptObj}
+          assignmentReceipt={assignmentReceipt}
+          slaReceipt={slaReceipt}
         />
 
         {/* 7. Timeline and audit history */}

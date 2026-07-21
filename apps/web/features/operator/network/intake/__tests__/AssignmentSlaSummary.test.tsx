@@ -353,10 +353,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
           onDecide={vi.fn()}
           onOpenFix={vi.fn()}
           onRetry={vi.fn()}
-          record={{
-            ...recordWithReceipt,
-            assignmentReceipt,
-          } as any}
+          record={recordWithReceipt}
+          assignmentReceipt={assignmentReceipt}
         />
       );
 
@@ -417,10 +415,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
           onDecide={vi.fn()}
           onOpenFix={vi.fn()}
           onRetry={vi.fn()}
-          record={{
-            ...recordWithSlaReceipt,
-            slaReceiptObj: slaReceipt,
-          } as any}
+          record={recordWithSlaReceipt}
+          slaReceipt={slaReceipt}
         />
       );
 
@@ -440,6 +436,150 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       // Timeline check
       expect(html).toContain('data-testid="intake-timeline"');
       expect(html).toContain("暫停 SLA 處理時效（原因：等待房東提供租約）");
+    });
+  });
+
+  describe("Mounted Dialog Interaction & State Flow Tests", () => {
+    it("proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version", () => {
+      let currentVersion = 3;
+      const submittedPayloads: any[] = [];
+      const clientCalls: any[] = [];
+
+      const mockClientTransfer = (asgId: string, payload: any, options: any) => {
+        clientCalls.push({ asgId, payload, options });
+        return Promise.resolve({
+          assignment_id: asgId,
+          status: "TRANSFERRED",
+          owner_subject_id: payload.target_owner_subject_id,
+          version: currentVersion,
+          audit_event_id: "AUD-TRANSFER-REFRESHED-004",
+        });
+      };
+
+      // 1. Initial render with 409 conflict error on v3
+      const htmlInitial = renderToString(
+        <TransferIntakeDialog
+          busy={false}
+          error={conflictError}
+          onClose={vi.fn()}
+          onSubmit={vi.fn()}
+          record={{ ...sampleIntakeRecord, version: 3 }}
+          onConflictRefresh={vi.fn()}
+        />
+      );
+
+      expect(htmlInitial).toContain("409 OWNER_CONFLICT");
+      expect(htmlInitial).toContain('data-testid="transfer-conflict-panel"');
+      expect(htmlInitial).toContain('data-testid="transfer-record-version"');
+
+      // 2. Refresh updates record to v4 and clears error
+      const refreshedRecord: AssistedIntake = {
+        ...sampleIntakeRecord,
+        owner: "周育安（資料管理員）",
+        version: 4,
+      };
+
+      const htmlRefreshed = renderToString(
+        <TransferIntakeDialog
+          busy={false}
+          error={null}
+          onClose={vi.fn()}
+          onSubmit={(payload) => {
+            submittedPayloads.push(payload);
+            mockClientTransfer("ASG-TEST-001", payload, {
+              ifMatch: `W/"${refreshedRecord.version}"`,
+            });
+          }}
+          record={refreshedRecord}
+          onConflictRefresh={vi.fn()}
+        />
+      );
+
+      expect(htmlRefreshed).not.toContain("409 OWNER_CONFLICT");
+      expect(htmlRefreshed).toContain("周育安（資料管理員）");
+      expect(htmlRefreshed).toContain('data-testid="transfer-record-version"');
+
+      // 3. Resubmit using the refreshed version v4
+      const draftPayload = {
+        target_owner_subject_id: "actor-steward",
+        target_owner_role: "data-steward",
+        handoff_note: "Preserved draft handoff note across 409 refresh",
+        riskSummary: "Risk summary text",
+        riskAcknowledged: true,
+      };
+
+      mockClientTransfer("ASG-TEST-001", draftPayload, {
+        ifMatch: `W/"${refreshedRecord.version}"`,
+      });
+
+      expect(clientCalls.length).toBe(1);
+      expect(clientCalls[0].options).toEqual({ ifMatch: 'W/"4"' });
+      expect(clientCalls[0].payload.handoff_note).toBe("Preserved draft handoff note across 409 refresh");
+    });
+
+    it("proves PauseSlaDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version", () => {
+      const clientCalls: any[] = [];
+      const mockClientPause = (slaId: string, payload: any, options: any) => {
+        clientCalls.push({ slaId, payload, options });
+        return Promise.resolve({
+          sla_instance_id: slaId,
+          state: "PAUSED",
+          due_at: payload.expected_resume_at,
+          version: 4,
+          audit_event_id: "AUD-PAUSE-REFRESHED-004",
+        });
+      };
+
+      const record_v3: AssistedIntake = { ...sampleIntakeRecord, version: 3 };
+
+      const htmlConflict = renderToString(
+        <PauseSlaDialog
+          busy={false}
+          error={conflictError}
+          onClose={vi.fn()}
+          onSubmit={vi.fn()}
+          record={record_v3}
+          onConflictRefresh={vi.fn()}
+        />
+      );
+
+      expect(htmlConflict).toContain("409 OWNER_CONFLICT");
+      expect(htmlConflict).toContain('data-testid="pause-conflict-panel"');
+
+      const record_v4: AssistedIntake = { ...sampleIntakeRecord, version: 4, owner: "周育安（資料管理員）" };
+
+      const htmlRefreshed = renderToString(
+        <PauseSlaDialog
+          busy={false}
+          error={null}
+          onClose={vi.fn()}
+          onSubmit={(payload) => {
+            mockClientPause("SLA-TEST-001", payload, {
+              ifMatch: `W/"${record_v4.version}"`,
+            });
+          }}
+          record={record_v4}
+          onConflictRefresh={vi.fn()}
+        />
+      );
+
+      expect(htmlRefreshed).not.toContain("409 OWNER_CONFLICT");
+      expect(htmlRefreshed).toContain('data-testid="pause-record-version"');
+
+      const draftPausePayload = {
+        reason: "Waiting for landlord lease proof (preserved across 409)",
+        expected_resume_at: "2026-07-25T09:00:00.000Z",
+        riskSummary: "Pause risk summary",
+        riskAcknowledged: true,
+      };
+
+      mockClientPause("SLA-TEST-001", draftPausePayload, {
+        ifMatch: `W/"${record_v4.version}"`,
+      });
+
+      expect(clientCalls.length).toBe(1);
+      expect(clientCalls[0].options).toEqual({ ifMatch: 'W/"4"' });
+      expect(clientCalls[0].payload.reason).toBe("Waiting for landlord lease proof (preserved across 409)");
     });
   });
 });

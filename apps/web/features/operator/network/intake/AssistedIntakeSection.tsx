@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { parseUrlState, serializeUrlState } from "./urlState";
-import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue } from "@oday-plus/openapi-client";
+import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
@@ -64,6 +64,8 @@ export function AssistedIntakeSection({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
+  const [slaReceipts, setSlaReceipts] = useState<Record<string, SlaReceipt>>({});
 
   const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
     const nextState = {
@@ -377,6 +379,9 @@ export function AssistedIntakeSection({
       }
 
       setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
+      if (receipt) {
+        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+      }
 
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
@@ -442,6 +447,9 @@ export function AssistedIntakeSection({
       );
 
       setToast(`已成功轉交收件！`);
+      if (receipt) {
+        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+      }
 
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
@@ -505,6 +513,9 @@ export function AssistedIntakeSection({
       );
 
       setToast(`SLA 已暫停！`);
+      if (receipt) {
+        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+      }
 
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
@@ -562,6 +573,9 @@ export function AssistedIntakeSection({
       );
 
       setToast(`SLA 已恢復計時！`);
+      if (receipt) {
+        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+      }
 
       const getResult = await intakeApi.get(client, selected.id);
       if (getResult.ok) {
@@ -680,6 +694,8 @@ export function AssistedIntakeSection({
           }}
           onRetry={handleRetry}
           record={selected}
+          assignmentReceipt={assignmentReceipts[selected.id]}
+          slaReceipt={slaReceipts[selected.id]}
           onClaimAssignment={handleClaim}
           onOpenTransfer={() => {
             setActionError(null);

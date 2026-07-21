@@ -12,13 +12,13 @@ npm run typecheck --workspace=@oday-plus/web
 ```bash
 npm test --workspace=@oday-plus/web -- AssignmentSlaSummary
 ```
-**Result**: PASS (1 test file, 7 tests passed)
+**Result**: PASS (1 test file, 13 tests passed)
 
 Full web workspace test suite execution:
 ```bash
 npm test --workspace=@oday-plus/web
 ```
-**Result**: PASS (3 test files, 19 tests passed)
+**Result**: PASS (3 test files, 25 tests passed)
 
 ### 3. Git Diff Format Validation
 ```bash
@@ -30,6 +30,9 @@ git diff --check origin/dev...HEAD
 - `apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx`
 - `apps/web/features/operator/network/intake/TransferIntakeDialog.tsx`
 - `apps/web/features/operator/network/intake/PauseSlaDialog.tsx`
+- `apps/web/features/operator/network/intake/AssistedIntakeSection.tsx`
+- `apps/web/features/operator/network/intake/IntakeDetailDialog.tsx`
 - `apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx`
 - `docs/evidence/completion/ODP-INTAKE-UX-ASSIGN-001/summary.md`
 - `docs/evidence/completion/ODP-INTAKE-UX-ASSIGN-001/verification.md`
+
