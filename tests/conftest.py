@@ -163,3 +163,25 @@ def reset_platform_metrics():
     """Reset the global default metrics registry before each test to prevent cross-test contamination."""
     from shared.observability.metrics import default_registry
     default_registry().clear()
+
+
+@pytest.fixture(autouse=True)
+def patch_synthetic_dns(request, monkeypatch):
+    """Ensure any test DNS lookup for synthetic.example resolves successfully.
+
+    Only applies to test modules related to assisted listing intake or retrieval to avoid global monkeypatching.
+    """
+    module_name = request.module.__name__
+    if not any(k in module_name for k in ("assisted_listing", "intake", "retrieval", "snapshot")):
+        return
+
+    from modules.external_data.security import assisted_listing_retrieval
+    original_resolve = assisted_listing_retrieval._resolve_host
+
+    def mock_resolve(host: str):
+        if "synthetic.example" in host:
+            return ("93.184.216.34",)
+        return original_resolve(host)
+
+    monkeypatch.setattr(assisted_listing_retrieval, "_resolve_host", mock_resolve)
+

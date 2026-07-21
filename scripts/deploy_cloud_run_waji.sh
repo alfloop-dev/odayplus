@@ -99,7 +99,7 @@ gcloud run deploy "${API_SERVICE}" \
   --project="${GCP_PROJECT}" \
   --platform=managed \
   --allow-unauthenticated \
-  --set-env-vars="ODP_ENV=dev" \
+  --set-env-vars="ODP_ENV=dev,ODP_OBJECT_STORE=gcs" \
   --quiet
 
 # Retrieve API URL

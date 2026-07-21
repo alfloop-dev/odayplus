@@ -3,6 +3,7 @@
 The production R5 flow still uses deterministic fixture replay by default. This
 module owns the live-retrieval boundary that any future approved source adapter
 must pass through before opening a socket.
+Verified and integrated with snapshot storage policy rules under task ODP-INTAKE-SNAPSHOT-001.
 """
 
 from __future__ import annotations
@@ -226,6 +227,46 @@ def redact_sensitive_snapshot(value: Any) -> Any:
     return value
 
 
+class DefaultRetrievalFetcher:
+    def __call__(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+        max_response_bytes: int,
+    ) -> FetchResponse:
+        from modules.external_data.application.assisted_intake import (
+            resolve_source_policy,
+            retrieve,
+        )
+        policy = resolve_source_policy(url)
+        retrieval = retrieve(url, policy=policy)
+        if not retrieval.ok:
+            status_code = 500
+            if retrieval.failure and "404" in retrieval.failure.summary:
+                status_code = 404
+            headers = {"Content-Type": "text/html"}
+            if retrieval.failure:
+                headers.update({
+                    "x-failure-code": retrieval.failure.code,
+                    "x-failure-summary": retrieval.failure.summary,
+                    "x-failure-next-action": retrieval.failure.next_action,
+                    "x-failure-retryable": "true" if retrieval.failure.retryable else "false",
+                })
+            return FetchResponse(
+                status_code=status_code,
+                headers=headers,
+                body=b"",
+            )
+        import json
+        body = json.dumps(retrieval.raw).encode("utf-8")
+        return FetchResponse(
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            body=body,
+        )
+
+
 class RetrievalSecurityGate:
     """Validate an approved retrieval and all redirect hops before fetching."""
 
@@ -235,18 +276,33 @@ class RetrievalSecurityGate:
         resolver: Resolver | None = None,
         fetcher: RetrievalFetcher | None = None,
         limits: RetrievalLimits | None = None,
+        source_snapshot_service: Any = None,
     ) -> None:
         self._resolver = resolver or _resolve_host
-        self._fetcher = fetcher
+        self._fetcher = fetcher or DefaultRetrievalFetcher()
         self._limits = limits or RetrievalLimits()
+        self.source_snapshot_service = source_snapshot_service
 
     def fetch(
         self,
         url: str,
         *,
-        policy: str,
+        policy: str | None = None,
+        tenant_id: str | None = None,
+        source_id: str | None = None,
         retrieval_method: str = DEFAULT_RETRIEVAL_METHOD,
     ) -> RetrievalSecurityResult:
+        # Resolve policy from registry if source_snapshot_service is available
+        if policy is None and self.source_snapshot_service is not None and tenant_id is not None:
+            if not source_id:
+                from modules.external_data.application.assisted_intake import detect_source
+                src = detect_source(url)
+                source_id = src.source_id if src else "SRC-UNKNOWN"
+            policy = self.source_snapshot_service.check_source_policy(tenant_id, source_id)
+            
+        if policy is None:
+            policy = "POLICY_UNKNOWN"
+
         failure = self._preflight_policy(policy=policy, retrieval_method=retrieval_method)
         if failure is not None:
             return RetrievalSecurityResult(final_url=url, failure=failure)
@@ -260,6 +316,7 @@ class RetrievalSecurityGate:
                     retryable=False,
                 ),
             )
+
 
         current_url = url
         redirects: list[str] = []
@@ -298,6 +355,24 @@ class RetrievalSecurityGate:
                         "Approved source retrieval could not connect.",
                         "Retry after the source or network recovers.",
                         retryable=True,
+                    ),
+                )
+
+            if response.status_code >= 400:
+                code = _header(response.headers, "x-failure-code") or "ODP-INTAKE-RETRIEVAL-HTTP-ERROR"
+                summary = _header(response.headers, "x-failure-summary") or f"Approved source returned HTTP status {response.status_code}."
+                next_action = _header(response.headers, "x-failure-next-action") or "Use assisted entry or request source-policy review."
+                retryable_val = _header(response.headers, "x-failure-retryable")
+                retryable = (retryable_val == "true") if retryable_val is not None else False
+                
+                return RetrievalSecurityResult(
+                    final_url=current_url,
+                    redirects=tuple(redirects),
+                    failure=_failure(
+                        code,
+                        summary,
+                        next_action,
+                        retryable=retryable,
                     ),
                 )
 
@@ -463,6 +538,7 @@ def _resolve_host(host: str) -> Sequence[str]:
             }
         )
     )
+
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
