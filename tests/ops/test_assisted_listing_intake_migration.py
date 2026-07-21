@@ -17,7 +17,7 @@ def test_migration_schema_upgrade_and_rollback(intake_blank_db) -> None:
 
     # 1. Apply schema and verify tables are created
     migrator.apply_schema()
-    
+
     cur = conn.cursor()
     cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'intake'")
     tables = {r[0] for r in cur.fetchall()}
@@ -49,7 +49,7 @@ def test_backfill_happy_path(intake_blank_db) -> None:
     migrator.apply_schema()
 
     tenant_id = "00000000-0000-0000-0000-000000000001"
-    
+
     # Setup legacy source inputs
     legacy_intakes = [
         {
@@ -120,7 +120,7 @@ def test_backfill_happy_path(intake_blank_db) -> None:
     # Query target tables to verify data was correctly written
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
-    
+
     cur.execute("SELECT original_url, processing_state FROM intake.intakes")
     rows = cur.fetchall()
     assert len(rows) == 1
@@ -153,7 +153,7 @@ def test_backfill_dry_run_does_not_commit(intake_blank_db) -> None:
     migrator.apply_schema()
 
     tenant_id = "00000000-0000-0000-0000-000000000001"
-    
+
     legacy_intakes = [
         {
             "id": "IN-2024",
@@ -189,7 +189,7 @@ def test_backfill_resume_skips_existing(intake_blank_db) -> None:
     migrator.apply_schema()
 
     tenant_id = "00000000-0000-0000-0000-000000000001"
-    
+
     legacy_intakes = [
         {
             "id": "IN-2024",
@@ -229,7 +229,7 @@ def test_backfill_partition_filtering(intake_blank_db) -> None:
 
     tenant_a = "00000000-0000-0000-0000-00000000000a"
     tenant_b = "00000000-0000-0000-0000-00000000000b"
-    
+
     legacy_intakes = [
         {
             "id": "IN-A",
@@ -270,7 +270,7 @@ def test_reconciliation_findings_and_duplicate_candidates(intake_blank_db) -> No
     migrator.apply_schema()
 
     tenant_id = "00000000-0000-0000-0000-000000000001"
-    
+
     # 1. Intake with missing URL (triggers MISSING_EVIDENCE finding)
     legacy_intakes = [
         {
@@ -298,7 +298,7 @@ def test_reconciliation_findings_and_duplicate_candidates(intake_blank_db) -> No
         raw_address="台北市大安區和平東路二段",
         normalized_address="台北市大安區和平東路二段",
     )
-    
+
     c1 = CandidateSite(candidate_site_id="CS-1", listing_id="L-DUP", address_id="ADDR-DUP")
     c2 = CandidateSite(candidate_site_id="CS-2", listing_id="L-DUP", address_id="ADDR-DUP")
     c3 = CandidateSite(candidate_site_id="CS-3", listing_id="L-MISSING", address_id="ADDR-MISSING")
@@ -330,7 +330,7 @@ def test_reconciliation_findings_and_duplicate_candidates(intake_blank_db) -> No
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
     cur.execute("SELECT finding_type, severity, status FROM workflow.reconciliation_findings")
     findings = cur.fetchall()
-    
+
     types = {f[0] for f in findings}
     assert "MISSING_EVIDENCE" in types
     assert "DUPLICATE_CANDIDATE" in types

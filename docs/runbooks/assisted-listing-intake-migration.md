@@ -1,7 +1,7 @@
 # Operational Runbook: Assisted Listing Intake Migration & Rollback
 
-**Migration Ref**: `ODP-INTAKE-MIGRATION-001`  
-**Subsystem**: Assisted Listing Intake & Expansion  
+**Migration Ref**: `ODP-INTAKE-MIGRATION-001`
+**Subsystem**: Assisted Listing Intake & Expansion
 **Target Schema**: `intake`, `identity`, `expansion`, `workflow`, `audit`
 
 ---

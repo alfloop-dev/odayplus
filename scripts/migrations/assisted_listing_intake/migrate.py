@@ -611,7 +611,7 @@ class IntakeMigrator:
                     WHERE tenant_id = %s AND property_id = %s AND status NOT IN ('REJECTED', 'OPENED')
                 """
                 dup_results = self._execute(check_dup, (i_tenant, prop_uuid), tenant_id=i_tenant)
-                
+
                 decision_status = "COMPLETED"
                 decision_type = "LEGACY_RECONCILED"
 
@@ -656,7 +656,7 @@ class IntakeMigrator:
 
                 # Insert Promotion Decision
                 decision_uuid = ensure_uuid(f"PD-{c_id}")
-                
+
                 # Fetch matching intake by listing_id, or by listing's URL hash
                 url_sha = None
                 listing_url_row = self._execute(
