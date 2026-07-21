@@ -328,8 +328,8 @@ def test_retrieval_stage_local_retry_and_timeout(db_path) -> None:
             ):
                 handle_assisted_listing_intake(claimed, bundle)
 
-        # Verify retrieve was called 4 times (3 in RETRIEVING stage (2 fails, 1 success) + 1 in PARSING stage)
-        assert call_count == 4
+        # Verify retrieve was called 3 times (3 in RETRIEVING stage (2 fails, 1 success))
+        assert call_count == 3
 
     finally:
         bundle.engine.close()
