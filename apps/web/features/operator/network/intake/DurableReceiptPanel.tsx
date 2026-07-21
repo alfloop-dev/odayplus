@@ -145,7 +145,7 @@ export function DurableReceiptPanel({
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
             <div>Decision State: <strong>{record.matchResult?.outcome ?? "PENDING"}</strong></div>
-            <div>Promoted Site ID: <code>{record.matchResult?.matchedCandidateId ?? "—"}</code></div>
+            <div>Promoted Site ID: <code>{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "—"}</code></div>
             <div>Audit Event: <code>{decisionReceipt ? ("audit_event_id" in decisionReceipt ? decisionReceipt.audit_event_id : "AUD-DEC-99") : "—"}</code></div>
           </div>
         </div>
@@ -163,7 +163,7 @@ export function DurableReceiptPanel({
 
         <div style={{ paddingTop: "6px", borderTop: "1px solid #334155", display: "flex", gap: "16px", color: "#cbd5e1" }}>
           <span>Trace Canonical Listing: <code>LISTING-{record.id}</code></span>
-          <span>Candidate Site: <code>SITE-{record.matchResult?.matchedCandidateId ?? "NONE"}</code></span>
+          <span>Candidate Site: <code>SITE-{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "NONE"}</code></span>
         </div>
       </div>
     </div>

@@ -8,7 +8,7 @@ import type { IntakeApiError } from "./intakeClient";
 export type IntakeErrorRecoveryProps = {
   error?: IntakeApiError | ApiError | ConflictError | null;
   stage?: string;
-  correlationId?: string;
+  correlationId?: string | null;
   preservedInput?: Record<string, unknown> | null;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
   onReplayDlq?: (jobId?: string) => void;
@@ -35,13 +35,13 @@ export function IntakeErrorRecovery({
   const [overrideReason, setOverrideReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
 
-  const errorCode = error?.code ?? "ERR_PARSE_MALFORMED_HTML";
-  const errorMessage = error?.message ?? "收件解析過程發生未預期的結構異常或連線中斷。";
-  const isRetryable = error?.retryable ?? true;
-  const corrId = error?.correlation_id ?? correlationId ?? "CORR-ERR-991204";
-  const occurredAt = "occurred_at" in (error ?? {}) ? (error as ApiError).occurred_at : new Date().toISOString();
-  const nextAction = error?.next_action ?? "RETRY";
-  const currentVersion = "current_version" in (error ?? {}) ? (error as ConflictError).current_version : 1;
+  const errorCode = (error as any)?.code ?? "ERR_PARSE_MALFORMED_HTML";
+  const errorMessage = (error as any)?.message ?? "收件解析過程發生未預期的結構異常或連線中斷。";
+  const isRetryable = (error as any)?.retryable ?? true;
+  const corrId = (error as any)?.correlation_id ?? correlationId ?? "CORR-ERR-991204";
+  const occurredAt = (error && "occurred_at" in error) ? (error as ApiError).occurred_at : new Date().toISOString();
+  const nextAction = (error as any)?.next_action ?? "RETRY";
+  const currentVersion = (error && "current_version" in error) ? (error as ConflictError).current_version : 1;
 
   // Mask credential/sensitive class data from preserved input (Purpose Binding enforcement)
   const sanitizePreservedInput = (obj?: Record<string, unknown> | null): Record<string, unknown> => {

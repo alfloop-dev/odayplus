@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import type { AssistedIntake, ApiError } from "@oday-plus/openapi-client";
 import { DurableReceiptPanel } from "../DurableReceiptPanel";
 import { EvidencePanel } from "../EvidencePanel";
@@ -11,6 +12,11 @@ const sampleIntake: AssistedIntake = {
   stage: "NEEDS_REVIEW",
   policy: "APPROVED_RETRIEVAL",
   policyLabel: "可自動抓取 (Approved)",
+  policyReason: "Approved domain for operational retrieval",
+  rawSnapshot: null,
+  snapshotId: "SNAP-100",
+  parserVersion: "1.0.0",
+  auditEvents: [],
   sourceId: "591-housing",
   originalUrl: "https://rent.591.com.tw/10492",
   canonicalUrl: "https://rent.591.com.tw/detail/10492",
@@ -23,15 +29,19 @@ const sampleIntake: AssistedIntake = {
   slaState: "ON_TRACK",
   correlationId: "CORR-TEST-998811",
   parsedFields: {
-    address_raw: { key: "address_raw", raw: "台北市信義區忠孝東路五段100號", value: "台北市信義區忠孝東路五段100號", confidence: 0.95 },
-    rent_amount: { key: "rent_amount", raw: "120000", value: 120000, confidence: 0.99 },
-    area_ping: { key: "area_ping", raw: "35.5", value: 35.5, confidence: 0.92 },
-    floor: { key: "floor", raw: "1F", value: "1F", confidence: 0.88 },
+    address_raw: { key: "address_raw", label: "地址", sourceValue: "台北市信義區忠孝東路五段100號", normalizedValue: "台北市信義區忠孝東路五段100號", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
+    rent_amount: { key: "rent_amount", label: "租金", sourceValue: 120000, normalizedValue: 120000, correctedValue: null, correctionReason: null, identity: false, lowConfidence: false },
+    area_ping: { key: "area_ping", label: "坪數", sourceValue: 35.5, normalizedValue: 35.5, correctedValue: null, correctionReason: null, identity: false, lowConfidence: false },
+    floor: { key: "floor", label: "樓層", sourceValue: "1F", normalizedValue: "1F", correctedValue: null, correctionReason: null, identity: false, lowConfidence: false },
   },
   matchResult: {
     outcome: "POSSIBLE_MATCH",
-    score: 0.86,
-    matchedCandidateId: "CAND-SITE-554",
+    outcomeLabel: "可能相符",
+    confidence: 0.86,
+    targetListingId: "CAND-SITE-554",
+    agreeingSignals: [],
+    contradictingSignals: [],
+    summary: "Address matched candidate site",
   },
 };
 
@@ -87,7 +97,7 @@ describe("IntakeProcessingDetail & Sub-components Test Suite", () => {
 
       expect(props.record.originalUrl).not.toBe(props.record.canonicalUrl);
       expect(props.record.matchResult?.outcome).toBe("POSSIBLE_MATCH");
-      expect(props.record.matchResult?.score).toBe(0.86);
+      expect(props.record.matchResult?.confidence).toBe(0.86);
       expect(props.auditReferences[0].result).toBe("ALLOWED");
     });
   });

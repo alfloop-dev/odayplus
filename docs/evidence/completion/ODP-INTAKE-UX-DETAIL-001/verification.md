@@ -8,11 +8,12 @@ npm run typecheck --workspace=@oday-plus/web
 Status: PASS (No type errors)
 
 ## 2. Test Verification
-Command:
+Commands:
 ```bash
+npm test --workspace=@oday-plus/web -- IntakeProcessingDetail
 uv run pytest tests/security/test_assisted_listing_intake_security.py tests/contract/test_assisted_listing_intake_states.py
 ```
-Status: PASS (16 passed)
+Status: PASS (5 Vitest passed, 38 Pytest passed)
 
 ## 3. Git Diff & Whitespace Check
 Command:

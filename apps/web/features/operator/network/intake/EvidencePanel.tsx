@@ -23,16 +23,16 @@ export function EvidencePanel({
 }: EvidencePanelProps) {
   const parsedFieldList: FieldValue[] = fields ?? Object.values(record.parsedFields ?? {}).map((f) => ({
     field_path: f.key,
-    parsed: f.raw,
-    normalized: f.value,
-    confidence: f.confidence,
+    parsed: (f as any).raw ?? f.sourceValue,
+    normalized: (f as any).value ?? f.normalizedValue,
+    confidence: (f as any).confidence ?? (f.lowConfidence ? 0.4 : 0.95),
     classification: (f.key.toLowerCase().includes("owner") || f.key.toLowerCase().includes("contact") ? "CONFIDENTIAL" : "PUBLIC") as FieldValue["classification"],
     masked: false,
   }));
 
   const urlDiffers = record.originalUrl && record.canonicalUrl && record.originalUrl !== record.canonicalUrl;
   const matchResult = record.matchResult;
-  const humanDecision = record.decision;
+  const humanDecision = (record as any).decision;
 
   return (
     <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
@@ -90,11 +90,11 @@ export function EvidencePanel({
             </div>
             <div>
               <span style={{ color: "#64748b" }}>Snapshot ID: </span>
-              <span style={{ fontFamily: "monospace" }}>{record.sourceSnapshotId ?? record.sourceId ?? "—"}</span>
+              <span style={{ fontFamily: "monospace" }}>{record.snapshotId ?? (record as any).sourceSnapshotId ?? record.sourceId ?? "—"}</span>
             </div>
             <div>
               <span style={{ color: "#64748b" }}>Parser Run ID: </span>
-              <span style={{ fontFamily: "monospace" }}>{record.parserRunId ?? "PR-RUN-88412"}</span>
+              <span style={{ fontFamily: "monospace" }}>{record.parserVersion ?? (record as any).parserRunId ?? "PR-RUN-88412"}</span>
             </div>
           </div>
         </div>
@@ -125,12 +125,12 @@ export function EvidencePanel({
             <div>
               <span style={{ color: "#64748b" }}>相似度得分: </span>
               <span style={{ fontWeight: 700 }}>
-                {matchResult?.score !== undefined ? `${Math.round(matchResult.score * 100)}%` : "—"}
+                {matchResult ? `${Math.round((matchResult.confidence ?? (matchResult as any).score ?? 0) * 100)}%` : "—"}
               </span>
             </div>
             <div>
               <span style={{ color: "#64748b" }}>候選標的物件 ID: </span>
-              <span style={{ fontFamily: "monospace" }}>{matchResult?.matchedCandidateId ?? "—"}</span>
+              <span style={{ fontFamily: "monospace" }}>{matchResult?.targetListingId ?? (matchResult as any)?.matchedCandidateId ?? "—"}</span>
             </div>
           </div>
         </div>

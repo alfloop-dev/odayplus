@@ -34,7 +34,7 @@ export function IntakeStageTimeline({
   const steps = stageSteps(record);
   const activeJob = jobs.find((j) => j.status === "RUNNING" || j.status === "RETRYING" || j.status === "DEAD_LETTER") ?? jobs[0];
   const isDlq = activeJob?.status === "DEAD_LETTER" || record.stage === "FAILED";
-  const isCancelled = record.stage === "CANCELLED";
+  const isCancelled = (record.stage as string) === "CANCELLED";
 
   return (
     <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>

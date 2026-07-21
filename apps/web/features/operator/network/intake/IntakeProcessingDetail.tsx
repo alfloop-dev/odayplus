@@ -332,7 +332,7 @@ export function IntakeProcessingDetail({
             error={error}
             stage={record.stage}
             correlationId={record.correlationId}
-            preservedInput={record.parsedFields ? Object.fromEntries(Object.values(record.parsedFields).map(f => [f.key, f.value])) : null}
+            preservedInput={record.parsedFields ? Object.fromEntries(Object.values(record.parsedFields).map(f => [f.key, (f as any).value ?? f.normalizedValue ?? f.sourceValue])) : null}
             onRetry={onRetry}
             onReplayDlq={onReplayDlq}
             onCancel={onCancel}
