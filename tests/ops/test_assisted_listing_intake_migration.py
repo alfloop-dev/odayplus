@@ -1037,4 +1037,3 @@ def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(intake_bla
     assert verify_res["blocking_findings"] == 0
     assert verify_res["shadow_comparison_success"] is True
 
-
