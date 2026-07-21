@@ -1,4 +1,6 @@
-export { AssistedIntakeSection } from "./AssistedIntakeSection";
+export { AssignmentSlaSummary } from "./AssignmentSlaSummary";
+export { TransferIntakeDialog } from "./TransferIntakeDialog";
+export { PauseSlaDialog } from "./PauseSlaDialog";
 export { IntakeAssignmentSlaDialog } from "./IntakeAssignmentSlaDialog";
 export { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 export { IntakeStageTimeline } from "./IntakeStageTimeline";
@@ -14,3 +16,4 @@ export {
 export type { IntakeApiError, IntakeResult } from "./intakeClient";
 export * from "./types";
 export * from "./urlState";
+
