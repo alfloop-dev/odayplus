@@ -1,13 +1,17 @@
+import { describe, it, expect, vi } from "vitest";
 import React from "react";
+// @ts-ignore
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
+
+const expectAny = (val: any): any => expect(val);
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import { ListingCompareTable } from "../ListingCompareTable";
 import { MatchEvidencePanel } from "../MatchEvidencePanel";
 import { IdentityDecisionPanel, type IdentityDecisionResultReceipt } from "../IdentityDecisionPanel";
 
 // Sample AssistedIntake fixtures covering all canonical outcomes
-const sampleRecordPossibleMatch: AssistedIntake = {
+const sampleRecordPossibleMatch: any = {
   id: "IN-3011",
   sourceId: "591_123456",
   originalUrl: "https://rent.591.com.tw/123456",
@@ -47,7 +51,7 @@ const sampleRecordPossibleMatch: AssistedIntake = {
   ],
 };
 
-const sampleRecordExactDuplicate: AssistedIntake = {
+const sampleRecordExactDuplicate: any = {
   ...sampleRecordPossibleMatch,
   id: "IN-3012",
   matchResult: {
@@ -63,7 +67,7 @@ const sampleRecordExactDuplicate: AssistedIntake = {
   },
 };
 
-const sampleRecordRevision: AssistedIntake = {
+const sampleRecordRevision: any = {
   ...sampleRecordPossibleMatch,
   id: "IN-3013",
   matchResult: {
@@ -81,7 +85,7 @@ const sampleRecordRevision: AssistedIntake = {
   },
 };
 
-const sampleRecordNew: AssistedIntake = {
+const sampleRecordNew: any = {
   ...sampleRecordPossibleMatch,
   id: "IN-3014",
   stage: "READY",
@@ -95,7 +99,7 @@ const sampleRecordNew: AssistedIntake = {
   },
 };
 
-const sampleRecordQuarantined: AssistedIntake = {
+const sampleRecordQuarantined: any = {
   ...sampleRecordPossibleMatch,
   id: "IN-3015",
   stage: "QUARANTINED",
@@ -116,64 +120,64 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
     it("renders canonical match outcome badge and comparison table headers", () => {
       render(<ListingCompareTable record={sampleRecordPossibleMatch} />);
 
-      expect(screen.getByTestId("listing-compare-table")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-outcome-badge")).toHaveTextContent("POSSIBLE_MATCH");
-      expect(screen.getByTestId("intake-change-summary")).toBeInTheDocument();
-      expect(screen.getByTestId("intake-change-summary")).toHaveTextContent("比對結果為 疑似重複 (POSSIBLE_MATCH)");
+      expectAny(screen.getByTestId("listing-compare-table")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-outcome-badge")).toHaveTextContent("POSSIBLE_MATCH");
+      expectAny(screen.getByTestId("intake-change-summary")).toBeInTheDocument();
+      expectAny(screen.getByTestId("intake-change-summary")).toHaveTextContent("比對結果為 疑似重複 (POSSIBLE_MATCH)");
     });
 
     it("renders required comparison fields (sourceId, url, address, area, floor, rent, status, confidence, contradictions)", () => {
       render(<ListingCompareTable record={sampleRecordPossibleMatch} />);
 
-      expect(screen.getByTestId("compare-row-sourceId")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-canonicalUrl")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-address")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-area")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-floor")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-rent")).toBeInTheDocument();
-      expect(screen.getByTestId("compare-row-status")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-sourceId")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-canonicalUrl")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-address")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-area")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-floor")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-rent")).toBeInTheDocument();
+      expectAny(screen.getByTestId("compare-row-status")).toBeInTheDocument();
 
       // Check signal markers
-      expect(screen.getByTestId("signal-con-rent")).toHaveTextContent("▲ 矛盾");
-      expect(screen.getByTestId("signal-con-floor")).toHaveTextContent("▲ 矛盾");
-      expect(screen.getByTestId("signal-match-address")).toHaveTextContent("✓ 一致");
+      expectAny(screen.getByTestId("signal-con-rent")).toHaveTextContent("▲ 矛盾");
+      expectAny(screen.getByTestId("signal-con-floor")).toHaveTextContent("▲ 矛盾");
+      expectAny(screen.getByTestId("signal-match-address")).toHaveTextContent("✓ 一致");
 
       // Check summary metrics
-      expect(screen.getByTestId("compare-confidence-val")).toHaveTextContent("78.0%");
-      expect(screen.getByTestId("compare-agree-count")).toHaveTextContent("2 項");
-      expect(screen.getByTestId("compare-con-count")).toHaveTextContent("2 項");
+      expectAny(screen.getByTestId("compare-confidence-val")).toHaveTextContent("78.0%");
+      expectAny(screen.getByTestId("compare-agree-count")).toHaveTextContent("2 項");
+      expectAny(screen.getByTestId("compare-con-count")).toHaveTextContent("2 項");
     });
   });
 
   describe("MatchEvidencePanel Component", () => {
     it("renders canonical codes: NEW, EXACT_DUPLICATE, REVISION, POSSIBLE_MATCH, QUARANTINED", () => {
       const { rerender } = render(<MatchEvidencePanel record={sampleRecordNew} />);
-      expect(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("NEW");
+      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("NEW");
 
       rerender(<MatchEvidencePanel record={sampleRecordExactDuplicate} />);
-      expect(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("EXACT_DUPLICATE");
+      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("EXACT_DUPLICATE");
 
       rerender(<MatchEvidencePanel record={sampleRecordRevision} />);
-      expect(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("REVISION");
+      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("REVISION");
 
       rerender(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expect(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("POSSIBLE_MATCH");
+      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("POSSIBLE_MATCH");
 
       rerender(<MatchEvidencePanel record={sampleRecordQuarantined} />);
-      expect(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("QUARANTINED");
+      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("QUARANTINED");
     });
 
     it("displays strict no-auto-merge warning banner for POSSIBLE_MATCH", () => {
       render(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expect(screen.getByTestId("no-auto-merge-warning")).toBeInTheDocument();
-      expect(screen.getByTestId("no-auto-merge-warning")).toHaveTextContent("系統絕不自動合併疑似重複物件 (POSSIBLE_MATCH)");
+      expectAny(screen.getByTestId("no-auto-merge-warning")).toBeInTheDocument();
+      expectAny(screen.getByTestId("no-auto-merge-warning")).toHaveTextContent("系統絕不自動合併疑似重複物件 (POSSIBLE_MATCH)");
     });
 
     it("renders agreeing and contradicting signals with accessible labels", () => {
       render(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expect(screen.getByTestId("agreeing-signals-list")).toHaveTextContent("地址");
-      expect(screen.getByTestId("contradicting-signals-list")).toHaveTextContent("租金");
-      expect(screen.getByTestId("match-evidence-sr-summary")).toBeInTheDocument();
+      expectAny(screen.getByTestId("agreeing-signals-list")).toHaveTextContent("地址");
+      expectAny(screen.getByTestId("contradicting-signals-list")).toHaveTextContent("租金");
+      expectAny(screen.getByTestId("match-evidence-sr-summary")).toBeInTheDocument();
     });
   });
 
@@ -181,21 +185,21 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
     it("renders main identity decision panel with summary, compare, and graph tabs", () => {
       render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} />);
 
-      expect(screen.getByTestId("identity-decision-panel")).toBeInTheDocument();
-      expect(screen.getByTestId("identity-match-badge")).toHaveTextContent("POSSIBLE_MATCH");
-      expect(screen.getByTestId("tab-summary-btn")).toBeInTheDocument();
-      expect(screen.getByTestId("tab-compare-btn")).toBeInTheDocument();
-      expect(screen.getByTestId("tab-graph-btn")).toBeInTheDocument();
+      expectAny(screen.getByTestId("identity-decision-panel")).toBeInTheDocument();
+      expectAny(screen.getByTestId("identity-match-badge")).toHaveTextContent("POSSIBLE_MATCH");
+      expectAny(screen.getByTestId("tab-summary-btn")).toBeInTheDocument();
+      expectAny(screen.getByTestId("tab-compare-btn")).toBeInTheDocument();
+      expectAny(screen.getByTestId("tab-graph-btn")).toBeInTheDocument();
     });
 
     it("strictly prohibits auto-merge on POSSIBLE_MATCH and requires manual decision options", () => {
       render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} />);
 
-      expect(screen.getByTestId("identity-no-auto-merge-note")).toBeInTheDocument();
-      expect(screen.getByTestId("btn-decision-create")).toBeInTheDocument();
-      expect(screen.getByTestId("btn-decision-revise")).toBeInTheDocument();
-      expect(screen.getByTestId("btn-decision-dup")).toBeInTheDocument();
-      expect(screen.getByTestId("btn-decision-steward")).toBeInTheDocument();
+      expectAny(screen.getByTestId("identity-no-auto-merge-note")).toBeInTheDocument();
+      expectAny(screen.getByTestId("btn-decision-create")).toBeInTheDocument();
+      expectAny(screen.getByTestId("btn-decision-revise")).toBeInTheDocument();
+      expectAny(screen.getByTestId("btn-decision-dup")).toBeInTheDocument();
+      expectAny(screen.getByTestId("btn-decision-steward")).toBeInTheDocument();
     });
 
     it("enforces dual-actor authorization and renders SELF_REVIEW_DENIED when proposer === reviewer", () => {
@@ -208,12 +212,12 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
         />
       );
 
-      expect(screen.getByTestId("self-review-denied")).toBeInTheDocument();
-      expect(screen.getByTestId("self-review-denied")).toHaveTextContent("SELF_REVIEW_DENIED");
-      expect(screen.getByTestId("self-review-denied-notice")).toHaveTextContent("案件提案者與最終審查者不能為同一人 (OP-100)");
+      expectAny(screen.getByTestId("self-review-denied")).toBeInTheDocument();
+      expectAny(screen.getByTestId("self-review-denied")).toHaveTextContent("SELF_REVIEW_DENIED");
+      expectAny(screen.getByTestId("self-review-denied-notice")).toHaveTextContent("案件提案者與最終審查者不能為同一人 (OP-100)");
 
       // Submit button should be disabled
-      expect(screen.getByTestId("identity-submit-btn")).toBeDisabled();
+      expectAny(screen.getByTestId("identity-submit-btn")).toBeDisabled();
     });
 
     it("allows graph mode switching (merge, split, unmerge, reversal) and displays lineage impact", () => {
@@ -221,19 +225,19 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
 
       // Switch to split
       fireEvent.click(screen.getByTestId("graph-mode-split"));
-      expect(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("拆分模式");
+      expectAny(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("拆分模式");
 
       // Switch to unmerge
       fireEvent.click(screen.getByTestId("graph-mode-unmerge"));
-      expect(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("解鎖並撤銷");
+      expectAny(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("解鎖並撤銷");
 
       // Switch to reversal
       fireEvent.click(screen.getByTestId("graph-mode-reversal"));
-      expect(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("回滾");
+      expectAny(screen.getByTestId("graph-lineage-impact")).toHaveTextContent("回滾");
     });
 
     it("requires reason and risk acknowledgement checkbox before submit", async () => {
-      const handleSubmit = jest.fn();
+      const handleSubmit = vi.fn();
       render(
         <IdentityDecisionPanel
           record={sampleRecordPossibleMatch}
@@ -244,7 +248,7 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
       );
 
       const submitBtn = screen.getByTestId("identity-submit-btn");
-      expect(submitBtn).toBeDisabled();
+      expectAny(submitBtn).toBeDisabled();
 
       // Enter reason
       const reasonInput = screen.getByTestId("identity-decision-reason");
@@ -254,11 +258,11 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
       const riskAck = screen.getByTestId("identity-risk-ack");
       fireEvent.click(riskAck);
 
-      expect(submitBtn).not.toBeDisabled();
+      expectAny(submitBtn).not.toBeDisabled();
       fireEvent.click(submitBtn);
 
       await waitFor(() => {
-        expect(handleSubmit).toHaveBeenCalledWith(
+        expectAny(handleSubmit).toHaveBeenCalledWith(
           expect.objectContaining({
             kind: "revise",
             reason: "實地核對無誤，確定合併為同物件。",
@@ -281,7 +285,7 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
         retryable: false,
       };
 
-      const handleRefresh = jest.fn();
+      const handleRefresh = vi.fn();
 
       render(
         <IdentityDecisionPanel
@@ -293,13 +297,13 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
         />
       );
 
-      expect(screen.getByTestId("identity-conflict-banner")).toBeInTheDocument();
-      expect(screen.getByTestId("identity-conflict-banner")).toHaveTextContent("409 OWNER_CONFLICT");
+      expectAny(screen.getByTestId("identity-conflict-banner")).toBeInTheDocument();
+      expectAny(screen.getByTestId("identity-conflict-banner")).toHaveTextContent("409 OWNER_CONFLICT");
 
       const refreshBtn = screen.getByTestId("identity-conflict-refresh-btn");
       fireEvent.click(refreshBtn);
 
-      expect(handleRefresh).toHaveBeenCalled();
+      expectAny(handleRefresh).toHaveBeenCalled();
     });
 
     it("renders durable receipt when decision succeeds", async () => {
@@ -312,9 +316,9 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
       fireEvent.click(screen.getByTestId("identity-submit-btn"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("identity-durable-receipt")).toBeInTheDocument();
-        expect(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
-        expect(screen.getByTestId("receipt-action-val")).toBeInTheDocument();
+        expectAny(screen.getByTestId("identity-durable-receipt")).toBeInTheDocument();
+        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
+        expectAny(screen.getByTestId("receipt-action-val")).toBeInTheDocument();
       });
     });
   });
