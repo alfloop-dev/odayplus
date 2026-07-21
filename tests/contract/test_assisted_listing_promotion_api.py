@@ -61,8 +61,8 @@ def test_promotion_api_contract_flow() -> None:
         repository = InMemoryListingRepository()
         app.state.listing_repository = repository
 
-    from shared.domain.models import Listing, AddressLocation
     from modules.listing.domain.models import ListingDedupKey
+    from shared.domain.models import AddressLocation, Listing
 
     address = AddressLocation(
         address_id="A-99",

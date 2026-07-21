@@ -93,20 +93,25 @@ class PromotionService:
                 f"Candidate gate failed: missing {', '.join(validation_errors)}"
             )
 
-        # Check duplicate candidate
-        for cand in self.listing_repository.list_candidates():
-            c_listing_id = cand.get("listingId") if hasattr(cand, "get") else cand.candidate_site.listing_id
-            if c_listing_id == target_listing_id:
-                raise DomainValidationError(
-                    DenialCode.DEPENDENCY_CONFLICT,
-                    "DUPLICATE_CANDIDATE"
-                )
-
         # Idempotency check: return existing promotion for this intake
         existing_promos = self.promotion_repository.list_promotions()
         for promo in existing_promos:
             if promo.get("intake_id") == intake_id:
                 return promo
+
+        # Check duplicate candidate
+        for cand in self.listing_repository.list_candidates():
+            if hasattr(cand, "candidate_site"):
+                c_listing_id = getattr(cand.candidate_site, "listing_id", None)
+            elif hasattr(cand, "get"):
+                c_listing_id = cand.get("listingId") or cand.get("listing_id")
+            else:
+                c_listing_id = getattr(cand, "listing_id", None)
+            if c_listing_id == target_listing_id:
+                raise DomainValidationError(
+                    DenialCode.DEPENDENCY_CONFLICT,
+                    "DUPLICATE_CANDIDATE"
+                )
 
         # Initialize promotion decision
         promo_id = str(uuid.uuid4())
@@ -254,7 +259,7 @@ class PromotionService:
 
             # Get fitScore or equivalent demand signal
             if hasattr(listing, "get"):
-                fit_score = listing.get("fitScore") or listing.get("fit_score") or 75.0
+                fit_score = listing.get("heat_zone_score") or listing.get("fitScore") or listing.get("fit_score")
                 h3_val = listing.get("heatZoneId") or listing.get("hz") or listing.get("h3Index") or listing.get("h3_index") or "HZ-01"
                 address_val = listing.get("address") or listing.get("address_raw") or ""
                 rent_val = listing.get("rentPerMonth") or listing.get("rent_amount") or 0.0
@@ -262,6 +267,7 @@ class PromotionService:
                 frontage_val = listing.get("frontage_m") or listing.get("frontage") or 0.0
                 conf_val = listing.get("geocodeConfidence") or listing.get("confidence") or 1.0
                 title_val = listing.get("title") or f"{listing_id} 候選點"
+                ds_id = listing.get("datasetSnapshotId") or listing.get("snapshot_id") or listing.get("dataset_snapshot_id")
             else:
                 # Domain object Listing
                 address_obj = None
@@ -276,11 +282,27 @@ class PromotionService:
                 area_val = listing.area_ping
                 frontage_val = listing.frontage_m
                 conf_val = address_obj.geocode_confidence if address_obj else listing.confidence
-                fit_score = 75.0
+                fit_score = getattr(listing, "heat_zone_score", None) or getattr(listing, "fit_score", None)
                 title_val = f"{listing_id} 候選點"
+                ds_id = getattr(listing, "snapshot_id", None)
+
+            if fit_score is None:
+                from modules.heatzone.domain.scoring import HeatZoneFeatureInput, score_heatzones
+                try:
+                    hz_results = score_heatzones([HeatZoneFeatureInput(h3_index=h3_val)])
+                    fit_score = hz_results[0].score if hz_results else 75.0
+                except Exception:
+                    fit_score = 75.0
+
+            if ds_id and str(ds_id).startswith("FS-"):
+                ds_snapshot_id = str(ds_id)
+            elif ds_id:
+                ds_snapshot_id = f"FS-{ds_id}"
+            else:
+                ds_snapshot_id = f"FS-{listing_id}"
 
             # Derive candidate fields from the listing and a real scoring call
-            from modules.sitescore.domain.scoring import score_site, SiteScoreFeatureInput
+            from modules.sitescore.domain.scoring import SiteScoreFeatureInput, score_site
             feature_input = SiteScoreFeatureInput(
                 candidate_site_id=candidate_id,
                 heat_zone_id=h3_val,
@@ -314,15 +336,15 @@ class PromotionService:
                 "score": score_val,
                 "recommendation": rec_val,
                 "modelVersion": score_report.model_version,
-                "datasetSnapshotId": "FS-20260704-0600",
+                "datasetSnapshotId": ds_snapshot_id,
                 "missingData": [],
                 "reviewId": f"RV-{uuid.uuid4().hex[:8].upper()}",
             }
 
             # Save candidate
             if hasattr(self.listing_repository, "save_candidate") and not hasattr(self.listing_repository, "_state"):
-                from shared.domain.models import CandidateSite, AddressLocation
                 from modules.listing.domain.models import CandidateSiteDraft
+                from shared.domain.models import AddressLocation, CandidateSite
                 orig_addr = None
                 if hasattr(self.listing_repository, "addresses"):
                     for addr in self.listing_repository.addresses:
@@ -350,12 +372,12 @@ class PromotionService:
                     candidate_site=c_site,
                     heat_zone_id=h3_val,
                     status="CANDIDATE",
+                    score=score_val,
+                    recommendation=rec_val,
+                    model_version=score_report.model_version,
+                    dataset_snapshot_id=ds_snapshot_id,
+                    review_id=candidate_dict["reviewId"],
                 )
-                object.__setattr__(draft, "score", score_val)
-                object.__setattr__(draft, "recommendation", rec_val)
-                object.__setattr__(draft, "model_version", score_report.model_version)
-                object.__setattr__(draft, "dataset_snapshot_id", "FS-20260704-0600")
-                object.__setattr__(draft, "review_id", candidate_dict["reviewId"])
                 self.listing_repository.save_candidate(draft)
             else:
                 self.listing_repository.save_candidate(candidate_dict)
@@ -482,7 +504,7 @@ class PromotionService:
             promo["status"] = to_status_str(PromotionState.SCORE_QUEUED)
             promo["version"] = promo_agg.version
 
-            score_job_id = f"JOB-SCORE-{uuid.uuid4().hex[:8]}"
+            score_job_id = str(uuid.uuid4())
             promo["site_score_job_id"] = score_job_id
             self.promotion_repository.save_promotion(promo)
 

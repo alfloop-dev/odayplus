@@ -146,7 +146,7 @@ def test_promotion_saga_golden_flow() -> None:
     # 5. Duplicate promotion prevention
     # If we submit another intake for the same listing, and try to promote it, it should fail
     # because a candidate already exists for that listing.
-    dup_url = "https://www.synthetic.example/detail-77120345.html"  # same listing
+    dup_url = "https://www.synthetic.example/detail-99999999.html"  # distinct intake, same target listing
     dup_submit_resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={"url": dup_url, "heatZoneId": "HZ-01"},

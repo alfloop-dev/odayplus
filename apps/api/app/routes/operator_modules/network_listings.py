@@ -598,6 +598,7 @@ def create_network_listings_sub_router(
                 actor_name=actor_name,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                target_listing_id=getattr(body, "targetListingId", None),
             )
             return mask_intake(principal, result)
         except NetworkListingNotFound as exc:

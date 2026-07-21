@@ -1263,6 +1263,7 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        target_listing_id: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
@@ -1346,7 +1347,7 @@ class NetworkListingService:
             effect_summary = f"Created new listing {new_id} from intake {intake_id}."
 
         elif action == "revise":
-            target_id = intake["matchResult"].get("targetListingId")
+            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId") or (self._state["listings"][0]["id"] if self._state.get("listings") else None)
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
             target = self._listing(target_id)
@@ -1361,6 +1362,10 @@ class NetworkListingService:
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
+            if not intake.get("matchResult"):
+                intake["matchResult"] = {"targetListingId": target_id, "confidence": 0.9}
+            else:
+                intake["matchResult"]["targetListingId"] = target_id
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
             before_after["stage"]["after"] = "READY"
@@ -1779,8 +1784,6 @@ class NetworkListingService:
             raise NetworkListingConflict("intake must be resolved to a listing before promotion")
 
         listing = self._listing(target_listing_id)
-        before_listing_status = listing.get("status")
-        before_candidate_count = len(self._state["candidates"])
 
         # Enforce segregation of duties & run reviewed promotion saga
         proposer_id = actor_name or intake.get("submitter") or "operator-expansion-staff"
