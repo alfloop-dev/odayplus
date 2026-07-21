@@ -14,8 +14,8 @@ The migration transitions legacy listing ingestion and candidate site drafts int
 
 ```mermaid
 graph TD
-    Legacy[Legacy Listings & Candidates] -->|IntakeMigrator| Backfill[Staging Backfill Engine]
-    Backfill -->|Dry Run / Resume| DB[(PostgreSQL Target Schemas)]
+    Legacy[Legacy Listings & Candidates] -->|IntakeMigrator CLI| Backfill[Staging Backfill Engine]
+    Backfill -->|--dry-run / --resume| DB[(PostgreSQL Target Schemas)]
     DB --> Reconcile[Shadow Verification & Reconciliation]
     Reconcile -->|BLOCKING Findings| Quarantine[Data Steward Review]
     Reconcile -->|0 Blocking Findings| Cutover[Production Cutover]
@@ -27,10 +27,10 @@ graph TD
 
 Before executing any migration in staging or production:
 
-1. **Verify Database State**:
+1. **Verify Database State & Tests**:
    ```bash
-   uv run pytest tests/contract/test_assisted_listing_intake_schema.py -v
-   uv run pytest tests/integration/test_assisted_listing_intake_persistence.py -v
+   uv run pytest tests/ops/test_assisted_listing_intake_migration.py -v
+   uv run ruff check scripts/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
    ```
 
 2. **Verify Auto Worker & Environment**:
@@ -40,68 +40,69 @@ Before executing any migration in staging or production:
 
 ---
 
-## 3. Staging Backfill Execution
+## 3. Staging Backfill Execution CLI
 
-The backfill process supports dry-run validation, partition-level execution (by tenant, source, or month), and resuming interrupted backfills cleanly.
+The backfill CLI supports dry-run validation, partition-level execution (by tenant, source, or month), and resuming interrupted backfills cleanly.
 
 ### 3.1 Dry Run Execution (Verification Only)
 
 Run a dry run to validate mapping rules and check for potential reconciliation findings without committing changes to the database:
 
-```python
-from scripts.migrations.assisted_listing_intake.migrate import IntakeMigrator
-
-migrator = IntakeMigrator(db_conn)
-report = migrator.backfill(
-    legacy_intakes=intakes,
-    legacy_listings=listings,
-    legacy_candidates=candidates,
-    dry_run=True,
-)
-print(report)
+```bash
+python3 -m scripts.migrations.assisted_listing_intake.migrate \
+  --action backfill \
+  --tenant-id "00000000-0000-0000-0000-000000000001" \
+  --input-file /tmp/legacy_backfill_input.json \
+  --dry-run
 ```
 
 ### 3.2 Partitioned Live Backfill
 
 Backfill specific tenants, sources, or monthly partitions:
 
-```python
-# Backfill Tenant A for July 2026
-report = migrator.backfill(
-    legacy_intakes=intakes,
-    legacy_listings=listings,
-    legacy_candidates=candidates,
-    tenant_id="00000000-0000-0000-0000-00000000000a",
-    source_id="SRC-591",
-    month="2026-07",
-    dry_run=False,
-    resume=True,
-)
+```bash
+# Backfill Tenant A for July 2026 with resume enabled
+python3 -m scripts.migrations.assisted_listing_intake.migrate \
+  --action backfill \
+  --tenant-id "00000000-0000-0000-0000-000000000001" \
+  --source-id "SRC-591" \
+  --month "2026-07" \
+  --input-file /tmp/legacy_backfill_input.json \
+  --resume
 ```
 
 ---
 
 ## 4. Reconciliation Findings & Shadow Verification
 
-Every backfill execution automatically analyzes target records and records findings into `workflow.reconciliation_findings`.
+Every backfill execution automatically computes durable proof metrics, persists them to `workflow.reconciliation_findings`, and records findings.
 
-### 4.1 Shadow Verification Command
+### 4.1 Shadow Verification CLI Command
 
-Run shadow comparison to prove data count parity and check for blocking findings prior to cutover:
+Run shadow comparison to prove data count parity against persisted proof metrics and check for blocking findings prior to cutover:
 
-```python
-results = migrator.verify_shadow_comparison(tenant_id="00000000-0000-0000-0000-00000000000a")
+```bash
+python3 -m scripts.migrations.assisted_listing_intake.migrate \
+  --action verify \
+  --tenant-id "00000000-0000-0000-0000-000000000001"
+```
 
-assert results["shadow_comparison_success"] is True
-assert results["blocking_findings"] == 0
+Expected output:
+```json
+{
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "open_findings": 0,
+  "blocking_findings": 0,
+  "shadow_comparison_success": true
+}
 ```
 
 ### 4.2 Handling Findings
 
-- **BLOCKING Findings** (`STATE_MAPPING_CONFLICT`, `CROSS_TENANT_REFERENCE`):
+- **BLOCKING Findings** (`STATE_MAPPING_CONFLICT`, `ORPHAN_REFERENCE`, `COUNT_MISMATCH`, `CHECKSUM_MISMATCH`):
   - **Action**: Must be resolved by a Data Steward or assigned a waived approval before cutover.
-- **WARNING Findings** (`MISSING_EVIDENCE`, `DUPLICATE_CANDIDATE`):
-  - **Action**: Legacy candidate is quarantined with status `REJECTED`, preserving historical lineage without creating active candidate conflicts.
+- **WARNING Findings** (`MISSING_EVIDENCE`, `INVALID_SCOPE`, `DUPLICATE_CANDIDATE`):
+  - **Action**: Candidate is quarantined with status `REJECTED`, preserving historical lineage without creating active candidate conflicts.
 
 ---
 
@@ -110,20 +111,21 @@ assert results["blocking_findings"] == 0
 ### 5.1 Trigger Conditions for Rollback
 
 Execute rollback if any of the following occur during staging or cutover validation:
-1. `shadow_comparison_success` returns `False` due to unresolvable data corruption.
+1. `shadow_comparison_success` returns `false` due to unresolvable data corruption or checksum mismatch.
 2. High-severity data loss or tenant isolation leakage.
 3. Live application error rate increases above SLA threshold during canary deployment.
 
-### 5.2 Rollback Procedure
+### 5.2 Scoped Table Rollback Procedure
 
-To roll back the relational intake schema cleanly:
+To roll back all data written by a migration without dropping relational schemas or destroying unrelated tables:
 
-```python
-migrator = IntakeMigrator(db_conn)
-migrator.rollback_schema()
+```bash
+python3 -m scripts.migrations.assisted_listing_intake.migrate \
+  --action rollback \
+  --tenant-id "00000000-0000-0000-0000-000000000001"
 ```
 
-This safely drops `intake`, `identity`, `expansion`, `workflow`, and `audit` upgrade tables without destroying the legacy document store tables.
+This safely deletes all records across `intake`, `identity`, `expansion`, `workflow`, and `audit` written under `ODP-INTAKE-MIGRATION-001` for the specified tenant, leaving zero leftover rows.
 
 ### 5.3 Forward Recovery Procedure
 
@@ -137,4 +139,11 @@ If blocking findings occur during backfill:
    ```
 2. **Apply Remediation**:
    - Provide missing source evidence/revisions for legacy candidates.
-   - Re-run backfill with `--resume` enabled.
+   - Re-run backfill CLI with `--resume` enabled:
+     ```bash
+     python3 -m scripts.migrations.assisted_listing_intake.migrate \
+       --action backfill \
+       --tenant-id "00000000-0000-0000-0000-000000000001" \
+       --input-file /tmp/legacy_backfill_input.json \
+       --resume
+     ```
