@@ -420,6 +420,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
                 async_intake=is_async,
+                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
             )
             return mask_intake(principal, result)
         except ValueError as exc:
@@ -643,6 +644,7 @@ def create_network_listings_sub_router(
                 actor_name=actor_name,
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
+                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
             )
             return mask_intake(principal, result)
         except NetworkListingNotFound as exc:

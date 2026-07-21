@@ -433,6 +433,12 @@ def test_idempotent_high_impact_replay_does_not_append_audit() -> None:
 
 
 def test_raw_snapshot_redacts_contact_and_token_material(monkeypatch: pytest.MonkeyPatch) -> None:
+    from modules.external_data.security import assisted_listing_retrieval
+    monkeypatch.setattr(
+        assisted_listing_retrieval,
+        "_resolve_host",
+        lambda host: ("93.184.216.34",)
+    )
     url = "https://www.synthetic.example/detail-70000001.html"
     monkeypatch.setitem(
         assisted_intake.RETRIEVAL_CORPUS,
