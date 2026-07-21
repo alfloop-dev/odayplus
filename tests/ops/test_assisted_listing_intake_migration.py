@@ -562,3 +562,258 @@ def test_backfill_resume_skips_existing(intake_blank_db) -> None:
 
     assert res["counts"]["intakes_processed"] == 0
     assert res["counts"]["skipped_due_to_resume"] == 1
+
+
+def test_blocker3_rollback_preserves_unrelated_tenant_data(intake_blank_db) -> None:
+    """Verify rollback safely preserves unrelated intakes and live audit events in the same tenant."""
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    # 1. Backfill migration data
+    legacy_intake = {
+        "id": "IN-MIG-1",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-mig.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+    }
+    migrator.backfill(
+        legacy_intakes=[legacy_intake],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+    )
+
+    # 2. Insert unrelated live intake and unrelated live audit event
+    cur = conn.cursor()
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    cur.execute(
+        """
+        INSERT INTO intake.intakes (
+            intake_id, tenant_id, heat_zone_id, submitter_subject_id,
+            intake_method, original_url, canonical_url, canonical_url_sha256,
+            source_id, source_policy_state, processing_state, resolved_listing_id,
+            correlation_id, version, submitted_at, last_transition_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, NOW(), NOW())
+        """,
+        (
+            ensure_uuid("IN-LIVE-001"),
+            tenant_id,
+            ensure_uuid("HZ-01"),
+            ensure_uuid("user-1"),
+            "URL",
+            "https://591.com.tw/live.html",
+            "https://591.com.tw/live.html",
+            "sha-live",
+            "SRC-591",
+            "APPROVED_RETRIEVAL",
+            "READY",
+            None,
+            ensure_uuid("corr-live"),
+        ),
+    )
+    cur.execute(
+        """
+        INSERT INTO audit.audit_events (
+            audit_event_id, tenant_id, sequence_no, event_type, actor_subject_id,
+            action, resource_type, resource_id, decision_id, result, correlation_id,
+            event_sha256, occurred_at, retained_until
+        ) VALUES (%s, %s, 999, 'LIVE_EVENT', %s, 'LIVE_ACTION', 'Intake', %s, NULL, 'SUCCEEDED', %s, 'sha-audit', NOW(), NOW())
+        """,
+        (
+            ensure_uuid("AUDIT-LIVE-001"),
+            tenant_id,
+            ensure_uuid("actor-live"),
+            ensure_uuid("IN-LIVE-001"),
+            ensure_uuid("corr-live"),
+        ),
+    )
+    conn.commit()
+
+    # 3. Roll back migration
+    deleted_count = migrator.rollback_migration(tenant_id=tenant_id)
+    assert deleted_count >= 1
+
+    # 4. Verify unrelated intake and audit event survived
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    cur.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id = %s", (tenant_id,))
+    surviving_intakes = [r[0] for r in cur.fetchall()]
+    assert len(surviving_intakes) == 1
+    assert str(surviving_intakes[0]) == ensure_uuid("IN-LIVE-001")
+
+    cur.execute("SELECT audit_event_id, event_type FROM audit.audit_events WHERE tenant_id = %s", (tenant_id,))
+    surviving_audits = cur.fetchall()
+    assert len(surviving_audits) == 1
+    assert str(surviving_audits[0][0]) == ensure_uuid("AUDIT-LIVE-001")
+    assert surviving_audits[0][1] == "LIVE_EVENT"
+
+
+def test_blocker2_month_partitioning_no_fabricated_created_at_date(intake_blank_db) -> None:
+    """Candidate draft with no legacy intake/timestamp must trigger INVALID_SCOPE when filtering by month."""
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    listing = Listing(listing_id="L-NO-TS", source_listing_id="s-nots", source_id="SRC-591")
+    addr = AddressLocation(address_id="A-NO-TS", normalized_address="台北市信義區松仁路 96 號 1F")
+    cand = CandidateSite(candidate_site_id="CS-NO-TS", listing_id="L-NO-TS", address_id="A-NO-TS")
+    draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
+
+    res = migrator.backfill(
+        legacy_intakes=[],
+        legacy_listings=[listing],
+        legacy_candidates=[draft],
+        tenant_id=tenant_id,
+        month="2026-07",
+    )
+
+    assert res["counts"]["listings_processed"] == 0
+    assert res["counts"]["candidates_processed"] == 0
+    assert res["counts"]["quarantined"] >= 1
+    assert res["counts"]["findings"] >= 1
+
+
+def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
+    """CLI execution end-to-end via subprocess against PostgreSQL DSN."""
+    import json
+    import subprocess
+    import sys
+
+    admin_params = dict(intake_blank_db.server.admin_params)
+    admin_params["dbname"] = intake_blank_db.dbname
+    dsn = " ".join(f"{k}={v}" for k, v in admin_params.items())
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    input_file = tmp_path / "input.json"
+    input_file.write_text(
+        json.dumps(
+            {
+                "legacy_intakes": [
+                    {
+                        "id": "IN-CLI-1",
+                        "tenantId": tenant_id,
+                        "sourceId": "SRC-591",
+                        "originalUrl": "https://591.com.tw/detail-cli.html",
+                        "submittedAt": "2026-07-14T06:10:00Z",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # 1. Backfill dry-run CLI
+    proc_dry = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.migrations.assisted_listing_intake.migrate",
+            "--action",
+            "backfill",
+            "--tenant-id",
+            tenant_id,
+            "--db-dsn",
+            dsn,
+            "--input-file",
+            str(input_file),
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_dry.returncode == 0, f"CLI dry-run failed stderr: {proc_dry.stderr}"
+    assert "dry_run" in proc_dry.stdout
+
+    # 2. Partitioned backfill CLI with --month and --resume
+    proc_bf = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.migrations.assisted_listing_intake.migrate",
+            "--action",
+            "backfill",
+            "--tenant-id",
+            tenant_id,
+            "--source-id",
+            "SRC-591",
+            "--month",
+            "2026-07",
+            "--db-dsn",
+            dsn,
+            "--input-file",
+            str(input_file),
+            "--resume",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_bf.returncode == 0, f"CLI backfill failed stderr: {proc_bf.stderr}"
+    assert "intakes_processed" in proc_bf.stdout
+
+    # 3. Verify CLI
+    proc_ver = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.migrations.assisted_listing_intake.migrate",
+            "--action",
+            "verify",
+            "--tenant-id",
+            tenant_id,
+            "--db-dsn",
+            dsn,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_ver.returncode == 0, f"CLI verify failed stderr: {proc_ver.stderr}"
+    assert "shadow_comparison_success" in proc_ver.stdout
+
+    # 4. Rollback CLI with --migration-ref
+    proc_rb = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.migrations.assisted_listing_intake.migrate",
+            "--action",
+            "rollback",
+            "--tenant-id",
+            tenant_id,
+            "--migration-ref",
+            "ODP-INTAKE-MIGRATION-001",
+            "--db-dsn",
+            dsn,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_rb.returncode == 0, f"CLI rollback failed stderr: {proc_rb.stderr}"
+    assert "Scoped migration rollback executed" in proc_rb.stdout
+
+
+def test_cli_fail_closed_without_database_target() -> None:
+    """CLI must fail closed with exit code 1 if no database DSN or sqlite-path is specified."""
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if "DATABASE_URL" not in k and "ODAY_" not in k and "INTAKE_" not in k}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.migrations.assisted_listing_intake.migrate",
+            "--action",
+            "backfill",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "Error: No database connection target provided" in proc.stderr
+
