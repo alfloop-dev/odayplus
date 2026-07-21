@@ -50,19 +50,15 @@
 
 ## Verification Proof
 
+### Final Re-Verification (2026-07-21T02:04Z · HEAD 58b50fee)
+
+All three required verification checks pass on HEAD `58b50fee`:
+
 ### Pytest Execution
 ```text
-$ uv run pytest tests/ops/test_assisted_listing_intake_migration.py -v
-============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
-rootdir: /tmp/pantheon-worker-worktrees/oday-plus/odp-intake-migration-001
-configfile: pyproject.toml
-plugins: anyio-4.14.1
-collected 20 items
-
-tests/ops/test_assisted_listing_intake_migration.py .................... [100%]
-
-============================= 20 passed in 17.56s ==============================
+$ uv run pytest tests/ops/test_assisted_listing_intake_migration.py -q
+....................                                                     [100%]
+20 passed
 ```
 
 ### Ruff Check
@@ -74,5 +70,13 @@ All checks passed!
 ### Git Diff Check
 ```text
 $ git diff --check origin/dev...HEAD
-Passes without errors or trailing whitespace issues.
+(no output — all checks pass, exit 0)
 ```
+
+---
+
+## PR Reference
+
+- **PR #343**: [ODP-INTAKE-MIGRATION-001: Implement staging backfill, reconciliation, and rollback](https://github.com/alfloop-dev/odayplus/pull/343)
+- **Branch**: `task/ODP-INTAKE-MIGRATION-001` → `dev`
+- **HEAD SHA**: `58b50fee` (pushed 2026-07-21)
