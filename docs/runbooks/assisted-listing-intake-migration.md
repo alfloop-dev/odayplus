@@ -43,6 +43,7 @@ Before executing any migration in staging or production:
 ## 3. Staging Backfill Execution CLI
 
 The backfill CLI supports dry-run validation, partition-level execution (by tenant, source, or month), and resuming interrupted backfills cleanly.
+Database connection must be specified via `--db-dsn "$ODAY_DATABASE_URL"`, `--sqlite-path /path/to/db.sqlite`, or setting the `ODAY_DATABASE_URL` environment variable.
 
 ### 3.1 Dry Run Execution (Verification Only)
 
@@ -52,6 +53,7 @@ Run a dry run to validate mapping rules and check for potential reconciliation f
 python3 -m scripts.migrations.assisted_listing_intake.migrate \
   --action backfill \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
+  --db-dsn "$ODAY_DATABASE_URL" \
   --input-file /tmp/legacy_backfill_input.json \
   --dry-run
 ```
@@ -67,6 +69,7 @@ python3 -m scripts.migrations.assisted_listing_intake.migrate \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
   --source-id "SRC-591" \
   --month "2026-07" \
+  --db-dsn "$ODAY_DATABASE_URL" \
   --input-file /tmp/legacy_backfill_input.json \
   --resume
 ```
@@ -84,7 +87,8 @@ Run shadow comparison to prove data count parity against persisted proof metrics
 ```bash
 python3 -m scripts.migrations.assisted_listing_intake.migrate \
   --action verify \
-  --tenant-id "00000000-0000-0000-0000-000000000001"
+  --tenant-id "00000000-0000-0000-0000-000000000001" \
+  --db-dsn "$ODAY_DATABASE_URL"
 ```
 
 Expected output:
@@ -122,10 +126,12 @@ To roll back all data written by a migration without dropping relational schemas
 ```bash
 python3 -m scripts.migrations.assisted_listing_intake.migrate \
   --action rollback \
-  --tenant-id "00000000-0000-0000-0000-000000000001"
+  --tenant-id "00000000-0000-0000-0000-000000000001" \
+  --migration-ref "ODP-INTAKE-MIGRATION-001" \
+  --db-dsn "$ODAY_DATABASE_URL"
 ```
 
-This safely deletes all records across `intake`, `identity`, `expansion`, `workflow`, and `audit` written under `ODP-INTAKE-MIGRATION-001` for the specified tenant, leaving zero leftover rows.
+This safely deletes all records across `intake`, `identity`, `expansion`, and `workflow` written under `ODP-INTAKE-MIGRATION-001` for the specified tenant, leaving zero leftover state rows while preserving immutable WORM audit logs.
 
 ### 5.3 Forward Recovery Procedure
 
@@ -144,6 +150,7 @@ If blocking findings occur during backfill:
      python3 -m scripts.migrations.assisted_listing_intake.migrate \
        --action backfill \
        --tenant-id "00000000-0000-0000-0000-000000000001" \
+       --db-dsn "$ODAY_DATABASE_URL" \
        --input-file /tmp/legacy_backfill_input.json \
        --resume
      ```

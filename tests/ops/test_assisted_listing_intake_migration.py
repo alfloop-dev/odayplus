@@ -466,7 +466,7 @@ def test_major_b_probe_complete_table_scoped_rollback(intake_blank_db) -> None:
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
-    tables = [
+    state_tables = [
         "intake.intakes",
         "intake.source_snapshots",
         "intake.parser_runs",
@@ -482,14 +482,17 @@ def test_major_b_probe_complete_table_scoped_rollback(intake_blank_db) -> None:
         "expansion.promotion_decisions",
         "expansion.candidate_sites",
         "workflow.outbox_events",
-        "audit.audit_events",
         "workflow.reconciliation_findings",
     ]
 
-    for tbl in tables:
+    for tbl in state_tables:
         cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE tenant_id = %s", (tenant_id,))
         count = cur.fetchone()[0]
         assert count == 0, f"Leftover records found in {tbl}: {count}"
+
+    # Audit events are append-only/WORM and preserved per contract
+    cur.execute("SELECT COUNT(*) FROM audit.audit_events WHERE tenant_id = %s", (tenant_id,))
+    assert cur.fetchone()[0] >= 1
 
 
 def test_backfill_dry_run_does_not_commit(intake_blank_db) -> None:
@@ -816,4 +819,222 @@ def test_cli_fail_closed_without_database_target() -> None:
     )
     assert proc.returncode != 0
     assert "Error: No database connection target provided" in proc.stderr
+
+
+def test_blocker2_rollback_scoped_to_migration_ref(intake_blank_db) -> None:
+    """Verify rollback of MIG-REF-B does not destroy intakes or identity created by MIG-REF-A."""
+    conn = intake_blank_db.connect()
+    migrator_a = IntakeMigrator(conn, migration_ref="MIG-REF-A")
+    migrator_a.apply_schema()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    legacy_intake_a = {
+        "id": "IN-A-1",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-a1.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+    }
+    migrator_a.backfill(
+        legacy_intakes=[legacy_intake_a],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+    )
+
+    migrator_b = IntakeMigrator(conn, migration_ref="MIG-REF-B")
+    legacy_intake_b = {
+        "id": "IN-B-1",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-b1.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+    }
+    migrator_b.backfill(
+        legacy_intakes=[legacy_intake_b],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+    )
+
+    # Roll back only MIG-REF-B
+    migrator_b.rollback_migration(migration_ref="MIG-REF-B", tenant_id=tenant_id)
+
+    cur = conn.cursor()
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    cur.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id = %s", (tenant_id,))
+    surviving_intakes = [str(r[0]) for r in cur.fetchall()]
+
+    assert len(surviving_intakes) == 1
+    assert surviving_intakes[0] == ensure_uuid("IN-A-1")
+
+
+def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(intake_blank_db) -> None:
+    """Verify rollback preserves pre-existing CandidateSitePromoted outbox events and orphan properties."""
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    cur = conn.cursor()
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+
+    # Insert pre-existing property (PROP-LIVE) with no listing
+    prop_live_id = ensure_uuid("PROP-LIVE")
+    cur.execute(
+        """
+        INSERT INTO identity.properties (
+            property_id, tenant_id, normalized_address, address_fingerprint, status, version
+        ) VALUES (%s, %s, '台北市信義區松仁路 1 號', 'sha-live-prop', 'ACTIVE', 1)
+        """,
+        (prop_live_id, tenant_id),
+    )
+
+    # Insert pre-existing runtime outbox event (OB-LIVE)
+    ob_live_id = ensure_uuid("OB-LIVE")
+    cur.execute(
+        """
+        INSERT INTO workflow.outbox_events (
+            outbox_event_id, tenant_id, event_id, event_type, event_version,
+            aggregate_type, aggregate_id, aggregate_version, partition_key,
+            payload, correlation_id, occurred_at, retention_until
+        ) VALUES (%s, %s, %s, 'CandidateSitePromoted', 1, 'CandidateSite', %s, 1, %s, '{}', %s, NOW(), NOW())
+        """,
+        (ob_live_id, tenant_id, ensure_uuid("evt-live"), ensure_uuid("CS-LIVE"), tenant_id, ensure_uuid("corr-live")),
+    )
+    conn.commit()
+
+    # Backfill migration candidate
+    listing = Listing(listing_id="L-MIG", source_listing_id="s-mig", source_id="SRC-591")
+    addr = AddressLocation(address_id="A-MIG", normalized_address="台北市信義區松仁路 96 號 1F")
+    cand = CandidateSite(candidate_site_id="CS-MIG", listing_id="L-MIG", address_id="A-MIG")
+    draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
+
+    legacy_intake = {
+        "id": "IN-MIG",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-mig.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+        "matchResult": {"targetListingId": "L-MIG", "outcome": "NEW"},
+    }
+
+    migrator.backfill(
+        legacy_intakes=[legacy_intake],
+        legacy_listings=[listing],
+        legacy_candidates=[draft],
+        tenant_id=tenant_id,
+    )
+
+    # Roll back migration
+    migrator.rollback_migration(tenant_id=tenant_id)
+
+    # Assert live property and outbox event survived
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    cur.execute("SELECT property_id FROM identity.properties WHERE tenant_id = %s", (tenant_id,))
+    surviving_props = [str(r[0]) for r in cur.fetchall()]
+    assert len(surviving_props) == 1
+    assert surviving_props[0] == prop_live_id
+
+    cur.execute("SELECT outbox_event_id FROM workflow.outbox_events WHERE tenant_id = %s", (tenant_id,))
+    surviving_outbox = [str(r[0]) for r in cur.fetchall()]
+    assert len(surviving_outbox) == 1
+    assert surviving_outbox[0] == ob_live_id
+
+
+def test_blocker4_resume_then_verify_cutover_path(intake_blank_db) -> None:
+    """Verify interrupt -> resume -> verify cutover path yields shadow_comparison_success=True with 0 findings."""
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    in1 = {
+        "id": "IN-R1",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-r1.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+    }
+    in2 = {
+        "id": "IN-R2",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-r2.html",
+        "submittedAt": "2026-07-14T06:10:00Z",
+    }
+
+    # Pass 1: backfill IN-R1
+    migrator.backfill(
+        legacy_intakes=[in1],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+    )
+
+    # Pass 2: resume backfill with [IN-R1, IN-R2]
+    res_resume = migrator.backfill(
+        legacy_intakes=[in1, in2],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+        resume=True,
+    )
+    assert res_resume["counts"]["skipped_due_to_resume"] == 1
+    assert res_resume["counts"]["intakes_processed"] == 1
+
+    # Fresh migrator instance verifies shadow comparison against persisted proof
+    fresh_migrator = IntakeMigrator(conn)
+    verify_res = fresh_migrator.verify_shadow_comparison(tenant_id)
+
+    assert verify_res["intake_count"] == 2
+    assert verify_res["blocking_findings"] == 0
+    assert verify_res["shadow_comparison_success"] is True
+
+
+def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(intake_blank_db) -> None:
+    """Verify multi-partition backfill verifies checksums for every partition correctly."""
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    in_jan = {
+        "id": "IN-JAN",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-jan.html",
+        "submittedAt": "2026-01-15T06:10:00Z",
+    }
+    in_feb = {
+        "id": "IN-FEB",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-feb.html",
+        "submittedAt": "2026-02-15T06:10:00Z",
+    }
+
+    # Partition 1: Jan 2026
+    migrator.backfill(
+        legacy_intakes=[in_jan],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+        month="2026-01",
+    )
+
+    # Partition 2: Feb 2026
+    migrator.backfill(
+        legacy_intakes=[in_feb],
+        legacy_listings=[],
+        legacy_candidates=[],
+        tenant_id=tenant_id,
+        month="2026-02",
+    )
+
+    verify_res = migrator.verify_shadow_comparison(tenant_id)
+    assert verify_res["intake_count"] == 2
+    assert verify_res["blocking_findings"] == 0
+    assert verify_res["shadow_comparison_success"] is True
+
 

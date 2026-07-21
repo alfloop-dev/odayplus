@@ -210,6 +210,13 @@ class IntakeMigrator:
 
         # 1. Scoped deletion of candidate_sites and property_redirects via promotion_decisions
         if tenant_uuid:
+            cand_rows = self._execute(
+                "SELECT candidate_site_id FROM expansion.candidate_sites WHERE tenant_id = %s AND promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s)",
+                (tenant_uuid, target_ref, tenant_uuid),
+                tenant_id=tenant_uuid,
+            )
+            rolled_back_candidate_ids = [r["candidate_site_id"] for r in cand_rows if r.get("candidate_site_id")]
+
             deleted_count += self._execute_count(
                 "DELETE FROM expansion.candidate_sites WHERE tenant_id = %s AND promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s)",
                 (tenant_uuid, target_ref, tenant_uuid),
@@ -226,6 +233,12 @@ class IntakeMigrator:
                 tenant_id=tenant_uuid,
             )
         else:
+            cand_rows = self._execute(
+                "SELECT candidate_site_id FROM expansion.candidate_sites WHERE promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s)",
+                (target_ref,),
+            )
+            rolled_back_candidate_ids = [r["candidate_site_id"] for r in cand_rows if r.get("candidate_site_id")]
+
             deleted_count += self._execute_count(
                 "DELETE FROM expansion.candidate_sites WHERE promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s)",
                 (target_ref,),
@@ -242,17 +255,19 @@ class IntakeMigrator:
         # 2. Scope intake/identity/expansion deletions strictly to migration-created intakes and listings
         if tenant_uuid:
             mig_intakes = self._execute(
-                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE tenant_id = %s AND service_principal = 'migration_worker' AND permission = 'intake:backfill'",
-                (tenant_uuid,),
+                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE tenant_id = %s AND service_principal = 'migration_worker' AND permission = 'intake:backfill' AND reason_code = %s",
+                (tenant_uuid, target_ref),
                 tenant_id=tenant_uuid,
             )
         else:
             mig_intakes = self._execute(
-                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE service_principal = 'migration_worker' AND permission = 'intake:backfill'"
+                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE service_principal = 'migration_worker' AND permission = 'intake:backfill' AND reason_code = %s",
+                (target_ref,),
             )
-        mig_intake_ids = [r["intake_id"] for r in mig_intakes]
+        mig_intake_ids = [r["intake_id"] for r in mig_intakes if r.get("intake_id")]
 
         if mig_intake_ids:
+            deleted_property_ids: set[str] = set()
             for i_id in mig_intake_ids:
                 # Match decisions / candidates / cases
                 deleted_count += self._execute_count(
@@ -279,6 +294,16 @@ class IntakeMigrator:
                 )
                 for l_row in res_listing_rows:
                     l_id = l_row["resolved_listing_id"]
+                    # Get property_id for this listing to safely prune orphan property if unreferenced
+                    prop_rows = self._execute(
+                        "SELECT property_id FROM expansion.listings WHERE listing_id = %s",
+                        (l_id,),
+                        tenant_id=tenant_uuid,
+                    )
+                    for pr in prop_rows:
+                        if pr.get("property_id"):
+                            deleted_property_ids.add(pr["property_id"])
+
                     deleted_count += self._execute_count(
                         "DELETE FROM identity.source_identity_edges WHERE listing_id = %s",
                         (l_id,),
@@ -302,10 +327,6 @@ class IntakeMigrator:
                     deleted_count += self._execute_count(
                         "DELETE FROM expansion.listings WHERE listing_id = %s",
                         (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    deleted_count += self._execute_count(
-                        "DELETE FROM identity.properties WHERE property_id NOT IN (SELECT property_id FROM expansion.listings)",
                         tenant_id=tenant_uuid,
                     )
 
@@ -335,30 +356,43 @@ class IntakeMigrator:
                     tenant_id=tenant_uuid,
                 )
 
-        # 3. Outbox and Audit scoped deletion
+            # Safely prune only properties created for rolled back listings if no remaining references exist
+            for prop_id in deleted_property_ids:
+                if tenant_uuid:
+                    deleted_count += self._execute_count(
+                        "DELETE FROM identity.properties WHERE property_id = %s AND property_id NOT IN (SELECT property_id FROM expansion.listings) AND property_id NOT IN (SELECT property_id FROM expansion.candidate_sites) AND property_id NOT IN (SELECT from_property_id FROM identity.property_redirects) AND property_id NOT IN (SELECT to_property_id FROM identity.property_redirects)",
+                        (prop_id,),
+                        tenant_id=tenant_uuid,
+                    )
+                else:
+                    deleted_count += self._execute_count(
+                        "DELETE FROM identity.properties WHERE property_id = %s AND property_id NOT IN (SELECT property_id FROM expansion.listings) AND property_id NOT IN (SELECT property_id FROM expansion.candidate_sites) AND property_id NOT IN (SELECT from_property_id FROM identity.property_redirects) AND property_id NOT IN (SELECT to_property_id FROM identity.property_redirects)",
+                        (prop_id,),
+                    )
+
+        # 3. Outbox event deletion scoped strictly to rolled-back candidate sites
+        if rolled_back_candidate_ids:
+            for c_id in rolled_back_candidate_ids:
+                if tenant_uuid:
+                    deleted_count += self._execute_count(
+                        "DELETE FROM workflow.outbox_events WHERE tenant_id = %s AND aggregate_type = 'CandidateSite' AND aggregate_id = %s",
+                        (tenant_uuid, c_id),
+                        tenant_id=tenant_uuid,
+                    )
+                else:
+                    deleted_count += self._execute_count(
+                        "DELETE FROM workflow.outbox_events WHERE aggregate_type = 'CandidateSite' AND aggregate_id = %s",
+                        (c_id,),
+                    )
+
+        # 4. Reconciliation findings deletion scoped to target_ref
         if tenant_uuid:
-            deleted_count += self._execute_count(
-                "DELETE FROM workflow.outbox_events WHERE tenant_id = %s AND event_type = 'CandidateSitePromoted' AND aggregate_type = 'CandidateSite'",
-                (tenant_uuid,),
-                tenant_id=tenant_uuid,
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM audit.audit_events WHERE tenant_id = %s AND action = 'BACKFILL' AND event_type = 'CANDIDATE_BACKFILL'",
-                (tenant_uuid,),
-                tenant_id=tenant_uuid,
-            )
             deleted_count += self._execute_count(
                 "DELETE FROM workflow.reconciliation_findings WHERE migration_id = %s AND tenant_id = %s",
                 (target_ref, tenant_uuid),
                 tenant_id=tenant_uuid,
             )
         else:
-            deleted_count += self._execute_count(
-                "DELETE FROM workflow.outbox_events WHERE event_type = 'CandidateSitePromoted' AND aggregate_type = 'CandidateSite'"
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM audit.audit_events WHERE action = 'BACKFILL' AND event_type = 'CANDIDATE_BACKFILL'"
-            )
             deleted_count += self._execute_count(
                 "DELETE FROM workflow.reconciliation_findings WHERE migration_id = %s",
                 (target_ref,),
@@ -446,7 +480,7 @@ class IntakeMigrator:
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{sem_ver}")
-            val_status = get_val(parser_release, "validation_status") or "VALIDATED"
+            val_status = get_val(parser_release, "validation_status") or "DRAFT"
             pkg_name = get_val(parser_release, "package_name") or "listing-parser"
             src_id = get_val(parser_release, "source_id") or "SRC-591"
 
@@ -570,6 +604,8 @@ class IntakeMigrator:
                     check_exists = "SELECT intake_id FROM intake.intakes WHERE intake_id = %s AND tenant_id = %s"
                     if self._execute(check_exists, (intake_uuid, i_tenant), tenant_id=i_tenant):
                         skipped_count += 1
+                        if intake_uuid not in processed_intake_uuids:
+                            processed_intake_uuids.append(intake_uuid)
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
@@ -629,8 +665,8 @@ class IntakeMigrator:
                 insert_trans_sql = """
                     INSERT INTO intake.intake_stage_transitions (
                         transition_id, tenant_id, intake_id, sequence_no, from_state,
-                        to_state, actor_subject_id, service_principal, permission, resulting_version, correlation_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        to_state, actor_subject_id, service_principal, permission, resulting_version, correlation_id, reason_code
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 self._execute(
                     insert_trans_sql,
@@ -646,6 +682,7 @@ class IntakeMigrator:
                         "intake:backfill",
                         1,
                         corr_id,
+                        self.migration_ref,
                     ),
                     tenant_id=i_tenant,
                 )
@@ -923,6 +960,8 @@ class IntakeMigrator:
                     check_exists = "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s"
                     if self._execute(check_exists, (listing_uuid, i_tenant), tenant_id=i_tenant):
                         skipped_count += 1
+                        if listing_uuid not in processed_listing_uuids:
+                            processed_listing_uuids.append(listing_uuid)
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
@@ -1208,6 +1247,8 @@ class IntakeMigrator:
                     check_exists = "SELECT candidate_site_id FROM expansion.candidate_sites WHERE candidate_site_id = %s AND tenant_id = %s"
                     if self._execute(check_exists, (candidate_uuid, i_tenant), tenant_id=i_tenant):
                         skipped_count += 1
+                        if candidate_uuid not in processed_candidate_uuids:
+                            processed_candidate_uuids.append(candidate_uuid)
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
@@ -1550,8 +1591,8 @@ class IntakeMigrator:
         t_tenant = ensure_uuid(tenant_id)
         self._execute("SELECT 1", tenant_id=t_tenant)
 
-        intake_rows = self._execute("SELECT intake_id FROM intake.intakes WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
-        listing_rows = self._execute("SELECT listing_id FROM expansion.listings WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
+        intake_rows = self._execute("SELECT intake_id, source_id, submitted_at FROM intake.intakes WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
+        listing_rows = self._execute("SELECT listing_id, source_id FROM expansion.listings WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
         candidate_rows = self._execute("SELECT candidate_site_id FROM expansion.candidate_sites WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
 
         actual_intake_ids = [r["intake_id"] for r in intake_rows]
@@ -1567,7 +1608,7 @@ class IntakeMigrator:
         actual_candidate_sha = calculate_checksum(actual_candidate_ids)
 
         proof_rows = self._execute(
-            "SELECT finding_id, expected FROM workflow.reconciliation_findings WHERE severity = 'INFO' AND tenant_id = %s AND migration_id = %s AND (source_id LIKE 'PROOF-%%' OR source_id = %s) ORDER BY version DESC",
+            "SELECT finding_id, expected FROM workflow.reconciliation_findings WHERE severity = 'INFO' AND tenant_id = %s AND migration_id = %s AND (source_id LIKE 'PROOF-%%' OR source_id = %s) ORDER BY finding_id DESC",
             (t_tenant, self.migration_ref, self.migration_ref),
             tenant_id=t_tenant,
         )
@@ -1609,34 +1650,6 @@ class IntakeMigrator:
                 "failures": {"missing_shadow_proof": 1},
             }
 
-        if expected_intake_count is not None:
-            exp_intake_c = expected_intake_count
-            exp_listing_c = expected_listing_count
-            exp_candidate_c = expected_candidate_count
-            exp_intake_sha = None
-            exp_listing_sha = None
-            exp_candidate_sha = None
-        elif partition_proofs:
-            exp_intake_c = sum(p.get("intakes", 0) for p in partition_proofs.values())
-            exp_listing_c = sum(p.get("listings", 0) for p in partition_proofs.values())
-            exp_candidate_c = sum(p.get("candidates", 0) for p in partition_proofs.values())
-            if len(partition_proofs) == 1:
-                single_p = next(iter(partition_proofs.values()))
-                exp_intake_sha = single_p.get("intakes_sha256")
-                exp_listing_sha = single_p.get("listings_sha256")
-                exp_candidate_sha = single_p.get("candidates_sha256")
-            else:
-                exp_intake_sha = None
-                exp_listing_sha = None
-                exp_candidate_sha = None
-        else:
-            exp_intake_c = in_mem_counts.get("intakes")
-            exp_listing_c = in_mem_counts.get("listings")
-            exp_candidate_c = in_mem_counts.get("candidates")
-            exp_intake_sha = in_mem_shas.get("intakes")
-            exp_listing_sha = in_mem_shas.get("listings")
-            exp_candidate_sha = in_mem_shas.get("candidates")
-
         findings = self._execute(
             "SELECT COUNT(*) as n FROM workflow.reconciliation_findings WHERE tenant_id = %s AND status = 'OPEN'",
             (t_tenant,),
@@ -1650,83 +1663,234 @@ class IntakeMigrator:
             tenant_id=t_tenant,
         )[0]["n"]
 
-        if exp_intake_c is not None and actual_intake_count != exp_intake_c:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="snapshot",
-                source_id="intakes",
-                target_ids=actual_intake_ids,
-                finding_type="COUNT_MISMATCH",
-                severity="BLOCKING",
-                expected={"count": exp_intake_c},
-                actual={"count": actual_intake_count},
-            )
-            blocking_findings += 1
+        if expected_intake_count is not None:
+            if actual_intake_count != expected_intake_count:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="snapshot",
+                    source_id="intakes",
+                    target_ids=actual_intake_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": expected_intake_count},
+                    actual={"count": actual_intake_count},
+                )
+                blocking_findings += 1
+            if expected_listing_count is not None and actual_listing_count != expected_listing_count:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_listing",
+                    source_id="listings",
+                    target_ids=actual_listing_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": expected_listing_count},
+                    actual={"count": actual_listing_count},
+                )
+                blocking_findings += 1
+            if expected_candidate_count is not None and actual_candidate_count != expected_candidate_count:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_candidate",
+                    source_id="candidate_sites",
+                    target_ids=actual_candidate_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": expected_candidate_count},
+                    actual={"count": actual_candidate_count},
+                )
+                blocking_findings += 1
+        elif partition_proofs:
+            for pkey, exp_dict in partition_proofs.items():
+                p_src = exp_dict.get("source_id")
+                p_month = exp_dict.get("month")
 
-        if exp_intake_sha and actual_intake_sha != exp_intake_sha:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="snapshot",
-                source_id="intakes",
-                target_ids=actual_intake_ids,
-                finding_type="CHECKSUM_MISMATCH",
-                severity="BLOCKING",
-                expected={"checksum": exp_intake_sha},
-                actual={"checksum": actual_intake_sha},
-            )
-            blocking_findings += 1
+                p_intake_ids = [
+                    r["intake_id"]
+                    for r in intake_rows
+                    if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
+                    and (p_month is None or p_month == "ALL" or (r.get("submitted_at") and str(r.get("submitted_at"))[:7] == p_month))
+                ]
+                p_intake_sha = calculate_checksum(p_intake_ids)
+                exp_p_intake_c = exp_dict.get("intakes")
+                exp_p_intake_sha = exp_dict.get("intakes_sha256")
 
-        if exp_listing_c is not None and actual_listing_count != exp_listing_c:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="legacy_listing",
-                source_id="listings",
-                target_ids=actual_listing_ids,
-                finding_type="COUNT_MISMATCH",
-                severity="BLOCKING",
-                expected={"count": exp_listing_c},
-                actual={"count": actual_listing_count},
-            )
-            blocking_findings += 1
+                if exp_p_intake_c is not None and len(p_intake_ids) != exp_p_intake_c:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="snapshot",
+                        source_id=f"intakes-{pkey}",
+                        target_ids=p_intake_ids,
+                        finding_type="COUNT_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"count": exp_p_intake_c},
+                        actual={"count": len(p_intake_ids)},
+                    )
+                    blocking_findings += 1
 
-        if exp_listing_sha and actual_listing_sha != exp_listing_sha:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="legacy_listing",
-                source_id="listings",
-                target_ids=actual_listing_ids,
-                finding_type="CHECKSUM_MISMATCH",
-                severity="BLOCKING",
-                expected={"checksum": exp_listing_sha},
-                actual={"checksum": actual_listing_sha},
-            )
-            blocking_findings += 1
+                if exp_p_intake_sha and p_intake_sha != exp_p_intake_sha:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="snapshot",
+                        source_id=f"intakes-{pkey}",
+                        target_ids=p_intake_ids,
+                        finding_type="CHECKSUM_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"checksum": exp_p_intake_sha},
+                        actual={"checksum": p_intake_sha},
+                    )
+                    blocking_findings += 1
 
-        if exp_candidate_c is not None and actual_candidate_count != exp_candidate_c:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="legacy_candidate",
-                source_id="candidate_sites",
-                target_ids=actual_candidate_ids,
-                finding_type="COUNT_MISMATCH",
-                severity="BLOCKING",
-                expected={"count": exp_candidate_c},
-                actual={"count": actual_candidate_count},
-            )
-            blocking_findings += 1
+                p_listing_ids = [
+                    r["listing_id"]
+                    for r in listing_rows
+                    if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
+                ]
+                p_listing_sha = calculate_checksum(p_listing_ids)
+                exp_p_listing_c = exp_dict.get("listings")
+                exp_p_listing_sha = exp_dict.get("listings_sha256")
 
-        if exp_candidate_sha and actual_candidate_sha != exp_candidate_sha:
-            self._create_finding(
-                tenant_id=t_tenant,
-                source_kind="legacy_candidate",
-                source_id="candidate_sites",
-                target_ids=actual_candidate_ids,
-                finding_type="CHECKSUM_MISMATCH",
-                severity="BLOCKING",
-                expected={"checksum": exp_candidate_sha},
-                actual={"checksum": actual_candidate_sha},
-            )
-            blocking_findings += 1
+                if exp_p_listing_c is not None and len(p_listing_ids) != exp_p_listing_c:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="legacy_listing",
+                        source_id=f"listings-{pkey}",
+                        target_ids=p_listing_ids,
+                        finding_type="COUNT_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"count": exp_p_listing_c},
+                        actual={"count": len(p_listing_ids)},
+                    )
+                    blocking_findings += 1
+
+                if exp_p_listing_sha and p_listing_sha != exp_p_listing_sha:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="legacy_listing",
+                        source_id=f"listings-{pkey}",
+                        target_ids=p_listing_ids,
+                        finding_type="CHECKSUM_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"checksum": exp_p_listing_sha},
+                        actual={"checksum": p_listing_sha},
+                    )
+                    blocking_findings += 1
+
+                p_candidate_ids = [r["candidate_site_id"] for r in candidate_rows]
+                p_candidate_sha = calculate_checksum(p_candidate_ids)
+                exp_p_candidate_c = exp_dict.get("candidates")
+                exp_p_candidate_sha = exp_dict.get("candidates_sha256")
+
+                if exp_p_candidate_c is not None and len(p_candidate_ids) != exp_p_candidate_c:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="legacy_candidate",
+                        source_id=f"candidates-{pkey}",
+                        target_ids=p_candidate_ids,
+                        finding_type="COUNT_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"count": exp_p_candidate_c},
+                        actual={"count": len(p_candidate_ids)},
+                    )
+                    blocking_findings += 1
+
+                if exp_p_candidate_sha and p_candidate_sha != exp_p_candidate_sha:
+                    self._create_finding(
+                        tenant_id=t_tenant,
+                        source_kind="legacy_candidate",
+                        source_id=f"candidates-{pkey}",
+                        target_ids=p_candidate_ids,
+                        finding_type="CHECKSUM_MISMATCH",
+                        severity="BLOCKING",
+                        expected={"checksum": exp_p_candidate_sha},
+                        actual={"checksum": p_candidate_sha},
+                    )
+                    blocking_findings += 1
+        else:
+            exp_intake_c = in_mem_counts.get("intakes")
+            exp_listing_c = in_mem_counts.get("listings")
+            exp_candidate_c = in_mem_counts.get("candidates")
+            exp_intake_sha = in_mem_shas.get("intakes")
+            exp_listing_sha = in_mem_shas.get("listings")
+            exp_candidate_sha = in_mem_shas.get("candidates")
+
+            if exp_intake_c is not None and actual_intake_count != exp_intake_c:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="snapshot",
+                    source_id="intakes",
+                    target_ids=actual_intake_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": exp_intake_c},
+                    actual={"count": actual_intake_count},
+                )
+                blocking_findings += 1
+
+            if exp_intake_sha and actual_intake_sha != exp_intake_sha:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="snapshot",
+                    source_id="intakes",
+                    target_ids=actual_intake_ids,
+                    finding_type="CHECKSUM_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"checksum": exp_intake_sha},
+                    actual={"checksum": actual_intake_sha},
+                )
+                blocking_findings += 1
+
+            if exp_listing_c is not None and actual_listing_count != exp_listing_c:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_listing",
+                    source_id="listings",
+                    target_ids=actual_listing_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": exp_listing_c},
+                    actual={"count": actual_listing_count},
+                )
+                blocking_findings += 1
+
+            if exp_listing_sha and actual_listing_sha != exp_listing_sha:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_listing",
+                    source_id="listings",
+                    target_ids=actual_listing_ids,
+                    finding_type="CHECKSUM_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"checksum": exp_listing_sha},
+                    actual={"checksum": actual_listing_sha},
+                )
+                blocking_findings += 1
+
+            if exp_candidate_c is not None and actual_candidate_count != exp_candidate_c:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_candidate",
+                    source_id="candidate_sites",
+                    target_ids=actual_candidate_ids,
+                    finding_type="COUNT_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"count": exp_candidate_c},
+                    actual={"count": actual_candidate_count},
+                )
+                blocking_findings += 1
+
+            if exp_candidate_sha and actual_candidate_sha != exp_candidate_sha:
+                self._create_finding(
+                    tenant_id=t_tenant,
+                    source_kind="legacy_candidate",
+                    source_id="candidate_sites",
+                    target_ids=actual_candidate_ids,
+                    finding_type="CHECKSUM_MISMATCH",
+                    severity="BLOCKING",
+                    expected={"checksum": exp_candidate_sha},
+                    actual={"checksum": actual_candidate_sha},
+                )
+                blocking_findings += 1
 
         pd_dup = self._execute(
             """
@@ -1740,16 +1904,7 @@ class IntakeMigrator:
             tenant_id=t_tenant,
         )
 
-        shadow_comparison_success = (
-            (len(pd_dup) == 0)
-            and (blocking_findings == 0)
-            and (exp_intake_c is None or actual_intake_count == exp_intake_c)
-            and (exp_listing_c is None or actual_listing_count == exp_listing_c)
-            and (exp_candidate_c is None or actual_candidate_count == exp_candidate_c)
-            and (exp_intake_sha is None or actual_intake_sha == exp_intake_sha)
-            and (exp_listing_sha is None or actual_listing_sha == exp_listing_sha)
-            and (exp_candidate_sha is None or actual_candidate_sha == exp_candidate_sha)
-        )
+        shadow_comparison_success = (len(pd_dup) == 0) and (blocking_findings == 0)
 
         return {
             "tenant_id": t_tenant,
