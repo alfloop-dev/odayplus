@@ -45,7 +45,8 @@ export function ListingCompareTable({
     const map = new Map<string, string>();
     if (record.parsedFields) {
       for (const field of Object.values(record.parsedFields)) {
-        map.set(field.key, field.correctedValue || field.normalizedValue || field.sourceValue || "—");
+        const val = field.correctedValue ?? field.normalizedValue ?? field.sourceValue;
+        map.set(field.key, val !== undefined && val !== null && val !== "" ? String(val) : "—");
       }
     }
     return map;
