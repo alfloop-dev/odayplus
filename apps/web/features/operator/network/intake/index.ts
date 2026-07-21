@@ -16,4 +16,3 @@ export {
 export type { IntakeApiError, IntakeResult } from "./intakeClient";
 export * from "./types";
 export * from "./urlState";
-

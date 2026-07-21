@@ -12,7 +12,8 @@ import { AssistedIntakeQueuePanel } from "./AssistedIntakeQueuePanel";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
-import { IntakeAssignmentSlaDialog } from "./IntakeAssignmentSlaDialog";
+import { TransferIntakeDialog } from "./TransferIntakeDialog";
+import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
   intakeApi,
@@ -401,7 +402,6 @@ export function AssistedIntakeSection({
     target_owner_subject_id: string;
     target_owner_role: string;
     handoff_note: string;
-    reason: string;
   }) {
     if (!client || !selected || busy) return;
     setBusy(true);
@@ -432,8 +432,7 @@ export function AssistedIntakeSection({
           target_owner_subject_id: payload.target_owner_subject_id,
           target_owner_role: payload.target_owner_role,
           handoff_note: payload.handoff_note,
-          reason: payload.reason,
-          due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+          reason: payload.handoff_note,
         },
         {
           idempotencyKey: key,
@@ -723,16 +722,29 @@ export function AssistedIntakeSection({
         />
       ) : null}
 
-      {dialog === "assignmentSla" && selected && asgKind ? (
-        <IntakeAssignmentSlaDialog
+      {dialog === "assignmentSla" && selected && asgKind === "transfer" ? (
+        <TransferIntakeDialog
           busy={busy}
           error={actionError}
-          kind={asgKind}
           onClose={() => {
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
           }}
-          onSubmit={asgKind === "transfer" ? handleTransferSubmit : handlePauseSubmit}
+          onSubmit={handleTransferSubmit}
+          record={selected}
+          onConflictRefresh={handleConflictRefresh}
+        />
+      ) : null}
+
+      {dialog === "assignmentSla" && selected && asgKind === "pause" ? (
+        <PauseSlaDialog
+          busy={busy}
+          error={actionError}
+          onClose={() => {
+            updateUrlState({ dialog: "detail", decisionKind: null });
+            setActionError(null);
+          }}
+          onSubmit={handlePauseSubmit}
           record={selected}
           onConflictRefresh={handleConflictRefresh}
         />
