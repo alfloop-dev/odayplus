@@ -6,10 +6,11 @@
 
 .header {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0 8px;
+  gap: 12px;
+  padding: 0 0 8px;
+  flex-wrap: wrap;
 }
 
 .header h2,
@@ -23,9 +24,15 @@
 }
 
 .header h2 {
-  font-size: 24px;
-  line-height: 1.15;
+  font-size: 18px;
+  line-height: 1.25;
   letter-spacing: 0;
+}
+
+.headerSummary {
+  margin-top: 2px;
+  color: #5a6478;
+  font-size: 12px;
 }
 
 .kicker {
@@ -46,14 +53,22 @@
 .headerStats {
   justify-content: flex-end;
   color: #39465d;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .headerStats span {
   border: 1px solid #d7deea;
-  border-radius: 6px;
+  border-radius: 9px;
   background: #ffffff;
-  padding: 5px 8px;
+  padding: 6px 12px;
+}
+
+.headerStats strong {
+  margin-right: 6px;
+  color: #2e3a97;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .tabs {
@@ -79,6 +94,213 @@
 .tab[aria-current="page"] {
   border-color: #2563eb;
   color: #0f172a;
+}
+
+.expansionStepper {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px 16px;
+}
+
+.flowHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.flowHeader span {
+  flex: 0 0 auto;
+  color: #8a93a8;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.flowHeader strong {
+  overflow: hidden;
+  color: #2e3a97;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowHeader em {
+  margin-left: auto;
+  overflow: hidden;
+  border: 1px solid #c6e6eb;
+  border-radius: 999px;
+  background: #e2f4f6;
+  color: #0e7c8c;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 2px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expansionStepGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.expansionStep {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "index body state"
+    "index entity entity";
+  gap: 3px 8px;
+  min-height: 56px;
+  border: 1px solid #d7deea;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.expansionStep:disabled {
+  cursor: not-allowed;
+}
+
+.expansionStep[aria-current="step"] {
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.expansionStep[data-state="completed"] {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.expansionStep[data-state="current"] {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.expansionStep[data-state="next"] {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.expansionStep[data-state="blocked"] {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #7a8799;
+}
+
+.expansionStepIndex {
+  grid-area: index;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #172033;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.expansionStepBody {
+  grid-area: body;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.expansionStepBody strong,
+.expansionStepBody small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expansionStepBody strong {
+  font-size: 11.5px;
+  line-height: 1.15;
+}
+
+.expansionStepBody small {
+  color: #98a1b3;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.expansionStepState {
+  grid-area: state;
+  align-self: flex-start;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.07);
+  color: #334155;
+  font-size: 8.5px;
+  font-weight: 900;
+  padding: 1px 5px;
+  text-transform: uppercase;
+}
+
+.expansionStepEntity {
+  grid-area: entity;
+  overflow: hidden;
+  color: #5a6478;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowChain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-top: 1px dashed #e3e8f0;
+  padding-top: 9px;
+}
+
+.flowChain span {
+  flex: 0 0 auto;
+  color: #8a93a8;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.flowChain button {
+  border: 0;
+  background: transparent;
+  color: #5a6478;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 0;
+}
+
+.flowChain button[aria-current="step"] {
+  color: #2e3a97;
+  font-weight: 900;
+}
+
+.flowChain button:disabled {
+  color: #a4adbd;
+  cursor: not-allowed;
+}
+
+.flowChain i {
+  margin-left: 6px;
+  color: #c0c7d8;
+  font-style: normal;
 }
 
 .tabDisabled {
@@ -417,7 +639,7 @@
 
 .detailTopline {
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -594,6 +816,179 @@
   color: #172033;
 }
 
+.tabPanel[data-screen-label="Network 找區域"] {
+  grid-template-columns: 206px minmax(0, 1fr) 330px;
+  grid-template-areas:
+    "lens map detail"
+    "lens tray detail";
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensBar {
+  grid-area: lens;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: stretch;
+  position: sticky;
+  top: 76px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensSelector,
+.tabPanel[data-screen-label="Network 找區域"] .legend {
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensSelector {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 13px 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .legend {
+  display: grid;
+  gap: 7px;
+  justify-content: stretch;
+  max-width: none;
+  padding: 13px 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mainGrid {
+  display: contents;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel {
+  grid-area: map;
+  overflow: hidden;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .trayPanel {
+  grid-area: tray;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailPanel {
+  grid-area: detail;
+  gap: 14px;
+  padding: 14px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"]) {
+  grid-template-rows: minmax(430px, 1fr);
+  min-height: 430px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map-canvas"]) {
+  min-height: 430px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map layer controls"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-config"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-alert"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-state-panel"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-evidence-fallback"]),
+.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map legend"]) {
+  display: none;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .trayPanel .panelHeader {
+  border-bottom: 0;
+  padding: 0 0 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneList {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main score"
+    "rank score";
+  align-items: stretch;
+  min-height: 74px;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow:hover,
+.tabPanel[data-screen-label="Network 找區域"] .zoneRow[aria-current="true"] {
+  border-color: #b7c6f0;
+  background: #f1f4fd;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .rank {
+  grid-area: rank;
+  align-self: flex-end;
+  color: #7a8496;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain {
+  grid-area: main;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain strong {
+  white-space: normal;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain small {
+  white-space: normal;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .zoneRowScore {
+  grid-area: score;
+  align-self: flex-start;
+  border-radius: 999px;
+  background: #e2f4f6;
+  color: #0e7c8c;
+  padding: 4px 8px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailTopline {
+  display: grid;
+  gap: 10px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailActions button {
+  min-width: 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .metricGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid {
+  grid-template-columns: 1fr;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .linkedRows {
+  display: grid;
+  gap: 6px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .linkedRows span {
+  border-radius: 8px;
+}
+
 .emptyState {
   display: grid;
   min-height: 220px;
@@ -605,7 +1000,7 @@
 @media (max-width: 980px) {
   .header,
   .detailTopline {
-    align-items: start;
+    align-items: flex-start;
     flex-direction: column;
   }
 
@@ -617,6 +1012,29 @@
   .lensBar,
   .mainGrid {
     grid-template-columns: 1fr;
+  }
+
+  .expansionStepper {
+    padding: 10px;
+  }
+
+  .expansionStepGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .flowHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .flowHeader em {
+    margin-left: 0;
+    max-width: 100%;
+  }
+
+  .radarToolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .mainGrid {
@@ -654,11 +1072,405 @@
   gap: 12px;
 }
 
+.complianceBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid #dccff2;
+  border-radius: 10px;
+  background: #f0ebfa;
+  color: #6d4fa3;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 9px 13px;
+}
+
+.complianceBanner span {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border-radius: 4px;
+  background: #6d4fa3;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+}
+
+.sourceSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 8px;
+}
+
+.radarToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zoneFilterChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  border: 1px solid #9ed4dc;
+  border-radius: 8px;
+  background: #e2f4f6;
+  color: #0e7c8c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 900;
+  padding: 5px 10px;
+  text-align: center;
+}
+
+.segmentedControl {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  overflow: hidden;
+  border: 1px solid #d5deea;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.segmentedControl button {
+  min-height: 32px;
+  border: 0;
+  border-right: 1px solid #d5deea;
+  background: transparent;
+  color: #4d5a70;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 6px 10px;
+}
+
+.segmentedControl button:last-child {
+  border-right: 0;
+}
+
+.segmentedControl button[aria-pressed="true"] {
+  background: #172033;
+  color: #ffffff;
+}
+
 .tableWrap {
   overflow-x: auto;
   border: 1px solid #d7deea;
   border-radius: 10px;
   background: #ffffff;
+}
+
+.radarLayout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 348px;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.sourceFilterPanel,
+.radarInbox,
+.listingDetailPanel {
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.sourceFilterPanel {
+  display: grid;
+  gap: 10px;
+  padding: 13px 14px;
+}
+
+.filterTitle {
+  color: #8a93a8;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.sourceFilterList {
+  display: grid;
+  gap: 5px;
+}
+
+.sourceFilterList button,
+.filterClearButton {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 750;
+  padding: 6px 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sourceFilterList button[aria-pressed="true"] {
+  border-color: #2e3a97;
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.filterClearButton {
+  width: 100%;
+  color: #2e3a97;
+  font-size: 10.5px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.radarInbox {
+  overflow: hidden;
+}
+
+.radarInboxHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #eef1f6;
+  padding: 11px 14px;
+}
+
+.radarInboxHeader > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.radarInboxHeader h3,
+.listingDetailPanel h3,
+.listingDetailPanel p,
+.listingDetailRows {
+  margin: 0;
+}
+
+.radarInboxHeader h3 {
+  color: #1c2333;
+  font-size: 13px;
+}
+
+.radarInboxHeader span {
+  color: #8a93a8;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.radarViewToggle {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.radarViewToggle button {
+  border: 1px solid #d6dce8;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 4px 11px;
+}
+
+.radarViewToggle button[aria-pressed="true"] {
+  background: #eceffb;
+}
+
+.radarRows {
+  display: grid;
+}
+
+.radarRow {
+  display: grid;
+  gap: 5px;
+  border-bottom: 1px solid #f1f3f8;
+  background: #ffffff;
+  cursor: pointer;
+  padding: 10px 14px;
+}
+
+.radarRow:last-child {
+  border-bottom: 0;
+}
+
+.radarRow:hover,
+.radarRow[data-active="true"] {
+  background: #f1f4fd;
+}
+
+.radarRow[data-tone="risk"] {
+  border-left: 3px solid #c4342c;
+}
+
+.radarRow[data-tone="watch"] {
+  border-left: 3px solid #d08700;
+}
+
+.radarRow[data-tone="good"] {
+  border-left: 3px solid #0e7c8c;
+}
+
+.radarRowHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.radarRowHead > span:first-child {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: #eceffb;
+  color: #2e3a97;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 6px;
+}
+
+.radarRowHead strong {
+  overflow: hidden;
+  color: #1c2333;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radarRowHead .toneBadge {
+  margin-left: auto;
+}
+
+.radarRowMeta,
+.radarEvidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.radarRowMeta span {
+  color: #5a6478;
+  font-size: 11px;
+}
+
+.radarRowMeta span:last-child {
+  margin-left: auto;
+  color: #2e3a97;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.zoneMini {
+  border-radius: 4px;
+  background: #e2f4f6;
+  color: #0e7c8c !important;
+  font-size: 9.5px !important;
+  font-weight: 750;
+  padding: 1px 6px;
+}
+
+.radarEvidence small {
+  color: #8a93a8;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.listingDetailPanel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.detailIdLine {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.detailIdLine > span {
+  color: #8a93a8;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+.listingDetailPanel h3 {
+  margin-top: 5px;
+  color: #1c2333;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.listingDetailPanel p {
+  overflow: hidden;
+  color: #8a93a8;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listingPhotoPlaceholder {
+  display: grid;
+  place-items: center;
+  height: 86px;
+  border: 1px dashed #c9d2e0;
+  border-radius: 9px;
+  background: repeating-linear-gradient(45deg, #e8ecf3, #e8ecf3 8px, #eff2f8 8px, #eff2f8 16px);
+  color: #8a93a8;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.listingDetailRows {
+  display: grid;
+  gap: 5px;
+}
+
+.listingDetailRows div {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.listingDetailRows dt {
+  flex: 0 0 78px;
+  color: #8a93a8;
+}
+
+.listingDetailRows dd {
+  min-width: 0;
+  margin: 0;
+  color: #3a4362;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.detailPrimaryButton {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  background: #2e3a97;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 850;
+  padding: 10px 14px;
+}
+
+.detailPrimaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .dataTable {
@@ -769,6 +1581,38 @@
 .flagRisk {
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.rowActions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  min-width: 86px;
+}
+
+.rowActions button {
+  min-height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 5px 8px;
+}
+
+.rowActions button:hover,
+.rowActions button:focus-visible,
+.segmentedControl button:focus-visible,
+.expansionStep:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.rowActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .bestTag {
@@ -964,6 +1808,305 @@
 
 /* --- Rebalance AVM & NetPlan Extensions --- */
 
+.rebalanceWorkflowGrid {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.rebalanceStoreList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rebalanceStoreButton {
+  width: 100%;
+  border: 1px solid #e3e8f0;
+  border-radius: 11px;
+  background: #ffffff;
+  padding: 11px 14px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: #1c2333;
+}
+
+.rebalanceStoreButton[aria-current="true"] {
+  border-color: #b9c4ee;
+  background: #f1f4fd;
+}
+
+.rebalanceStoreButton[data-tone="risk"] {
+  border-color: #efb4ae;
+}
+
+.rebalanceStoreTopline,
+.rebalanceStoreMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.rebalanceStoreTopline i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #c4342c;
+  flex: none;
+}
+
+.rebalanceStoreTopline strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+
+.rebalanceStoreTopline small {
+  margin-left: auto;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #5a6472;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.rebalanceStoreButton > span:nth-child(2) {
+  color: #5a6478;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.rebalanceStoreMeta {
+  color: #3a4362;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  justify-content: space-between;
+}
+
+.rebalanceLights {
+  display: flex;
+  gap: 3px;
+}
+
+.rebalanceLights i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.rebalanceDetail {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.rebalanceDetailHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rebalanceDetailHeader h4 {
+  margin: 2px 0 4px;
+  font-size: 16px;
+}
+
+.rebalanceDetailHeader p {
+  margin: 0;
+  color: #5a6478;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rebalanceStatusPill {
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #2e3a97;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.rebalanceStepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  position: relative;
+}
+
+.rebalanceStep {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: #98a1b3;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 0;
+}
+
+.rebalanceStep i {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid #d6dce8;
+  display: grid;
+  place-items: center;
+  color: #2e3a97;
+  font-size: 10px;
+  font-style: normal;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.rebalanceStep b {
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.rebalanceStep[data-active="true"] {
+  color: #2e3a97;
+}
+
+.rebalanceStep[data-active="true"] i,
+.rebalanceStep[data-done="true"] i {
+  border-color: #2e3a97;
+}
+
+.rebalanceStep[data-done="true"] {
+  color: #3a4362;
+}
+
+.rebalanceStep[data-done="true"] i {
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.rebalanceSignalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rebalanceSignalGrid div {
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.rebalanceSignalGrid span {
+  color: #98a1b3;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.rebalanceSignalGrid strong {
+  color: #1c2333;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+
+.rebalanceTrend {
+  display: flex;
+  align-items: end;
+  gap: 3px;
+  height: 64px;
+}
+
+.rebalanceTrend i {
+  flex: 1 1 0;
+  border-radius: 3px 3px 0 0;
+  min-width: 4px;
+}
+
+.rebalanceRuntimeState,
+.rebalanceSelection,
+.rebalanceBoundary,
+.rebalanceError {
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rebalanceRuntimeState {
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+}
+
+.rebalanceSelection {
+  border: 1px solid #c6e6eb;
+  background: #f2fbfc;
+  color: #135e6b;
+}
+
+.rebalanceBoundary {
+  border: 1px solid #e0e5ef;
+  background: #f8fafc;
+  color: #3a4362;
+}
+
+.rebalanceBoundary b {
+  color: #2e3a97;
+}
+
+.rebalanceError {
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+  margin-bottom: 10px;
+}
+
+.rebalanceMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: #4a7c86;
+}
+
+.rebalanceMetadata span {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.64);
+  padding: 2px 6px;
+}
+
+.rebalancePrimary {
+  width: 100%;
+  border: none;
+  border-radius: 9px;
+  background: #2e3a97;
+  color: #ffffff;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.rebalancePrimary:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
 .rebalanceAvmBlock {
   border: 1px solid #c6e6eb;
   border-radius: 10px;
@@ -1054,6 +2197,9 @@
   display: grid;
   gap: 4px;
   transition: all 0.2s ease;
+  cursor: pointer;
+  width: 100%;
+  color: #1c2333;
 }
 
 .netPlanScenarioCardRec {
@@ -1061,11 +2207,21 @@
   background: #f4f6fc;
 }
 
+.netPlanScenarioCardSelected {
+  border-color: #2e3a97;
+  background: #eef1fb;
+}
+
+.netPlanScenarioCard:disabled {
+  cursor: default;
+}
+
 .scenarioTitleRow {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
 }
 
 .scenarioTitleRow strong {
@@ -1180,4 +2336,644 @@
 
 .btnReject:hover {
   background: #dc2626;
+}
+
+@media (max-width: 980px) {
+  .radarToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .segmentedControl {
+    width: 100%;
+  }
+
+  .rebalanceWorkflowGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rebalanceSignalGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rebalanceDetailHeader,
+  .scenarioTitleRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .roiValue {
+    margin-left: 0;
+  }
+}
+
+/* ── ODP-OC-R4-006 Candidate gate / SiteScore / Compare surfaces ── */
+.gateGrid {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.gateRowItem {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f6f8fb;
+  font-size: 12.5px;
+}
+
+.gateRowItem[data-state="fail"] {
+  background: #fbe9e7;
+}
+
+.gateRowItem[data-state="warn"] {
+  background: #fbf1dd;
+}
+
+.gateMark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.gateRowItem[data-state="ok"] .gateMark {
+  color: #1e7f4f;
+}
+
+.gateRowItem[data-state="warn"] .gateMark {
+  color: #96610b;
+}
+
+.gateRowItem[data-state="fail"] .gateMark {
+  color: #b3261e;
+}
+
+.revenuePath {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  align-items: end;
+  height: 96px;
+  margin: 12px 0;
+}
+
+.revenueBar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.revenueBar i {
+  display: block;
+  width: 100%;
+  height: 60px;
+  background: #eef1f5;
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.revenueBar i b {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: block;
+  background: #12909f;
+  border-radius: 6px 6px 0 0;
+}
+
+.revenueBar small {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: #5a6472;
+}
+
+.bandTiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.bandTile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f6f8fb;
+}
+
+.bandTile span {
+  font-size: 10.5px;
+  color: #8a93a8;
+}
+
+.bandTile strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+}
+
+.subScoreGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.reasonCols {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.reasonCols h4 {
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+
+.conditionBox {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 4px solid #f59e0b;
+  background: #fbf1dd;
+}
+
+.conditionBox[data-tone="risk"] {
+  border-left-color: #ef4444;
+  background: #fbe9e7;
+}
+
+.conditionBox strong {
+  display: block;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.compareRecPanel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.recCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e3e8ef;
+  background: #ffffff;
+}
+
+.recCard[data-tone="good"] {
+  border-left: 4px solid #10b981;
+}
+
+.recCard[data-tone="watch"] {
+  border-left: 4px solid #f59e0b;
+}
+
+.recCard[data-tone="risk"] {
+  border-left: 4px solid #ef4444;
+}
+
+.priorityPill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #5a6472;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+}
+
+.priorityPill[data-best="true"] {
+  background: #e5f3ea;
+  color: #1e7f4f;
+}
+
+/* ---------------------------------------------------------------------------
+ * ODP-OC-R4-007 Network Review decision surface
+ * (data-screen-label "Network 選址審核" / "Dialog Review Decision")
+ * ------------------------------------------------------------------------- */
+
+.reviewLayout {
+  display: grid;
+  grid-template-columns: 390px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .reviewLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.reviewQueue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reviewQueueCard {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 11px;
+  padding: 11px 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.reviewQueueCard:hover {
+  border-color: #b9c4ee;
+}
+
+.reviewQueueCard[data-active="true"] {
+  border-color: #2e3a97;
+  box-shadow: 0 0 0 1px #2e3a97 inset;
+}
+
+.reviewQueueTop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.reviewQueueId {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: #8a93a8;
+}
+
+.reviewQueueName {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1c2333;
+  margin-top: 5px;
+}
+
+.reviewQueueMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #8a93a8;
+}
+
+.reviewQueueDue {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", monospace;
+  color: #96610b;
+}
+
+.reviewDetail {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.reviewDetailHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reviewMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (max-width: 640px) {
+  .reviewMetaGrid,
+  .reviewMetricGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.reviewMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid #eef1f6;
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: #fbfcfe;
+}
+
+.reviewMetaLabel {
+  font-size: 9.5px;
+  color: #98a1b3;
+  font-weight: 700;
+}
+
+.reviewMetaValue {
+  font-size: 11.5px;
+  color: #3a4362;
+  margin-top: 2px;
+}
+
+.reviewFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+
+.reviewFactRow {
+  display: flex;
+  gap: 8px;
+}
+
+.reviewFactKey {
+  width: 82px;
+  flex: none;
+  color: #8a93a8;
+}
+
+.reviewChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.reviewChip {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #0e7c8c;
+  background: #e2f4f6;
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+
+.reviewHistory {
+  margin-top: 10px;
+  border: 1px solid #eef1f6;
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: #fbfcfe;
+}
+
+.reviewHistoryRow {
+  display: flex;
+  gap: 8px;
+  font-size: 10.5px;
+}
+
+.reviewHistoryTime {
+  width: 118px;
+  flex: none;
+  color: #98a1b3;
+  font-weight: 600;
+}
+
+.reviewDecided {
+  margin-top: 12px;
+  background: #f8fafd;
+  border: 1px solid #eef1f6;
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: #3a4362;
+  line-height: 1.6;
+}
+
+.reviewPending {
+  margin-top: 14px;
+  border-top: 1px solid #eef1f6;
+  padding-top: 12px;
+}
+
+.reviewSyncNote {
+  background: #f8fafd;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #5a6478;
+  line-height: 1.6;
+}
+
+.reviewOverrideHint {
+  margin-bottom: 8px;
+  background: #fbf1dd;
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #96610b;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.reviewDecisionBar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.reviewDecisionBar button {
+  flex: 1;
+  min-width: 110px;
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btnGo {
+  background: #1e7f4f;
+  color: #ffffff;
+  border: none;
+}
+
+.btnWait {
+  background: #ffffff;
+  color: #96610b;
+  border: 1px solid #e4c88a;
+}
+
+.reviewRoleNote {
+  margin-top: 10px;
+  background: #fbf6e9;
+  border: 1px solid #efe2c0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #7a6220;
+  line-height: 1.55;
+}
+
+/* Decision dialog ("Dialog Review Decision") */
+.reviewDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: rgba(20, 25, 48, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.reviewDialog {
+  width: 520px;
+  max-width: 94vw;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.reviewDialogHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px 0;
+}
+
+.reviewDialogTitle {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.reviewDialogClose {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #8a93a8;
+  font-size: 17px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.reviewDialogBody {
+  padding: 12px 18px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.reviewDialogSub {
+  font-size: 11.5px;
+  color: #5a6478;
+}
+
+.reviewDialogField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.reviewDialogFieldLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a6478;
+}
+
+.reviewDialogFieldLabelWarn {
+  color: #96610b;
+}
+
+.reviewDialogInput {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #1c2333;
+  background: #fbfcfe;
+  outline: none;
+  resize: vertical;
+}
+
+.reviewAckButton {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.reviewAckButton[data-checked="true"] {
+  background: #eef1fb;
+  border-color: #2e3a97;
+}
+
+.reviewAckMark {
+  font-size: 14px;
+  color: #2e3a97;
+  flex: none;
+  line-height: 1.2;
+}
+
+.reviewAckText {
+  font-size: 11.5px;
+  color: #3a4362;
+  line-height: 1.5;
+}
+
+.reviewDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+.reviewDialogCancel {
+  background: #ffffff;
+  color: #3a4362;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reviewDialogSubmit {
+  background: #2e3a97;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reviewDialogSubmit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }

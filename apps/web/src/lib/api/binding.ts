@@ -1,4 +1,5 @@
 import type { OdpApiClient } from "@oday-plus/openapi-client";
+import { headers } from "next/headers";
 
 /**
  * Outcome of attempting to bind a workspace region to live backend data.
@@ -32,20 +33,42 @@ export async function loadApiBinding<T>(options: {
 }): Promise<ApiBinding<T>> {
   const fetchedAt = new Date().toISOString();
   const { client, fetcher } = options;
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true";
+
   if (!client) {
-    return { state: "unconfigured", items: [], source: "fixture", fetchedAt };
+    return {
+      state: "unconfigured",
+      items: [],
+      source: isProduction ? "api" : "fixture",
+      fetchedAt,
+    };
   }
+
   try {
     const items = await fetcher(client);
     if (items.length === 0) {
-      return { state: "empty", items: [], source: "fixture", baseUrl: client.baseUrl, fetchedAt };
+      return {
+        state: "empty",
+        items: [],
+        source: isProduction ? "api" : "fixture",
+        baseUrl: client.baseUrl,
+        fetchedAt,
+      };
     }
-    return { state: "ready", items, source: "api", baseUrl: client.baseUrl, fetchedAt };
+    return {
+      state: "ready",
+      items,
+      source: "api",
+      baseUrl: client.baseUrl,
+      fetchedAt,
+    };
   } catch (error) {
     return {
       state: "error",
       items: [],
-      source: "fixture",
+      source: isProduction ? "api" : "fixture",
       error: error instanceof Error ? error.message : String(error),
       baseUrl: client.baseUrl,
       fetchedAt,

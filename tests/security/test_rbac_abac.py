@@ -52,6 +52,7 @@ def principal(role: Role, **scope_kwargs) -> Principal:
 
 # --- RBAC -------------------------------------------------------------------
 
+
 def test_rbac_grants_role_permission() -> None:
     p = principal(Role.PRICING_MANAGER)
     assert rbac_allows(p, "priceops", Action.APPROVE)
@@ -74,13 +75,12 @@ def test_permissions_for_unions_roles() -> None:
 
 # --- ABAC -------------------------------------------------------------------
 
+
 def test_tenant_isolation_blocks_other_tenant() -> None:
     engine, sink = make_engine()
     p = principal(Role.OPERATIONS_MANAGER, tenant_id="tenant-a")
     res = ResourceDescriptor(type="forecastops", tenant_id="tenant-b")
-    decision = engine.authorize(
-        AccessRequest(p, Action.VIEW, res), on=ON
-    )
+    decision = engine.authorize(AccessRequest(p, Action.VIEW, res), on=ON)
     assert not decision.allowed
     assert decision.policy_id == "tenant_isolation"
 
@@ -114,9 +114,7 @@ def test_data_classification_visibility() -> None:
         roles=frozenset({Role.AUDITOR}),
         scope=Scope(clearance=DataClassification.CONFIDENTIAL),
     )
-    res = ResourceDescriptor(
-        type="audit", data_classification=DataClassification.RESTRICTED
-    )
+    res = ResourceDescriptor(type="audit", data_classification=DataClassification.RESTRICTED)
     decision = engine.authorize(AccessRequest(p, Action.VIEW, res), on=ON)
     assert not decision.allowed
     assert decision.policy_id == "data_classification"
@@ -124,13 +122,12 @@ def test_data_classification_visibility() -> None:
 
 # --- engine: unauthenticated + audit ---------------------------------------
 
+
 def test_unauthenticated_denied_and_audited() -> None:
     # ODP-AC-AUTH-001 + ODP-AC-AUTH-005
     engine, log = make_engine()
     res = ResourceDescriptor(type="priceops")
-    req = AccessRequest(
-        ANONYMOUS, Action.VIEW, res, Environment(source_ip="10.0.0.9")
-    )
+    req = AccessRequest(ANONYMOUS, Action.VIEW, res, Environment(source_ip="10.0.0.9"))
     decision = engine.authorize(req, on=ON)
     assert not decision.allowed
     denials = events_with_outcome(log, AuditOutcome.DENY)
@@ -155,6 +152,7 @@ def test_denied_action_writes_security_audit_event() -> None:
 
 
 # --- high-risk policy hooks -------------------------------------------------
+
 
 def test_high_risk_denied_when_flag_disabled() -> None:
     # ODP-AC-AUTH-004: high-risk action requires the policy hook (flag)
@@ -192,9 +190,7 @@ def test_separation_of_duties_blocks_self_approval() -> None:
     )
     engine = AuthorizationEngine(audit_log=log, flags=flags)
     reviewer = Principal(subject_id="rev-1", roles=frozenset({Role.SITE_REVIEWER}))
-    res = ResourceDescriptor(
-        type="sitescore", attributes={"proposed_by": "rev-1"}
-    )
+    res = ResourceDescriptor(type="sitescore", attributes={"proposed_by": "rev-1"})
     decision = engine.authorize(AccessRequest(reviewer, Action.APPROVE, res), on=ON)
     assert not decision.allowed
     assert decision.policy_id == "high_risk.separation_of_duties"

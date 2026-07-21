@@ -1,5 +1,7 @@
 import type { Issue, OperatorRoleId, Severity } from "./types";
 
+export const STORE_OPS_REFRESH_EVENT = "oday:store-ops-refresh";
+
 export const STORE_OPS_WORKFLOW_DIALOG_TYPES = [
   "triage",
   "assign",

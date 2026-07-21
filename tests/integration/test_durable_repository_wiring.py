@@ -35,6 +35,7 @@ from shared.infrastructure.persistence import (
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobRequest
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 
@@ -112,6 +113,80 @@ def test_forecast_service_writes_survive_restart(db_path) -> None:
         assert latest[0].forecast_output_id == first_id
         assert len(repo.history("store-001")) == 1
         assert len(repo.list_alerts()) >= 1
+    finally:
+        reopened.engine.close()
+
+
+def test_durable_forecastops_acknowledge_and_handoff_api_survive_restart(db_path) -> None:
+    bundle = _durable_bundle(db_path)
+    correlation_id = "corr-durable-forecastops-ack-exec"
+    try:
+        client = TestClient(create_app(persistence=bundle), headers=FORECASTOPS_HEADERS)
+        created = client.post(
+            "/forecastops/forecast-jobs",
+            json={
+                "prediction_origin_time": PREDICTION_TIME.isoformat(),
+                "inputs": [
+                    {
+                        "store_id": "store-durable-ack-001",
+                        "observations": [
+                            {
+                                "business_date": "2026-06-25",
+                                "actual_revenue": 120_000,
+                                "site_score_baseline_p50": 120_000,
+                            },
+                            {
+                                "business_date": "2026-06-26",
+                                "actual_revenue": 72_000,
+                                "site_score_baseline_p50": 120_000,
+                            },
+                        ],
+                    }
+                ],
+            },
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert created.status_code == 202
+        payload = created.json()
+        alert_id = payload["alerts"][0]["alert_id"]
+        handoff_id = payload["handoffs"][0]["handoff_id"]
+
+        acknowledged = client.post(
+            f"/forecastops/alerts/{alert_id}/acknowledge",
+            json={"actor": "ops-manager-durable", "note": "durable triage"},
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert acknowledged.status_code == 200
+        assert acknowledged.json()["status"] == "acknowledged"
+
+        executed = client.post(
+            f"/forecastops/intervention-handoffs/{handoff_id}/execute",
+            json={
+                "actor": "ops-dispatcher-durable",
+                "intervention_id": "intervention-durable-001",
+            },
+            headers={"x-correlation-id": correlation_id},
+        )
+        assert executed.status_code == 200
+        assert executed.json()["status"] == "dispatched"
+
+        audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+        event_types = {event["event_type"] for event in audit.json()["events"]}
+        assert "forecastops.alert.acknowledged.v1" in event_types
+        assert "forecastops.handoff.executed.v1" in event_types
+    finally:
+        bundle.engine.close()
+
+    reopened = _durable_bundle(db_path)
+    try:
+        alert = reopened.forecastops_repository.get_alert(alert_id)
+        handoff = reopened.forecastops_repository.get_handoff(handoff_id)
+        assert alert is not None
+        assert alert.status == "acknowledged"
+        assert alert.acknowledged_by == "ops-manager-durable"
+        assert handoff is not None
+        assert handoff.status == "dispatched"
+        assert handoff.intervention_id == "intervention-durable-001"
     finally:
         reopened.engine.close()
 
@@ -241,5 +316,136 @@ def test_durable_job_queue_idempotency_survives_restart(db_path) -> None:
         )
         assert created is False
         assert replay.job_id == job_id
+    finally:
+        reopened.engine.close()
+
+
+def test_product_domain_writes_survive_restart(db_path) -> None:
+    import uuid
+    from datetime import UTC, date, datetime, time
+
+    from shared.domain.models import (
+        AddressLocation,
+        Brand,
+        Machine,
+        MachineCycle,
+        Store,
+        Tenant,
+        Transaction,
+    )
+
+    # 1. Write data to the durable bundle
+    bundle = _durable_bundle(db_path)
+    try:
+        tenant_id = str(uuid.uuid4())
+        brand_id = str(uuid.uuid4())
+        address_id = str(uuid.uuid4())
+        store_id = str(uuid.uuid4())
+        machine_id = str(uuid.uuid4())
+        tx_id = str(uuid.uuid4())
+        cycle_id = str(uuid.uuid4())
+
+        tenant = Tenant(tenant_id=tenant_id, tenant_name="ODay Group")
+        brand = Brand(
+            brand_id=brand_id, tenant_id=tenant_id, brand_code="ODAY", brand_name="ODay Laundry"
+        )
+        address = AddressLocation(
+            address_id=address_id,
+            raw_address="Taipei 101",
+            city="Taipei",
+            latitude=25.033,
+            longitude=121.564,
+        )
+        store = Store(
+            store_id=store_id,
+            tenant_id=tenant_id,
+            brand_id=brand_id,
+            store_name="Xinyi Store",
+            address_id=address_id,
+            opened_on=date(2026, 6, 26),
+            service_start_time=time(8, 0),
+            service_end_time=time(22, 0),
+        )
+        machine = Machine(
+            machine_id=machine_id,
+            store_id=store_id,
+            source_machine_id="M01",
+            machine_family="washer",
+            capacity_kg=15.0,
+            installed_on=date(2026, 6, 26),
+        )
+        tx = Transaction(
+            transaction_id=tx_id,
+            store_id=store_id,
+            machine_id=machine_id,
+            gross_amount=150.0,
+            net_amount=150.0,
+            source_system="POS",
+        )
+        cycle = MachineCycle(
+            cycle_id=cycle_id,
+            store_id=store_id,
+            machine_id=machine_id,
+            transaction_id=tx_id,
+            cycle_start_time=datetime(2026, 7, 11, 3, 0, tzinfo=UTC),
+            cycle_end_time=datetime(2026, 7, 11, 3, 30, tzinfo=UTC),
+            cycle_type="wash",
+            duration_sec=1800,
+        )
+
+        bundle.tenant_repository.save_tenant(tenant)
+        bundle.brand_repository.save_brand(brand)
+        bundle.address_location_repository.save_address(address)
+        bundle.store_repository.save_store(store)
+        bundle.machine_repository.save_machine(machine)
+        bundle.transaction_repository.save_transaction(tx)
+        bundle.machine_cycle_repository.save_machine_cycle(cycle)
+
+    finally:
+        bundle.engine.close()
+
+    # 2. Simulated process restart: reopen on the same DB file and verify
+    reopened = _durable_bundle(db_path)
+    try:
+        t = reopened.tenant_repository.get_tenant(tenant_id)
+        assert t is not None
+        assert t.tenant_name == "ODay Group"
+
+        b = reopened.brand_repository.get_brand(brand_id)
+        assert b is not None
+        assert b.brand_code == "ODAY"
+
+        a = reopened.address_location_repository.get_address(address_id)
+        assert a is not None
+        assert a.raw_address == "Taipei 101"
+
+        s = reopened.store_repository.get_store(store_id)
+        assert s is not None
+        assert s.store_name == "Xinyi Store"
+        assert s.opened_on == date(2026, 6, 26)
+        assert s.service_start_time == time(8, 0)
+
+        m = reopened.machine_repository.get_machine(machine_id)
+        assert m is not None
+        assert m.source_machine_id == "M01"
+
+        tx_ret = reopened.transaction_repository.get_transaction(tx_id)
+        assert tx_ret is not None
+        assert tx_ret.gross_amount == 150.0
+
+        c = reopened.machine_cycle_repository.get_machine_cycle(cycle_id)
+        assert c is not None
+        assert c.cycle_type == "wash"
+        assert c.duration_sec == 1800
+
+        # Verify list methods
+        assert len(reopened.tenant_repository.list_tenants()) == 1
+        assert len(reopened.brand_repository.list_brands()) == 1
+        assert len(reopened.address_location_repository.list_addresses()) == 1
+        assert len(reopened.store_repository.list_stores()) == 1
+        assert len(reopened.machine_repository.list_machines()) == 1
+        assert len(reopened.transaction_repository.list_transactions()) == 1
+        assert len(reopened.machine_cycle_repository.list_machine_cycles()) == 1
+
     finally:
         reopened.engine.close()

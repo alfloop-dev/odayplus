@@ -14,7 +14,9 @@ CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
 
 
 def load_checker_module():
-    spec = importlib.util.spec_from_file_location("check_external_proof_handback_status_board", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "check_external_proof_handback_status_board", CHECKER
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -44,7 +46,10 @@ def test_external_proof_handback_status_board_matches_closeout_queue() -> None:
     assert set(queue_entries) == set(status_entries)
     assert status_board["release_target"]["pr"] == 82
     assert "headRefOid" in status_board["release_target"]["authority"]
-    assert status_board["source_of_truth"] == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+    assert (
+        status_board["source_of_truth"]
+        == "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+    )
     assert status_board["bundle_status"]["status"] == "pending_external_handbacks"
 
     for task_id, queue_entry in queue_entries.items():
@@ -68,7 +73,9 @@ def test_external_proof_handback_status_board_rejects_unproven_acceptance_claim(
     errors = checker.validate_status_board(queue, candidate)
 
     assert any("accepted handback must set artifact_check_passed true" in error for error in errors)
-    assert any("accepted handback missing accepted_release_head_ref_oid" in error for error in errors)
+    assert any(
+        "accepted handback missing accepted_release_head_ref_oid" in error for error in errors
+    )
     assert any("accepted must set handback_artifact_path" in error for error in errors)
 
 

@@ -2,9 +2,10 @@
 
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./designAligned.module.css";
-import type { Issue, Severity, EvidenceKind, OperatorRoleId } from "./types";
-import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
+import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
+import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
   filterStoreOpsIssues,
   getIssueEvidence,
@@ -32,8 +33,41 @@ type DesignTodayWorkspaceProps = {
 };
 
 type DesignStoreOpsWorkspaceProps = {
+  initialIssueId?: string;
+  initialTabId?: string;
   onOpenWorkflow: (dialog: StoreOpsWorkflowDialogType, issue: Issue) => void;
   issues?: Issue[];
+};
+
+type StoreOpsLightDimension = keyof Store["lights"];
+
+type StoreOpsLightFilter = {
+  dimension: StoreOpsLightDimension;
+  status: StoreLightStatus;
+};
+
+type StoreOpsLightSummary = {
+  dimension: StoreOpsLightDimension;
+  label: string;
+  counts: Record<StoreLightStatus, number>;
+  issueCounts: Record<StoreLightStatus, number>;
+};
+
+type StoreOpsApiState = {
+  stores: Store[];
+  issues: Issue[];
+  evidence: EvidenceItem[];
+  auditEvents: AuditEvent[];
+  fourLightSummary: StoreOpsLightSummary[];
+  count: number;
+};
+
+const lightStatusOrder: StoreLightStatus[] = ["red", "yellow"];
+
+const lightStatusLabels: Record<StoreLightStatus, string> = {
+  green: "Green",
+  yellow: "Yellow",
+  red: "Red",
 };
 
 const kpis = [
@@ -325,9 +359,17 @@ export function DesignTodayWorkspace({
   );
 }
 
-export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: DesignStoreOpsWorkspaceProps) {
+export function DesignStoreOpsWorkspace({
+  initialIssueId,
+  initialTabId,
+  onOpenWorkflow,
+  issues: propIssues,
+}: DesignStoreOpsWorkspaceProps) {
   // 1. Get current operator role from sessionStorage if available
   const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
+  const [apiState, setApiState] = useState<StoreOpsApiState | null>(null);
+  const [storeOpsRefreshToken, setStoreOpsRefreshToken] = useState(0);
+  const [isStoreOpsLoading, setIsStoreOpsLoading] = useState(false);
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedRole = window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId;
@@ -341,13 +383,76 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedSeverities, setSelectedSeverities] = useState<Severity[]>([]);
+  const [selectedLightFilter, setSelectedLightFilter] = useState<StoreOpsLightFilter | null>(null);
   const [mineOnly, setMineOnly] = useState(false);
-  const [selectedIssueId, setSelectedIssueId] = useState<string>("ISS-1024");
+  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "ISS-1024");
+
+  useEffect(() => {
+    if (initialIssueId) {
+      setSelectedIssueId(initialIssueId);
+    }
+  }, [initialIssueId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleRefresh = () => setStoreOpsRefreshToken((token) => token + 1);
+    window.addEventListener(STORE_OPS_REFRESH_EVENT, handleRefresh);
+    return () => window.removeEventListener(STORE_OPS_REFRESH_EVENT, handleRefresh);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStoreOpsIssues() {
+      const params = new URLSearchParams();
+      if (searchQuery.trim()) params.set("query", searchQuery.trim());
+      selectedSources.forEach((source) => params.append("sources", source));
+      selectedSeverities.forEach((severity) => params.append("severities", severity));
+      if (mineOnly) params.set("mineOnly", "true");
+      params.set("roleId", roleId);
+      if (selectedLightFilter) {
+        params.set("light", selectedLightFilter.dimension);
+        params.set("lightStatus", selectedLightFilter.status);
+      }
+
+      setIsStoreOpsLoading(true);
+      try {
+        const response = await fetch(`/api/v1/operator/store-ops/issues?${params.toString()}`, {
+          headers: operatorSecurityHeaders(roleId),
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as StoreOpsApiState;
+        if (!cancelled) {
+          setApiState(data);
+        }
+      } catch (error) {
+        console.error("Error loading Store Ops issues:", error);
+      } finally {
+        if (!cancelled) {
+          setIsStoreOpsLoading(false);
+        }
+      }
+    }
+
+    loadStoreOpsIssues();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchQuery, selectedSources, selectedSeverities, mineOnly, roleId, selectedLightFilter, storeOpsRefreshToken]);
+
+  const issueSource = apiState?.issues ?? propIssues ?? ISSUE_FIXTURES;
+  const activeStores = apiState?.stores ?? STORE_FIXTURES;
+  const activeEvidence = apiState?.evidence ?? EVIDENCE_FIXTURES;
+  const activeAuditEvents = apiState?.auditEvents ?? AUDIT_EVENT_FIXTURES;
+  const fourLightSummary = apiState?.fourLightSummary ?? [];
 
   // 3. Apply filters and sort (by severity + SLA)
   const filteredIssues = useMemo(() => {
+    if (apiState) {
+      return issueSource;
+    }
     return filterStoreOpsIssues(
-      propIssues || ISSUE_FIXTURES,
+      issueSource,
       {
         search: searchQuery,
         statuses: [],
@@ -357,7 +462,7 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
       },
       roleId
     );
-  }, [searchQuery, selectedSources, selectedSeverities, mineOnly, roleId]);
+  }, [apiState, issueSource, searchQuery, selectedSources, selectedSeverities, mineOnly, roleId]);
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
@@ -420,8 +525,8 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
 
   // 6. Dynamic evidence list resolved from issue
   const issueEvidence = useMemo(() => {
-    return getIssueEvidence(issue, EVIDENCE_FIXTURES);
-  }, [issue]);
+    return getIssueEvidence(issue, activeEvidence);
+  }, [issue, activeEvidence]);
 
   const supportingEvidence = useMemo(() => {
     return issueEvidence.filter((e) => e.polarity === "supporting");
@@ -440,13 +545,13 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
 
   // 7. Filtered audit timelines
   const localAuditEvents = useMemo(() => {
-    return getLocalAuditEvents(issue, AUDIT_EVENT_FIXTURES);
-  }, [issue]);
+    return getLocalAuditEvents(issue, activeAuditEvents);
+  }, [issue, activeAuditEvents]);
 
   // 8. Store lighting status helper
   const storeObj = useMemo(() => {
-    return STORE_FIXTURES.find((s) => s.id === issue.storeId);
-  }, [issue.storeId]);
+    return activeStores.find((s) => s.id === issue.storeId);
+  }, [activeStores, issue.storeId]);
 
   // Interactive callbacks
   const toggleSource = (source: string) => {
@@ -461,9 +566,16 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
     );
   };
 
+  const toggleLightFilter = (dimension: StoreOpsLightDimension, status: StoreLightStatus) => {
+    setSelectedLightFilter((current) =>
+      current?.dimension === dimension && current.status === status ? null : { dimension, status }
+    );
+  };
+
   const clearFilters = () => {
     setSelectedSources([]);
     setSelectedSeverities([]);
+    setSelectedLightFilter(null);
     setMineOnly(false);
     setSearchQuery("");
   };
@@ -491,13 +603,35 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
   const secondaryActionLabels = getSecondaryActionLabels(issue);
+  const totalIssueCount =
+    fourLightSummary[0]
+      ? lightStatusOrder.reduce(
+          (total, status) => total + fourLightSummary[0].issueCounts[status],
+          fourLightSummary[0].issueCounts.green,
+        )
+      : (propIssues ?? ISSUE_FIXTURES).length;
 
   return (
-    <div className={styles.storeWorkspace} data-screen-label="Store Ops 門市營運">
+    <div
+      className={styles.storeWorkspace}
+      data-screen-label="Store Ops 門市營運"
+      data-selected-issue-id={selectedIssueId}
+      data-selected-tab-id={initialTabId}
+    >
       <header className={styles.storeHeader}>
         <h1>門市營運</h1>
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>
       </header>
+
+      <div data-screen-label="Store Ops 全店四燈摘要" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "12px", color: "#1C2333" }}>全店營運狀況（四燈）</strong>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 需求</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 設備</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 清潔</span>
+          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 利潤</span>
+        </div>
+      </div>
       <div className={styles.storeGrid}>
         <aside className={styles.storeQueue} aria-label="門市 Issue queue">
           <label className={styles.designSearch}>
@@ -507,14 +641,35 @@ export function DesignStoreOpsWorkspace({ onOpenWorkflow, issues: propIssues }: 
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </label>
+          {fourLightSummary.length > 0 ? (
+            <div className={styles.filterRows} aria-label="Store Ops four-light quick filters">
+              {fourLightSummary.flatMap((item) =>
+                lightStatusOrder.map((status) => {
+                  const isActive = selectedLightFilter?.dimension === item.dimension && selectedLightFilter.status === status;
+                  return (
+                    <button
+                      aria-pressed={isActive}
+                      className={`${styles.filterButton} ${isActive ? styles.filterActive : ""}`}
+                      key={`${item.dimension}-${status}`}
+                      onClick={() => toggleLightFilter(item.dimension, status)}
+                      type="button"
+                    >
+                      {item.label} {lightStatusLabels[status]} {item.issueCounts[status]}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
           <div className={styles.filterRows}>
             <button
               type="button"
-              className={`${styles.filterButton} ${selectedSources.length === 0 && selectedSeverities.length === 0 && !mineOnly ? styles.filterActive : ""}`}
+              className={`${styles.filterButton} ${selectedSources.length === 0 && selectedSeverities.length === 0 && !selectedLightFilter && !mineOnly ? styles.filterActive : ""}`}
               onClick={clearFilters}
             >
-              全部 {ISSUE_FIXTURES.length}
+              全部 {totalIssueCount}
             </button>
+            {isStoreOpsLoading ? <span>API</span> : null}
             <button
               type="button"
               className={`${styles.filterButton} ${selectedSeverities.includes("critical") ? styles.filterActive : ""}`}

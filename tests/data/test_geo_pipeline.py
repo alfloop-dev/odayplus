@@ -43,6 +43,7 @@ def test_address_normalization_geocode_and_h3_are_reproducible() -> None:
     assert normalized.normalized_address == "台北市大安區和平東路二段100號"
     assert result.address.city == "台北市"
     import h3
+
     assert result.address.district == "大安區"
     assert result.address.geocode_precision == "rooftop"
     assert result.address.geocode_confidence == 0.92
@@ -88,6 +89,7 @@ def test_geo_pipeline_flags_stale_source_snapshot() -> None:
     )
 
     import h3
+
     assert h3.is_valid_cell(result.address.h3_res_9)
     assert h3.get_resolution(result.address.h3_res_9) == 9
     assert "stale_source_snapshot" in result.quality_flags

@@ -23,7 +23,9 @@ EVIDENCE = ROOT / "docs/evidence"
 
 
 def load_checker_module():
-    spec = importlib.util.spec_from_file_location("check_product_grade_gate_reconciliation", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "check_product_grade_gate_reconciliation", CHECKER
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -44,7 +46,9 @@ def test_committed_evidence_satisfies_static_invariants() -> None:
     module = load_checker_module()
     external_queue, handback_board, pickup_text, release_queue = load_sources(module)
 
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, None)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, None
+    )
     errors = module.validate_static(reconciliation)
 
     assert errors == [], errors
@@ -61,7 +65,9 @@ def test_static_invariant_flags_queue_board_mismatch() -> None:
     handback_board = json.loads(json.dumps(handback_board))
     handback_board["tasks"] = handback_board["tasks"][:-1]
 
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, None)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, None
+    )
     errors = module.validate_static(reconciliation)
 
     assert any("task ids must match" in error for error in errors), errors
@@ -75,7 +81,9 @@ def test_static_invariant_flags_blocker_count_vs_ack_skew() -> None:
     handback_board = json.loads(json.dumps(handback_board))
     handback_board["tasks"][0]["status"] = "accepted"
 
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, None)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, None
+    )
     errors = module.validate_static(reconciliation)
 
     assert reconciliation["queue_open_blocker_count"] != reconciliation["pending_pickup_acks"]
@@ -96,7 +104,9 @@ def test_runtime_flags_orphaned_and_active_blocker(tmp_path: Path) -> None:
         ],
     }
 
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, status_payload)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, status_payload
+    )
     findings = module.evaluate_runtime(reconciliation, status_payload)
     kinds = {f["kind"] for f in findings}
 
@@ -111,7 +121,9 @@ def test_runtime_flags_stale_closure_packet() -> None:
     closure_task = release_queue["queue"][1]["task_id"]
 
     status_payload = {"tasks": [{"id": closure_task, "status": "done"}]}
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, status_payload)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, status_payload
+    )
     findings = module.evaluate_runtime(reconciliation, status_payload)
 
     assert any(
@@ -130,7 +142,9 @@ def test_runtime_clean_when_status_matches_queue() -> None:
         queue_statuses.setdefault(action["task_id"], action["status"])
     status_payload = {"tasks": [{"id": tid, "status": st} for tid, st in queue_statuses.items()]}
 
-    reconciliation = module.reconcile(external_queue, handback_board, pickup_text, release_queue, status_payload)
+    reconciliation = module.reconcile(
+        external_queue, handback_board, pickup_text, release_queue, status_payload
+    )
     findings = module.evaluate_runtime(reconciliation, status_payload)
 
     assert findings == [], findings

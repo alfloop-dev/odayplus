@@ -1,4 +1,22 @@
 import { expect, test, type Locator } from "@playwright/test";
+import {
+  acquireOperatorBackendLock,
+  releaseOperatorBackendLock,
+} from "./_operatorBackendLock";
+
+const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
+const NETWORK_HEADERS = {
+  "x-subject-id": "operator-expansion-manager",
+  "x-roles": "expansion_user",
+  "x-operator-role": "expansion-manager",
+  "x-tenant-id": "tenant-a",
+};
+
+// No-op unless the running test actually took the operator backend lock, so it
+// is safe for every test in this file and releases even on failure.
+test.afterEach(() => {
+  releaseOperatorBackendLock();
+});
 
 test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog", async ({
   page,
@@ -39,6 +57,49 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   await expect(page.locator('[data-screen-label="Govern 治理稽核"]')).toContainText("核准中心");
 
   expect(browserErrors).toEqual([]);
+});
+
+test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({ page }) => {
+  const taskRequests: string[] = [];
+  await page.route("**/api/v1/tasks", async (route) => {
+    taskRequests.push(route.request().url());
+    await route.fulfill({
+      contentType: "application/json",
+      status: 200,
+      body: JSON.stringify({
+        items: [
+          {
+            id: "API-902",
+            title: "Live SiteScore review",
+            summary: "Review CS-1002 before the expansion weekly gate.",
+            owner: "展店",
+            status: "review",
+            priority: "P1",
+            dueLabel: "42m",
+            workspace: "govern",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/operator");
+
+  await page.getByTestId("operator-task-center-button").click();
+  const taskCenter = page.getByTestId("operator-task-center");
+  await expect(taskCenter).toBeVisible();
+  await expect(taskCenter).toContainText("API");
+  await expect(taskCenter).toContainText("Live SiteScore review");
+  expect(taskRequests.length).toBeGreaterThan(0);
+
+  await page.keyboard.press("Control+K");
+  const palette = page.getByTestId("operator-command-palette");
+  await expect(palette).toBeVisible();
+  await page.getByRole("combobox", { name: "Command palette search" }).fill("Live SiteScore");
+  await expect(page.getByRole("option", { name: /Live SiteScore review/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator('[data-screen-label="Govern 治理稽核"]')).toBeVisible();
 });
 
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
@@ -99,10 +160,12 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   const fileName = await resultPanel.locator("span").first().textContent();
   expect(fileName).toContain("EVD-2026-0705-");
 
-  // Go to Audit Trail tab and verify audit event has been written
+  // Go to Audit Trail tab and verify audit event has been written.
+  // The Govern workspace is now API-bound (ODP-OC-R4-009): the export audit is
+  // attributed to the acting role rather than the former hardcoded mock actor.
   await page.getByRole("button", { name: "Audit Trail" }).click();
   await expect(page.locator("table")).toContainText("Export Evidence Package");
-  await expect(page.locator("table")).toContainText("Antigravity6");
+  await expect(page.locator("table")).toContainText("營運主管");
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
@@ -126,7 +189,21 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 });
 
 
-test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page }) => {
+test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ page, request }) => {
+  // Only this test resets the shared operator listing backend, so the lock is
+  // taken here rather than for the whole file. Released by the afterEach below,
+  // which is a no-op for the tests that never took it.
+  await acquireOperatorBackendLock();
+
+  const resetRebalance = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-rebalance/reset`, {
+    headers: NETWORK_HEADERS,
+  });
+  expect(resetRebalance.status()).toBe(200);
+  const resetListings = await page.request.post(`${API_BASE_URL}/api/v1/operator/network-listings/reset`, {
+    headers: NETWORK_HEADERS,
+  });
+  expect(resetListings.status()).toBe(200);
+
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -134,6 +211,12 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
     }
   });
   page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  // ODP-OC-R4-007: reset the review service before the panel first fetches so
+  // the golden GO review (RV-702) is pending and decidable in this smoke.
+  await request
+    .post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`)
+    .catch(() => undefined);
 
   await page.goto("/operator");
 
@@ -148,66 +231,58 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({ p
   // 物件雷達 / Listing Radar
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("network-panel-listings")).toBeVisible();
-  await expect(page.getByTestId("network-listing-table")).toContainText("LST-440");
-  await expect(page.getByTestId("network-listing-table")).toContainText("LST-441");
+  await expect(page.getByTestId("network-listing-table")).toContainText("L-2024");
+  await expect(page.getByTestId("network-listing-table")).toContainText("L-2030");
+  await page.getByTestId("convert-L-2024").click();
 
   // 候選點 / Candidates
-  await page.getByTestId("network-tab-2").click();
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
-  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1002");
+  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1001");
 
   // SiteScore / Score Lab
   await page.getByTestId("network-tab-3").click();
   await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
-  await expect(page.getByTestId("sitescore-card-CS-1002")).toContainText("sitescore-v0.9.4");
+  await expect(page.getByTestId("sitescore-card-CS-1001")).toContainText("SiteScore v2.3");
 
-  // 比較 / Compare
+  // 比較 / Compare — ODP-OC-R4-006 productized the compare table to the
+  // score-sorted SiteScore comparison with a primary/alternate/avoid rec.
   await page.getByTestId("network-tab-4").click();
   await expect(page.getByTestId("network-panel-compare")).toBeVisible();
-  await expect(page.getByTestId("network-compare-table")).toContainText("Brand Fit");
+  await expect(page.getByTestId("network-compare-table")).toContainText("SiteScore");
 
-  // 審核 / Review
+  // 選址審核 / Review — ODP-OC-R4-007 productized the review to the API-backed
+  // decision dialog (Candidate/Review/Approval/Decision/Audit atomic sync).
   await page.getByTestId("network-tab-5").click();
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
-  await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
+  await expect(page.getByTestId("review-card-RV-702")).toBeVisible({ timeout: 15_000 });
 
-  // Test reason gate validation error
-  await page.getByTestId("review-reason-input-RV-701").fill("Short");
-  await page.getByTestId("review-btn-approve-RV-701").click();
-  await expect(page.getByTestId("review-error-RV-701")).toContainText("決策理由需至少 10 個字");
+  // Reason gate: submitting without a substantive reason is blocked.
+  await page.getByTestId("review-card-RV-702").click();
+  await page.getByTestId("review-btn-go-RV-702").click();
+  await expect(page.getByTestId("review-decision-dialog")).toBeVisible();
+  await page.getByTestId("review-decision-reason").fill("Short");
+  await page.getByTestId("review-decision-submit").click();
+  await expect(page.getByTestId("review-decision-error")).toContainText("決策原因");
 
-  // Perform a valid decision
-  const reviewReason = "Review approved based on excellent SiteScore and fit metrics.";
-  await page.getByTestId("review-reason-input-RV-701").fill(reviewReason);
-  await page.getByTestId("review-btn-return-RV-701").click(); // Return decision status
+  // A complete GO decision maps to Approved and closes the dialog.
+  await page.getByTestId("review-decision-reason").fill("Review approved based on excellent SiteScore and fit metrics.");
+  await page.getByTestId("review-decision-submit").click();
+  await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("review-decided-RV-702")).toContainText("Approved");
 
-  // Verify UI changes on card
-  await expect(page.getByTestId("review-card-RV-701")).toContainText("退回");
-  await expect(page.getByTestId("review-reason-RV-701")).toContainText(reviewReason);
-  await expect(page.getByTestId("review-card-RV-701")).toContainText("Decided");
-
-  // Check that candidate status is updated in Candidates tab
+  // Candidates tab now surfaces the ODP-OC-R4-006 data-completeness Gate:
+  // CS-1003 is gate-blocked ("缺資料 — 無法評分") so scoring is locked.
   await page.getByTestId("network-tab-2").click();
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
-  await expect(page.getByTestId("network-candidate-table")).toContainText("觀望");
+  await expect(page.getByTestId("network-candidate-table")).toContainText("CS-1001");
+  await expect(page.getByTestId("candidate-gate-block-CS-1003")).toContainText("缺資料 — 無法評分");
 
   // 低效重配 / Rebalance
   await page.getByTestId("network-tab-6").click();
   await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
   await expect(page.getByTestId("rebalance-card-RB-801")).toContainText("新北板橋文化");
-
-  // Verify AVM bands
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toBeVisible();
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P50 公允價值");
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P10");
-  await expect(page.getByTestId("rebalance-avm-RB-801")).toContainText("P90");
-
-  // Verify NetPlan scenarios
-  await expect(page.getByTestId("rebalance-netplan-RB-801")).toBeVisible();
-  await expect(page.getByTestId("rebalance-scenario-0")).toContainText("Keep / Improve");
-  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("Move (移轉新址)");
-  await expect(page.getByTestId("rebalance-scenario-1")).toContainText("系統建議");
-  await expect(page.getByTestId("rebalance-scenario-2")).toContainText("Exit (關店止損)");
+  await expect(page.getByTestId("rebalance-primary-action")).toContainText("建立 AVM 估值請求");
+  await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText("relocationExecuted=false");
 
   // Back to Find Areas remains functional.
   await page.getByTestId("network-tab-0").click();

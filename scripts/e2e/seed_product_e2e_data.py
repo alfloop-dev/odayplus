@@ -127,7 +127,7 @@ def main() -> int:
                     "evidence_refs": ["listing_raw_snapshot.valid", heatzone_job["job_id"], avm_case["case_id"]],
                     "model_refs": ["heatzone-baseline-v1", "dealroom-avm-baseline-v1"],
                     "policy_refs": ["audit-evidence-export-policy-v1"],
-                    "audit_event_ids": [avm_case["audit_event_id"], queued_job["audit_event_id"]],
+                    "audit_event_ids": [evt_id for evt_id in [avm_case.get("audit_event_id"), queued_job.get("audit_event_id")] if evt_id],
                     "subsidy_requirements": ["ELIGIBILITY", "DECISION", "EFFECT", "CONTROL", "TRACE"],
                     "controls": ["seeded-durable-store", "fixture-source-stub", "audit-retention"],
                     "prediction_ref": heatzone_job["job_id"],

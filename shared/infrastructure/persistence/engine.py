@@ -17,9 +17,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-_MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
-)
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
 
 # Engine-neutral (SQLite-compatible) durable-persistence DDL, applied in order
 # at bootstrap. 000001 is the canonical PostgreSQL + PostGIS schema and is
@@ -30,7 +28,12 @@ _MIGRATIONS_DIR = (
 _SCHEMA_FILES = (
     "000002_durable_e2e_persistence.sql",
     "000003_durable_audit_evidence.sql",
+    "000004_durable_product_domain.sql",
+    "000005_durable_notifications.sql",
+    "000006_durable_outbox.sql",
+    "000007_job_lease_columns.sql",
 )
+
 
 
 class SqliteEngine:
@@ -65,7 +68,31 @@ class SqliteEngine:
         with self._lock:
             for filename in _SCHEMA_FILES:
                 ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
-                self._conn.executescript(ddl)
+                # Strip comments and group lines into semicolon-separated statements
+                statements = []
+                current = []
+                for line in ddl.splitlines():
+                    stripped = line.split("--")[0].strip()
+                    if not stripped:
+                        continue
+                    current.append(stripped)
+                    if stripped.endswith(";"):
+                        statements.append(" ".join(current))
+                        current = []
+                if current:
+                    statements.append(" ".join(current))
+
+                for statement in statements:
+                    statement = statement.strip()
+                    if not statement:
+                        continue
+                    try:
+                        self._conn.execute(statement)
+                    except sqlite3.OperationalError as exc:
+                        exc_msg = str(exc).lower()
+                        if "duplicate column name" in exc_msg or "already exists" in exc_msg:
+                            continue
+                        raise exc
             self._conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:

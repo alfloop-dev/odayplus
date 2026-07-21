@@ -27,10 +27,20 @@ CREATE TABLE IF NOT EXISTS durable_audit_events (
     correlation_id TEXT NOT NULL,
     job_id         TEXT,
     metadata_json  TEXT NOT NULL DEFAULT '{}',
-    occurred_at    TEXT NOT NULL
+    occurred_at    TEXT NOT NULL,
+    sequence       INTEGER,
+    previous_hash  TEXT,
+    event_hash     TEXT,
+    signature_key_id TEXT,
+    signature_version TEXT,
+    signature_alg  TEXT,
+    worm_sink_id   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_durable_audit_correlation
     ON durable_audit_events(correlation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_audit_sequence
+    ON durable_audit_events(sequence)
+    WHERE sequence IS NOT NULL;
 
 -- ---------------------------------------------------------
 -- durable_jobs
@@ -38,13 +48,20 @@ CREATE INDEX IF NOT EXISTS idx_durable_audit_correlation
 -- replay the original job after a restart instead of duplicating work.
 -- ---------------------------------------------------------
 CREATE TABLE IF NOT EXISTS durable_jobs (
-    job_id          TEXT PRIMARY KEY,
-    job_type        TEXT NOT NULL,
-    status          TEXT NOT NULL,
-    correlation_id  TEXT NOT NULL,
-    idempotency_key TEXT,
-    payload_json    TEXT NOT NULL DEFAULT '{}',
-    created_at      TEXT NOT NULL
+    job_id           TEXT PRIMARY KEY,
+    job_type         TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    correlation_id   TEXT NOT NULL,
+    idempotency_key  TEXT,
+    payload_json     TEXT NOT NULL DEFAULT '{}',
+    created_at       TEXT NOT NULL,
+    fence_token      INTEGER NOT NULL DEFAULT 0,
+    version          INTEGER NOT NULL DEFAULT 1,
+    locked_by        TEXT,
+    heartbeat_at     TEXT,
+    lease_expires_at TEXT,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    error_message    TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_jobs_idempotency
     ON durable_jobs(idempotency_key)

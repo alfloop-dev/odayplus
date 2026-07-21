@@ -75,6 +75,11 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
             build_version="test-build",
             data_classification="restricted",
             sensitive=True,
+            purpose_scope="subsidy-review:q2",
+            expires_at=NOW + timedelta(hours=4),
+            authorized_by="legal-approver",
+            authorization_id="authz-sub-2026-q2",
+            masking_profile="masked",
         ),
         decision_cards=(_ready_card(event.event_id),),
         generated_at=NOW,
@@ -101,6 +106,9 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
     }
     assert all(row.status == "READY" for row in bundle.subsidy_matrix)
     assert bundle.audit_events[0]["event_id"] == event.event_id
+    assert bundle.audit_events[0]["integrity"]["event_hash"]
+    assert bundle.to_dict()["export_governance"]["purpose_scope"] == "subsidy-review:q2"
+    assert bundle.to_dict()["audit_chain"]["end"]
     export_events = [
         item
         for item in audit_log.list_events(correlation_id="corr-audit-export-1")
@@ -141,6 +149,11 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
             "build_version": "test-build",
             "data_classification": "restricted",
             "sensitive": True,
+            "purpose_scope": "model-release-subsidy-review",
+            "expires_at": (NOW + timedelta(days=60)).isoformat(),
+            "authorized_by": "legal-approver",
+            "authorization_id": "authz-model-release-q2",
+            "masking_profile": "masked",
             "decision_cards": [
                 {
                     "decision_id": "decision-model-release-001",
@@ -191,3 +204,5 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
     assert len(payload["decision_cards"][0]["card_hash"]) == 64
     assert payload["missing_requirements"] == []
     assert len(payload["bundle_checksum"]) == 64
+    assert payload["export_governance"]["download_evidence_id"]
+    assert payload["audit_chain"]["end"]

@@ -13,6 +13,8 @@ RUN npm ci
 
 # Build the web workspace.
 COPY . .
+ARG ODP_API_BASE_URL
+ENV ODP_API_BASE_URL=$ODP_API_BASE_URL
 RUN npm run build --workspace=@oday-plus/web
 
 FROM node:22-slim AS runner

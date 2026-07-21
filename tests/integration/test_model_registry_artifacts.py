@@ -105,9 +105,7 @@ def _model_card(version: str, dataset_snapshot_id: str, validation_run_id: str) 
         algorithm="seasonal_baseline_plus_gradient_boosting",
         baseline="seasonal_naive_v1",
         metrics_summary={"w4_smape": 0.11, "p80_coverage": 0.82},
-        segment_metrics=(
-            {"segment_name": "region", "segment_value": "north", "w4_smape": 0.10},
-        ),
+        segment_metrics=({"segment_name": "region", "segment_value": "north", "w4_smape": 0.10},),
         calibration_summary={"p80_coverage": 0.82},
         explainability_method="feature_importance",
         limitations=("synthetic fixture validation only",),
@@ -268,7 +266,9 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
 
         # Artifacts survived restart and remain tamper-evident.
         assert artifacts2.verify("forecast_revenue_interval/1.1.0/model")
-        assert artifacts2.open_artifact("forecast_revenue_interval/1.1.0/model") == _artifact_bytes("1.1.0")
+        assert artifacts2.open_artifact("forecast_revenue_interval/1.1.0/model") == _artifact_bytes(
+            "1.1.0"
+        )
 
         # Rollback after restart via the worker entrypoint.
         rollback = run_learninghub_release(
@@ -362,7 +362,9 @@ def test_artifact_content_addressing_and_tamper_evidence(db_path) -> None:
 
         # Different bytes -> different digest (no silent collision).
         other = store.put_artifact(
-            model_name=MODEL_NAME, version="1.1.0", kind=ArtifactKind.MODEL,
+            model_name=MODEL_NAME,
+            version="1.1.0",
+            kind=ArtifactKind.MODEL,
             data=_artifact_bytes("1.1.0"),
         )
         assert other.content_digest != record.content_digest

@@ -20,9 +20,7 @@ def test_ci_baseline_includes_security_gate() -> None:
 
 
 def test_production_readiness_metadata_is_filled() -> None:
-    readiness = (ROOT / "docs/evidence/PRODUCTION_READINESS_PACKAGE.md").read_text(
-        encoding="utf-8"
-    )
+    readiness = (ROOT / "docs/evidence/PRODUCTION_READINESS_PACKAGE.md").read_text(encoding="utf-8")
 
     metadata_block = readiness.split("## Required Evidence Manifest", maxsplit=1)[0]
     assert "[ASSIGNMENT_REQUIRED" not in metadata_block
@@ -32,9 +30,7 @@ def test_production_readiness_metadata_is_filled() -> None:
 
 
 def test_release_blocker_evidence_records_dependency_remediation() -> None:
-    evidence = (ROOT / "docs/evidence/RELEASE_BLOCKER_REMEDIATION.md").read_text(
-        encoding="utf-8"
-    )
+    evidence = (ROOT / "docs/evidence/RELEASE_BLOCKER_REMEDIATION.md").read_text(encoding="utf-8")
 
     assert "next` and `eslint-config-next` to `15.5.19" in evidence
     assert "`@playwright/test` to `1.61.1" in evidence

@@ -55,9 +55,7 @@ def test_domain_route_denies_anonymous_and_writes_security_audit() -> None:
 
 def test_domain_route_denies_wrong_role() -> None:
     # MARKETING_MANAGER is only granted the adlift resource, never forecastops.
-    client = TestClient(
-        create_app(), headers=auth_headers(Role.MARKETING_MANAGER)
-    )
+    client = TestClient(create_app(), headers=auth_headers(Role.MARKETING_MANAGER))
 
     response = client.get("/forecastops/timeseries")
 
@@ -173,7 +171,11 @@ def test_openapi_contract_exposes_domain_paths() -> None:
 
     assert openapi.status_code == status.HTTP_200_OK
     paths = openapi.json()["paths"]
-    # integration / opsboard / data / ML domains this service exposes.
+    # integration / opsboard / data / ML domains this service exposes. The
+    # documented contract is versioned as of ODP-PGAP-API-001; the unversioned
+    # paths still serve as deprecated aliases (covered by
+    # tests/contract/test_api_versioning.py) but are deliberately kept out of
+    # the schema so the generated client cannot target them.
     for path in (
         "/forecastops/timeseries",
         "/avm/cases",
@@ -184,4 +186,5 @@ def test_openapi_contract_exposes_domain_paths() -> None:
         "/audit/evidence/exports",
         "/external-data/freshness",
     ):
-        assert path in paths, f"missing domain path {path} in OpenAPI contract"
+        assert f"/api/v1{path}" in paths, f"missing domain path /api/v1{path} in OpenAPI contract"
+        assert path not in paths, f"deprecated alias {path} must not be in the OpenAPI contract"

@@ -36,7 +36,7 @@ from shared.observability import (
     redact,
 )
 from shared.observability.audit import AuditValidationError
-from shared.observability.metrics import PLATFORM_METRICS
+from shared.observability.metrics import PLATFORM_METRICS, MetricsRegistry
 from shared.observability.tracing import SpanKind, SpanStatus
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -134,7 +134,9 @@ def test_metric_catalog_covers_required_categories() -> None:
 
 def test_metric_operations_record_values() -> None:
     registry = default_registry()
-    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "202"})
+    registry.increment(
+        "api_request_count", labels={"service": "api", "route": "/jobs", "status": "202"}
+    )
     registry.observe("api_latency_ms", 12.5, labels={"service": "api", "route": "/jobs"})
     registry.set("data_freshness_hours", 3.0, labels={"source": "rent", "view": "v"})
     snapshot = registry.snapshot()
@@ -155,9 +157,13 @@ def test_metric_type_mismatch_is_rejected() -> None:
 def test_e2e_trace_links_all_stages_under_one_correlation_id() -> None:
     # Deterministic monotonic clock so durations are stable.
     ticks = iter(float(i) for i in range(100))
+    metrics = MetricsRegistry()
+    for definition in PLATFORM_METRICS:
+        metrics.register(definition)
     telemetry = Telemetry(
         "oday-platform",
         logger=StructuredLogger("oday-platform", sink=ListSink()),
+        metrics=metrics,
     )
     telemetry.tracer._clock = lambda: next(ticks)  # noqa: SLF001 - deterministic test clock
 
@@ -432,7 +438,9 @@ def test_dashboards_cover_five_audiences() -> None:
 
 def test_audit_dashboard_uses_audit_pipeline_metrics() -> None:
     dashboards = _load("dashboards.json")["dashboards"]
-    audit_dashboard = next(dashboard for dashboard in dashboards if dashboard["id"] == "audit-compliance")
+    audit_dashboard = next(
+        dashboard for dashboard in dashboards if dashboard["id"] == "audit-compliance"
+    )
     metrics = {panel["metric"] for panel in audit_dashboard["panels"]}
     assert {
         "audit_event_record_count",
@@ -475,3 +483,104 @@ def test_slo_defines_recovery_objectives() -> None:
     for system in ["cloud-sql", "audit-logs", "model-artifacts"]:
         assert system in recovery, system
         assert "rpo" in recovery[system] and "rto" in recovery[system]
+
+
+def test_worker_and_scheduler_export_telemetry() -> None:
+    from apps.scheduler.oday_scheduler.main import ODayScheduler
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.infrastructure.persistence.factory import build_persistence
+
+    # Set up
+    persistence = build_persistence(mode="memory")
+    logger_sink = ListSink()
+    telemetry = Telemetry(
+        "test-telemetry",
+        logger=StructuredLogger("test-telemetry", sink=logger_sink),
+    )
+
+    worker = ODayWorker(persistence=persistence, telemetry=telemetry)
+    scheduler = ODayScheduler(persistence=persistence, telemetry=telemetry)
+
+    # 1. Run scheduler once to enqueue a job
+    scheduler.run_once()
+    assert len(logger_sink.dicts) >= 2  # start + ok
+    assert logger_sink.dicts[0]["service"] == "test-telemetry"
+    assert logger_sink.dicts[1]["action"] == "enqueue"
+
+    # Verify span generated
+    spans = telemetry.tracer.spans_for(logger_sink.dicts[0]["correlation_id"])
+    assert len(spans) == 1
+    assert spans[0].name == "scheduler-tick"
+
+    # 2. Run worker once to consume the job
+    worker.run_once()
+    # Should have executed and logged
+    # Verify job metric updated
+    snapshot = telemetry.metrics.snapshot()
+    assert "job_duration_seconds" in snapshot
+    assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
+
+
+def test_alert_routing_and_real_notification_delivery() -> None:
+    from modules.notifications import (
+        ConsoleNotificationAdapter,
+        InMemoryNotificationRepository,
+        NotificationService,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = ConsoleNotificationAdapter()
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    # Setup preferences
+    service.set_preferences("ops-lead", ["email", "sms"])
+
+    # Initialize AlertRouter
+    router = AlertRouter(notification_service=service)
+
+    # Trigger P1 Alert
+    nid = router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query")
+    assert nid is not None
+
+    # Verify routing target
+    routed = router.route_alert("audit-write-failure")
+    assert routed["receiver"] == "ops-lead"
+
+    # Verify delivery
+    assert len(adapter.sent_messages) == 1
+    msg = adapter.sent_messages[0]
+    assert msg["notification_id"] == nid
+    assert msg["user_id"] == "ops-lead"
+    assert "ALERT: [P1] Audit write failure" in msg["title"]
+    assert "Durable storage write timeout" in msg["detail"]
+
+
+def test_api_telemetry_export() -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import ListSink, SpanKind, StructuredLogger, Telemetry
+
+    logger_sink = ListSink()
+    telemetry = Telemetry(
+        "test-api",
+        logger=StructuredLogger("test-api", sink=logger_sink),
+    )
+
+    app = create_app(telemetry=telemetry, external_provider_validation=lambda: None)
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    corr_id = response.headers.get("X-Correlation-ID")
+    assert corr_id is not None
+
+    spans = telemetry.tracer.spans_for(corr_id)
+    assert len(spans) == 1
+    assert spans[0].name == "HTTP GET /healthz"
+    assert spans[0].kind == SpanKind.API
+
+    snapshot = telemetry.metrics.snapshot()
+    assert "api_latency_ms" in snapshot

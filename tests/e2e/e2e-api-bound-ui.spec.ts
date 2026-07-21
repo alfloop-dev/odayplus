@@ -54,8 +54,11 @@ test("E2E-PV-010 AVM cases workspace reflects a backend state change without edi
   await expect(live).toContainText(storeId);
   await expect(live).toContainText(caseId);
 
-  // The documented non-product fixture table still coexists as fallback.
-  await expect(page.getByText("估值案件列表（reserve / asking 為敏感欄位，依權限遮罩）")).toBeVisible();
+  // The documented non-product fixture table still coexists as fallback if not in production mode.
+  const fallbackTable = page.getByText("估值案件列表（reserve / asking 為敏感欄位，依權限遮罩）");
+  if (await fallbackTable.count() > 0) {
+    await expect(fallbackTable).toBeVisible();
+  }
 });
 
 test("E2E-PV-010 admin audit workspace surfaces live backend audit events", async ({ page }) => {

@@ -60,6 +60,46 @@ class SegmentMetric:
 
 
 @dataclass(frozen=True)
+class SegmentMetricThreshold:
+    segment_name: str
+    metric_name: str
+    segment_value: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    warning_min_value: float | None = None
+    warning_max_value: float | None = None
+
+    @property
+    def rule_name(self) -> str:
+        segment = self.segment_value if self.segment_value is not None else "*"
+        return f"segment:{self.segment_name}:{segment}:{self.metric_name}"
+
+    def applies_to(self, segment_metric: SegmentMetric) -> bool:
+        if segment_metric.segment_name != self.segment_name:
+            return False
+        return self.segment_value in (None, segment_metric.segment_value)
+
+    def evaluate(self, segment_metric: SegmentMetric) -> tuple[ValidationStatus, str | None]:
+        if self.metric_name not in segment_metric.metrics:
+            return (
+                ValidationStatus.FAILED,
+                f"{self.metric_name} missing for {segment_metric.segment_name}="
+                f"{segment_metric.segment_value}",
+            )
+        threshold = MetricThreshold(
+            metric_name=self.metric_name,
+            min_value=self.min_value,
+            max_value=self.max_value,
+            warning_min_value=self.warning_min_value,
+            warning_max_value=self.warning_max_value,
+        )
+        status, message = threshold.evaluate(float(segment_metric.metrics[self.metric_name]))
+        if message:
+            message = f"{segment_metric.segment_name}={segment_metric.segment_value}: {message}"
+        return status, message
+
+
+@dataclass(frozen=True)
 class ValidationRuleFailure:
     rule_name: str
     severity: ValidationStatus
@@ -116,6 +156,7 @@ def validate_model_candidate(
     baseline_metrics: Mapping[str, float],
     thresholds: Sequence[MetricThreshold],
     segment_metrics: Sequence[SegmentMetric] = (),
+    segment_thresholds: Sequence[SegmentMetricThreshold] = (),
     calibration_summary: Mapping[str, Any] | None = None,
     min_training_records: int = 1,
     validation_run_id: str | None = None,
@@ -155,6 +196,36 @@ def validate_model_candidate(
         elif worst_status is ValidationStatus.PASSED:
             worst_status = ValidationStatus.WARNING
 
+    for segment_threshold in segment_thresholds:
+        matched = False
+        for segment_metric in segment_metrics:
+            if not segment_threshold.applies_to(segment_metric):
+                continue
+            matched = True
+            status, message = segment_threshold.evaluate(segment_metric)
+            if status is ValidationStatus.PASSED:
+                continue
+            failures.append(
+                ValidationRuleFailure(
+                    segment_threshold.rule_name,
+                    status,
+                    message or segment_threshold.rule_name,
+                )
+            )
+            if status is ValidationStatus.FAILED:
+                worst_status = ValidationStatus.FAILED
+            elif worst_status is ValidationStatus.PASSED:
+                worst_status = ValidationStatus.WARNING
+        if not matched:
+            failures.append(
+                ValidationRuleFailure(
+                    segment_threshold.rule_name,
+                    ValidationStatus.FAILED,
+                    f"missing segment metric for {segment_threshold.segment_name}",
+                )
+            )
+            worst_status = ValidationStatus.FAILED
+
     return ValidationRun(
         validation_run_id=validation_run_id or f"validation-{uuid4()}",
         model_name=model_name,
@@ -172,6 +243,7 @@ def validate_model_candidate(
 __all__ = [
     "MetricThreshold",
     "SegmentMetric",
+    "SegmentMetricThreshold",
     "ValidationRuleFailure",
     "ValidationRun",
     "ValidationStatus",

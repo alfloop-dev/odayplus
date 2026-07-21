@@ -109,6 +109,18 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   expect(scenarioDetail.execution.actions.length).toBeGreaterThan(0);
   expect(scenarioDetail.outcome.variance).toBeGreaterThan(0);
 
+  // Solver returned an alternatives set for the side-by-side comparison view.
+  expect(solve.result.alternative_plan_available).toBe(true);
+  expect(solve.result.alternatives.length).toBeGreaterThan(0);
+  // Comparison/list endpoint the NetPlan overview UI binds to (GET /netplan/scenarios).
+  const scenarioList = await expectStatus(api.get(`${API_BASE_URL}/netplan/scenarios`), 200);
+  const listedScenario = scenarioList.items.find(
+    (item: { scenario_id: string }) => item.scenario_id === scenarioId,
+  );
+  expect(listedScenario).toBeTruthy();
+  expect(listedScenario.status).toBe("outcome_observed");
+  expect(listedScenario.solver_version).toBeTruthy();
+
   await registerLearningDataset(api);
   await registerLearningModelVersion(api, "2.3.0", {
     stage: "production",
@@ -130,10 +142,31 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
     data: releasePayload("FULL", "2.4.0", "2.3.0", "pv007-full-approval"),
   }), 201);
   expect(full.release_type).toBe("FULL");
+  // Release monitor (ODP-FLOW-009): evaluate the FULL release's guardrails during
+  // its monitoring window. A breach recommends — never auto-executes — a rollback,
+  // and writes an audited learninghub.release_monitor.v1 event.
+  const monitor = await expectStatus(api.post(`${API_BASE_URL}/learninghub/releases/${full.release_id}/monitor`, {
+    data: {
+      observed_metrics: { precision_at_50: 0.74 },
+      guardrails: [{ metric_name: "precision_at_50", min_value: 0.8 }],
+      evaluated_by: "pv007-release-monitor",
+    },
+  }), 201);
+  expect(monitor.status).toBe("BREACHED");
+  expect(monitor.recommended_action).toBe("ROLLBACK");
+  expect(monitor.breaches[0].metric_name).toBe("precision_at_50");
   const rollback = await expectStatus(api.post(`${API_BASE_URL}/learninghub/releases`, {
     data: releasePayload("ROLLBACK", "2.4.0", "2.3.0", "pv007-rollback-approval"),
   }), 201);
   expect(rollback.to_version).toBe("2.3.0");
+  // Release log endpoint the Learning Hub UI binds to (GET /learninghub/releases).
+  const releaseList = await expectStatus(api.get(`${API_BASE_URL}/learninghub/releases`), 200);
+  const listedFull = releaseList.items.find(
+    (item: { release_id: string }) => item.release_id === full.release_id,
+  );
+  expect(listedFull).toBeTruthy();
+  expect(listedFull.release_type).toBe("FULL");
+  expect(releaseList.items.some((item: { release_type: string }) => item.release_type === "ROLLBACK")).toBe(true);
   const registryEvidence = await expectStatus(api.get(`${API_BASE_URL}/learninghub/models/sitescore-propensity/evidence`), 200);
   expect(registryEvidence.aliases.production).toBe("2.3.0");
   expect(registryEvidence.versions.find((version: { version: string }) => version.version === "2.4.0").artifacts[0].content_digest).toContain("sha256:");
@@ -147,6 +180,7 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
     "netplan.executed.v1",
     "netplan.outcome_observed.v1",
     "learninghub.model_release.v1",
+    "learninghub.release_monitor.v1",
   ]));
 
   const evidenceExport = await api.post(`${API_BASE_URL}/audit/evidence/export`, {
@@ -192,6 +226,12 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   await expect(page.getByTestId("avm-approval-panel")).toContainText("never optimistic");
   await expect(page.getByTestId("avm-dataroom")).toContainText("Valuation card");
 
+  await page.goto("/netplan");
+  // API-backed comparison region: bound to GET /netplan/scenarios with a
+  // visible DataSourceBadge; renders live rows or a documented fixture fallback.
+  await expect(page.getByTestId("netplan-live-scenarios")).toBeVisible();
+  await expect(page.getByTestId("netplan-data-source")).toBeVisible();
+
   await page.goto("/w/network/scenarios/np-6201");
   await expect(page.getByTestId("netplan-scenario-card")).toContainText("Binding constraints");
   await expect(page.getByTestId("netplan-execution")).toContainText("Variance");
@@ -204,6 +244,12 @@ test("E2E-PV-007 AVM, NetPlan, Learning Hub, and Audit product loop", async ({ p
   await expect(page.getByTestId("release-controller")).toContainText("Affected modules");
   await expect(page.getByTestId("rollback-console")).toContainText("rollback reason");
   await expect(page.getByTestId("learning-audit-metadata")).toContainText("correlation_id");
+
+  await page.goto("/w/ai/releases");
+  // API-backed release log: bound to GET /learninghub/releases with a visible
+  // DataSourceBadge; renders live rows or a documented fixture fallback.
+  await expect(page.getByTestId("learning-live-releases")).toBeVisible();
+  await expect(page.getByTestId("learning-data-source")).toBeVisible();
 
   await page.goto("/w/audit/decisions/decision-netplan-404");
   await expect(page.getByTestId("audit-summary")).toContainText("override");
