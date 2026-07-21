@@ -101,6 +101,12 @@ Expected output:
 }
 ```
 
+> **Note**: `open_findings` may be > 0 if WARNING-severity findings exist (e.g., missing `rawObjectUri`
+> or no `parser_release` provided). These are non-blocking and do not prevent cutover. Only
+> `blocking_findings: 0` and `shadow_comparison_success: true` are required to proceed.
+> A backfill run without `--parser-release` correctly leaves 2 open WARNING findings per partition
+> (`MISSING_EVIDENCE` for snapshot URI and parser release). Provide `--parser-release` to suppress these.
+
 ### 4.2 Handling Findings
 
 - **BLOCKING Findings** (`STATE_MAPPING_CONFLICT`, `ORPHAN_REFERENCE`, `COUNT_MISMATCH`, `CHECKSUM_MISMATCH`):

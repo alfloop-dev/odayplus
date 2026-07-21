@@ -1036,3 +1036,138 @@ def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(intake_bla
     assert verify_res["intake_count"] == 2
     assert verify_res["blocking_findings"] == 0
     assert verify_res["shadow_comparison_success"] is True
+
+
+def test_blocker1_multi_partition_listings_and_candidates(intake_blank_db) -> None:
+    """BLOCKER 1 regression: two-month partitioned cutover with listings AND candidates.
+
+    Reviewer scenario (ai-activity-log.jsonl 2026-07-21T02:30:15Z):
+    - Run backfill for month 2026-01 with 1 intake + 1 listing + 1 candidate.
+    - Run backfill for month 2026-02 with 1 intake + 1 listing + 1 candidate.
+    - Create a fresh migrator (simulates 'verify from a fresh migrator').
+    - verify_shadow_comparison must return shadow_comparison_success=True with 0 blocking findings.
+
+    Before the fix, verify_shadow_comparison built each partition's listing actuals from
+    the whole-tenant listing set filtered only by source_id (no month). With two partitions
+    (both source SRC-591), each partition saw all 2 listings, producing COUNT_MISMATCH
+    (expected 1, got 2) x2 and CHECKSUM_MISMATCH x2 per entity type = 8 BLOCKING findings.
+    """
+    conn = intake_blank_db.connect()
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    # January partition: intake IN-JAN, listing L-JAN, candidate CS-JAN
+    in_jan = {
+        "id": "IN-JAN",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-jan.html",
+        "submittedAt": "2026-01-15T06:10:00Z",
+        "matchResult": {"outcome": "NEW", "confidence": 1.0, "targetListingId": "L-JAN"},
+    }
+    lst_jan = Listing(
+        listing_id="L-JAN",
+        source_listing_id="src-jan",
+        source_id="SRC-591",
+        listing_status="new",
+        rent_amount=30000.0,
+        snapshot_id="https://591.com.tw/detail-jan.html",
+    )
+    addr_jan = AddressLocation(
+        address_id="ADDR-JAN",
+        raw_address="台北市信義區松仁路 10 號 1F",
+        normalized_address="台北市信義區松仁路 10 號 1F",
+        latitude=25.0330,
+        longitude=121.5654,
+    )
+    cand_jan = CandidateSite(
+        candidate_site_id="CS-JAN",
+        listing_id="L-JAN",
+        address_id="ADDR-JAN",
+        site_status="new",
+    )
+    draft_jan = CandidateSiteDraft(
+        listing=lst_jan,
+        address=addr_jan,
+        candidate_site=cand_jan,
+        heat_zone_id="HZ-JAN",
+        status="CANDIDATE",
+    )
+
+    # February partition: intake IN-FEB, listing L-FEB, candidate CS-FEB
+    in_feb = {
+        "id": "IN-FEB",
+        "tenantId": tenant_id,
+        "sourceId": "SRC-591",
+        "originalUrl": "https://591.com.tw/detail-feb.html",
+        "submittedAt": "2026-02-15T06:10:00Z",
+        "matchResult": {"outcome": "NEW", "confidence": 1.0, "targetListingId": "L-FEB"},
+    }
+    lst_feb = Listing(
+        listing_id="L-FEB",
+        source_listing_id="src-feb",
+        source_id="SRC-591",
+        listing_status="new",
+        rent_amount=35000.0,
+        snapshot_id="https://591.com.tw/detail-feb.html",
+    )
+    addr_feb = AddressLocation(
+        address_id="ADDR-FEB",
+        raw_address="台北市大安區新生南路一段 20 號 2F",
+        normalized_address="台北市大安區新生南路一段 20 號 2F",
+        latitude=25.0400,
+        longitude=121.5300,
+    )
+    cand_feb = CandidateSite(
+        candidate_site_id="CS-FEB",
+        listing_id="L-FEB",
+        address_id="ADDR-FEB",
+        site_status="new",
+    )
+    draft_feb = CandidateSiteDraft(
+        listing=lst_feb,
+        address=addr_feb,
+        candidate_site=cand_feb,
+        heat_zone_id="HZ-FEB",
+        status="CANDIDATE",
+    )
+
+    # Partition 1: backfill January (runbook 3.2 run #1)
+    r1 = migrator.backfill(
+        legacy_intakes=[in_jan],
+        legacy_listings=[lst_jan],
+        legacy_candidates=[draft_jan],
+        tenant_id=tenant_id,
+        month="2026-01",
+    )
+    assert r1["counts"]["intakes_processed"] == 1
+    assert r1["counts"]["listings_processed"] == 1
+    assert r1["counts"]["candidates_processed"] == 1
+
+    # Partition 2: backfill February (runbook 3.2 run #2)
+    r2 = migrator.backfill(
+        legacy_intakes=[in_feb],
+        legacy_listings=[lst_feb],
+        legacy_candidates=[draft_feb],
+        tenant_id=tenant_id,
+        month="2026-02",
+    )
+    assert r2["counts"]["intakes_processed"] == 1
+    assert r2["counts"]["listings_processed"] == 1
+    assert r2["counts"]["candidates_processed"] == 1
+
+    # Simulate 'fresh migrator' — new instance without in-memory state, reads proofs from DB
+    fresh_migrator = IntakeMigrator(conn)
+
+    verify_res = fresh_migrator.verify_shadow_comparison(tenant_id)
+
+    # Must be 0 blocking findings and shadow_comparison_success=True
+    assert verify_res["blocking_findings"] == 0, (
+        f"Expected 0 blocking findings but got {verify_res['blocking_findings']}. "
+        f"Full result: {verify_res}"
+    )
+    assert verify_res["shadow_comparison_success"] is True
+    assert verify_res["intake_count"] == 2
+    assert verify_res["listing_count"] == 2
+    assert verify_res["candidate_count"] == 2

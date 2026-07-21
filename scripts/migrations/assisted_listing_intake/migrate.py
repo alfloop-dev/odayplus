@@ -1459,6 +1459,10 @@ class IntakeMigrator:
                 "intakes_sha256": calculate_checksum(processed_intake_uuids),
                 "listings_sha256": calculate_checksum(processed_listing_uuids),
                 "candidates_sha256": calculate_checksum(processed_candidate_uuids),
+                # Store the exact migrated ID sets so verify_shadow_comparison can
+                # compare migration-scoped actuals rather than whole-tenant DB rows.
+                "listing_ids": processed_listing_uuids,
+                "candidate_ids": processed_candidate_uuids,
             }
             self._expected_counts[t_key] = {
                 "intakes": len(processed_intake_uuids),
@@ -1741,12 +1745,24 @@ class IntakeMigrator:
                     )
                     blocking_findings += 1
 
-                p_listing_ids = [
-                    r["listing_id"]
-                    for r in listing_rows
-                    if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
-                ]
-                p_listing_sha = calculate_checksum(p_listing_ids)
+                # Build migration-scoped listing actuals using the stored migrated IDs
+                # from the proof. This avoids comparing against the whole-tenant listing
+                # set (which would include rows from other partitions or pre-existing rows).
+                # Normalize both sets to strings: psycopg returns UUID objects, proof stores strings.
+                exp_listing_id_set: set[str] = {str(x) for x in (exp_dict.get("listing_ids") or [])}
+                actual_listing_id_set: set[str] = {str(r["listing_id"]) for r in listing_rows}
+                if exp_listing_id_set:
+                    # Actuals = migrated IDs that now exist in the DB
+                    p_listing_ids = sorted(exp_listing_id_set & actual_listing_id_set)
+                else:
+                    # Fallback: no stored IDs in proof (legacy proof without listing_ids)
+                    # Use source filter only — same as before but with a comment explaining
+                    p_listing_ids = [
+                        str(r["listing_id"])
+                        for r in listing_rows
+                        if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
+                    ]
+                p_listing_sha = calculate_checksum(sorted(p_listing_ids))
                 exp_p_listing_c = exp_dict.get("listings")
                 exp_p_listing_sha = exp_dict.get("listings_sha256")
 
@@ -1776,8 +1792,16 @@ class IntakeMigrator:
                     )
                     blocking_findings += 1
 
-                p_candidate_ids = [r["candidate_site_id"] for r in candidate_rows]
-                p_candidate_sha = calculate_checksum(p_candidate_ids)
+                # Build migration-scoped candidate actuals using the stored migrated IDs.
+                # Normalize both sets to strings: psycopg returns UUID objects, proof stores strings.
+                exp_candidate_id_set: set[str] = {str(x) for x in (exp_dict.get("candidate_ids") or [])}
+                actual_candidate_id_set: set[str] = {str(r["candidate_site_id"]) for r in candidate_rows}
+                if exp_candidate_id_set:
+                    p_candidate_ids = sorted(exp_candidate_id_set & actual_candidate_id_set)
+                else:
+                    # Fallback: legacy proof without candidate_ids stored
+                    p_candidate_ids = [str(r["candidate_site_id"]) for r in candidate_rows]
+                p_candidate_sha = calculate_checksum(sorted(p_candidate_ids))
                 exp_p_candidate_c = exp_dict.get("candidates")
                 exp_p_candidate_sha = exp_dict.get("candidates_sha256")
 
