@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,12 +41,21 @@ def get_val(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def calculate_checksum(ids: Iterable[str]) -> str:
+    """Compute deterministic SHA-256 checksum for a collection of string IDs."""
+    sorted_ids = sorted(str(x) for x in ids if str(x).strip())
+    content = ",".join(sorted_ids)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 class IntakeMigrator:
     """Handles migration execution, partition backfill, reconciliation, and rollback."""
 
     def __init__(self, db_conn: Any) -> None:
         self.db_conn = db_conn
         self.migration_ref = "ODP-INTAKE-MIGRATION-001"
+        self._expected_counts: dict[str, dict[str, int]] = {}
+        self._expected_checksums: dict[str, dict[str, str]] = {}
 
     def _is_sqlite(self) -> bool:
         conn_str = str(type(self.db_conn)).lower()
@@ -80,13 +90,11 @@ class IntakeMigrator:
 
     def apply_schema(self) -> None:
         """Apply the ordered PostgreSQL upgrade schema if it doesn't exist."""
-        # Check if table intakes exists
         is_sqlite = self._is_sqlite()
         exists = False
         if is_sqlite:
             res = self._execute("SELECT name FROM sqlite_master WHERE type='table' AND name='intake.intakes'")
             if not res:
-                # Also check without schema prefix in sqlite
                 res = self._execute("SELECT name FROM sqlite_master WHERE type='table' AND name='intakes'")
             exists = len(res) > 0
         else:
@@ -98,18 +106,13 @@ class IntakeMigrator:
         if not exists:
             logger.info("Applying Assisted Listing Intake schema upgrade steps...")
             if is_sqlite:
-                # SQLite execution: execute SQL statements
                 for _name, sql in intake_schema.upgrade_statements():
-                    # For sqlite, strip out RLS-specific clauses or run natively
-                    # SQLite master doesn't support schemas natively unless attached,
-                    # so we execute helper statements. Let's make sure it handles it.
                     self._execute_raw_sql(sql)
             else:
                 intake_schema.apply_upgrade(self.db_conn.cursor().execute)
             logger.info("Schema applied successfully.")
 
     def _execute_raw_sql(self, sql: str) -> None:
-        # Simple parser to strip incompatible Postgres features for Sqlite unit/integration tests
         statements = sql.split(";")
         for stmt in statements:
             stmt = stmt.strip()
@@ -117,7 +120,6 @@ class IntakeMigrator:
                 continue
             if "ROW LEVEL SECURITY" in stmt or "POLICY" in stmt or "CREATE SCHEMA" in stmt:
                 continue
-            # replace format
             stmt = stmt.replace("timestamptz", "timestamp")
             stmt = stmt.replace("jsonb", "text")
             stmt = stmt.replace("uuid PRIMARY KEY DEFAULT gen_random_uuid()", "uuid PRIMARY KEY")
@@ -126,27 +128,50 @@ class IntakeMigrator:
             try:
                 self._execute(stmt)
             except Exception as e:
-                # Ignore table/index already exists or syntax differences in sqlite fallback
                 logger.debug("SQLite schema adjustment ignored statement: %s (Error: %s)", stmt, e)
 
     def rollback_schema(self) -> None:
         """Drop the upgrade schemas (only for clean testing environments)."""
         is_sqlite = self._is_sqlite()
         if is_sqlite:
-            # SQLite drop tables
             for table in reversed(intake_schema.TENANT_TABLES + intake_schema.NON_TENANT_TABLES):
                 self._execute(f"DROP TABLE IF EXISTS {table}")
         else:
             intake_schema.apply_downgrade(self.db_conn.cursor().execute)
 
-    def register_sources_and_parsers(self) -> None:
-        """Register default approved sources and parser releases if not present."""
-        # 1. Register sources
-        sources = [
+    def rollback_migration(self, migration_ref: str | None = None) -> int:
+        """Perform scoped data rollback for a specific migration_ref without dropping tables."""
+        target_ref = migration_ref or self.migration_ref
+        deleted_count = 0
+
+        # Roll back promotion decisions & candidate sites created under migration_ref
+        decisions = self._execute(
+            "SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s",
+            (target_ref,),
+        )
+        for d in decisions:
+            dec_id = d["promotion_decision_id"]
+            self._execute("DELETE FROM expansion.candidate_sites WHERE promotion_decision_id = %s", (dec_id,))
+            self._execute("DELETE FROM expansion.promotion_decisions WHERE promotion_decision_id = %s", (dec_id,))
+            deleted_count += 1
+
+        # Roll back reconciliation findings created under migration_ref
+        self._execute("DELETE FROM workflow.reconciliation_findings WHERE migration_id = %s", (target_ref,))
+        return deleted_count
+
+    def register_sources_and_parsers(
+        self,
+        sources: list[tuple[str, str, str, list[str]]] | None = None,
+        parser_release: dict[str, Any] | None = None,
+    ) -> None:
+        """Register sources and parser releases using supplied provenance or defaults."""
+        default_sources = [
             ("SRC-591", "591 licensed broker intake", "APPROVED_RETRIEVAL", ["591.com.tw"]),
             ("SRC-BROKER", "Broker confirmation", "ASSISTED_ENTRY_ONLY", []),
         ]
-        for src_id, name, mode, hosts in sources:
+        target_sources = sources or default_sources
+
+        for src_id, name, mode, hosts in target_sources:
             check_sql = "SELECT source_id FROM intake.source_registry WHERE source_id = %s"
             if not self._execute(check_sql, (src_id,)):
                 insert_sql = """
@@ -166,12 +191,13 @@ class IntakeMigrator:
                         hosts_val,
                         ensure_uuid("system"),
                         1,
-                    )
+                    ),
                 )
 
         # 2. Register parser release
+        sem_ver = get_val(parser_release, "semantic_version") or "1.4"
         check_parser = "SELECT parser_release_id FROM intake.parser_releases WHERE semantic_version = %s"
-        if not self._execute(check_parser, ("1.4",)):
+        if not self._execute(check_parser, (sem_ver,)):
             insert_parser = """
                 INSERT INTO intake.parser_releases (
                     parser_release_id, source_id, package_name, semantic_version,
@@ -179,21 +205,28 @@ class IntakeMigrator:
                     artifact_sha256, test_corpus_version, validation_status, version
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
+            parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{sem_ver}")
+            art_uri = get_val(parser_release, "artifact_uri") or f"odp-artifact://parser-releases/{sem_ver}"
+            art_sha = get_val(parser_release, "artifact_sha256") or hashlib.sha256(f"parser-{sem_ver}".encode()).hexdigest()
+            val_status = get_val(parser_release, "validation_status") or "VALIDATED"
+            pkg_name = get_val(parser_release, "package_name") or "listing-parser"
+            src_id = get_val(parser_release, "source_id") or "SRC-591"
+
             self._execute(
                 insert_parser,
                 (
-                    ensure_uuid("parser-1.4"),
-                    "SRC-591",
-                    "listing-parser",
-                    "1.4",
+                    parser_id,
+                    src_id,
+                    pkg_name,
+                    sem_ver,
                     "v1.0",
                     "v1.0",
-                    "gs://parser-artifacts/v1.4",
-                    "0" * 64,
+                    art_uri,
+                    art_sha,
                     "v1.0",
-                    "PRODUCTION",
+                    val_status,
                     1,
-                )
+                ),
             )
 
     def backfill(
@@ -206,36 +239,78 @@ class IntakeMigrator:
         tenant_id: str | None = None,
         source_id: str | None = None,
         month: str | None = None,
+        sources: list[tuple[str, str, str, list[str]]] | None = None,
+        parser_release: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Perform the staging backfill. Returns count proofs and reconciliation report."""
         if not self._is_sqlite() and hasattr(self.db_conn, "autocommit"):
             self.db_conn.autocommit = False
 
         self.apply_schema()
-        self.register_sources_and_parsers()
+        self.register_sources_and_parsers(sources=sources, parser_release=parser_release)
 
         reconciled_count = 0
         skipped_count = 0
         quarantined_count = 0
         findings_count = 0
 
-        # Backfilled item caches to check uniqueness/duplicates
-        processed_intakes: set[str] = set()
-        processed_listings: set[str] = set()
-        processed_candidates: set[str] = set()
+        # Build address and partition maps from legacy objects
+        listing_to_address: dict[str, Any] = {}
+        listing_to_month: dict[str, str] = {}
+        listing_to_source: dict[str, str] = {}
+
+        # 1. Inspect legacy candidates
+        for draft in legacy_candidates:
+            lst = get_val(draft, "listing")
+            addr = get_val(draft, "address")
+            cand = get_val(draft, "candidate_site")
+            if lst:
+                lst_id = get_val(lst, "listing_id") or get_val(lst, "id")
+                if lst_id:
+                    lst_uuid = ensure_uuid(lst_id)
+                    if addr:
+                        listing_to_address[lst_uuid] = addr
+                    c_src = get_val(lst, "source_id") or get_val(lst, "sourceId") or "SRC-591"
+                    listing_to_source[lst_uuid] = c_src
+                    created_at_val = get_val(cand, "created_at") or get_val(draft, "created_at")
+                    if created_at_val:
+                        dt_str = created_at_val.isoformat() if isinstance(created_at_val, datetime) else str(created_at_val)
+                        listing_to_month[lst_uuid] = dt_str[:7]
+
+        # 2. Inspect legacy intakes
+        for intake in legacy_intakes:
+            i_source = intake.get("sourceId") or intake.get("source_id") or "SRC-591"
+            i_date_str = intake.get("submittedAt") or intake.get("firstSeenAt") or datetime.now(UTC).isoformat()
+            i_month = i_date_str[:7]
+            match_res = intake.get("matchResult") or {}
+            lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
+            if lst_id:
+                lst_uuid = ensure_uuid(lst_id)
+                listing_to_month[lst_uuid] = i_month
+                listing_to_source[lst_uuid] = i_source
+                parsed = intake.get("parsedFields") or {}
+                if lst_uuid not in listing_to_address and parsed.get("address"):
+                    listing_to_address[lst_uuid] = {
+                        "normalized_address": parsed.get("address"),
+                        "raw_address": parsed.get("address"),
+                        "latitude": parsed.get("latitude") or 25.0,
+                        "longitude": parsed.get("longitude") or 121.0,
+                    }
+
+        processed_intake_uuids: list[str] = []
+        processed_listing_uuids: list[str] = []
+        processed_candidate_uuids: list[str] = []
 
         try:
             # 1. Backfill Intakes
             for legacy_intake in legacy_intakes:
                 l_id = legacy_intake.get("id")
-                i_tenant = ensure_uuid(legacy_intake.get("tenantId") or tenant_id or "tenant-a")
-                i_source = legacy_intake.get("sourceId") or "SRC-591"
-
-                # Date partition filter
+                i_tenant = ensure_uuid(legacy_intake.get("tenantId") or legacy_intake.get("tenant_id") or tenant_id or "tenant-a")
+                i_source = legacy_intake.get("sourceId") or legacy_intake.get("source_id") or "SRC-591"
                 i_date_str = legacy_intake.get("submittedAt") or legacy_intake.get("firstSeenAt") or datetime.now(UTC).isoformat()
-                i_month = i_date_str[:7]  # YYYY-MM
+                i_month = i_date_str[:7]
 
-                # Filter by partition arguments
+                # Partition filtering
                 if tenant_id and i_tenant != ensure_uuid(tenant_id):
                     continue
                 if source_id and i_source != source_id:
@@ -252,26 +327,21 @@ class IntakeMigrator:
                         skipped_count += 1
                         continue
 
-                # RLS Context
                 self._execute("SELECT 1", tenant_id=i_tenant)
 
-                # Insert Intake
                 url = legacy_intake.get("originalUrl") or legacy_intake.get("sourceUrl") or ""
                 canon_url = legacy_intake.get("canonicalUrl") or url
                 canon_url_sha = hashlib.sha256(canon_url.encode()).hexdigest() if canon_url else None
                 stage = legacy_intake.get("stage") or "READY"
-
-                # Check for invalid fields / blocking findings
-                reconciliation_target_ids = [intake_uuid]
+                source_policy = legacy_intake.get("sourcePolicyState") or legacy_intake.get("source_policy_state") or "POLICY_UNKNOWN"
 
                 if not url:
-                    # Missing source evidence
                     findings_count += 1
                     self._create_finding(
                         tenant_id=i_tenant,
                         source_kind="legacy_listing",
                         source_id=l_id,
-                        target_ids=reconciliation_target_ids,
+                        target_ids=[intake_uuid],
                         finding_type="MISSING_EVIDENCE",
                         severity="WARNING",
                         expected={"originalUrl": "non-empty string"},
@@ -292,14 +362,14 @@ class IntakeMigrator:
                     (
                         intake_uuid,
                         i_tenant,
-                        ensure_uuid(legacy_intake.get("heatZoneId")),
+                        ensure_uuid(legacy_intake.get("heatZoneId") or legacy_intake.get("heat_zone_id")),
                         ensure_uuid("system"),
                         "URL",
                         url,
                         canon_url,
                         canon_url_sha,
                         i_source,
-                        "APPROVED_RETRIEVAL",
+                        source_policy,
                         stage,
                         ensure_uuid(legacy_intake.get("matchResult", {}).get("targetListingId"), default=None),
                         ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}"),
@@ -310,12 +380,45 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                # Insert Source Snapshot if rawSnapshot is present
+                # Insert Stage Transition (B5 lineage)
+                corr_id = ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}")
+                insert_trans_sql = """
+                    INSERT INTO intake.intake_stage_transitions (
+                        transition_id, tenant_id, intake_id, sequence_no, from_state,
+                        to_state, actor_subject_id, service_principal, permission, resulting_version, correlation_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                self._execute(
+                    insert_trans_sql,
+                    (
+                        ensure_uuid(f"TRANS-{l_id}"),
+                        i_tenant,
+                        intake_uuid,
+                        1,
+                        None,
+                        stage,
+                        ensure_uuid("system"),
+                        "migration_worker",
+                        "intake:backfill",
+                        1,
+                        corr_id,
+                    ),
+                    tenant_id=i_tenant,
+                )
+
+                # Insert Source Snapshot
                 snap_id = ensure_uuid(legacy_intake.get("snapshotId") or f"SNAP-{l_id}")
                 if "rawSnapshot" in legacy_intake:
                     raw_snap = legacy_intake["rawSnapshot"]
-                    raw_snap_str = json.dumps(raw_snap)
-                    snap_sha = hashlib.sha256(raw_snap_str.encode()).hexdigest()
+                    if isinstance(raw_snap, bytes):
+                        raw_snap_bytes = raw_snap
+                    elif isinstance(raw_snap, str):
+                        raw_snap_bytes = raw_snap.encode("utf-8")
+                    else:
+                        raw_snap_bytes = json.dumps(raw_snap, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+                    snap_sha = legacy_intake.get("rawSnapshotSha256") or hashlib.sha256(raw_snap_bytes).hexdigest()
+                    raw_uri = legacy_intake.get("rawObjectUri") or legacy_intake.get("raw_object_uri") or f"odp-artifact://snapshots/{snap_id}"
 
                     insert_snap_sql = """
                         INSERT INTO intake.source_snapshots (
@@ -334,10 +437,10 @@ class IntakeMigrator:
                             i_source,
                             url,
                             canon_url,
-                            f"gs://taiwan-snapshots/{snap_id}",
+                            raw_uri,
                             snap_sha,
                             "application/json",
-                            len(raw_snap_str),
+                            len(raw_snap_bytes),
                             i_date_str,
                             i_date_str,
                             "SERVER_RETRIEVAL",
@@ -348,7 +451,7 @@ class IntakeMigrator:
                         tenant_id=i_tenant,
                     )
 
-                    # Insert Parser Run if parsedFields present
+                    # Insert Parser Run
                     if "parsedFields" in legacy_intake:
                         parsed_fields = legacy_intake["parsedFields"]
                         insert_parser_run_sql = """
@@ -358,10 +461,11 @@ class IntakeMigrator:
                                 correlation_id, version
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
+                        parser_run_id = ensure_uuid(f"PRUN-{l_id}")
                         self._execute(
                             insert_parser_run_sql,
                             (
-                                ensure_uuid(f"PRUN-{l_id}"),
+                                parser_run_id,
                                 i_tenant,
                                 intake_uuid,
                                 snap_id,
@@ -375,7 +479,39 @@ class IntakeMigrator:
                             tenant_id=i_tenant,
                         )
 
-                # Match Case / Candidates
+                # Human Corrections (B5 lineage)
+                if "humanCorrections" in legacy_intake or "corrections" in legacy_intake:
+                    corrections = legacy_intake.get("humanCorrections") or legacy_intake.get("corrections") or []
+                    for corr in corrections:
+                        corr_id = ensure_uuid(get_val(corr, "correction_id") or f"CORR-{uuid.uuid4()}")
+                        insert_corr_sql = """
+                            INSERT INTO intake.human_corrections (
+                                correction_id, tenant_id, intake_id, listing_id, field_path,
+                                field_classification, parsed_value, normalized_value, corrected_value,
+                                after_effective_value, reason, proposed_by, status, version
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                        """
+                        self._execute(
+                            insert_corr_sql,
+                            (
+                                corr_id,
+                                i_tenant,
+                                intake_uuid,
+                                ensure_uuid(get_val(corr, "listing_id")),
+                                get_val(corr, "field_path") or "parsedFields.rent",
+                                get_val(corr, "field_classification") or "PUBLIC",
+                                json.dumps(get_val(corr, "parsed_value")),
+                                json.dumps(get_val(corr, "normalized_value")),
+                                json.dumps(get_val(corr, "corrected_value")),
+                                json.dumps(get_val(corr, "after_effective_value")),
+                                get_val(corr, "reason") or "Legacy manual correction",
+                                ensure_uuid(get_val(corr, "proposed_by") or "system"),
+                                get_val(corr, "status") or "APPLIED",
+                            ),
+                            tenant_id=i_tenant,
+                        )
+
+                # Match Case, Candidates, and Decisions (B5 lineage)
                 match_res = legacy_intake.get("matchResult")
                 if match_res:
                     outcome = match_res.get("outcome") or "NEW"
@@ -401,14 +537,83 @@ class IntakeMigrator:
                         tenant_id=i_tenant,
                     )
 
+                    # Insert Match Candidates if supplied
+                    for idx, cand_match in enumerate(match_res.get("candidates") or match_res.get("match_candidates") or [], start=1):
+                        cand_match_id = ensure_uuid(f"MCAND-{l_id}-{idx}")
+                        cand_prop_id = ensure_uuid(get_val(cand_match, "property_id"))
+                        if cand_prop_id:
+                            check_p = self._execute(
+                                "SELECT property_id FROM identity.properties WHERE property_id = %s AND tenant_id = %s",
+                                (cand_prop_id, i_tenant),
+                                tenant_id=i_tenant,
+                            )
+                            if not check_p:
+                                cand_prop_id = None
+
+                        cand_lst_id = ensure_uuid(get_val(cand_match, "listing_id"))
+                        if cand_lst_id:
+                            check_l = self._execute(
+                                "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
+                                (cand_lst_id, i_tenant),
+                                tenant_id=i_tenant,
+                            )
+                            if not check_l:
+                                cand_lst_id = None
+
+                        insert_cand_match_sql = """
+                            INSERT INTO identity.match_candidates (
+                                match_candidate_id, tenant_id, match_case_id, property_id,
+                                listing_id, rank, confidence, evidence
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """
+                        self._execute(
+                            insert_cand_match_sql,
+                            (
+                                cand_match_id,
+                                i_tenant,
+                                match_case_id,
+                                cand_prop_id,
+                                cand_lst_id,
+                                idx,
+                                float(get_val(cand_match, "confidence") or 0.9),
+                                json.dumps(get_val(cand_match, "evidence") or {}),
+                            ),
+                            tenant_id=i_tenant,
+                        )
+
+                    # Insert Match Decision
+                    match_dec_id = ensure_uuid(f"MDEC-{l_id}")
+                    insert_match_dec_sql = """
+                        INSERT INTO identity.match_decisions (
+                            match_decision_id, tenant_id, match_case_id, decision_type,
+                            status, proposer_subject_id, reason, before_graph, after_graph, version
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                    """
+                    self._execute(
+                        insert_match_dec_sql,
+                        (
+                            match_dec_id,
+                            i_tenant,
+                            match_case_id,
+                            "CREATE" if outcome == "NEW" else "DUPLICATE",
+                            "APPROVED",
+                            ensure_uuid("system"),
+                            "Legacy match backfill",
+                            "{}",
+                            "{}",
+                        ),
+                        tenant_id=i_tenant,
+                    )
+
                 reconciled_count += 1
-                processed_intakes.add(l_id)
+                processed_intake_uuids.append(intake_uuid)
 
             # 2. Backfill Listings
             for legacy_lst in legacy_listings:
                 l_id = get_val(legacy_lst, "listing_id") or get_val(legacy_lst, "id")
+                listing_uuid = ensure_uuid(l_id)
                 i_tenant = ensure_uuid(tenant_id or get_val(legacy_lst, "tenant_id") or get_val(legacy_lst, "tenantId") or "tenant-a")
-                i_source = get_val(legacy_lst, "source_id") or get_val(legacy_lst, "sourceId") or "SRC-591"
+                i_source = get_val(legacy_lst, "source_id") or get_val(legacy_lst, "sourceId") or listing_to_source.get(listing_uuid) or "SRC-591"
 
                 # Filter by partition arguments
                 if tenant_id and i_tenant != ensure_uuid(tenant_id):
@@ -416,21 +621,40 @@ class IntakeMigrator:
                 if source_id and i_source != source_id:
                     continue
 
-                listing_uuid = ensure_uuid(l_id)
+                lst_month = listing_to_month.get(listing_uuid)
+                if month and lst_month != month:
+                    continue
 
                 if resume:
                     check_exists = "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s"
                     if self._execute(check_exists, (listing_uuid, i_tenant), tenant_id=i_tenant):
+                        skipped_count += 1
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
 
-                # Address & Property Identity
-                address_str = get_val(legacy_lst, "address") or ""
+                # Address & Property Identity resolution (Fix B1)
+                addr_obj = listing_to_address.get(listing_uuid)
+                if addr_obj:
+                    address_str = get_val(addr_obj, "normalized_address") or get_val(addr_obj, "raw_address") or ""
+                    lat = get_val(addr_obj, "latitude")
+                    lng = get_val(addr_obj, "longitude")
+                else:
+                    address_str = get_val(legacy_lst, "address") or get_val(legacy_lst, "normalized_address") or ""
+                    lat = get_val(legacy_lst, "latitude")
+                    lng = get_val(legacy_lst, "longitude")
+
+                if not address_str:
+                    address_str = f"UNKNOWN_ADDRESS_{listing_uuid}"
+
+                if lat is None:
+                    lat = 25.0
+                if lng is None:
+                    lng = 121.0
+
                 prop_uuid = ensure_uuid(f"PROP-{address_str}")
                 addr_fingerprint = hashlib.sha256(address_str.encode()).hexdigest()
 
-                # Insert Property if not exists
                 check_prop = "SELECT property_id FROM identity.properties WHERE property_id = %s AND tenant_id = %s"
                 if not self._execute(check_prop, (prop_uuid, i_tenant), tenant_id=i_tenant):
                     insert_prop_sql = """
@@ -446,15 +670,14 @@ class IntakeMigrator:
                             i_tenant,
                             address_str,
                             addr_fingerprint,
-                            get_val(legacy_lst, "latitude") or 25.0,
-                            get_val(legacy_lst, "longitude") or 121.0,
+                            float(lat),
+                            float(lng),
                             "ACTIVE",
                             1,
                         ),
                         tenant_id=i_tenant,
                     )
 
-                # Insert Listing
                 status = get_val(legacy_lst, "listing_status") or get_val(legacy_lst, "status") or "ACTIVE"
                 source_listing_id = get_val(legacy_lst, "source_listing_id") or get_val(legacy_lst, "sourceListingId") or f"src-{l_id}"
                 snap_url = get_val(legacy_lst, "snapshot_id") or get_val(legacy_lst, "sourceUrl") or ""
@@ -479,7 +702,7 @@ class IntakeMigrator:
                         i_source,
                         source_listing_id,
                         url_sha,
-                        "ACTIVE" if status in ("new", "watching") else "REMOVED",
+                        "ACTIVE" if status in ("new", "watching", "ACTIVE") else "REMOVED",
                         rev_uuid,
                         obs_uuid,
                         1,
@@ -498,8 +721,7 @@ class IntakeMigrator:
                     "floor": floor,
                     "providerListingId": source_listing_id,
                 }
-                fingerprint_source = f"{rent}:{area}:{floor}"
-                mat_fingerprint = hashlib.sha256(fingerprint_source.encode()).hexdigest()
+                mat_fingerprint = hashlib.sha256(f"{rent}:{area}:{floor}".encode()).hexdigest()
 
                 insert_rev_sql = """
                     INSERT INTO expansion.listing_revisions (
@@ -524,7 +746,13 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                # Insert Observation
+                # Insert Observation (Fix Major d: preserve timestamps & evidence)
+                obs_time = get_val(legacy_lst, "observed_at") or get_val(legacy_lst, "observedAt") or get_val(legacy_lst, "submittedAt") or datetime.now(UTC).isoformat()
+                obs_kind = get_val(legacy_lst, "observation_kind") or "UNCHANGED"
+                if obs_kind not in ('UNCHANGED', 'FRESHNESS_REFRESHED', 'REMOVED', 'UNAVAILABLE', 'BLOCKED', 'EXPIRED', 'STALE'):
+                    obs_kind = "UNCHANGED"
+                obs_evidence = json.dumps(get_val(legacy_lst, "evidence") or {"source_listing_id": source_listing_id})
+
                 insert_obs_sql = """
                     INSERT INTO expansion.listing_observations (
                         listing_observation_id, tenant_id, listing_id,
@@ -537,9 +765,9 @@ class IntakeMigrator:
                         obs_uuid,
                         i_tenant,
                         listing_uuid,
-                        "UNCHANGED",
-                        datetime.now(UTC).isoformat(),
-                        "{}",
+                        obs_kind,
+                        obs_time,
+                        obs_evidence,
                     ),
                     tenant_id=i_tenant,
                 )
@@ -570,34 +798,134 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                processed_listings.add(l_id)
+                # Property Redirects (B5 lineage)
+                if get_val(legacy_lst, "redirected_to_property_id"):
+                    to_prop_uuid = ensure_uuid(get_val(legacy_lst, "redirected_to_property_id"))
+                    check_to = self._execute(
+                        "SELECT property_id FROM identity.properties WHERE property_id = %s AND tenant_id = %s",
+                        (to_prop_uuid, i_tenant),
+                        tenant_id=i_tenant,
+                    )
+                    if not check_to:
+                        insert_to_prop = """
+                            INSERT INTO identity.properties (
+                                property_id, tenant_id, normalized_address, address_fingerprint,
+                                latitude, longitude, status, version
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """
+                        self._execute(
+                            insert_to_prop,
+                            (
+                                to_prop_uuid,
+                                i_tenant,
+                                f"REDIRECTED_PROPERTY_{to_prop_uuid}",
+                                hashlib.sha256(f"REDIRECTED_PROPERTY_{to_prop_uuid}".encode()).hexdigest(),
+                                25.0,
+                                121.0,
+                                "ACTIVE",
+                                1,
+                            ),
+                            tenant_id=i_tenant,
+                        )
+
+                    dec_id = ensure_uuid(f"DEC-REDIR-{l_id}")
+                    mc_id = ensure_uuid(f"MC-REDIR-{l_id}")
+                    check_mc = self._execute("SELECT match_case_id FROM identity.match_cases WHERE match_case_id = %s AND tenant_id = %s", (mc_id, i_tenant), tenant_id=i_tenant)
+                    if not check_mc:
+                        intake_dummy_id = ensure_uuid(f"IN-REDIR-{l_id}")
+                        check_in = self._execute("SELECT intake_id FROM intake.intakes WHERE intake_id = %s AND tenant_id = %s", (intake_dummy_id, i_tenant), tenant_id=i_tenant)
+                        if not check_in:
+                            self._execute(
+                                """
+                                INSERT INTO intake.intakes (
+                                    intake_id, tenant_id, submitter_subject_id, intake_method, original_url,
+                                    canonical_url, source_id, source_policy_state, processing_state, correlation_id, version, submitted_at, last_transition_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+                                """,
+                                (intake_dummy_id, i_tenant, ensure_uuid("system"), "URL", "", "", "SRC-591", "POLICY_UNKNOWN", "READY", ensure_uuid(f"corr-{intake_dummy_id}"), datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+                                tenant_id=i_tenant,
+                            )
+                        self._execute(
+                            """
+                            INSERT INTO identity.match_cases (
+                                match_case_id, tenant_id, intake_id, outcome, status, confidence, proposed_by, version
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
+                            """,
+                            (mc_id, i_tenant, intake_dummy_id, "NEW", "APPROVED", 1.0, "system"),
+                            tenant_id=i_tenant,
+                        )
+
+                    check_dec = self._execute("SELECT match_decision_id FROM identity.match_decisions WHERE match_decision_id = %s AND tenant_id = %s", (dec_id, i_tenant), tenant_id=i_tenant)
+                    if not check_dec:
+                        self._execute(
+                            """
+                            INSERT INTO identity.match_decisions (
+                                match_decision_id, tenant_id, match_case_id, decision_type, status, proposer_subject_id, reason, before_graph, after_graph, version
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                            """,
+                            (dec_id, i_tenant, mc_id, "MERGE", "APPROVED", ensure_uuid("system"), "Property redirect decision", "{}", "{}"),
+                            tenant_id=i_tenant,
+                        )
+
+                    redir_id = ensure_uuid(f"REDIR-{l_id}")
+                    insert_redir_sql = """
+                        INSERT INTO identity.property_redirects (
+                            redirect_id, tenant_id, from_property_id, to_property_id, decision_id, version
+                        ) VALUES (%s, %s, %s, %s, %s, 1)
+                    """
+                    self._execute(
+                        insert_redir_sql,
+                        (
+                            redir_id,
+                            i_tenant,
+                            prop_uuid,
+                            to_prop_uuid,
+                            dec_id,
+                        ),
+                        tenant_id=i_tenant,
+                    )
+
+                processed_listing_uuids.append(listing_uuid)
 
             # 3. Backfill Candidates
             for legacy_cand in legacy_candidates:
-                # Resolve attributes depending on whether it is a CandidateSiteDraft dataclass or dict
                 candidate_site = get_val(legacy_cand, "candidate_site")
                 c_id = get_val(candidate_site, "candidate_site_id") or get_val(legacy_cand, "id")
                 listing = get_val(legacy_cand, "listing")
                 lst_id = get_val(listing, "listing_id") or get_val(legacy_cand, "listingId")
                 status = get_val(legacy_cand, "status") or "CANDIDATE"
 
+                candidate_uuid = ensure_uuid(c_id)
+                listing_uuid = ensure_uuid(lst_id)
                 i_tenant = ensure_uuid(tenant_id or get_val(candidate_site, "tenant_id") or "tenant-a")
 
-                # Filter by partition arguments
+                # Partition filtering (Fix B2)
                 if tenant_id and i_tenant != ensure_uuid(tenant_id):
                     continue
 
-                candidate_uuid = ensure_uuid(c_id)
-                listing_uuid = ensure_uuid(lst_id)
+                c_source = get_val(listing, "source_id") or get_val(listing, "sourceId") or listing_to_source.get(listing_uuid) or "SRC-591"
+                if source_id and c_source != source_id:
+                    continue
+
+                c_month = None
+                created_at_val = get_val(candidate_site, "created_at") or get_val(legacy_cand, "created_at")
+                if created_at_val:
+                    dt_str = created_at_val.isoformat() if isinstance(created_at_val, datetime) else str(created_at_val)
+                    c_month = dt_str[:7]
+                if not c_month:
+                    c_month = listing_to_month.get(listing_uuid)
+
+                if month and c_month != month:
+                    continue
 
                 if resume:
                     check_exists = "SELECT candidate_site_id FROM expansion.candidate_sites WHERE candidate_site_id = %s AND tenant_id = %s"
                     if self._execute(check_exists, (candidate_uuid, i_tenant), tenant_id=i_tenant):
+                        skipped_count += 1
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
 
-                # Fetch listing properties to tie property_id
                 prop_row = self._execute(
                     "SELECT property_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
                     (listing_uuid, i_tenant),
@@ -605,7 +933,7 @@ class IntakeMigrator:
                 )
                 prop_uuid = prop_row[0]["property_id"] if prop_row else ensure_uuid("PROP-unknown")
 
-                # Check Duplicate Candidate
+                # Duplicate check
                 check_dup = """
                     SELECT candidate_site_id FROM expansion.candidate_sites
                     WHERE tenant_id = %s AND property_id = %s AND status NOT IN ('REJECTED', 'OPENED')
@@ -616,7 +944,6 @@ class IntakeMigrator:
                 decision_type = "LEGACY_RECONCILED"
 
                 if len(dup_results) > 0:
-                    # Duplicate candidate found! We must quarantine all but no automatic deletion
                     findings_count += 1
                     self._create_finding(
                         tenant_id=i_tenant,
@@ -632,14 +959,12 @@ class IntakeMigrator:
                     status = "REJECTED"
                     quarantined_count += 1
 
-                # Check required fields present
                 rent_row = self._execute(
                     "SELECT normalized_values FROM expansion.listing_revisions WHERE listing_id = %s AND tenant_id = %s",
                     (listing_uuid, i_tenant),
                     tenant_id=i_tenant,
                 )
                 if not rent_row:
-                    # Missing listing details or source evidence
                     findings_count += 1
                     self._create_finding(
                         tenant_id=i_tenant,
@@ -654,18 +979,14 @@ class IntakeMigrator:
                     quarantined_count += 1
                     continue
 
-                # Insert Promotion Decision
                 decision_uuid = ensure_uuid(f"PD-{c_id}")
 
-                # Fetch matching intake by listing_id, or by listing's URL hash
-                url_sha = None
                 listing_url_row = self._execute(
                     "SELECT canonical_url_sha256 FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
                     (listing_uuid, i_tenant),
                     tenant_id=i_tenant,
                 )
-                if listing_url_row and listing_url_row[0]["canonical_url_sha256"]:
-                    url_sha = listing_url_row[0]["canonical_url_sha256"]
+                url_sha = listing_url_row[0]["canonical_url_sha256"] if listing_url_row else None
 
                 if url_sha:
                     intake_row = self._execute(
@@ -689,7 +1010,6 @@ class IntakeMigrator:
                         tenant_id=i_tenant,
                     )
                     if not check_intake:
-                        # Check if listing exists in expansion.listings to satisfy foreign key constraints
                         check_lst = self._execute(
                             "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
                             (listing_uuid, i_tenant),
@@ -697,7 +1017,6 @@ class IntakeMigrator:
                         )
                         resolved_val = listing_uuid if check_lst else None
 
-                        # Auto-create placeholder intake
                         insert_intake_sql = """
                             INSERT INTO intake.intakes (
                                 intake_id, tenant_id, submitter_subject_id,
@@ -717,7 +1036,7 @@ class IntakeMigrator:
                                 "",
                                 None,
                                 "SRC-591",
-                                "APPROVED_RETRIEVAL",
+                                "POLICY_UNKNOWN",
                                 "READY",
                                 resolved_val,
                                 ensure_uuid(f"corr-{intake_uuid}"),
@@ -726,6 +1045,8 @@ class IntakeMigrator:
                             ),
                             tenant_id=i_tenant,
                         )
+                        if intake_uuid not in processed_intake_uuids:
+                            processed_intake_uuids.append(intake_uuid)
 
                 insert_dec_sql = """
                     INSERT INTO expansion.promotion_decisions (
@@ -753,7 +1074,6 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                # Insert Candidate Site
                 insert_cand_sql = """
                     INSERT INTO expansion.candidate_sites (
                         candidate_site_id, tenant_id, property_id, source_listing_id,
@@ -774,20 +1094,93 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                processed_candidates.add(c_id)
+                # Outbox Event & Audit Event (B5 lineage)
+                event_id = ensure_uuid(f"EVT-{c_id}")
+                insert_outbox_sql = """
+                    INSERT INTO workflow.outbox_events (
+                        outbox_event_id, tenant_id, event_id, event_type, event_version,
+                        aggregate_type, aggregate_id, aggregate_version, partition_key,
+                        payload, correlation_id, occurred_at, retention_until
+                    ) VALUES (%s, %s, %s, %s, 1, %s, %s, 1, %s, %s, %s, %s, %s)
+                """
+                self._execute(
+                    insert_outbox_sql,
+                    (
+                        ensure_uuid(f"OUTBOX-{c_id}"),
+                        i_tenant,
+                        event_id,
+                        "CandidateSitePromoted",
+                        "CandidateSite",
+                        candidate_uuid,
+                        i_tenant,
+                        json.dumps({"candidate_site_id": candidate_uuid, "status": status}),
+                        ensure_uuid(f"corr-{c_id}"),
+                        datetime.now(UTC).isoformat(),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                    tenant_id=i_tenant,
+                )
+
+                audit_evt_id = ensure_uuid(f"AUDIT-{c_id}")
+                audit_sha = hashlib.sha256(f"{audit_evt_id}:{candidate_uuid}".encode()).hexdigest()
+                seq_row = self._execute("SELECT COALESCE(MAX(sequence_no), 0) as max_seq FROM audit.audit_events WHERE tenant_id = %s", (i_tenant,), tenant_id=i_tenant)
+                audit_seq = (seq_row[0]["max_seq"] if seq_row else 0) + 1
+
+                insert_audit_sql = """
+                    INSERT INTO audit.audit_events (
+                        audit_event_id, tenant_id, sequence_no, event_type, actor_subject_id,
+                        action, resource_type, resource_id, decision_id, result, correlation_id,
+                        event_sha256, occurred_at, retained_until
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                self._execute(
+                    insert_audit_sql,
+                    (
+                        audit_evt_id,
+                        i_tenant,
+                        audit_seq,
+                        "CANDIDATE_BACKFILL",
+                        ensure_uuid("system"),
+                        "BACKFILL",
+                        "CandidateSite",
+                        candidate_uuid,
+                        decision_uuid,
+                        "SUCCEEDED",
+                        ensure_uuid(f"corr-{c_id}"),
+                        audit_sha,
+                        datetime.now(UTC).isoformat(),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                    tenant_id=i_tenant,
+                )
+
+                processed_candidate_uuids.append(candidate_uuid)
+
+            # Store expected counts and checksums for verification proof (B3)
+            t_key = tenant_id or "global"
+            self._expected_counts[t_key] = {
+                "intakes": len(processed_intake_uuids),
+                "listings": len(processed_listing_uuids),
+                "candidates": len(processed_candidate_uuids),
+            }
+            self._expected_checksums[t_key] = {
+                "intakes": calculate_checksum(processed_intake_uuids),
+                "listings": calculate_checksum(processed_listing_uuids),
+                "candidates": calculate_checksum(processed_candidate_uuids),
+            }
 
             if dry_run:
-                # If dry_run, roll back database changes
-                if not self._is_sqlite() and hasattr(self.db_conn, "rollback"):
+                # Roll back dry run changes regardless of DB driver (Fix Major a)
+                if hasattr(self.db_conn, "rollback"):
                     self.db_conn.rollback()
                 logger.info("Dry run complete. Rolled back all changes.")
             else:
-                if not self._is_sqlite() and hasattr(self.db_conn, "commit"):
+                if hasattr(self.db_conn, "commit"):
                     self.db_conn.commit()
                 logger.info("Backfill transaction committed.")
 
         except Exception as exc:
-            if not self._is_sqlite() and hasattr(self.db_conn, "rollback"):
+            if hasattr(self.db_conn, "rollback"):
                 self.db_conn.rollback()
             logger.exception("Backfill aborted due to error: %s", exc)
             raise
@@ -798,11 +1191,16 @@ class IntakeMigrator:
             "status": "success" if not dry_run else "dry_run",
             "counts": {
                 "intakes_processed": reconciled_count,
-                "listings_processed": len(processed_listings),
-                "candidates_processed": len(processed_candidates),
+                "listings_processed": len(processed_listing_uuids),
+                "candidates_processed": len(processed_candidate_uuids),
                 "skipped_due_to_resume": skipped_count,
                 "quarantined": quarantined_count,
                 "findings": findings_count,
+            },
+            "checksums": {
+                "intakes_sha256": calculate_checksum(processed_intake_uuids),
+                "listings_sha256": calculate_checksum(processed_listing_uuids),
+                "candidates_sha256": calculate_checksum(processed_candidate_uuids),
             },
         }
 
@@ -849,14 +1247,42 @@ class IntakeMigrator:
             tenant_id=tenant_id,
         )
 
-    def verify_shadow_comparison(self, tenant_id: str) -> dict[str, Any]:
+    def verify_shadow_comparison(
+        self,
+        tenant_id: str,
+        expected_intake_count: int | None = None,
+        expected_listing_count: int | None = None,
+        expected_candidate_count: int | None = None,
+    ) -> dict[str, Any]:
         """Perform shadow comparison and verification proofs. Returns verification results."""
         self._execute("SELECT 1", tenant_id=tenant_id)
 
-        # 1. Row count validations
-        intake_count = self._execute("SELECT COUNT(*) as n FROM intake.intakes WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)[0]["n"]
-        listing_count = self._execute("SELECT COUNT(*) as n FROM expansion.listings WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)[0]["n"]
-        candidate_count = self._execute("SELECT COUNT(*) as n FROM expansion.candidate_sites WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)[0]["n"]
+        # 1. Fetch target row IDs and calculate actual checksums & counts
+        intake_rows = self._execute("SELECT intake_id FROM intake.intakes WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)
+        listing_rows = self._execute("SELECT listing_id FROM expansion.listings WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)
+        candidate_rows = self._execute("SELECT candidate_site_id FROM expansion.candidate_sites WHERE tenant_id = %s", (tenant_id,), tenant_id=tenant_id)
+
+        actual_intake_ids = [r["intake_id"] for r in intake_rows]
+        actual_listing_ids = [r["listing_id"] for r in listing_rows]
+        actual_candidate_ids = [r["candidate_site_id"] for r in candidate_rows]
+
+        actual_intake_count = len(actual_intake_ids)
+        actual_listing_count = len(actual_listing_ids)
+        actual_candidate_count = len(actual_candidate_ids)
+
+        actual_intake_sha = calculate_checksum(actual_intake_ids)
+        actual_listing_sha = calculate_checksum(actual_listing_ids)
+        actual_candidate_sha = calculate_checksum(actual_candidate_ids)
+
+        # Retrieve stored expected metrics or arguments
+        t_key = tenant_id if tenant_id in self._expected_counts else "global"
+        exp_intake_c = expected_intake_count if expected_intake_count is not None else self._expected_counts.get(t_key, {}).get("intakes", actual_intake_count)
+        exp_listing_c = expected_listing_count if expected_listing_count is not None else self._expected_counts.get(t_key, {}).get("listings", actual_listing_count)
+        exp_candidate_c = expected_candidate_count if expected_candidate_count is not None else self._expected_counts.get(t_key, {}).get("candidates", actual_candidate_count)
+
+        exp_intake_sha = self._expected_checksums.get(t_key, {}).get("intakes", actual_intake_sha)
+        exp_listing_sha = self._expected_checksums.get(t_key, {}).get("listings", actual_listing_sha)
+        exp_candidate_sha = self._expected_checksums.get(t_key, {}).get("candidates", actual_candidate_sha)
 
         # 2. Findings check
         findings = self._execute(
@@ -866,15 +1292,91 @@ class IntakeMigrator:
         )
         open_findings = findings[0]["n"] if findings else 0
 
-        # Check blocking findings
         blocking_findings = self._execute(
             "SELECT COUNT(*) as n FROM workflow.reconciliation_findings WHERE tenant_id = %s AND status = 'OPEN' AND severity = 'BLOCKING'",
             (tenant_id,),
             tenant_id=tenant_id,
         )[0]["n"]
 
-        # 3. Unique integrity validations
-        # Ensure no duplicate candidate active promotion requests exist
+        # 3. Check Count and Checksum Mismatches (Fix B3)
+        if actual_intake_count != exp_intake_c:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="snapshot",
+                source_id="intakes",
+                target_ids=actual_intake_ids,
+                finding_type="COUNT_MISMATCH",
+                severity="BLOCKING",
+                expected={"count": exp_intake_c},
+                actual={"count": actual_intake_count},
+            )
+            blocking_findings += 1
+
+        if actual_intake_sha != exp_intake_sha:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="snapshot",
+                source_id="intakes",
+                target_ids=actual_intake_ids,
+                finding_type="CHECKSUM_MISMATCH",
+                severity="BLOCKING",
+                expected={"checksum": exp_intake_sha},
+                actual={"checksum": actual_intake_sha},
+            )
+            blocking_findings += 1
+
+        if actual_listing_count != exp_listing_c:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="legacy_listing",
+                source_id="listings",
+                target_ids=actual_listing_ids,
+                finding_type="COUNT_MISMATCH",
+                severity="BLOCKING",
+                expected={"count": exp_listing_c},
+                actual={"count": actual_listing_count},
+            )
+            blocking_findings += 1
+
+        if actual_listing_sha != exp_listing_sha:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="legacy_listing",
+                source_id="listings",
+                target_ids=actual_listing_ids,
+                finding_type="CHECKSUM_MISMATCH",
+                severity="BLOCKING",
+                expected={"checksum": exp_listing_sha},
+                actual={"checksum": actual_listing_sha},
+            )
+            blocking_findings += 1
+
+        if actual_candidate_count != exp_candidate_c:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="legacy_candidate",
+                source_id="candidate_sites",
+                target_ids=actual_candidate_ids,
+                finding_type="COUNT_MISMATCH",
+                severity="BLOCKING",
+                expected={"count": exp_candidate_c},
+                actual={"count": actual_candidate_count},
+            )
+            blocking_findings += 1
+
+        if actual_candidate_sha != exp_candidate_sha:
+            self._create_finding(
+                tenant_id=tenant_id,
+                source_kind="legacy_candidate",
+                source_id="candidate_sites",
+                target_ids=actual_candidate_ids,
+                finding_type="CHECKSUM_MISMATCH",
+                severity="BLOCKING",
+                expected={"checksum": exp_candidate_sha},
+                actual={"checksum": actual_candidate_sha},
+            )
+            blocking_findings += 1
+
         pd_dup = self._execute(
             """
             SELECT listing_id, COUNT(*) as c
@@ -887,15 +1389,25 @@ class IntakeMigrator:
             tenant_id=tenant_id,
         )
 
-        # Shadow outcome matching correctness:
-        # Check that target matching outcome in match_cases matches expected value
-        shadow_comparison_success = (len(pd_dup) == 0) and (blocking_findings == 0)
+        shadow_comparison_success = (
+            (len(pd_dup) == 0)
+            and (blocking_findings == 0)
+            and (actual_intake_count == exp_intake_c)
+            and (actual_listing_count == exp_listing_c)
+            and (actual_candidate_count == exp_candidate_c)
+            and (actual_intake_sha == exp_intake_sha)
+            and (actual_listing_sha == exp_listing_sha)
+            and (actual_candidate_sha == exp_candidate_sha)
+        )
 
         return {
             "tenant_id": tenant_id,
-            "intake_count": intake_count,
-            "listing_count": listing_count,
-            "candidate_count": candidate_count,
+            "intake_count": actual_intake_count,
+            "listing_count": actual_listing_count,
+            "candidate_count": actual_candidate_count,
+            "intake_sha256": actual_intake_sha,
+            "listing_sha256": actual_listing_sha,
+            "candidate_sha256": actual_candidate_sha,
             "open_findings": open_findings,
             "blocking_findings": blocking_findings,
             "shadow_comparison_success": shadow_comparison_success,
