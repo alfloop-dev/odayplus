@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-f7c0ae83903133d1dfc94043a73ecc14",
+  "serialNumber": "urn:uuid:sha256-15370ea85c16cbf8516d0ffaa71056d4",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-20T10:50:43.921349+00:00",
+    "timestamp": "2026-07-21T00:04:29.834454+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "8e17ac836839190f4e34e56d3bf11a811810ff9f"
+        "value": "828f640072d605ec3cf3523f0a38e10fbbc24867"
       },
       {
         "name": "sbom-hash",
-        "value": "f7c0ae83903133d1dfc94043a73ecc148794d8681721e74383cbff95fb60d0e4"
+        "value": "15370ea85c16cbf8516d0ffaa71056d47be8254fe8d154644bd0c35b7f531b76"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:be3d0e19c7632f37b4aa8e9bb9bc61aaddf91ae3155ce7b7ef25a6f43e7682d5"
+        "value": "sha256:485b86063f1fced453e83932638d4ae64ab5e7c659a3fc4196ec2cbfc40a78f7"
       }
     ]
   },
@@ -819,10 +819,10 @@
     },
     {
       "name": "@typescript-eslint/typescript-estree/brace-expansion",
-      "version": "5.0.6",
+      "version": "5.0.7",
       "type": "library",
-      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.6",
-      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.6"
+      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7",
+      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7"
     },
     {
       "name": "@typescript-eslint/typescript-estree/minimatch",
@@ -1197,10 +1197,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "1.1.15",
+      "version": "1.1.16",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@1.1.15",
-      "bom-ref": "pkg:npm/brace-expansion@1.1.15"
+      "purl": "pkg:npm/brace-expansion@1.1.16",
+      "bom-ref": "pkg:npm/brace-expansion@1.1.16"
     },
     {
       "name": "braces",
