@@ -127,14 +127,36 @@ export function DurableReceiptPanel({
         </div>
 
         {/* Assignment & SLA Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }}>
+        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }} data-testid="durable-receipt-asg-sla">
           <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-            ⏱️ 指派與 SLA 收據 Assignment Receipt
+            ⏱️ 指派與 SLA 收據 Assignment & SLA Receipt
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Owner: <strong>{record.owner ?? "Unassigned"}</strong></div>
-            <div>SLA Status: <strong>{record.slaState ?? "ON_TRACK"}</strong></div>
-            <div>Audit Event: <code>{assignmentReceipt?.audit_event_id ?? `AUD-${record.id}`}</code></div>
+            <div>Owner: <strong data-testid="receipt-owner-id">{assignmentReceipt?.owner_subject_id ?? record.owner ?? "Unassigned"}</strong></div>
+            <div>Assignment Status: <strong data-testid="receipt-asg-status">{assignmentReceipt?.status ?? record.assignmentStatus ?? "ASSIGNED"}</strong></div>
+            <div>SLA State: <strong data-testid="receipt-sla-state">{slaReceipt?.state ?? record.slaState ?? "ON_TRACK"}</strong></div>
+            {assignmentReceipt?.assignment_id && (
+              <div>Assignment ID: <code data-testid="receipt-asg-id">{assignmentReceipt.assignment_id}</code></div>
+            )}
+            {assignmentReceipt?.version !== undefined && (
+              <div>Assignment Version: <span data-testid="receipt-asg-version">v{assignmentReceipt.version}</span></div>
+            )}
+            {assignmentReceipt?.due_at && (
+              <div>Assignment Due At: <span data-testid="receipt-asg-due">{assignmentReceipt.due_at}</span></div>
+            )}
+            {slaReceipt?.sla_instance_id && (
+              <div>SLA Instance ID: <code data-testid="receipt-sla-id">{slaReceipt.sla_instance_id}</code></div>
+            )}
+            {slaReceipt?.version !== undefined && (
+              <div>SLA Version: <span data-testid="receipt-sla-version">v{slaReceipt.version}</span></div>
+            )}
+            {slaReceipt?.paused_duration_seconds !== undefined && (
+              <div>Paused Duration: <span data-testid="receipt-sla-paused-sec">{slaReceipt.paused_duration_seconds}s</span></div>
+            )}
+            {slaReceipt?.correlation_id && (
+              <div>SLA Correlation: <code data-testid="receipt-sla-correlation">{slaReceipt.correlation_id}</code></div>
+            )}
+            <div>Audit Event: <code data-testid="receipt-audit-event-id">{assignmentReceipt?.audit_event_id ?? slaReceipt?.audit_event_id ?? `AUD-${record.id}`}</code></div>
           </div>
         </div>
 

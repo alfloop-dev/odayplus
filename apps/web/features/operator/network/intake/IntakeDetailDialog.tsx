@@ -7,6 +7,7 @@ import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
 import { ACTION_DENIED_NOTE } from "./intakePermissions";
+import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import {
   decisionOptions,
   isIdentityField,
@@ -372,6 +373,13 @@ export function IntakeDetailDialog({
             </div>
           </div>
         ) : null}
+
+        {/* Durable Receipts Panel */}
+        <DurableReceiptPanel
+          record={record}
+          assignmentReceipt={(record as any).assignmentReceipt}
+          slaReceipt={(record as any).slaReceiptObj}
+        />
 
         {/* 7. Timeline and audit history */}
         <div className={styles.timeline} data-testid="intake-timeline">

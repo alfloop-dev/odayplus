@@ -114,6 +114,23 @@ export function TransferIntakeDialog({
       </div>
 
       <div className={styles.dialogBody}>
+        <div
+          style={{
+            fontSize: "11px",
+            color: "#64748b",
+            background: "#f8fafc",
+            padding: "6px 10px",
+            borderRadius: "4px",
+            border: "1px solid #e2e8f0",
+            marginBottom: "10px",
+          }}
+          data-testid="transfer-record-info"
+        >
+          收件編號：<strong>{record.id}</strong> · 目前負責人：
+          <strong data-testid="transfer-record-owner">{record.owner || "未指派"}</strong> · 版本：
+          <span data-testid="transfer-record-version">v{record.version || 1}</span>
+        </div>
+
         <div>
           <label className={styles.fieldLabel} htmlFor="transfer-target-select">
             轉交對象
