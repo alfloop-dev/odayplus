@@ -41,11 +41,11 @@ Output:
 
    Creating an optimized production build ...
    Compiled successfully in 24.5s
-   Linting and checking validity of types     ✓ Linting and checking validity of types 
-   Collecting page data     ✓ Collecting page data 
+   Linting and checking validity of types     ✓ Linting and checking validity of types
+   Collecting page data     ✓ Collecting page data
  ✓ Generating static pages (19/19)
-   Collecting build traces     ✓ Collecting build traces 
-   Finalizing page optimization     ✓ Finalizing page optimization 
+   Collecting build traces     ✓ Collecting build traces
+   Finalizing page optimization     ✓ Finalizing page optimization
 ```
 Status: PASS
 
