@@ -237,3 +237,14 @@ Rollback evidence: trigger, actor, flag versions, task counts, last committed ag
 - SQL/GCS reconciliation and WORM verification;
 - restore and rollback drill;
 - role-based UAT with screenshots/receipts and no hidden backend assumptions.
+
+## 8. Deployment Configuration
+
+The following environment configurations are required to wire the production GCS object store for snapshot persistence and residency validation:
+
+| Variable | Description | Production Value (Example) |
+| --- | --- | --- |
+| `ODP_OBJECT_STORE` | Selects backend object store runtime. Must be set to `gcs` in production. Falls back to `in_memory` if unset or credentials are missing. | `gcs` |
+| `ODP_RESIDENCY_APPROVED_BUCKETS` | Comma-separated list of approved GCS buckets matching residency rules (e.g. `TW_ONLY` residency). | `taiwan-snapshots,tw-intake-snapshots` |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` / `ODP_AUDIT_WORM_GCS_TOKEN` | OAuth token required for WORM GCS API writes. Must be provided by runtime environment/service account. | `<auth-token-material>` |
+

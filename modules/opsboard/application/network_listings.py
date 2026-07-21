@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -890,6 +890,7 @@ class NetworkListingService:
         correlation_id: str | None,
         job_queue: Any | None = None,
         async_intake: bool = False,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         cache_key = ("submit_intake", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
@@ -897,13 +898,13 @@ class NetworkListingService:
 
         from modules.external_data.application.assisted_intake import (
             PARSER_VERSION,
+            RetrievalFailure,
             content_fingerprint,
             effective_fields,
             match_listing,
             normalize_url,
             parse_snapshot,
             resolve_source_policy,
-            retrieve,
             validate_url,
         )
         from modules.external_data.security import redact_sensitive_snapshot
@@ -970,6 +971,7 @@ class NetworkListingService:
                     "heat_zone_id": heat_zone_id,
                     "actor_role_id": actor_role_id,
                     "actor_name": actor_name,
+                    "tenant_id": tenant_id,
                 }
                 job, created = job_queue.enqueue(
                     JobRequest(
@@ -981,17 +983,51 @@ class NetworkListingService:
                 )
             else:
                 intake["stage"] = "RETRIEVING"
-                retrieval = retrieve(canon_url, policy=policy)
-                if retrieval.ok:
-                    retrieval = replace(
-                        retrieval,
-                        raw=redact_sensitive_snapshot(retrieval.raw),
+                import json
+                snapshot_service = self._get_snapshot_service()
+                gate = self._get_security_gate(snapshot_service)
+                
+                resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+                retrieval_res = gate.fetch(
+                    canon_url,
+                    tenant_id=resolved_tenant_id,
+                    retrieval_method="fixture_replay",
+                )
+                
+                if retrieval_res.ok:
+                    raw_dict = json.loads(retrieval_res.body.decode("utf-8"))
+                    redacted_raw = redact_sensitive_snapshot(raw_dict)
+                    redacted_data = json.dumps(redacted_raw).encode("utf-8")
+                    
+                    snapshot_id = snapshot_service.create_snapshot(
+                        tenant_id=resolved_tenant_id,
+                        intake_id=intake_id,
+                        source_id=policy.source_id,
+                        raw_data=retrieval_res.body,
+                        original_url=url,
+                        canonical_url=canon_url,
+                        media_type="application/json",
+                        capture_method="SERVER_RETRIEVAL",
+                        retention_class="STANDARD",
+                        encryption_key_ref="kms://default-key",
+                        observed_at=datetime.now(UTC),
+                        captured_at=datetime.now(UTC),
+                        bucket="taiwan-snapshots",
+                        redacted_data=redacted_data,
                     )
+                    
                     intake["stage"] = "PARSING"
-                    intake["rawSnapshot"] = retrieval.raw
-                    intake["snapshotId"] = retrieval.snapshot_id
-                    intake["capturedAt"] = retrieval.captured_at
-                    intake["parsedFields"] = parse_snapshot(retrieval)
+                    intake["rawSnapshot"] = redacted_raw
+                    intake["snapshotId"] = snapshot_id
+                    intake["capturedAt"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                    
+                    from modules.external_data.application.assisted_intake import RetrievalResult
+                    mock_retrieval_obj = RetrievalResult(
+                        snapshot_id=snapshot_id,
+                        captured_at=intake["capturedAt"],
+                        raw=redacted_raw,
+                    )
+                    intake["parsedFields"] = parse_snapshot(mock_retrieval_obj)
 
                     effective_vals = effective_fields(intake["parsedFields"])
 
@@ -1033,7 +1069,14 @@ class NetworkListingService:
                         intake["stage"] = "AWAITING_ASSISTED_ENTRY"
                 else:
                     intake["stage"] = "FAILED"
-                    intake["failure"] = retrieval.failure.to_dict()
+                    failure_obj = RetrievalFailure(
+                        code=retrieval_res.failure.code if retrieval_res.failure else "FAILED",
+                        summary=retrieval_res.failure.summary if retrieval_res.failure else "retrieval failed",
+                        next_action=retrieval_res.failure.next_action if retrieval_res.failure else "governance review",
+                        retryable=retrieval_res.failure.retryable if retrieval_res.failure else False,
+                    )
+                    intake["failure"] = failure_obj.to_dict()
+
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -1413,6 +1456,7 @@ class NetworkListingService:
         actor_name: str | None,
         correlation_id: str | None,
         job_queue: Any | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         intake = self._listing_intake(intake_id)
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
@@ -1443,12 +1487,12 @@ class NetworkListingService:
 
 
         from modules.external_data.application.assisted_intake import (
+            RetrievalFailure,
             content_fingerprint,
             effective_fields,
             match_listing,
             parse_snapshot,
             resolve_source_policy,
-            retrieve,
         )
         from modules.external_data.security import redact_sensitive_snapshot
 
@@ -1470,7 +1514,60 @@ class NetworkListingService:
             retrieval = None
         else:
             intake["stage"] = "RETRIEVING"
-            retrieval = retrieve(intake["canonicalUrl"], policy=policy)
+            import json
+            snapshot_service = self._get_snapshot_service()
+            gate = self._get_security_gate(snapshot_service)
+            
+            resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+            retrieval_res = gate.fetch(
+                intake["canonicalUrl"],
+                tenant_id=resolved_tenant_id,
+                retrieval_method="fixture_replay",
+            )
+            
+            if retrieval_res.ok:
+                raw_dict = json.loads(retrieval_res.body.decode("utf-8"))
+                redacted_raw = redact_sensitive_snapshot(raw_dict)
+                redacted_data = json.dumps(redacted_raw).encode("utf-8")
+                
+                snapshot_id = snapshot_service.create_snapshot(
+                    tenant_id=resolved_tenant_id,
+                    intake_id=intake_id,
+                    source_id=policy.source_id,
+                    raw_data=retrieval_res.body,
+                    original_url=intake["originalUrl"],
+                    canonical_url=intake["canonicalUrl"],
+                    media_type="application/json",
+                    capture_method="SERVER_RETRIEVAL",
+                    retention_class="STANDARD",
+                    encryption_key_ref="kms://default-key",
+                    observed_at=datetime.now(UTC),
+                    captured_at=datetime.now(UTC),
+                    bucket="taiwan-snapshots",
+                    redacted_data=redacted_data,
+                )
+                
+                from modules.external_data.application.assisted_intake import RetrievalResult
+                retrieval = RetrievalResult(
+                    snapshot_id=snapshot_id,
+                    captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    raw=redacted_raw,
+                )
+            else:
+                from modules.external_data.application.assisted_intake import (
+                    RetrievalFailure,
+                    RetrievalResult,
+                )
+                retrieval = RetrievalResult(
+                    snapshot_id="FAILED",
+                    captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    failure=RetrievalFailure(
+                        code=retrieval_res.failure.code if retrieval_res.failure else "FAILED",
+                        summary=retrieval_res.failure.summary if retrieval_res.failure else "retrieval failed",
+                        next_action=retrieval_res.failure.next_action if retrieval_res.failure else "governance review",
+                        retryable=retrieval_res.failure.retryable if retrieval_res.failure else False,
+                    )
+                )
 
         if retrieval is None:
             audit_evt = {
@@ -1495,10 +1592,6 @@ class NetworkListingService:
         intake["stage"] = "RETRIEVING"
 
         if retrieval.ok:
-            retrieval = replace(
-                retrieval,
-                raw=redact_sensitive_snapshot(retrieval.raw),
-            )
             intake["stage"] = "PARSING"
             intake["rawSnapshot"] = retrieval.raw
             intake["snapshotId"] = retrieval.snapshot_id
@@ -1556,7 +1649,14 @@ class NetworkListingService:
                 intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         else:
             intake["stage"] = "FAILED"
-            intake["failure"] = retrieval.failure.to_dict()
+            failure_obj = RetrievalFailure(
+                code=retrieval.failure.code if retrieval.failure else "FAILED",
+                summary=retrieval.failure.summary if retrieval.failure else "retrieval failed",
+                next_action=retrieval.failure.next_action if retrieval.failure else "governance review",
+                retryable=retrieval.failure.retryable if retrieval.failure else False,
+            )
+            intake["failure"] = failure_obj.to_dict()
+
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
@@ -1829,6 +1929,41 @@ class NetworkListingService:
             (candidate for candidate in self._state["candidates"] if candidate.get("listingId") == listing_id),
             None,
         )
+
+    def _get_snapshot_service(self) -> Any:
+        import os
+
+        from modules.external_data.application.source_snapshots import SourceSnapshotService
+        from shared.infrastructure.object_store.client import GcsObjectStore, InMemoryObjectStore
+
+        doc_store = None
+        db_conn = None
+        if hasattr(self._intakes, "_store"):
+            doc_store = self._intakes._store
+            if hasattr(doc_store, "_engine"):
+                db_conn = doc_store._engine
+
+        def residency_resolver(tenant_id: str) -> str:
+            if doc_store:
+                tenant_meta = doc_store.get("operator.tenant_metadata", tenant_id)
+                if tenant_meta:
+                    return tenant_meta.get("residency_mode", "TW_ONLY")
+            return "TW_ONLY"
+
+        if os.environ.get("ODP_OBJECT_STORE") == "gcs":
+            object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
+        else:
+            object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
+
+        return SourceSnapshotService(
+            db_conn=db_conn,
+            object_store=object_store,
+            document_store=doc_store,
+        )
+
+    def _get_security_gate(self, snapshot_service: Any) -> Any:
+        from modules.external_data.security.assisted_listing_retrieval import RetrievalSecurityGate
+        return RetrievalSecurityGate(source_snapshot_service=snapshot_service)
 
     def _audit(
         self,
