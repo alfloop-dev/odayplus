@@ -48,6 +48,9 @@ export function AddListingFromUrlDialog({
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
 
+  const sourceInfo = useMemo(() => (looksValid ? detectSource(trimmed) : null), [looksValid, trimmed]);
+  const canonicalPreview = useMemo(() => (looksValid ? computeCanonicalUrlPreview(trimmed) : null), [looksValid, trimmed]);
+
   function handleSubmit() {
     if (busy) return; // re-entrancy guard: never post twice from one dialog
     if (!trimmed) {
@@ -63,6 +66,7 @@ export function AddListingFromUrlDialog({
   }
 
   const shownError = localError ?? error?.summary ?? null;
+  const isExactDuplicate = error?.code === "ODP-INTAKE-CONFLICT" || (error?.summary ?? "").includes("已存在");
 
   return (
     <IntakeDialogShell
@@ -99,6 +103,25 @@ export function AddListingFromUrlDialog({
           />
         </div>
 
+        {sourceInfo ? (
+          <div className={styles.metaRow} data-testid="intake-source-preview">
+            <span className={styles.metaLabel}>辨識來源：</span>
+            <span className={styles.chip} data-tone={sourceInfo.isApproved ? "good" : "info"}>
+              {sourceInfo.name}
+            </span>
+            <span className={styles.metaValue}> — {sourceInfo.policy}</span>
+          </div>
+        ) : null}
+
+        {canonicalPreview && canonicalPreview !== trimmed ? (
+          <div className={styles.metaRow} data-testid="intake-canonical-preview">
+            <span className={styles.metaLabel}>正規化 URL 預覽：</span>
+            <span className={`${styles.rowUrl} ${styles.mono}`} title={canonicalPreview}>
+              {canonicalPreview}
+            </span>
+          </div>
+        ) : null}
+
         <div className={styles.grid2}>
           <div>
             <label className={styles.fieldLabel} htmlFor="intake-area">
@@ -130,7 +153,14 @@ export function AddListingFromUrlDialog({
           送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 →
           已核准來源才擷取解析 → 與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，
           原始 URL 保留為證據。你可以先離開，稍後從收件佇列回到此紀錄。
+          系統僅進行使用者提交之單頁擷取或已核准推送，絕不進行定期爬取或要求提供 credentials。
         </div>
+
+        {isExactDuplicate ? (
+          <div className={styles.warnNote} data-testid="intake-exact-duplicate-intercept" role="alert">
+            ⚡ 識別檢查攔截：此網址已被收錄。系統已提供短路徑可直接導向既有物件紀錄。
+          </div>
+        ) : null}
 
         {shownError ? (
           <div className={styles.errorPanel} data-testid="intake-add-error" role="alert">
@@ -175,3 +205,48 @@ function isHttpUrl(value: string): boolean {
     return false;
   }
 }
+
+function detectSource(url: string): { name: string; policy: string; isApproved: boolean } {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host.includes("591.com.tw")) {
+      return { name: "591 房屋交易網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
+    }
+    if (host.includes("rakuya.com.tw")) {
+      return { name: "樂屋網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
+    }
+    if (host.includes("sinyi.com.tw")) {
+      return { name: "信義房屋", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
+    }
+    if (host.includes("yungching.com.tw")) {
+      return { name: "永慶房產集團", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
+    }
+    return { name: host || "外部網站", policy: "單頁網址送件（由系統判定來源政策）", isApproved: false };
+  } catch {
+    return { name: "未知來源", policy: "請輸入有效 http(s) 網址", isApproved: false };
+  }
+}
+
+function computeCanonicalUrlPreview(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const searchParams = new URLSearchParams(parsed.search);
+    const trackingKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"];
+    let changed = false;
+    for (const key of trackingKeys) {
+      if (searchParams.has(key)) {
+        searchParams.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      parsed.search = searchParams.toString();
+      return parsed.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
