@@ -16,8 +16,33 @@
 | `apps/web/features/operator/network/intake/PromotionReviewPanel.tsx` | UX-SCR-EXP-003F promotion section: explicit request, second-actor review, full saga rendering, commit-gated IDs, lost-response recovery, durable receipt |
 | `apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx` | SiteScore job slice: all 7 `JobReceipt` states, commit-gated job ID, authorized same-key replay from `SCORE_QUEUED` checkpoint |
 | `apps/web/features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx` | 27 tests encoding the four acceptance criteria + control presence/absence per state |
+| `packages/openapi-client/src/index.ts` | Generated-client methods for the four v1 saga routes (`requestCandidatePromotion`, `reviewPromotionDecision`, `getPromotionDecision`, `retryJob`) with mandatory `If-Match`/`Idempotency-Key` and `Idempotency-Replayed` capture |
+| `apps/web/features/operator/network/intake/intakeClient.ts` | Guarded `intakeApi.requestPromotion` / `reviewPromotion` / `getPromotionDecision` / `retryScoreJob` wrappers + promotion error vocabulary (403/404/409/422/428) |
+| `apps/web/features/operator/network/intake/AssistedIntakeSection.tsx` | **Production mounting** — the live operator container wires all four handlers, computes the gate snapshot SHA-256, holds server receipts, and renders the panel on the READY branch of the real detail dialog |
+| `apps/web/features/operator/network/intake/IntakeDetailDialog.tsx` | `promotionSection` slot on the live detail (after human decision, before durable receipts) |
+| `apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx` | Promotion tab (`tab-promotion`) mounting the panel on the durable processing-detail surface |
+| `apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx` | 3 integration tests mounting the REAL container against a stubbed network boundary and asserting the actual wire traffic of all four calls |
 
-Both components are presentational and typed exclusively against the generated
+## Production integration (review round 2)
+
+The runtime path is `ExpansionWorkspace → AssistedIntakeSection →
+IntakeDetailDialog(promotionSection) → PromotionReviewPanel → SiteScoreJobStatus`.
+`AssistedIntakeSection` owns the API wiring: every handler goes through
+`intakeApi` → the typed `OdpApiClient` (no raw fetch), receipts are only ever set
+from server responses (non-optimistic), `Idempotency-Replayed` is surfaced from
+the response header, and the `gate_snapshot_sha256` is computed with WebCrypto
+SHA-256 over the canonical server-provided gate inputs
+(`intakeId`/`version`/`stage`/`policy`/`matchOutcome`) so the request provably
+binds to the gate evaluation the operator saw. `IntakeProcessingDetail`
+additionally mounts the panel as its promotion tab for the durable
+processing-detail surface. For a `SCORE_FAILED` decision with no prior retry
+receipt, the container bootstraps the replay view strictly from the
+authoritative promotion receipt (`site_score_job_id`, `correlation_id`; status
+`FAILED`/checkpoint `SCORE_QUEUED` are what `SCORE_FAILED` means by contract;
+initial attempt/version use the server's job-creation values and a stale
+version surfaces as the 409 conflict flow, never a silent overwrite).
+
+The components are typed exclusively against the generated
 `@oday-plus/openapi-client` v1 contract (`PromotionDecisionReceipt`, `PromotionStatus`,
 `JobReceipt`, `RetryRequest` semantics). Wire calls map to:
 
@@ -102,11 +127,20 @@ Both components are presentational and typed exclusively against the generated
 
 ```bash
 npm ci
-npm run typecheck --workspace=@oday-plus/web   # clean (tsc --noEmit)
-npm test --workspace=@oday-plus/web -- PromotionReviewPanel   # 27/27 passed
-npm test --workspace=@oday-plus/web            # full web suite 80/80 passed
+npm run typecheck --workspace=@oday-plus/web              # clean (tsc --noEmit)
+npm run typecheck --workspace=@oday-plus/openapi-client   # clean (tsc --noEmit)
+npm test --workspace=@oday-plus/web -- PromotionReviewPanel      # 27/27 passed
+npm test --workspace=@oday-plus/web -- PromotionSagaIntegration  # 3/3 passed
+npm test --workspace=@oday-plus/web            # full web suite 83/83 passed
 git diff --check origin/dev...HEAD             # clean
 ```
 
-Transcripts: `verification-transcript.txt` (typecheck + focused suite),
-`test-run-verbose.txt` (per-test listing, 27 passed).
+Integration tests assert the actual wire shape leaving the generated client:
+`If-Match: W/"<intake|promotion|job version>"`, stable `Idempotency-Key` reuse
+across a lost-response retry (same key on both attempts), `Idempotency-Replayed`
+labeling, `gate_snapshot_sha256` format, commit-gated ID display, and that the
+decision lookup path never resends the review write.
+
+Transcripts: `verification-transcript.txt` (typecheck + focused + integration +
+full suite), `test-run-verbose.txt` (per-test listing, 30 passed across the
+promotion slice).

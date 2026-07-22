@@ -56,6 +56,11 @@ import type {
   AssignmentRequest,
   SlaPauseRequest,
   SlaReceipt,
+  JobReceipt,
+  PromotionDecisionReceipt,
+  PromotionRequest,
+  RetryRequest,
+  ReviewDecisionRequest,
 } from "./generated/types";
 
 export type { ErrorEnvelope };
@@ -800,6 +805,20 @@ export class OdpApiClient {
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const { value } = await this.requestWithMeta<T>(path, options);
+    return value;
+  }
+
+  /**
+   * Like `request`, but also surfaces the response headers. The assisted-intake
+   * promotion saga needs `Idempotency-Replayed` to tell the operator whether
+   * the server answered from a prior durable receipt (a replay must be labeled,
+   * not silently presented as a fresh write — handoff §8.8).
+   */
+  private async requestWithMeta<T>(
+    path: string,
+    options: RequestOptions = {},
+  ): Promise<{ value: T; headers: Headers }> {
     const query = options.query
       ? Object.entries(options.query)
           .filter(([, value]) => value !== undefined && value !== "")
@@ -846,7 +865,7 @@ export class OdpApiClient {
           body,
         });
       }
-      return (await response.json()) as T;
+      return { value: (await response.json()) as T, headers: response.headers };
     } finally {
       clearTimeout(timer);
     }
@@ -1436,6 +1455,83 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
       ifMatch: options.ifMatch,
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Candidate promotion saga (ODP-INTAKE-UX-PROMOTION-001). These are the v1
+  // assisted-intake contract routes (docs/api/openapi/
+  // ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml). Every write is a high-impact
+  // mutation: Idempotency-Key and If-Match are REQUIRED, not optional, and the
+  // response envelope carries `idempotencyReplayed` so the UI can label a
+  // durable-receipt replay instead of presenting it as a fresh write.
+  // -------------------------------------------------------------------------
+
+  /** POST /api/v1/intakes/{intake_id}/promotion-requests (202). */
+  async requestCandidatePromotion(
+    intakeId: string,
+    payload: PromotionRequest,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<{ receipt: PromotionDecisionReceipt; idempotencyReplayed: boolean }> {
+    const { value, headers } = await this.requestWithMeta<PromotionDecisionReceipt>(
+      `/api/v1/intakes/${intakeId}/promotion-requests`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+    return { receipt: value, idempotencyReplayed: headers.get("Idempotency-Replayed") === "true" };
+  }
+
+  /** GET /api/v1/promotion-decisions/{promotion_decision_id} — lost-response recovery lookup. */
+  getPromotionDecision(
+    promotionDecisionId: string,
+    options: { correlationId?: string } = {},
+  ): Promise<PromotionDecisionReceipt> {
+    return this.request<PromotionDecisionReceipt>(
+      `/api/v1/promotion-decisions/${promotionDecisionId}`,
+      { correlationId: options.correlationId },
+    );
+  }
+
+  /** POST /api/v1/promotion-decisions/{id}/actions/review — independent second-actor decision. */
+  async reviewPromotionDecision(
+    promotionDecisionId: string,
+    payload: ReviewDecisionRequest,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<{ receipt: PromotionDecisionReceipt; idempotencyReplayed: boolean }> {
+    const { value, headers } = await this.requestWithMeta<PromotionDecisionReceipt>(
+      `/api/v1/promotion-decisions/${promotionDecisionId}/actions/review`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+    return { receipt: value, idempotencyReplayed: headers.get("Idempotency-Replayed") === "true" };
+  }
+
+  /** POST /api/v1/jobs/{job_id}/retry (202) — replay from a durable checkpoint. */
+  async retryJob(
+    jobId: string,
+    payload: RetryRequest,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<{ receipt: JobReceipt; idempotencyReplayed: boolean }> {
+    const { value, headers } = await this.requestWithMeta<JobReceipt>(
+      `/api/v1/jobs/${jobId}/retry`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+    return { receipt: value, idempotencyReplayed: headers.get("Idempotency-Replayed") === "true" };
   }
 
   getAvmCase(caseId: string): Promise<AvmCase> {

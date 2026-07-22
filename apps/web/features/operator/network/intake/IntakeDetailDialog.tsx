@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { AssignmentReceipt, AssistedIntake, IntakeFieldCell, SlaReceipt } from "@oday-plus/openapi-client";
 import { ASSISTED_ENTRY_REQUIRED_FIELDS } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
@@ -45,6 +45,7 @@ export function IntakeDetailDialog({
   onOpenTransfer,
   onOpenPause,
   onResumeSla,
+  promotionSection,
 }: {
   busy: boolean;
   canCorrect: boolean;
@@ -67,6 +68,13 @@ export function IntakeDetailDialog({
   onOpenTransfer?: () => void;
   onOpenPause?: () => void;
   onResumeSla?: () => void;
+  /**
+   * Candidate promotion saga slice (ODP-INTAKE-UX-PROMOTION-001). The
+   * container owns the API wiring and passes the fully-wired
+   * PromotionReviewPanel; the dialog only decides WHERE it renders (after the
+   * human decision, before the durable receipts).
+   */
+  promotionSection?: ReactNode;
 }) {
   const steps = stageSteps(record);
   const fields = useMemo(() => Object.values(record.parsedFields ?? {}), [record.parsedFields]);
@@ -377,6 +385,9 @@ export function IntakeDetailDialog({
             </div>
           </div>
         ) : null}
+
+        {/* 8. Candidate promotion saga (UX-SCR-EXP-003F) */}
+        {promotionSection}
 
         {/* Durable Receipts Panel */}
         <DurableReceiptPanel

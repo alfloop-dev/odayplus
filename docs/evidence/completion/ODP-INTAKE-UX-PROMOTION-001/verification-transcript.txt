@@ -1,8 +1,20 @@
+# ODP-INTAKE-UX-PROMOTION-001 verification transcript (round 2 — production integration)
+# repo: alfloop-dev/odayplus  branch: task/ODP-INTAKE-UX-PROMOTION-001
+# date: 2026-07-22T18:47:22Z
+
+$ npm run typecheck --workspace=@oday-plus/web
 
 > @oday-plus/web@0.1.0 typecheck
 > tsc --noEmit
 
 
+$ npm run typecheck --workspace=@oday-plus/openapi-client
+
+> @oday-plus/openapi-client@0.1.0 typecheck
+> tsc --noEmit
+
+
+$ npm test --workspace=@oday-plus/web -- PromotionReviewPanel
 
 > @oday-plus/web@0.1.0 test
 > vitest run PromotionReviewPanel
@@ -13,6 +25,30 @@
 
  Test Files  1 passed (1)
       Tests  27 passed (27)
-   Start at  18:26:31
-   Duration  1.60s (transform 314ms, setup 0ms, import 407ms, tests 591ms, environment 410ms)
+   Start at  18:47:32
+   Duration  1.78s (transform 318ms, setup 0ms, import 428ms, tests 675ms, environment 439ms)
 
+
+$ npm test --workspace=@oday-plus/web -- PromotionSagaIntegration
+
+> @oday-plus/web@0.1.0 test
+> vitest run PromotionSagaIntegration
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/oday-plus/odp-intake-ux-promotion-001/apps/web
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  18:47:35
+   Duration  2.53s (transform 721ms, setup 0ms, import 1.07s, tests 672ms, environment 552ms)
+
+
+$ npm test --workspace=@oday-plus/web  (full suite, tail)
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/oday-plus/odp-intake-ux-promotion-001/apps/web
+
+
+ Test Files  8 passed (8)
+      Tests  83 passed (83)
+   Start at  18:47:38
+   Duration  5.07s (transform 3.15s, setup 0ms, import 6.63s, tests 5.50s, environment 7.89s)

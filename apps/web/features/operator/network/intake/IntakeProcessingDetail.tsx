@@ -22,6 +22,13 @@ import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
 import type { IntakeApiError } from "./intakeClient";
 import { IntakeStageTimeline } from "./IntakeStageTimeline";
 import {
+  PromotionReviewPanel,
+  type PromotionActor,
+  type PromotionRequestInput,
+  type PromotionReviewInput,
+} from "./PromotionReviewPanel";
+import type { ScoreReplayInput } from "./SiteScoreJobStatus";
+import {
   decisionOptions,
   matchLabel,
   matchTone,
@@ -32,7 +39,7 @@ import {
   type IntakeDecisionKind,
 } from "./intakeTypes";
 
-export type IntakeDetailTab = "timeline" | "evidence" | "receipts" | "error";
+export type IntakeDetailTab = "timeline" | "evidence" | "receipts" | "promotion" | "error";
 
 export type IntakeProcessingDetailProps = {
   record: AssistedIntake;
@@ -65,6 +72,23 @@ export type IntakeProcessingDetailProps = {
   onResumeSla?: () => void;
   onRefresh?: () => void;
   testId?: string;
+  // ---- Candidate promotion saga slice (ODP-INTAKE-UX-PROMOTION-001) -------
+  // All optional: when `currentOperator` + `gateSnapshotSha256` are provided
+  // the detail exposes the promotion tab; existing callers are unchanged.
+  promotion?: PromotionDecisionReceipt | null;
+  scoreJob?: JobReceipt | null;
+  currentOperator?: PromotionActor;
+  gateSnapshotSha256?: string;
+  promotionBusy?: boolean;
+  promotionError?: IntakeApiError | null;
+  promotionIdempotencyReplayed?: boolean;
+  canRequestPromotion?: boolean;
+  canReviewPromotion?: boolean;
+  canReplayScore?: boolean;
+  onRequestPromotion?: (input: PromotionRequestInput) => Promise<PromotionDecisionReceipt | void> | void;
+  onReviewPromotion?: (input: PromotionReviewInput) => Promise<PromotionDecisionReceipt | void> | void;
+  onReplayScore?: (input: ScoreReplayInput) => Promise<JobReceipt | void> | void;
+  onLookupPromotionDecision?: () => void;
 };
 
 export function IntakeProcessingDetail({
@@ -98,6 +122,20 @@ export function IntakeProcessingDetail({
   onResumeSla,
   onRefresh,
   testId = "intake-processing-detail",
+  promotion = null,
+  scoreJob = null,
+  currentOperator,
+  gateSnapshotSha256,
+  promotionBusy = false,
+  promotionError = null,
+  promotionIdempotencyReplayed = false,
+  canRequestPromotion = false,
+  canReviewPromotion = false,
+  canReplayScore = false,
+  onRequestPromotion,
+  onReviewPromotion,
+  onReplayScore,
+  onLookupPromotionDecision,
 }: IntakeProcessingDetailProps) {
   const isFailedOrQuarantined = record.stage === "FAILED" || record.stage === "QUARANTINED" || Boolean(error);
   const [activeTab, setActiveTab] = useState<IntakeDetailTab>(isFailedOrQuarantined ? "error" : "timeline");
@@ -105,6 +143,12 @@ export function IntakeProcessingDetail({
 
   const options = decisionOptions(record);
   const outcome = record.matchResult?.outcome;
+
+  // The promotion tab exists only when the container wired the saga slice —
+  // and only once the intake is READY (or a decision receipt already exists),
+  // mirroring the server's WORKFLOW_STATE_DENIED gate.
+  const promotionMounted = Boolean(currentOperator && gateSnapshotSha256 !== undefined);
+  const promotionAvailable = promotionMounted && (record.stage === "READY" || Boolean(promotion));
 
   return (
     <IntakeDialogShell
@@ -221,6 +265,26 @@ export function IntakeProcessingDetail({
           📜 持久化收據 (Receipts)
         </button>
 
+        {promotionAvailable && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("promotion")}
+            style={{
+              padding: "6px 12px",
+              borderRadius: "6px",
+              fontSize: "11.5px",
+              fontWeight: activeTab === "promotion" ? 700 : 500,
+              background: activeTab === "promotion" ? "#ffffff" : "transparent",
+              color: activeTab === "promotion" ? "#2e3a97" : "#64748b",
+              border: activeTab === "promotion" ? "1px solid #cbd5e1" : "none",
+              cursor: "pointer",
+            }}
+            data-testid="tab-promotion"
+          >
+            🚀 晉升審查 (Promotion)
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => setActiveTab("error")}
@@ -323,6 +387,28 @@ export function IntakeProcessingDetail({
             decisionReceipt={decisionReceipt}
             slaReceipt={slaReceipt}
             correctionReceipts={correctionReceipts}
+          />
+        )}
+
+        {/* Tab: Candidate promotion saga (UX-SCR-EXP-003F) */}
+        {activeTab === "promotion" && promotionAvailable && currentOperator && (
+          <PromotionReviewPanel
+            busy={promotionBusy}
+            canReplayScore={canReplayScore}
+            canRequest={canRequestPromotion}
+            canReview={canReviewPromotion}
+            currentOperator={currentOperator}
+            error={promotionError}
+            gateSnapshotSha256={gateSnapshotSha256 ?? ""}
+            idempotencyReplayed={promotionIdempotencyReplayed}
+            onLookupDecision={onLookupPromotionDecision}
+            onRefresh={onRefresh}
+            onReplayScore={onReplayScore}
+            onRequestPromotion={onRequestPromotion}
+            onReviewPromotion={onReviewPromotion}
+            promotion={promotion}
+            record={record}
+            scoreJob={scoreJob}
           />
         )}
 
