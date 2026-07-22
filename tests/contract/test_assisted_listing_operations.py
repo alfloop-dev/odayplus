@@ -711,6 +711,60 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
 
     # Transition the intake state to READY in store to satisfy the promotion prerequisite
     store.intakes[intake_id]["state"] = "READY"
+    target_listing_id = str(uuid4())
+    store.intakes[intake_id]["matchResult"] = {
+        "targetListingId": target_listing_id,
+        "confidence": 0.95,
+        "contradictorySignals": [],
+    }
+
+    repository = getattr(client.app.state, "listing_repository", None)
+    if repository is None:
+        from modules.listing.infrastructure.repositories import InMemoryListingRepository
+
+        repository = InMemoryListingRepository()
+        client.app.state.listing_repository = repository
+
+    from modules.listing.domain.models import ListingDedupKey
+    from shared.domain.models import AddressLocation, Listing
+
+    repository.save_listing(
+        Listing(
+            listing_id=target_listing_id,
+            source_listing_id="SRC-CONTRACT-PROMOTION",
+            source_id="S-CONTRACT",
+            listing_status="watching",
+            address_id="A-CONTRACT-PROMOTION",
+            rent_amount=50000.0,
+            currency="TWD",
+            area_ping=25.0,
+            floor=1,
+            frontage_m=5.0,
+            depth_m=12.0,
+            corner_flag=False,
+            parking_flag=False,
+            utility_electricity_flag=True,
+            utility_drainage_flag=True,
+            utility_gas_flag=False,
+            available_from="2026-08-01",
+            snapshot_id="SN-CONTRACT-PROMOTION",
+            confidence=1.0,
+        ),
+        AddressLocation(
+            address_id="A-CONTRACT-PROMOTION",
+            raw_address="100 Contract Way",
+            normalized_address="100 Contract Way",
+            geocode_confidence=1.0,
+            h3_res_9="HZ-CONTRACT",
+        ),
+        ListingDedupKey(
+            source_id="S-CONTRACT",
+            source_listing_id="SRC-CONTRACT-PROMOTION",
+            normalized_address="100 Contract Way",
+            rent_amount=50000.0,
+            area_ping=25.0,
+        ),
+    )
 
     # 9. requestCandidatePromotion (POST /api/v1/intakes/{id}/promotion-requests)
 
@@ -756,11 +810,13 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         headers={
             **HEADERS_A_REVIEWER,
             "Idempotency-Key": f"idem-rev-promo-{uuid4()}",
-            "If-Match": 'W/"1"'
+            "If-Match": f'W/"{promo_receipt["version"]}"'
         }
     )
     assert resp_rev_promo.status_code == 200
-    assert resp_rev_promo.json()["status"] == "APPROVED"
+    assert resp_rev_promo.json()["status"] == "COMPLETED"
+    assert resp_rev_promo.json()["candidate_site_id"] is not None
+    assert resp_rev_promo.json()["site_score_job_id"] is not None
 
 
 

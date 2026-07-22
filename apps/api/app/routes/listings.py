@@ -2185,7 +2185,7 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("state") != "READY":
+                if current.get("state") != "READY" and current.get("stage") != "READY":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
 
@@ -2224,11 +2224,13 @@ else:
                         context=proposer_context,
                     )
                 except Exception as exc:
-                    if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
+                    exc_str = str(exc)
+                    code_val = str(getattr(exc, "code", ""))
+                    if "DEPENDENCY_CONFLICT" in code_val or "DUPLICATE" in exc_str or "DEPENDENCY" in exc_str:
                         raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
-                    if "WORKFLOW_STATE_DENIED" in str(exc):
+                    if "WORKFLOW_STATE_DENIED" in code_val or "WORKFLOW_STATE" in exc_str:
                         raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                    if "SOURCE_POLICY_DENIED" in str(exc):
+                    if "SOURCE_POLICY_DENIED" in code_val or "SOURCE_POLICY_DENIED" in exc_str:
                         raise HTTPException(422, f"SOURCE_POLICY_DENIED: {exc}") from exc
                     raise HTTPException(422, str(exc)) from exc
 

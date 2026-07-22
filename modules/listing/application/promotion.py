@@ -64,7 +64,7 @@ class PromotionService:
                 "Tenant isolation mismatch"
             )
 
-        target_listing_id = intake.get("matchResult", {}).get("targetListingId")
+        target_listing_id = (intake.get("matchResult") or {}).get("targetListingId")
         if not target_listing_id:
             raise ValueError("Intake not resolved to listing")
 
@@ -144,7 +144,7 @@ class PromotionService:
             "status": "PENDING_REVIEW",
             "decision_type": "STANDARD",
             "version": promo_agg.version,
-            "audit_event_id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+            "audit_event_id": str(uuid.uuid4()),
             "correlation_id": context.correlation_id or str(uuid.uuid4()),
             "tenant_id": context.actor.tenant_id,
             "proposer": context.actor.actor_id,
@@ -239,7 +239,7 @@ class PromotionService:
             before_status = getattr(listing, "listing_status", None)
 
         candidate_created_flag = False
-        candidate_id = f"CS-{uuid.uuid4().hex[:8].upper()}"
+        candidate_id = str(uuid.uuid4())
 
         try:
             # 1. APPROVED -> CANDIDATE_CREATING
