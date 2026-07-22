@@ -26,6 +26,7 @@ function intake(overrides: Partial<AssistedIntake>): AssistedIntake {
     parsedFields: {},
     matchResult: null,
     auditEvents: [],
+    version: 1,
     ...overrides,
   };
 }
