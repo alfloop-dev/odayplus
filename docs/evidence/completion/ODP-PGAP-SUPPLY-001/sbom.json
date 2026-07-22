@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:sha256-e3613e422b23148a260203aa49cbc876",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-22T17:20:40.779225+00:00",
+    "timestamp": "2026-07-22T17:42:33.140226+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,7 +13,7 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "449bd49d395377b6388f8ff57d0d953a829ca0d1"
+        "value": "84516e8bd446b8a76fc8673ca4903ebba34ef515"
       },
       {
         "name": "sbom-hash",
@@ -21,7 +21,7 @@
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:d67d73eeaa6dc6af625b79e42d1b66bfd0fe21650631735315681fd6238dfc14"
+        "value": "sha256:49747b0ed11eac378e7f57a64fb5a7beecdb63d822bb9bab049cc33804da62f5"
       }
     ]
   },
