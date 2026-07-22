@@ -8,9 +8,17 @@ def test_approved_capacity_and_slo_are_measured(tmp_path: Path) -> None:
 
     assert report["volume"] == 120
     assert report["batch_size"] <= 1000
-    assert report["concurrency"] <= 100
+    assert report["concurrency"] == 20
+    assert report["observed_peak_submitters"] == 20
+    assert report["observed_peak_workers"] == 20
     assert report["throughput_rows_per_second"] > 0
     assert report["availability"] >= 0.9995
+    assert {item["target"] for item in report["not_executed_targets"]} == {
+        "human_review_completion_sla",
+        "managed_service_capacity",
+    }
+    assert report["missed_targets"] == []
+    assert report["production_ready"] is False
     assert report["passed"] is True
 
 

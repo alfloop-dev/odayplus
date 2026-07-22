@@ -2,51 +2,75 @@
   "events": [
     {
       "injected_delay_seconds": 0.002,
-      "measured_seconds": 0.0020973309874534607,
+      "local_product_path": "durable_job_timeout_failure",
+      "managed_provider_executed": false,
+      "measured_seconds": 0.0132214087061584,
       "passed": true,
       "scenario": "provider_latency"
     },
     {
-      "measured_seconds": 0.0045038689859211445,
+      "measured_seconds": 0.002878780011087656,
       "passed": true,
       "scenario": "duplicate_delivery"
     },
     {
-      "measured_seconds": 0.00954564893618226,
+      "measured_seconds": 0.008449258748441935,
       "passed": true,
       "rpo_seconds": 0.0,
       "scenario": "worker_loss"
     },
     {
-      "measured_seconds": 0.02425243891775608,
+      "measured_seconds": 0.013093567918986082,
       "passed": true,
       "rpo_seconds": 0.0,
       "scenario": "sql_failover"
     },
     {
-      "measured_seconds": 6.0191377997398376e-05,
-      "outcome": "quarantined",
+      "local_product_path": "object_store_checksum_and_generation",
+      "managed_gcs_executed": false,
+      "measured_seconds": 0.0001696702092885971,
+      "outcome": "generation_precondition_rejected",
       "passed": true,
       "scenario": "gcs_inconsistency"
     },
     {
       "active_jobs": 201,
-      "measured_seconds": 0.43633517622947693,
+      "measured_seconds": 0.4774310728535056,
       "passed": true,
       "scenario": "queue_backlog"
     },
     {
-      "measured_seconds": 0.013266790192574263,
+      "attempts_before_replay": 3,
+      "failed_status": "failed",
+      "max_retries": 3,
+      "measured_seconds": 0.23401821218430996,
       "passed": true,
-      "scenario": "retry_budget_dlq_recovery"
+      "replayed_status": "queued",
+      "scenario": "retry_budget_dlq_recovery",
+      "transitions": [
+        "leased:1",
+        "queued",
+        "leased:2",
+        "queued",
+        "leased:3",
+        "failed"
+      ]
     }
   ],
-  "measured_at": "2026-07-22T18:16:27.244387+00:00",
+  "measured_at": "2026-07-22T18:32:12.935660+00:00",
   "measured_rpo_seconds": 0.0,
-  "measured_rto_seconds": 0.49006144562736154,
+  "measured_rto_seconds": 0.7492619706317782,
   "measurement_mode": "durable-runtime-fault-injection",
+  "missed_production_targets": [
+    "managed_provider_latency_injection",
+    "cloud_sql_regional_failover",
+    "gcs_generation_and_checksum_reconciliation",
+    "cloud_tasks_pubsub_backlog_and_dlq",
+    "production_restore_drill"
+  ],
   "missed_targets": [],
   "passed": true,
+  "production_ready": false,
   "rpo_target_seconds": 900.0,
   "rto_target_seconds": 14400.0,
   "schema_version": 1

@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
+from shared.infrastructure.object_store.client import InMemoryObjectStore
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
 from shared.jobs.queue import JobRequest, JobStatus
@@ -27,10 +28,38 @@ def run_drills(db_path: Path) -> dict:
         def record(name: str, started: float, passed: bool, **details) -> None:
             events.append({"scenario": name, "measured_seconds": time.perf_counter() - started, "passed": passed, **details})
 
-        # Provider latency is measured and remains safely inside the parse SLO.
+        # Provider latency drives a real durable job through the timeout failure
+        # path. The managed provider/network injection remains a release gate.
         started = time.perf_counter()
+        provider_job, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                "assisted-listing-intake",
+                {"intake_id": "IN-PROVIDER-LATENCY", "injected_delay_seconds": 0.002},
+                "provider-latency-key",
+            ),
+            correlation_id="provider-latency",
+        )
+        provider_claim = bundle.job_queue.claim_next(worker_id="provider-worker")
+        assert provider_claim is not None and provider_claim.job_id == provider_job.job_id
         time.sleep(0.002)
-        record("provider_latency", started, True, injected_delay_seconds=0.002)
+        bundle.job_queue.update_status(
+            provider_claim.job_id,
+            JobStatus.FAILED,
+            expected_version=provider_claim.version,
+            fence_token=provider_claim.fence_token,
+            error_message="PROVIDER_TIMEOUT_INJECTED",
+        )
+        provider_failed = bundle.job_queue.get(provider_claim.job_id)
+        record(
+            "provider_latency",
+            started,
+            provider_failed is not None
+            and provider_failed.status == JobStatus.FAILED
+            and provider_failed.error_message == "PROVIDER_TIMEOUT_INJECTED",
+            injected_delay_seconds=0.002,
+            local_product_path="durable_job_timeout_failure",
+            managed_provider_executed=False,
+        )
 
         # At-least-once delivery must collapse on the durable idempotency key.
         started = time.perf_counter()
@@ -63,12 +92,42 @@ def run_drills(db_path: Path) -> dict:
         recovered = bundle.job_queue.get(durable_job_id)
         record("sql_failover", started, recovered is not None, rpo_seconds=0.0)
 
-        # GCS inconsistency analogue: persisted checksum validation fails closed.
+        # Exercise the product object-store adapter's checksum and immutable
+        # generation precondition. A real GCS bucket drill remains release-gated.
         started = time.perf_counter()
+        object_store = InMemoryObjectStore()
+        tenant_id = "00000000-0000-0000-0000-000000000001"
         payload = b"approved source snapshot"
-        expected = hashlib.sha256(payload).hexdigest()
-        observed = hashlib.sha256(payload + b" corrupt").hexdigest()
-        record("gcs_inconsistency", started, expected != observed, outcome="quarantined")
+        uri, generation = object_store.upload_object(
+            tenant_id,
+            "tw-intake-snapshots",
+            f"tenants/{tenant_id}/snapshots/IN-GCS/raw",
+            payload,
+            "text/html",
+        )
+        metadata = object_store.head_object(tenant_id, uri)
+        generation_rejected = False
+        try:
+            object_store.upload_object(
+                tenant_id,
+                "tw-intake-snapshots",
+                f"tenants/{tenant_id}/snapshots/IN-GCS/raw",
+                payload + b" corrupt",
+                "text/html",
+                if_generation_match=generation + 1,
+            )
+        except ValueError:
+            generation_rejected = True
+        record(
+            "gcs_inconsistency",
+            started,
+            generation_rejected
+            and metadata["sha256"] == hashlib.sha256(payload).hexdigest()
+            and object_store.download_object(tenant_id, uri, generation=generation) == payload,
+            outcome="generation_precondition_rejected",
+            local_product_path="object_store_checksum_and_generation",
+            managed_gcs_executed=False,
+        )
 
         # Backlog reaches the runtime threshold and drains without receipt loss.
         started = time.perf_counter()
@@ -77,17 +136,47 @@ def run_drills(db_path: Path) -> dict:
         active_at_peak = bundle.job_queue.count_active_jobs()
         record("queue_backlog", started, active_at_peak >= 200, active_jobs=active_at_peak)
 
-        # Retry budget and DLQ recovery use persisted attempts/status and replay.
+        # Retry budget and DLQ recovery use an isolated FIFO so every lease is
+        # guaranteed to target the poison job rather than the older backlog.
         started = time.perf_counter()
-        poison, _ = bundle.job_queue.enqueue(JobRequest("assisted-listing-intake", {"intake_id": "IN-POISON"}), correlation_id="poison")
-        for _ in range(3):
-            current = bundle.job_queue.claim_next(worker_id="retry-worker")
-            if current and current.job_id == poison.job_id:
-                bundle.job_queue.update_status(poison.job_id, JobStatus.FAILED, error_message="injected")
-                break
-        failed = bundle.job_queue.get(poison.job_id)
-        replayed = bundle.job_queue.replay(poison.job_id)
-        record("retry_budget_dlq_recovery", started, failed is not None and replayed.status == JobStatus.QUEUED and replayed.attempts == 0)
+        retry_path = db_path.with_name(f"{db_path.stem}-retry{db_path.suffix}")
+        retry_bundle = _durable_bundle(str(retry_path))
+        transitions: list[str] = []
+        try:
+            poison, _ = retry_bundle.job_queue.enqueue(
+                JobRequest("assisted-listing-intake", {"intake_id": "IN-POISON"}),
+                correlation_id="poison",
+            )
+            for _ in range(poison.max_retries):
+                leased = retry_bundle.job_queue.lease(lease_duration_seconds=0.01)
+                assert leased is not None and leased.job_id == poison.job_id
+                transitions.append(f"leased:{leased.attempts}")
+                assert retry_bundle.job_queue.fail(
+                    poison.job_id, lease_token=leased.leased_until
+                )
+                current = retry_bundle.job_queue.get(poison.job_id)
+                assert current is not None
+                transitions.append(current.status.value)
+            failed = retry_bundle.job_queue.get(poison.job_id)
+            assert failed is not None
+            replayed = retry_bundle.job_queue.replay(
+                poison.job_id, expected_version=failed.version
+            )
+            record(
+                "retry_budget_dlq_recovery",
+                started,
+                failed.status == JobStatus.FAILED
+                and failed.attempts == failed.max_retries
+                and replayed.status == JobStatus.QUEUED
+                and replayed.attempts == 0,
+                failed_status=failed.status.value,
+                attempts_before_replay=failed.attempts,
+                max_retries=failed.max_retries,
+                replayed_status=replayed.status.value,
+                transitions=transitions,
+            )
+        finally:
+            retry_bundle.engine.close()
     finally:
         bundle.engine.close()
 
@@ -102,6 +191,14 @@ def run_drills(db_path: Path) -> dict:
         "measured_rto_seconds": rto,
         "rto_target_seconds": 14400.0,
         "missed_targets": [event["scenario"] for event in events if not event["passed"]],
+        "missed_production_targets": [
+            "managed_provider_latency_injection",
+            "cloud_sql_regional_failover",
+            "gcs_generation_and_checksum_reconciliation",
+            "cloud_tasks_pubsub_backlog_and_dlq",
+            "production_restore_drill",
+        ],
+        "production_ready": False,
     }
     report["passed"] = not report["missed_targets"] and rto < report["rto_target_seconds"]
     return report
