@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-4ae80fd012bc9793ce4593a6ae64a1ec",
+  "serialNumber": "urn:uuid:sha256-73b4e5fca44cdd8d5019ce551dcbbfee",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-22T23:46:39.892123+00:00",
+    "timestamp": "2026-07-22T23:51:16.581135+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "38cd59e1c1ec1a82d1b163d39deaf99ece99b623"
+        "value": "f3e7a49ea342956154dc7b224f0623a836173059"
       },
       {
         "name": "sbom-hash",
-        "value": "4ae80fd012bc9793ce4593a6ae64a1ec97e762a6c57876b2c67ff1712a027d98"
+        "value": "73b4e5fca44cdd8d5019ce551dcbbfeeaf8964a6780dbeae39ee143848b1bd14"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:b267539406b0f501fea150a2fbbea8d1536f1e58c5d95908c591162d685d2ee2"
+        "value": "sha256:78c18255721e2f0c369792b8bc5e5fb2a48eaeaf391e6970045a0df5df79e243"
       }
     ]
   },
@@ -32,6 +32,13 @@
       "type": "library",
       "purl": "pkg:npm/apps/web@0.1.0",
       "bom-ref": "pkg:npm/apps/web@0.1.0"
+    },
+    {
+      "name": "apps/web/@types/node",
+      "version": "20.14.10",
+      "type": "library",
+      "purl": "pkg:npm/apps/web/@types/node@20.14.10",
+      "bom-ref": "pkg:npm/apps/web/@types/node@20.14.10"
     },
     {
       "name": "@adobe/css-tools",
@@ -931,10 +938,17 @@
     },
     {
       "name": "@types/node",
-      "version": "20.14.10",
+      "version": "26.1.1",
       "type": "library",
-      "purl": "pkg:npm/@types/node@20.14.10",
-      "bom-ref": "pkg:npm/@types/node@20.14.10"
+      "purl": "pkg:npm/@types/node@26.1.1",
+      "bom-ref": "pkg:npm/@types/node@26.1.1"
+    },
+    {
+      "name": "@types/node/undici-types",
+      "version": "8.3.0",
+      "type": "library",
+      "purl": "pkg:npm/@types/node/undici-types@8.3.0",
+      "bom-ref": "pkg:npm/@types/node/undici-types@8.3.0"
     },
     {
       "name": "@types/offscreencanvas",
