@@ -93,10 +93,15 @@ class PromotionService:
                 f"Candidate gate failed: missing {', '.join(validation_errors)}"
             )
 
-        # Idempotency check: return existing promotion for this intake
+        # A live or completed decision is intake-scoped. Rejected and failed
+        # decisions are terminal attempts, so a fresh idempotency key may open
+        # a new independently reviewed attempt for the corrected intake.
         existing_promos = self.promotion_repository.list_promotions()
         for promo in existing_promos:
-            if promo.get("intake_id") == intake_id:
+            if (
+                promo.get("intake_id") == intake_id
+                and promo.get("status") not in {"REJECTED", "FAILED"}
+            ):
                 return promo
 
         # Check duplicate candidate
@@ -531,50 +536,28 @@ class PromotionService:
             )
 
         except Exception as exc:
-            # Compensate listing status
-            if before_status:
-                if hasattr(listing, "get"):
-                    listing["status"] = before_status
-                    if "candidateId" in listing:
-                        listing["candidateId"] = None
-                    self.listing_repository.save_listing(listing)
-                else:
-                    from shared.domain.models import Listing
-                    updated_listing = Listing(
-                        listing_id=listing.listing_id,
-                        source_listing_id=listing.source_listing_id,
-                        source_id=listing.source_id,
-                        listing_status=before_status,
-                        address_id=listing.address_id,
-                        rent_amount=listing.rent_amount,
-                        currency=listing.currency,
-                        area_ping=listing.area_ping,
-                        floor=listing.floor,
-                        frontage_m=listing.frontage_m,
-                        depth_m=listing.depth_m,
-                        corner_flag=listing.corner_flag,
-                        parking_flag=listing.parking_flag,
-                        utility_electricity_flag=listing.utility_electricity_flag,
-                        utility_drainage_flag=listing.utility_drainage_flag,
-                        utility_gas_flag=listing.utility_gas_flag,
-                        available_from=listing.available_from,
-                        snapshot_id=listing.snapshot_id,
-                        confidence=listing.confidence,
-                    )
-                    self.listing_repository.save_listing(updated_listing)
+            # Scoring failure is recoverable: retain the candidate and listing
+            # association, mark the candidate for operator visibility, and let
+            # job.replay restart the SCORE_QUEUED checkpoint.
+            for candidate in self.listing_repository.list_candidates():
+                candidate_key = (
+                    candidate.candidate_site.candidate_site_id
+                    if hasattr(candidate, "candidate_site")
+                    else candidate.get("id")
+                )
+                if candidate_key == candidate_id and hasattr(candidate, "get"):
+                    candidate["status"] = "SCORING_FAILED"
+            underlying_repo = getattr(self.listing_repository, "repo", None)
+            if underlying_repo is not None and hasattr(underlying_repo, "candidates"):
+                from dataclasses import replace
 
-            # Compensate candidate site
-            if candidate_created_flag:
-                if hasattr(self.listing_repository, "candidates"):
-                    self.listing_repository.candidates = [
-                        c for c in self.listing_repository.candidates
-                        if (c.candidate_site.candidate_site_id if hasattr(c, "candidate_site") else c.get("id")) != candidate_id
-                    ]
-                if hasattr(self.listing_repository, "_state") and "candidates" in self.listing_repository._state:
-                    self.listing_repository._state["candidates"] = [
-                        c for c in self.listing_repository._state["candidates"]
-                        if c.get("id") != candidate_id
-                    ]
+                for draft in underlying_repo.candidates:
+                    if draft.candidate_site.candidate_site_id == candidate_id:
+                        draft.candidate_site = replace(
+                            draft.candidate_site,
+                            site_status="SCORING_FAILED",
+                        )
+                        break
 
             PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_FAILED, system_context)
             promo["status"] = to_status_str(PromotionState.SCORE_FAILED)

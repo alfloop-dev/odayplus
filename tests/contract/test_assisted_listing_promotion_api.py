@@ -154,3 +154,8 @@ def test_promotion_api_contract_flow() -> None:
     assert reviewed_data["reviewer_subject_id"] == ACTOR_A_REVIEWER
     assert reviewed_data["candidate_site_id"] is not None
     assert reviewed_data["site_score_job_id"] is not None
+    candidate = repository.list_candidates()[0]
+    assert candidate.dataset_snapshot_id == "FS-SN-99"
+    job = store.jobs[reviewed_data["site_score_job_id"]]
+    assert job["status"] == "COMPLETED"
+    assert job["checkpoint"] == "SCORE_QUEUED"

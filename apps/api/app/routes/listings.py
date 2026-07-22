@@ -692,11 +692,16 @@ else:
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
             if promo.get("site_score_job_id"):
                 job_id = promo["site_score_job_id"]
-                if job_id not in self.active_store.jobs:
-                    self.active_store.jobs[job_id] = {
+                job_status = {
+                    "COMPLETED": "COMPLETED",
+                    "SCORE_FAILED": "FAILED",
+                }.get(promo.get("status"), "QUEUED")
+                job = self.active_store.jobs.get(job_id)
+                if job is None:
+                    job = {
                         "job_id": job_id,
-                        "status": "FAILED" if promo.get("status") == "FAILED" else ("COMPLETED" if promo.get("status") == "COMPLETED" else "QUEUED"),
-                        "checkpoint": "SCORING",
+                        "status": job_status,
+                        "checkpoint": "SCORE_QUEUED",
                         "attempt": 0,
                         "version": 1,
                         "correlation_id": promo.get("correlation_id") or str(uuid4()),
@@ -704,6 +709,10 @@ else:
                         "tenant_id": promo.get("tenant_id"),
                         "candidate_site_id": promo.get("candidate_site_id"),
                     }
+                    self.active_store.jobs[job_id] = job
+                else:
+                    job["status"] = job_status
+                    job["candidate_site_id"] = promo.get("candidate_site_id")
 
         def list_promotions(self) -> list[dict[str, Any]]:
             if self.op_repo:
@@ -839,7 +848,7 @@ else:
                 "utility_drainage_flag": listing.utility_drainage_flag,
                 "utility_gas_flag": listing.utility_gas_flag,
                 "confidence": listing.confidence,
-                "fitScore": getattr(listing, "fitScore", 75) if hasattr(listing, "fitScore") else 75,
+                "snapshot_id": listing.snapshot_id,
             }
             if address:
                 d.update({
