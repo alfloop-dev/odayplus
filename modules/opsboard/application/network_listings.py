@@ -915,6 +915,7 @@ class NetworkListingService:
             "submitter": actor_name or "林曉青（展店）",
             "owner": actor_name or "林曉青",
             "heatZoneId": heat_zone_id,
+            "intakeMethod": "URL",
             "stage": "SUBMITTED",
             "sourceId": policy.source_id,
             "policy": policy.policy,
