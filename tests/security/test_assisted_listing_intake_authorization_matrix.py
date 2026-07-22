@@ -368,6 +368,6 @@ def test_staff_view_own_only_filtering() -> None:
         headers=headers_user_a,
     )
     assert list_intakes_a.status_code == 200
-    list_ids_a = [i["id"] for i in list_intakes_a.json()]
+    list_ids_a = [i["id"] for i in list_intakes_a.json()["items"]]
     assert intake_a_id in list_ids_a
     assert intake_b_id not in list_ids_a

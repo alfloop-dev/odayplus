@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
 import { ListingCompareTable } from "../ListingCompareTable";
 import { MatchEvidencePanel } from "../MatchEvidencePanel";
-import { IdentityDecisionPanel, type IdentityDecisionResultReceipt } from "../IdentityDecisionPanel";
+import { IdentityDecisionPanel } from "../IdentityDecisionPanel";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -126,35 +125,38 @@ const sampleRecordPossibleMatch: any = {
   submitter: "OP-100 (John Proposer)",
   capturedAt: "2026-07-20T10:00:00Z",
   owner: "OP-100",
+  heatZoneId: "HZ-TPE-XINYI",
   policy: "APPROVED_RETRIEVAL",
   policyLabel: "核准單頁讀取",
   policyReason: "核准領域白名單",
   stage: "NEEDS_REVIEW",
   parserVersion: "v2.1.0",
   snapshotId: "SNAP-9001",
+  rawSnapshot: null,
   correlationId: "CORR-778899",
   matchResult: {
     targetListingId: "LST-1002",
     outcome: "POSSIBLE_MATCH",
+    outcomeLabel: "疑似重複",
     confidence: 0.78,
     summary: "地址高度比對成功，但租金由 35,000 變更為 38,000，樓層登記有些許差異。",
     agreeingSignals: [
-      { key: "address", label: "地址", detail: "台北市信義區松高路12號 (100% 吻合)" },
-      { key: "area", label: "面積", detail: "45 坪 (吻合)" },
+      { key: "address", label: "地址", agrees: true, detail: "台北市信義區松高路12號 (100% 吻合)" },
+      { key: "area", label: "面積", agrees: true, detail: "45 坪 (吻合)" },
     ],
     contradictingSignals: [
-      { key: "rent", label: "租金", detail: "目標 $35,000 vs 本次 $38,000" },
-      { key: "floor", label: "樓層", detail: "目標 5F vs 本次 5F-2" },
+      { key: "rent", label: "租金", agrees: false, detail: "目標 $35,000 vs 本次 $38,000" },
+      { key: "floor", label: "樓層", agrees: false, detail: "目標 5F vs 本次 5F-2" },
     ],
   },
   parsedFields: {
-    address: { key: "address", label: "地址", sourceValue: "台北市信義區松高路12號", normalizedValue: "台北市信義區松高路12號", correctedValue: null, lowConfidence: false },
-    rent: { key: "rent", label: "租金", sourceValue: "38000", normalizedValue: "38000", correctedValue: null, lowConfidence: true },
-    area: { key: "area", label: "坪數", sourceValue: "45", normalizedValue: "45", correctedValue: null, lowConfidence: false },
-    floor: { key: "floor", label: "樓層", sourceValue: "5F-2", normalizedValue: "5F-2", correctedValue: null, lowConfidence: false },
+    address: { key: "address", label: "地址", sourceValue: "台北市信義區松高路12號", normalizedValue: "台北市信義區松高路12號", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
+    rent: { key: "rent", label: "租金", sourceValue: "38000", normalizedValue: "38000", correctedValue: null, correctionReason: null, identity: false, lowConfidence: true },
+    area: { key: "area", label: "坪數", sourceValue: "45", normalizedValue: "45", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
+    floor: { key: "floor", label: "樓層", sourceValue: "5F-2", normalizedValue: "5F-2", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
   },
   auditEvents: [
-    { id: "EV-1", occurredAt: "2026-07-20T10:00:00Z", actorName: "System", actorRoleId: "system", message: "Intake created" },
+    { id: "EV-1", occurredAt: "2026-07-20T10:00:00Z", actorName: "System", actorRoleId: "system", action: "INTAKE_CREATED", targetId: "IN-3011", message: "Intake created", correlationId: "CORR-778899" },
   ],
 };
 
@@ -164,11 +166,12 @@ const sampleRecordExactDuplicate: any = {
   matchResult: {
     targetListingId: "LST-1002",
     outcome: "EXACT_DUPLICATE",
+    outcomeLabel: "完全重複",
     confidence: 0.99,
     summary: "全欄位與網址完全相同，判定為完全重複。",
     agreeingSignals: [
-      { key: "address", label: "地址", detail: "完全相同" },
-      { key: "url", label: "網址", detail: "完全相同" },
+      { key: "address", label: "地址", agrees: true, detail: "完全相同" },
+      { key: "url", label: "網址", agrees: true, detail: "完全相同" },
     ],
     contradictingSignals: [],
   },
@@ -180,14 +183,15 @@ const sampleRecordRevision: any = {
   matchResult: {
     targetListingId: "LST-1002",
     outcome: "REVISION",
+    outcomeLabel: "物件版本更新",
     confidence: 0.92,
     summary: "同一物件更新價格與圖片，判定為物件新版本。",
     agreeingSignals: [
-      { key: "address", label: "地址", detail: "完全相同" },
-      { key: "sourceId", label: "來源 ID", detail: "同物件號" },
+      { key: "address", label: "地址", agrees: true, detail: "完全相同" },
+      { key: "sourceId", label: "來源 ID", agrees: true, detail: "同物件號" },
     ],
     contradictingSignals: [
-      { key: "rent", label: "租金", detail: "價格調降 2,000" },
+      { key: "rent", label: "租金", agrees: false, detail: "價格調降 2,000" },
     ],
   },
 };
@@ -199,6 +203,7 @@ const sampleRecordNew: any = {
   matchResult: {
     targetListingId: "",
     outcome: "NEW",
+    outcomeLabel: "新物件",
     confidence: 0.95,
     summary: "未於既有網絡庫中比對到相關物件，判定為全新物件。",
     agreeingSignals: [],
@@ -213,19 +218,32 @@ const sampleRecordQuarantined: any = {
   matchResult: {
     targetListingId: "",
     outcome: "QUARANTINED",
+    outcomeLabel: "已隔離",
     confidence: 0.40,
     summary: "來源內容存在衝突且遭安全隔離。",
     agreeingSignals: [],
     contradictingSignals: [
-      { key: "identity", label: "身份權限", detail: "屬受保護刊登" },
+      { key: "identity", label: "身份權限", agrees: false, detail: "屬受保護刊登" },
     ],
   },
+};
+
+const targetListing = {
+  id: "LST-1002",
+  sourceId: "591_123456",
+  canonicalUrl: "https://rent.591.com.tw/123456",
+  address: "台北市信義區松高路12號",
+  area: "45",
+  floor: "5F",
+  listingType: "—",
+  rent: "35000",
+  status: "NEEDS_REVIEW",
 };
 
 describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-UX-MATCH-001)", () => {
   describe("ListingCompareTable Component", () => {
     it("renders canonical match outcome badge and comparison table headers", () => {
-      render(<ListingCompareTable record={sampleRecordPossibleMatch} />);
+      render(<ListingCompareTable record={sampleRecordPossibleMatch} targetListing={targetListing} />);
 
       expectAny(screen.getByTestId("listing-compare-table")).toBeInTheDocument();
       expectAny(screen.getByTestId("compare-outcome-badge")).toHaveTextContent("POSSIBLE_MATCH");
@@ -234,12 +252,7 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
     });
 
     it("renders required comparison fields (sourceId, url, address, area, floor, rent, status, confidence, contradictions)", () => {
-      render(
-        <ListingCompareTable
-          record={sampleRecordPossibleMatch}
-          targetListing={{ address: "台北市信義區松高路12號" }}
-        />
-      );
+      render(<ListingCompareTable record={sampleRecordPossibleMatch} targetListing={targetListing} />);
 
       expectAny(screen.getByTestId("compare-row-sourceId")).toBeInTheDocument();
       expectAny(screen.getByTestId("compare-row-canonicalUrl")).toBeInTheDocument();

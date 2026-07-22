@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
@@ -31,6 +31,7 @@ export function AddListingFromUrlDialog({
   defaultHeatZoneId,
   error,
   onClose,
+  onOpenExisting,
   onSubmit,
   submitterLabel,
 }: {
@@ -38,18 +39,24 @@ export function AddListingFromUrlDialog({
   defaultHeatZoneId?: string;
   error: IntakeApiError | null;
   onClose: () => void;
-  onSubmit: (input: { url: string; heatZoneId: string }) => void;
+  onOpenExisting?: (intakeId: string) => void;
+  onSubmit: (input: { url: string; heatZoneId: string }) => void | Promise<void>;
   submitterLabel: string;
 }) {
   const [url, setUrl] = useState("");
   const [heatZoneId, setHeatZoneId] = useState(defaultHeatZoneId ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false);
 
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
 
-  function handleSubmit() {
-    if (busy) return; // re-entrancy guard: never post twice from one dialog
+  const sourceHost = useMemo(() => (looksValid ? detectSourceHost(trimmed) : null), [looksValid, trimmed]);
+  const canonicalPreview = useMemo(() => (looksValid ? computeCanonicalUrlPreview(trimmed) : null), [looksValid, trimmed]);
+
+  async function handleSubmit() {
+    if (busy || submitLock.current) return;
     if (!trimmed) {
       setLocalError("請輸入物件頁網址");
       return;
@@ -59,10 +66,21 @@ export function AddListingFromUrlDialog({
       return;
     }
     setLocalError(null);
-    onSubmit({ url: trimmed, heatZoneId });
+    submitLock.current = true;
+    setSubmitting(true);
+    try {
+      await onSubmit({ url: trimmed, heatZoneId });
+    } finally {
+      submitLock.current = false;
+      setSubmitting(false);
+    }
   }
 
   const shownError = localError ?? error?.summary ?? null;
+  const isExactDuplicate = error?.code === "ODP-INTAKE-CONFLICT" || (error?.summary ?? "").includes("已存在");
+  const existingIntakeId = isExactDuplicate
+    ? /\b(IN-[A-Za-z0-9-]+)\b/.exec(error?.summary ?? "")?.[1] ?? null
+    : null;
 
   return (
     <IntakeDialogShell
@@ -91,13 +109,32 @@ export function AddListingFromUrlDialog({
             id="intake-url"
             onChange={(event) => setUrl(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") handleSubmit();
+              if (event.key === "Enter") void handleSubmit();
             }}
             placeholder="https://www.591.com.tw/rent-detail-XXXXXXXX.html"
             type="url"
             value={url}
           />
         </div>
+
+        {looksValid ? (
+          <div className={styles.metaRow} data-testid="intake-source-preview">
+            <span className={styles.metaLabel}>辨識來源：</span>
+            <span className={styles.chip} data-tone="info">{sourceHost}</span>
+            <span className={styles.metaLabel}>來源政策：</span>
+            <span className={styles.chip} data-tone="info">送出後由伺服器判定</span>
+            <span className={styles.metaValue}> — 瀏覽器不會推定來源已核准或允許擷取。</span>
+          </div>
+        ) : null}
+
+        {canonicalPreview && canonicalPreview !== trimmed ? (
+          <div className={styles.metaRow} data-testid="intake-canonical-preview">
+            <span className={styles.metaLabel}>正規化 URL 預覽：</span>
+            <span className={`${styles.rowUrl} ${styles.mono}`} title={canonicalPreview}>
+              {canonicalPreview}
+            </span>
+          </div>
+        ) : null}
 
         <div className={styles.grid2}>
           <div>
@@ -130,7 +167,24 @@ export function AddListingFromUrlDialog({
           送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 →
           已核准來源才擷取解析 → 與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，
           原始 URL 保留為證據。你可以先離開，稍後從收件佇列回到此紀錄。
+          系統僅進行使用者提交之單頁擷取或已核准推送，絕不進行定期爬取或要求提供 credentials。
         </div>
+
+        {isExactDuplicate ? (
+          <div className={styles.warnNote} data-testid="intake-exact-duplicate-intercept" role="alert">
+            ⚡ 識別檢查攔截：此網址已被收錄。系統已提供短路徑可直接導向既有物件紀錄。
+            {existingIntakeId && onOpenExisting ? (
+              <button
+                className={styles.secondaryButton}
+                data-testid="intake-open-existing"
+                onClick={() => onOpenExisting(existingIntakeId)}
+                type="button"
+              >
+                開啟既有收件 {existingIntakeId}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {shownError ? (
           <div className={styles.errorPanel} data-testid="intake-add-error" role="alert">
@@ -156,11 +210,11 @@ export function AddListingFromUrlDialog({
         <button
           className={styles.primaryButton}
           data-testid="intake-submit-button"
-          disabled={busy || !trimmed}
-          onClick={handleSubmit}
+          disabled={busy || submitting || !trimmed}
+          onClick={() => void handleSubmit()}
           type="button"
         >
-          {busy ? "送出中…（防止重複送出）" : "送出 URL"}
+          {busy || submitting ? "送出中…（防止重複送出）" : "送出 URL"}
         </button>
       </div>
     </IntakeDialogShell>
@@ -173,5 +227,35 @@ function isHttpUrl(value: string): boolean {
     return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+function detectSourceHost(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "未知來源";
+  }
+}
+
+function computeCanonicalUrlPreview(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const searchParams = new URLSearchParams(parsed.search);
+    const trackingKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"];
+    let changed = false;
+    for (const key of trackingKeys) {
+      if (searchParams.has(key)) {
+        searchParams.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      parsed.search = searchParams.toString();
+      return parsed.toString();
+    }
+    return url;
+  } catch {
+    return url;
   }
 }

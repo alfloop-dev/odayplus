@@ -20708,6 +20708,111 @@
               ],
               "title": "Selectedheatzoneid"
             }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "savedView",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Savedview",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intakeMethod",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Intakemethod",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intakeStage",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Intakestage",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "matchOutcome",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Matchoutcome",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "slaState",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Slastate",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "required": false,
+            "schema": {
+              "default": "updatedAt",
+              "title": "Sortby",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortOrder",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "pattern": "^(asc|desc)$",
+              "title": "Sortorder",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -20715,12 +20820,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
+                  "additionalProperties": true,
                   "title": "Response List Intakes Api V1 Operator Network Listings Intake Get",
-                  "type": "array"
+                  "type": "object"
                 }
               }
             },
