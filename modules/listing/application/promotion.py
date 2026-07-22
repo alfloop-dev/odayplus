@@ -313,7 +313,7 @@ class PromotionService:
                 average_confidence=float(conf_val),
             )
             score_report = score_site(feature_input)
-            
+
             # Map score and recommendation
             rec_val = score_report.recommendation.value
             if rec_val == "GO":
@@ -483,12 +483,12 @@ class PromotionService:
             if candidate_created_flag:
                 if hasattr(self.listing_repository, "candidates"):
                     self.listing_repository.candidates = [
-                        c for c in self.listing_repository.candidates 
+                        c for c in self.listing_repository.candidates
                         if (c.candidate_site.candidate_site_id if hasattr(c, "candidate_site") else c.get("id")) != candidate_id
                     ]
                 if hasattr(self.listing_repository, "_state") and "candidates" in self.listing_repository._state:
                     self.listing_repository._state["candidates"] = [
-                        c for c in self.listing_repository._state["candidates"] 
+                        c for c in self.listing_repository._state["candidates"]
                         if c.get("id") != candidate_id
                     ]
 
@@ -567,12 +567,12 @@ class PromotionService:
             if candidate_created_flag:
                 if hasattr(self.listing_repository, "candidates"):
                     self.listing_repository.candidates = [
-                        c for c in self.listing_repository.candidates 
+                        c for c in self.listing_repository.candidates
                         if (c.candidate_site.candidate_site_id if hasattr(c, "candidate_site") else c.get("id")) != candidate_id
                     ]
                 if hasattr(self.listing_repository, "_state") and "candidates" in self.listing_repository._state:
                     self.listing_repository._state["candidates"] = [
-                        c for c in self.listing_repository._state["candidates"] 
+                        c for c in self.listing_repository._state["candidates"]
                         if c.get("id") != candidate_id
                     ]
 

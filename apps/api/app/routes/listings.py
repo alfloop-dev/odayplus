@@ -815,7 +815,7 @@ else:
                     if addr.address_id == listing.address_id:
                         address = addr
                         break
-            
+
             d = {
                 "id": listing.listing_id,
                 "listing_id": listing.listing_id,
