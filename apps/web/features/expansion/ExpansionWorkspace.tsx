@@ -7,6 +7,8 @@ import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import { AccessibleDrawer } from "./AccessibleDrawer.tsx";
 import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
+import { AssistedIntakeSection } from "../operator/network/intake/AssistedIntakeSection.tsx";
+import type { OperatorRoleId } from "../operator/navigation.ts";
 import {
   candidates,
   decisionTone,
@@ -358,6 +360,11 @@ function HeatZoneScoreCard({ zone }: { zone: (typeof heatZones)[number] }) {
 function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
   const selected = selectedFromQuery(searchParams.selected) ?? listings[0].id;
   const listing = listings.find((item) => item.id === selected) ?? listings[0];
+  const requestedRole = selectedFromQuery(searchParams.role);
+  const activeRoleId: OperatorRoleId = isOperatorRoleId(requestedRole)
+    ? requestedRole
+    : "expansion-manager";
+  const selectedHeatZoneId = selectedFromQuery(searchParams.heatZone);
   return (
     <>
       <Header
@@ -367,6 +374,10 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       />
       <section aria-label="Listing inbox workspace" className="odp-content" data-testid="exp-listings-page">
         <WorkspaceNav active="listings" />
+        <AssistedIntakeSection
+          activeRoleId={activeRoleId}
+          selectedHeatZoneId={selectedHeatZoneId}
+        />
         <ImportSummary />
         <FilterBar>
           <label>
@@ -408,6 +419,17 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       </section>
     </>
   );
+}
+
+function isOperatorRoleId(value: string | undefined): value is OperatorRoleId {
+  return value !== undefined && [
+    "expansion-manager",
+    "ops-lead",
+    "cs-lead",
+    "field-lead",
+    "marketing-manager",
+    "pm-audit",
+  ].includes(value);
 }
 
 function CandidatesPage({ searchParams }: { searchParams: SearchParams }) {
