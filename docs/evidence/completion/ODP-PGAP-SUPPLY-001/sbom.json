@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-1ec914061f8200a4eb97d58fe28c027c",
+  "serialNumber": "urn:uuid:sha256-135e9fe8ed8c65f2a05b11e5e06043b7",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-22T17:11:37.094242+00:00",
+    "timestamp": "2026-07-22T17:13:56.609873+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "24def4b581c7936d8048c785e065176093d9a575"
+        "value": "d1b2e6f56b17714bffdf31c4d3d091e603765cfb"
       },
       {
         "name": "sbom-hash",
-        "value": "1ec914061f8200a4eb97d58fe28c027c6d1756c90ecd6d30d69998fd18a666e2"
+        "value": "135e9fe8ed8c65f2a05b11e5e06043b79e5421c733d76274e3c9f29edd0cc87c"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:8ed23b912391063be9dd4bb2a3c04c9d7f303a17ecfae6a1557d97ca2cb67c80"
+        "value": "sha256:61f7e85b2d31ff4ef105108232b5cf056cb71d008cc4570c9399647060bdae92"
       }
     ]
   },
@@ -32,6 +32,13 @@
       "type": "library",
       "purl": "pkg:npm/apps/web@0.1.0",
       "bom-ref": "pkg:npm/apps/web@0.1.0"
+    },
+    {
+      "name": "apps/web/@types/node",
+      "version": "20.14.10",
+      "type": "library",
+      "purl": "pkg:npm/apps/web/@types/node@20.14.10",
+      "bom-ref": "pkg:npm/apps/web/@types/node@20.14.10"
     },
     {
       "name": "@adobe/css-tools",
@@ -95,6 +102,13 @@
       "type": "library",
       "purl": "pkg:npm/@emnapi/core@1.11.1",
       "bom-ref": "pkg:npm/@emnapi/core@1.11.1"
+    },
+    {
+      "name": "@emnapi/runtime",
+      "version": "1.11.2",
+      "type": "library",
+      "purl": "pkg:npm/@emnapi/runtime@1.11.2",
+      "bom-ref": "pkg:npm/@emnapi/runtime@1.11.2"
     },
     {
       "name": "@emnapi/wasi-threads",
@@ -707,10 +721,17 @@
     },
     {
       "name": "@types/node",
-      "version": "20.14.10",
+      "version": "26.1.1",
       "type": "library",
-      "purl": "pkg:npm/@types/node@20.14.10",
-      "bom-ref": "pkg:npm/@types/node@20.14.10"
+      "purl": "pkg:npm/@types/node@26.1.1",
+      "bom-ref": "pkg:npm/@types/node@26.1.1"
+    },
+    {
+      "name": "@types/node/undici-types",
+      "version": "8.3.0",
+      "type": "library",
+      "purl": "pkg:npm/@types/node/undici-types@8.3.0",
+      "bom-ref": "pkg:npm/@types/node/undici-types@8.3.0"
     },
     {
       "name": "@types/offscreencanvas",
