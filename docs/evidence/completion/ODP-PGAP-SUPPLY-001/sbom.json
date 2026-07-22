@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-15370ea85c16cbf8516d0ffaa71056d4",
+  "serialNumber": "urn:uuid:sha256-fc083dafb66576ed5f80c194f3acaefa",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-21T00:04:29.834454+00:00",
+    "timestamp": "2026-07-22T15:01:06.631476+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "828f640072d605ec3cf3523f0a38e10fbbc24867"
+        "value": "6857d323151a68871f1e1a2b4f6abeea1a300d70"
       },
       {
         "name": "sbom-hash",
-        "value": "15370ea85c16cbf8516d0ffaa71056d47be8254fe8d154644bd0c35b7f531b76"
+        "value": "fc083dafb66576ed5f80c194f3acaefa55af7ebacc3076bc7c74c8cd5d014444"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:485b86063f1fced453e83932638d4ae64ab5e7c659a3fc4196ec2cbfc40a78f7"
+        "value": "sha256:2c479860ae6282f4b39a1a1788400d82d9cbc2507be39e2f73db30ceb1a20ad8"
       }
     ]
   },
@@ -168,171 +168,192 @@
     },
     {
       "name": "@img/sharp-darwin-arm64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-darwin-arm64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-darwin-arm64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-darwin-arm64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-darwin-arm64@0.35.3"
     },
     {
       "name": "@img/sharp-darwin-x64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-darwin-x64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-darwin-x64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-darwin-x64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-darwin-x64@0.35.3"
+    },
+    {
+      "name": "@img/sharp-freebsd-wasm32",
+      "version": "0.35.3",
+      "type": "library",
+      "purl": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.3"
     },
     {
       "name": "@img/sharp-libvips-darwin-arm64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-darwin-x64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-darwin-x64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-x64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-arm",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-arm@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-arm64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-arm64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-ppc64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-riscv64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-s390x",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-s390x@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-s390x@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linux-x64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-x64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-arm64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.2"
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-x64",
-      "version": "1.2.4",
+      "version": "1.3.2",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.2.4",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.2.4"
+      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.2",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.2"
     },
     {
       "name": "@img/sharp-linux-arm",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-arm@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-arm@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-arm@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-arm@0.35.3"
     },
     {
       "name": "@img/sharp-linux-arm64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-arm64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-arm64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-arm64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-arm64@0.35.3"
     },
     {
       "name": "@img/sharp-linux-ppc64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-ppc64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-ppc64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-ppc64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-ppc64@0.35.3"
     },
     {
       "name": "@img/sharp-linux-riscv64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-riscv64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-riscv64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-riscv64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-riscv64@0.35.3"
     },
     {
       "name": "@img/sharp-linux-s390x",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-s390x@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-s390x@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-s390x@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-s390x@0.35.3"
     },
     {
       "name": "@img/sharp-linux-x64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-x64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linux-x64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.35.3"
     },
     {
       "name": "@img/sharp-linuxmusl-arm64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linuxmusl-arm64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-arm64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.3"
     },
     {
       "name": "@img/sharp-linuxmusl-x64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linuxmusl-x64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.3"
     },
     {
       "name": "@img/sharp-wasm32",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-wasm32@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-wasm32@0.34.5"
+      "purl": "pkg:npm/@img/sharp-wasm32@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-wasm32@0.35.3"
+    },
+    {
+      "name": "@img/sharp-wasm32/@emnapi/runtime",
+      "version": "1.11.2",
+      "type": "library",
+      "purl": "pkg:npm/@img/sharp-wasm32/@emnapi/runtime@1.11.2",
+      "bom-ref": "pkg:npm/@img/sharp-wasm32/@emnapi/runtime@1.11.2"
+    },
+    {
+      "name": "@img/sharp-webcontainers-wasm32",
+      "version": "0.35.3",
+      "type": "library",
+      "purl": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.3"
     },
     {
       "name": "@img/sharp-win32-arm64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-arm64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-win32-arm64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-win32-arm64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-win32-arm64@0.35.3"
     },
     {
       "name": "@img/sharp-win32-ia32",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-ia32@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-win32-ia32@0.34.5"
+      "purl": "pkg:npm/@img/sharp-win32-ia32@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-win32-ia32@0.35.3"
     },
     {
       "name": "@img/sharp-win32-x64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-x64@0.34.5",
-      "bom-ref": "pkg:npm/@img/sharp-win32-x64@0.34.5"
+      "purl": "pkg:npm/@img/sharp-win32-x64@0.35.3",
+      "bom-ref": "pkg:npm/@img/sharp-win32-x64@0.35.3"
     },
     {
       "name": "@loaders.gl/core",
@@ -2793,10 +2814,10 @@
     },
     {
       "name": "sharp",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "type": "library",
-      "purl": "pkg:npm/sharp@0.34.5",
-      "bom-ref": "pkg:npm/sharp@0.34.5"
+      "purl": "pkg:npm/sharp@0.35.3",
+      "bom-ref": "pkg:npm/sharp@0.35.3"
     },
     {
       "name": "shebang-command",
