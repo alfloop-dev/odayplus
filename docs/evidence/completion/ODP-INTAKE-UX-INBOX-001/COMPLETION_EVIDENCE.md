@@ -2,7 +2,7 @@
 
 - Task: Implement Listing Inbox intake integration and URL submission
 - Owner: Codex2
-- Reviewer: Codex
+- Reviewer: Antigravity4
 - Branch: `task/ODP-INTAKE-UX-INBOX-001`
 - Phase: Assisted Listing Intake R7 UI Implementation
 - Date: 2026-07-21
@@ -61,3 +61,12 @@ This task implements the Listing Inbox integration surface (`UX-SCR-EXP-003`) an
 3. `uv run pytest tests/contract/test_operator_assisted_listing_api.py -q` -> 22 passed
 4. `uv run pytest tests/security/test_assisted_listing_intake_authorization_matrix.py -q` -> 11 passed
 5. `git diff --check` -> clean
+
+## 4. Finalization
+
+- Review disposition: approved by Antigravity4 on 2026-07-22.
+- Approved scope: server-owned filtering, pagination, stable sorting and counts; mutually exclusive list/map modes; operational actions and route transitions; server-owned source-policy authority.
+- Closeout verification at `0ad3ef605d4d7d23a3586ecb9785b0efc2347423`:
+  - `npm test --workspace=@oday-plus/web -- ListingInboxIntakeView AddListingFromUrlDialog` -> 16 passed.
+  - `git diff --check origin/dev...HEAD` and `git diff --check` -> clean.
+  - `npm run typecheck --workspace=@oday-plus/web` -> blocked by pre-existing sister-lane errors in `IdentityDecisionPanel.test.tsx` (stale `MatchSignalDto`, `IntakeFieldCell`, `IntakeAuditEvent`, and `MatchResultDto` fixtures plus missing Jest globals); no errors point to this task's owned files.
