@@ -105,7 +105,7 @@ function systemRoleFor(roleId: string) {
     case "marketing-manager":
       return "marketing_manager";
     case "expansion-manager":
-      return "expansion_user";
+      return "expansion_user,site_reviewer";
     case "pm-audit":
       return "auditor";
     default:
