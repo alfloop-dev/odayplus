@@ -1,6 +1,6 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import { ListingInboxIntakeView } from "../ListingInboxIntakeView";
@@ -125,7 +125,8 @@ describe("ListingInboxIntakeView", () => {
     expect(screen.getByTestId("intake-inbox-row-IN-103")).toBeDefined();
   });
 
-  it("filters records by saved view tab", () => {
+  it("sends saved-view filtering to the server contract", async () => {
+    const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
         activeRoleId="expansion-manager"
@@ -133,6 +134,7 @@ describe("ListingInboxIntakeView", () => {
         loadState="ready"
         onAddSubmit={mockOnAddSubmit}
         onOpenDetail={mockOnOpenDetail}
+        onQueryChange={onQueryChange}
         records={mockRecords}
       />
     );
@@ -140,12 +142,11 @@ describe("ListingInboxIntakeView", () => {
     const needsReviewTab = screen.getByTestId("intake-tab-needsReview");
     fireEvent.click(needsReviewTab);
 
-    expect(screen.getByTestId("intake-inbox-row-IN-101")).toBeDefined();
-    expect(screen.queryByTestId("intake-inbox-row-IN-102")).toBeNull();
-    expect(screen.queryByTestId("intake-inbox-row-IN-103")).toBeNull();
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ savedView: "needsReview", page: 1 })));
   });
 
-  it("filters records by search input", () => {
+  it("sends search to the server contract", async () => {
+    const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
         activeRoleId="expansion-manager"
@@ -153,6 +154,7 @@ describe("ListingInboxIntakeView", () => {
         loadState="ready"
         onAddSubmit={mockOnAddSubmit}
         onOpenDetail={mockOnOpenDetail}
+        onQueryChange={onQueryChange}
         records={mockRecords}
       />
     );
@@ -160,9 +162,7 @@ describe("ListingInboxIntakeView", () => {
     const searchInput = screen.getByTestId("intake-search-input");
     fireEvent.change(searchInput, { target: { value: "sinyi" } });
 
-    expect(screen.queryByTestId("intake-inbox-row-IN-101")).toBeNull();
-    expect(screen.getByTestId("intake-inbox-row-IN-102")).toBeDefined();
-    expect(screen.queryByTestId("intake-inbox-row-IN-103")).toBeNull();
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ search: "sinyi", page: 1 })));
   });
 
   it("toggles between list mode and map mode", () => {
@@ -181,6 +181,8 @@ describe("ListingInboxIntakeView", () => {
     fireEvent.click(mapModeBtn);
 
     expect(screen.getByTestId("intake-map-view-panel")).toBeDefined();
+    expect(screen.queryByTestId("intake-table")).not.toBeInTheDocument();
+    expect(screen.getByTestId("intake-map-marker-IN-101")).toHaveTextContent("待定位");
 
     const listModeBtn = screen.getByTestId("intake-view-mode-list");
     fireEvent.click(listModeBtn);
@@ -188,7 +190,8 @@ describe("ListingInboxIntakeView", () => {
     expect(screen.queryByTestId("intake-map-view-panel")).toBeNull();
   });
 
-  it("restores filters across browser history navigation", () => {
+  it("restores server query filters across browser history navigation", async () => {
+    const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
         activeRoleId="expansion-manager"
@@ -196,6 +199,7 @@ describe("ListingInboxIntakeView", () => {
         loadState="ready"
         onAddSubmit={mockOnAddSubmit}
         onOpenDetail={mockOnOpenDetail}
+        onQueryChange={onQueryChange}
         records={mockRecords}
       />
     );
@@ -207,8 +211,7 @@ describe("ListingInboxIntakeView", () => {
     fireEvent.popState(window);
 
     expect(screen.getByTestId("intake-search-input")).toHaveValue("591");
-    expect(screen.getByTestId("intake-inbox-row-IN-101")).toBeInTheDocument();
-    expect(screen.queryByTestId("intake-inbox-row-IN-102")).not.toBeInTheDocument();
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ search: "591" })));
   });
 
   it("triggers detail modal on row action button click", () => {
@@ -227,6 +230,32 @@ describe("ListingInboxIntakeView", () => {
     fireEvent.click(actionBtn);
 
     expect(mockOnOpenDetail).toHaveBeenCalledWith("IN-101");
+  });
+
+  it("renders degraded evidence separately and directly retries retryable failures", () => {
+    const onRetryIntake = vi.fn();
+    const failed = intake({
+      id: "IN-FAIL",
+      stage: "FAILED",
+      failure: { code: "FETCH_TIMEOUT", summary: "timeout", nextAction: "retry", retryable: true },
+    });
+    render(
+      <ListingInboxIntakeView
+        activeRoleId="expansion-manager"
+        busy={false}
+        loadState="ready"
+        onAddSubmit={mockOnAddSubmit}
+        onOpenDetail={mockOnOpenDetail}
+        onRetryIntake={onRetryIntake}
+        pageData={{ items: [failed], total: 1, page: 1, pageSize: 10, counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 1, ready: 0 }, evidenceState: "degraded" }}
+        records={[failed]}
+      />
+    );
+    expect(screen.getByTestId("intake-evidence-degraded")).toHaveTextContent("證據降級");
+    expect(screen.getAllByText(/可重試/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByTestId("intake-row-action-IN-FAIL"));
+    expect(onRetryIntake).toHaveBeenCalledWith("IN-FAIL");
+    expect(mockOnOpenDetail).not.toHaveBeenCalled();
   });
 
   it("renders permission denied note for unauthorized role", () => {

@@ -128,7 +128,7 @@ describe("AddListingFromUrlDialog", () => {
     resolveSubmit?.();
   });
 
-  it("displays source detection preview for recognized real-estate domains", () => {
+  it("leaves source policy authority with the server", () => {
     render(
       <AddListingFromUrlDialog
         busy={false}
@@ -142,8 +142,9 @@ describe("AddListingFromUrlDialog", () => {
     const input = screen.getByTestId("intake-url-input");
     fireEvent.change(input, { target: { value: "https://www.sinyi.com.tw/buy/house/1234" } });
 
-    expect(screen.getByTestId("intake-source-preview")).toHaveTextContent("信義房屋");
-    expect(screen.getByTestId("intake-source-preview")).toHaveTextContent("已核准來源推送");
+    expect(screen.getByTestId("intake-source-preview")).toHaveTextContent("送出後由伺服器判定");
+    expect(screen.getByTestId("intake-source-preview")).toHaveTextContent("www.sinyi.com.tw");
+    expect(screen.getByTestId("intake-source-preview")).not.toHaveTextContent("可自動處理擷取");
   });
 
   it("displays exact duplicate intercept alert when conflict error is passed", () => {

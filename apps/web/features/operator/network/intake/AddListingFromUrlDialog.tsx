@@ -52,7 +52,7 @@ export function AddListingFromUrlDialog({
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
 
-  const sourceInfo = useMemo(() => (looksValid ? detectSource(trimmed) : null), [looksValid, trimmed]);
+  const sourceHost = useMemo(() => (looksValid ? detectSourceHost(trimmed) : null), [looksValid, trimmed]);
   const canonicalPreview = useMemo(() => (looksValid ? computeCanonicalUrlPreview(trimmed) : null), [looksValid, trimmed]);
 
   async function handleSubmit() {
@@ -117,13 +117,13 @@ export function AddListingFromUrlDialog({
           />
         </div>
 
-        {sourceInfo ? (
+        {looksValid ? (
           <div className={styles.metaRow} data-testid="intake-source-preview">
             <span className={styles.metaLabel}>辨識來源：</span>
-            <span className={styles.chip} data-tone={sourceInfo.isApproved ? "good" : "info"}>
-              {sourceInfo.name}
-            </span>
-            <span className={styles.metaValue}> — {sourceInfo.policy}</span>
+            <span className={styles.chip} data-tone="info">{sourceHost}</span>
+            <span className={styles.metaLabel}>來源政策：</span>
+            <span className={styles.chip} data-tone="info">送出後由伺服器判定</span>
+            <span className={styles.metaValue}> — 瀏覽器不會推定來源已核准或允許擷取。</span>
           </div>
         ) : null}
 
@@ -229,25 +229,12 @@ function isHttpUrl(value: string): boolean {
     return false;
   }
 }
-function detectSource(url: string): { name: string; policy: string; isApproved: boolean } {
+
+function detectSourceHost(url: string): string {
   try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    if (host === "591.com.tw" || host.endsWith(".591.com.tw")) {
-      return { name: "591 房屋交易網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
-    }
-    if (host === "rakuya.com.tw" || host.endsWith(".rakuya.com.tw")) {
-      return { name: "樂屋網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
-    }
-    if (host === "sinyi.com.tw" || host.endsWith(".sinyi.com.tw")) {
-      return { name: "信義房屋", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
-    }
-    if (host === "yungching.com.tw" || host.endsWith(".yungching.com.tw")) {
-      return { name: "永慶房產集團", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
-    }
-    return { name: host || "外部網站", policy: "單頁網址送件（由系統判定來源政策）", isApproved: false };
+    return new URL(url).hostname.toLowerCase();
   } catch {
-    return { name: "未知來源", policy: "請輸入有效 http(s) 網址", isApproved: false };
+    return "未知來源";
   }
 }
 

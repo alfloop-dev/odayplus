@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue } from "@oday-plus/openapi-client";
+import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue, IntakeInboxPage, IntakeInboxQuery } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
@@ -41,6 +41,8 @@ export function AssistedIntakeSection({
   selectedHeatZoneId?: string;
 }) {
   const [records, setRecords] = useState<AssistedIntake[]>([]);
+  const [pageData, setPageData] = useState<IntakeInboxPage | undefined>();
+  const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [dialog, setDialog] = useState<"add" | "detail" | "fix" | "decide" | null>(null);
@@ -69,16 +71,17 @@ export function AssistedIntakeSection({
       return;
     }
     setLoadState("loading");
-    const result = await intakeApi.list(client, selectedHeatZoneId);
+    const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
     if (result.ok) {
-      setRecords(result.value);
+      setRecords(result.value.items);
+      setPageData(result.value);
       setLoadState("ready");
       setLoadError(null);
     } else {
       setLoadState("error");
       setLoadError(result.error);
     }
-  }, [activeRoleId, client, selectedHeatZoneId]);
+  }, [activeRoleId, client, inboxQuery, selectedHeatZoneId]);
 
   useEffect(() => {
     void refresh();
@@ -320,6 +323,21 @@ export function AssistedIntakeSection({
     void refresh();
   }
 
+  async function handleInboxRetry(intakeId: string) {
+    if (!client || busy) return;
+    setBusy(true);
+    setActionError(null);
+    const result = await intakeApi.retry(client, intakeId, activeRoleId);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    applyRecord(result.value);
+    setToast(`收件 ${intakeId} 已直接重試；原始證據與修正紀錄保留`);
+    void refresh();
+  }
+
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
 
   return (
@@ -333,6 +351,9 @@ export function AssistedIntakeSection({
         onAddSubmit={handleSubmit}
         onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}
+        onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
+        onQueryChange={setInboxQuery}
+        pageData={pageData}
         records={records}
         selectedHeatZoneId={selectedHeatZoneId}
       />

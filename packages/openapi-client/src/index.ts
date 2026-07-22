@@ -1279,12 +1279,12 @@ export class OdpApiClient {
     });
   }
 
-  listIntakes(
-    options: { selectedHeatZoneId?: string } = {},
-  ): Promise<AssistedIntake[]> {
+  listIntakes(options: IntakeInboxQuery = {}): Promise<IntakeInboxPage> {
     const query: Record<string, string> = {};
-    if (options.selectedHeatZoneId) query.selectedHeatZoneId = options.selectedHeatZoneId;
-    return this.request<AssistedIntake[]>("/api/v1/operator/network-listings/intake", {
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null && value !== "") query[key] = String(value);
+    }
+    return this.request<IntakeInboxPage>("/api/v1/operator/network-listings/intake", {
       query,
     });
   }
@@ -1558,6 +1558,8 @@ export type AssistedIntake = {
   submitter: string;
   owner: string;
   heatZoneId: string | null;
+  intakeMethod?: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED";
+  slaState?: string | null;
   stage: IntakeStage;
   sourceId: string;
   policy: SourcePolicyState;
@@ -1573,6 +1575,29 @@ export type AssistedIntake = {
   auditEvents: IntakeAuditEvent[];
   idempotencyKey?: string | null;
   failure?: IntakeFailure | null;
+};
+
+export type IntakeInboxQuery = {
+  selectedHeatZoneId?: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  savedView?: string;
+  intakeMethod?: string;
+  intakeStage?: string;
+  matchOutcome?: string;
+  slaState?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+};
+
+export type IntakeInboxPage = {
+  items: AssistedIntake[];
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: { needsReview: number; awaitingEntry: number; processing: number; blocked: number; ready: number };
+  evidenceState: "complete" | "partial" | "degraded";
 };
 
 export type NetworkListingRadarSnapshot = {

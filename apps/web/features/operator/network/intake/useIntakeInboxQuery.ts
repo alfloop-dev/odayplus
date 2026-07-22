@@ -1,8 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AssistedIntake, IntakeStage, MatchOutcome } from "@oday-plus/openapi-client";
-import { queueCounts } from "./intakeTypes";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type SavedViewType = "all" | "needsReview" | "awaitingEntry" | "blocked" | "processing" | "ready";
 export type ViewMode = "list" | "map";
@@ -107,7 +105,7 @@ function updateUrlQueryParams(state: IntakeInboxFilterState, mode: "push" | "rep
   }
 }
 
-export function useIntakeInboxQuery(records: AssistedIntake[]) {
+export function useIntakeInboxQuery() {
   const [filters, setFilters] = useState<IntakeInboxFilterState>(() => ({
     ...DEFAULT_FILTERS,
     ...parseUrlQueryParams(),
@@ -166,88 +164,6 @@ export function useIntakeInboxQuery(records: AssistedIntake[]) {
     });
   }, [filters.viewMode]);
 
-  // Filter records
-  const filteredRecords = useMemo(() => {
-    return records.filter((r) => {
-      // Saved views
-      if (filters.savedView === "needsReview" && r.stage !== "NEEDS_REVIEW") return false;
-      if (filters.savedView === "awaitingEntry" && r.stage !== "AWAITING_ASSISTED_ENTRY") return false;
-      if (filters.savedView === "blocked" && r.stage !== "QUARANTINED" && r.stage !== "FAILED") return false;
-      if (filters.savedView === "processing" && ["NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "CANCELLED"].includes(r.stage)) return false;
-      if (filters.savedView === "ready" && r.stage !== "READY") return false;
-
-      // Method filter
-      if (filters.intakeMethod && (r.policyLabel || "").indexOf(filters.intakeMethod) === -1) return false;
-
-      // Stage filter
-      if (filters.intakeStage && r.stage !== filters.intakeStage) return false;
-
-      // Match outcome filter
-      if (filters.matchOutcome && r.matchResult?.outcome !== filters.matchOutcome) return false;
-
-      // HeatZone filter
-      if (filters.heatZoneId && r.heatZoneId !== filters.heatZoneId) return false;
-
-      // Search filter
-      if (filters.search) {
-        const q = filters.search.toLowerCase();
-        const matches =
-          r.id.toLowerCase().includes(q) ||
-          r.canonicalUrl.toLowerCase().includes(q) ||
-          (r.sourceId && r.sourceId.toLowerCase().includes(q)) ||
-          (r.submitter && r.submitter.toLowerCase().includes(q)) ||
-          (r.owner && r.owner.toLowerCase().includes(q));
-        if (!matches) return false;
-      }
-
-      return true;
-    });
-  }, [records, filters]);
-
-  // Sorted records
-  const sortedRecords = useMemo(() => {
-    const sorted = [...filteredRecords];
-    sorted.sort((a, b) => {
-      let valA: string | number = "";
-      let valB: string | number = "";
-
-      if (filters.sortBy === "id") {
-        valA = a.id;
-        valB = b.id;
-      } else if (filters.sortBy === "stage") {
-        valA = a.stage;
-        valB = b.stage;
-      } else if (filters.sortBy === "sourceId") {
-        valA = a.sourceId || "";
-        valB = b.sourceId || "";
-      } else {
-        // The intake contract has no synthetic updatedAt field. The newest
-        // persisted audit event (or source capture time) is the durable clock.
-        valA = a.auditEvents?.at(-1)?.occurredAt || a.capturedAt || "";
-        valB = b.auditEvents?.at(-1)?.occurredAt || b.capturedAt || "";
-      }
-
-      if (valA < valB) return filters.sortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return filters.sortOrder === "asc" ? 1 : -1;
-
-      // Stable secondary tie-breaker by ID
-      return a.id.localeCompare(b.id);
-    });
-
-    return sorted;
-  }, [filteredRecords, filters.sortBy, filters.sortOrder]);
-
-  // Server-paginated slice
-  const pageCount = Math.max(1, Math.ceil(sortedRecords.length / filters.pageSize));
-  const currentPage = Math.min(filters.page, pageCount);
-
-  const paginatedRecords = useMemo(() => {
-    const start = (currentPage - 1) * filters.pageSize;
-    return sortedRecords.slice(start, start + filters.pageSize);
-  }, [sortedRecords, currentPage, filters.pageSize]);
-
-  const counts = useMemo(() => queueCounts(records), [records]);
-
   const toggleSort = useCallback((column: string) => {
     setFilters((prev) => {
       if (prev.sortBy === column) {
@@ -258,16 +174,9 @@ export function useIntakeInboxQuery(records: AssistedIntake[]) {
   }, []);
 
   return {
-    filters: {
-      ...filters,
-      page: currentPage,
-    },
+    filters,
     updateFilters,
     resetFilters,
     toggleSort,
-    counts,
-    totalRecords: filteredRecords.length,
-    pageCount,
-    paginatedRecords,
   };
 }

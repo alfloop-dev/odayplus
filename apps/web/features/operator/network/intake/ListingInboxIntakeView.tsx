@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
+import React, { useEffect, useMemo, useState } from "react";
+import type { AssistedIntake, IntakeInboxPage, IntakeInboxQuery } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
@@ -29,6 +29,9 @@ export function ListingInboxIntakeView({
   onAddSubmit,
   onOpenDetail,
   onRetryLoad,
+  onRetryIntake,
+  pageData,
+  onQueryChange,
 }: {
   activeRoleId: OperatorRoleId;
   records: AssistedIntake[];
@@ -40,6 +43,9 @@ export function ListingInboxIntakeView({
   onAddSubmit: (input: { url: string; heatZoneId: string }) => Promise<void>;
   onOpenDetail: (intakeId: string) => void;
   onRetryLoad?: () => void;
+  onRetryIntake?: (intakeId: string) => void;
+  pageData?: IntakeInboxPage;
+  onQueryChange?: (query: IntakeInboxQuery) => void;
 }) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
@@ -54,11 +60,14 @@ export function ListingInboxIntakeView({
     updateFilters,
     resetFilters,
     toggleSort,
-    counts,
-    totalRecords,
-    pageCount,
-    paginatedRecords,
-  } = useIntakeInboxQuery(records);
+  } = useIntakeInboxQuery();
+  useEffect(() => {
+    onQueryChange?.({ ...filters, selectedHeatZoneId: selectedHeatZoneId || filters.heatZoneId || undefined });
+  }, [filters, onQueryChange, selectedHeatZoneId]);
+  const paginatedRecords = records;
+  const totalRecords = pageData?.total ?? records.length;
+  const pageCount = Math.max(1, Math.ceil(totalRecords / filters.pageSize));
+  const counts = pageData?.counts ?? { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 };
 
   const savedViewTabs: { id: SavedViewType; label: string; count: number }[] = useMemo(
     () => [
@@ -169,8 +178,9 @@ export function ListingInboxIntakeView({
           >
             <option value="">所有來源方式</option>
             <option value="URL">網址單頁 (URL)</option>
-            <option value="推送">核准推送 (Feed)</option>
-            <option value="人工">人工補錄 (Manual)</option>
+            <option value="APPROVED_FEED">核准推送 (Feed)</option>
+            <option value="MANUAL">人工補錄 (Manual)</option>
+            <option value="CSV">批次匯入 (CSV)</option>
           </select>
 
           <select
@@ -234,15 +244,27 @@ export function ListingInboxIntakeView({
         </div>
       ) : null}
 
-      {/* Map View mode banner */}
-      {filters.viewMode === "map" ? (
-        <div className={styles.noteBox} data-testid="intake-map-view-panel">
-          🗺️ 地圖模式保留既有收件匣篩選與點位同步 — 當前顯示 {paginatedRecords.length} 筆物件空間範圍。
+      {loadState === "ready" && pageData && pageData.evidenceState !== "complete" ? (
+        <div className={pageData?.evidenceState === "degraded" ? styles.errorPanel : styles.warnNote} data-testid={`intake-evidence-${pageData?.evidenceState ?? "partial"}`} role="status">
+          {pageData?.evidenceState === "degraded"
+            ? "證據降級：部分收件處理失敗；請查看可重試性與 correlation ID。"
+            : "證據部分可用：部分收件尚未產生來源快照，畫面不會將缺值視為完整證據。"}
+        </div>
+      ) : null}
+
+      {loadState === "ready" && filters.viewMode === "map" ? (
+        <div className={styles.rows} data-testid="intake-map-view-panel" aria-label="Listing Inbox 地圖結果">
+          <div className={styles.noteBox}>🗺️ 依 HeatZone 顯示目前 server page 的收件位置；未定位項目明確列入「待定位」。</div>
+          {paginatedRecords.map((record) => (
+            <button className={styles.secondaryButton} data-testid={`intake-map-marker-${record.id}`} key={record.id} onClick={() => onOpenDetail(record.id)} type="button">
+              {record.heatZoneId ?? "待定位"} · {record.id} · {shortUrl(record.canonicalUrl)}
+            </button>
+          ))}
         </div>
       ) : null}
 
       {/* Data Table */}
-      {loadState === "ready" ? (
+      {loadState === "ready" && filters.viewMode === "list" ? (
         paginatedRecords.length === 0 ? (
           <div className={styles.emptyState} data-testid="intake-inbox-empty">
             目前無符合條件的收件紀錄。
@@ -335,19 +357,22 @@ export function ListingInboxIntakeView({
                     )}
                   </span>
                   <span className={styles.rowMeta}>
-                    {record.submitter} · {record.owner}
+                    {record.intakeMethod ?? "URL"} · 送件 {record.submitter} · 指派 {record.owner || "未認領"}<br />
+                    SLA {record.slaState ?? "未提供"} · 更新 {record.auditEvents?.at(-1)?.occurredAt ?? record.capturedAt ?? "待處理"}<br />
+                    {record.rawSnapshot ? "證據已擷取" : "證據待補"} · {record.stage === "QUARANTINED" ? "已隔離" : record.failure ? (record.failure.retryable ? "可重試" : "不可重試") : "未隔離"}
                   </span>
                   <button
                     className={styles.primaryButton}
                     data-testid={`intake-row-action-${record.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onOpenDetail(record.id);
+                      if (record.stage === "FAILED" && record.failure?.retryable && onRetryIntake) onRetryIntake(record.id);
+                      else onOpenDetail(record.id);
                     }}
                     type="button"
                     style={{ fontSize: "0.8rem", padding: "0.2rem 0.5rem" }}
                   >
-                    {rowActionLabel(record)} →
+                    {record.stage === "FAILED" && record.failure?.retryable ? "重試" : record.stage === "NEEDS_REVIEW" ? "覆核" : !record.owner ? "認領" : record.stage === "AWAITING_ASSISTED_ENTRY" ? "要求補正" : rowActionLabel(record)} →
                   </button>
                 </div>
               );

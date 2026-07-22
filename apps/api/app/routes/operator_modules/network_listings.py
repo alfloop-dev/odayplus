@@ -439,7 +439,17 @@ def create_network_listings_sub_router(
     def list_intakes(
         request: Request,
         selected_heat_zone_id: str | None = Query(default=None, alias="selectedHeatZoneId"),
-    ) -> list[dict[str, Any]]:
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=10, alias="pageSize", ge=1, le=100),
+        search: str = Query(default="", max_length=200),
+        saved_view: str = Query(default="all", alias="savedView"),
+        intake_method: str = Query(default="", alias="intakeMethod"),
+        intake_stage: str = Query(default="", alias="intakeStage"),
+        match_outcome: str = Query(default="", alias="matchOutcome"),
+        sla_state: str = Query(default="", alias="slaState"),
+        sort_by: str = Query(default="updatedAt", alias="sortBy"),
+        sort_order: str = Query(default="desc", alias="sortOrder", pattern="^(asc|desc)$"),
+    ) -> dict[str, Any]:
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
         correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -475,8 +485,46 @@ def create_network_listings_sub_router(
                 intake for intake in intakes
                 if is_record_owner(principal, intake)
             ]
+        visible = [mask_intake(principal, intake) for intake in intakes]
+        processing_stages = {
+            "SUBMITTED",
+            "CHECKING_IDENTITY",
+            "CHECKING_SOURCE_POLICY",
+            "RETRIEVING",
+            "PARSING",
+            "MATCHING",
+        }
+        counts = {
+            "needsReview": sum(item.get("stage") == "NEEDS_REVIEW" for item in visible),
+            "awaitingEntry": sum(item.get("stage") == "AWAITING_ASSISTED_ENTRY" for item in visible),
+            "processing": sum(item.get("stage") in processing_stages for item in visible),
+            "blocked": sum(item.get("stage") in {"QUARANTINED", "FAILED"} for item in visible),
+            "ready": sum(item.get("stage") == "READY" for item in visible),
+        }
 
-        return [mask_intake(principal, intake) for intake in intakes]
+        def latest(item: dict[str, Any]) -> str:
+            events = item.get("auditEvents") or []
+            return (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
+
+        if saved_view == "needsReview": visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
+        elif saved_view == "awaitingEntry": visible = [i for i in visible if i.get("stage") == "AWAITING_ASSISTED_ENTRY"]
+        elif saved_view == "blocked": visible = [i for i in visible if i.get("stage") in {"QUARANTINED", "FAILED"}]
+        elif saved_view == "processing": visible = [i for i in visible if i.get("stage") in processing_stages]
+        elif saved_view == "ready": visible = [i for i in visible if i.get("stage") == "READY"]
+        if intake_method: visible = [i for i in visible if i.get("intakeMethod") == intake_method]
+        if intake_stage: visible = [i for i in visible if i.get("stage") == intake_stage]
+        if match_outcome: visible = [i for i in visible if (i.get("matchResult") or {}).get("outcome") == match_outcome]
+        if sla_state: visible = [i for i in visible if i.get("slaState") == sla_state]
+        if search:
+            needle = search.casefold()
+            visible = [i for i in visible if any(needle in str(i.get(k) or "").casefold() for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner"))]
+        keys = {"id": lambda i: i.get("id", ""), "stage": lambda i: i.get("stage", ""), "sourceId": lambda i: i.get("sourceId", ""), "updatedAt": latest}
+        visible.sort(key=lambda i: (keys.get(sort_by, latest)(i), i.get("id", "")), reverse=sort_order == "desc")
+        total = len(visible)
+        start = (page - 1) * page_size
+        page_items = visible[start:start + page_size]
+        evidence_state = "degraded" if any(i.get("failure") for i in page_items) else ("partial" if any(not i.get("rawSnapshot") for i in page_items) else "complete")
+        return {"items": page_items, "total": total, "page": page, "pageSize": page_size, "counts": counts, "evidenceState": evidence_state}
 
     @router.get(
         "/intake/{intake_id}",
