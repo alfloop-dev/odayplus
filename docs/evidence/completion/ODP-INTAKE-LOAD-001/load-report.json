@@ -1,78 +1,78 @@
 {
   "availability": 1.0,
   "availability_target": 0.9995,
-  "batch_size": 240,
-  "concurrency": 20,
+  "batch_size": 1000,
+  "concurrency": 100,
   "daily_intake_target": 100000,
-  "duration_seconds": 1.3810052028857172,
+  "duration_seconds": 3.384825287386775,
   "error_budget": {
     "parse_budget_fraction": 0.02,
     "parse_over_target_fraction": 0.0,
     "receipt_budget_fraction": 0.01,
     "receipt_over_target_fraction": 0.0
   },
-  "measured_at": "2026-07-22T18:15:27.248149+00:00",
+  "measured_at": "2026-07-22T18:16:25.340665+00:00",
   "measurement_mode": "durable-runtime",
   "passed": true,
-  "projected_daily_capacity": 15015149.802962745,
+  "projected_daily_capacity": 25525689.7075194,
   "schema_version": 1,
   "slis": [
     {
       "availability": 1.0,
       "name": "url_submission_durable_receipt",
       "over_target_fraction": 0.0,
-      "p95_seconds": 0.0036825424060225485,
+      "p95_seconds": 0.0025318236323073505,
       "p95_target_seconds": 0.5,
-      "p99_seconds": 0.005243599042296409,
+      "p99_seconds": 0.003979412773624062,
       "p99_target_seconds": 1.5,
       "passed": true,
-      "sample_count": 240,
-      "successful": 240
+      "sample_count": 1000,
+      "successful": 1000
     },
     {
       "availability": 1.0,
       "name": "queue_age",
       "over_target_fraction": 0.0,
-      "p95_seconds": 0.0072796499999999995,
+      "p95_seconds": 0.0050073999999999995,
       "p95_target_seconds": 120.0,
-      "p99_seconds": 0.0093265,
+      "p99_seconds": 0.00649348,
       "p99_target_seconds": 600.0,
       "passed": true,
-      "sample_count": 240,
-      "successful": 240
+      "sample_count": 1000,
+      "successful": 1000
     },
     {
       "availability": 1.0,
       "name": "approved_source_parse_completion",
       "over_target_fraction": 0.0,
-      "p95_seconds": 3.9556180126965046e-05,
+      "p95_seconds": 3.563007339835167e-05,
       "p95_target_seconds": 300.0,
-      "p99_seconds": 5.295008420944214e-05,
+      "p99_seconds": 5.243238992989063e-05,
       "p99_target_seconds": 900.0,
       "passed": true,
-      "sample_count": 240,
-      "successful": 240
+      "sample_count": 1000,
+      "successful": 1000
     },
     {
       "availability": 1.0,
       "name": "review_routing",
       "over_target_fraction": 0.0,
-      "p95_seconds": 1.6363849863409995e-05,
+      "p95_seconds": 1.520065125077963e-05,
       "p95_target_seconds": 60.0,
-      "p99_seconds": 1.9943160004913807e-05,
+      "p99_seconds": 2.0211022347211836e-05,
       "p99_target_seconds": 60.0,
       "passed": true,
-      "sample_count": 240,
-      "successful": 240
+      "sample_count": 1000,
+      "successful": 1000
     },
     {
       "name": "review_completion",
       "passed": true,
-      "sample_count": 240,
+      "sample_count": 1000,
       "within_one_business_day_fraction": 0.9,
       "within_three_business_days_fraction": 1.0
     }
   ],
-  "throughput_rows_per_second": 173.78645605280954,
-  "volume": 240
+  "throughput_rows_per_second": 295.4362234666597,
+  "volume": 1000
 }

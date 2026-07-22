@@ -19,4 +19,3 @@ def test_error_budget_is_derived_from_samples(tmp_path: Path) -> None:
 
     assert report["error_budget"]["receipt_over_target_fraction"] <= 0.01
     assert report["error_budget"]["parse_over_target_fraction"] <= 0.02
-

@@ -2,48 +2,48 @@
   "events": [
     {
       "injected_delay_seconds": 0.002,
-      "measured_seconds": 0.002105480059981346,
+      "measured_seconds": 0.0020973309874534607,
       "passed": true,
       "scenario": "provider_latency"
     },
     {
-      "measured_seconds": 0.00297069875523448,
+      "measured_seconds": 0.0045038689859211445,
       "passed": true,
       "scenario": "duplicate_delivery"
     },
     {
-      "measured_seconds": 0.008155960123986006,
+      "measured_seconds": 0.00954564893618226,
       "passed": true,
       "rpo_seconds": 0.0,
       "scenario": "worker_loss"
     },
     {
-      "measured_seconds": 0.011587879154831171,
+      "measured_seconds": 0.02425243891775608,
       "passed": true,
       "rpo_seconds": 0.0,
       "scenario": "sql_failover"
     },
     {
-      "measured_seconds": 5.955016240477562e-05,
+      "measured_seconds": 6.0191377997398376e-05,
       "outcome": "quarantined",
       "passed": true,
       "scenario": "gcs_inconsistency"
     },
     {
       "active_jobs": 201,
-      "measured_seconds": 0.4884758018888533,
+      "measured_seconds": 0.43633517622947693,
       "passed": true,
       "scenario": "queue_backlog"
     },
     {
-      "measured_seconds": 0.012806958984583616,
+      "measured_seconds": 0.013266790192574263,
       "passed": true,
       "scenario": "retry_budget_dlq_recovery"
     }
   ],
-  "measured_at": "2026-07-22T18:15:29.574758+00:00",
+  "measured_at": "2026-07-22T18:16:27.244387+00:00",
   "measured_rpo_seconds": 0.0,
-  "measured_rto_seconds": 0.5261623291298747,
+  "measured_rto_seconds": 0.49006144562736154,
   "measurement_mode": "durable-runtime-fault-injection",
   "missed_targets": [],
   "passed": true,
