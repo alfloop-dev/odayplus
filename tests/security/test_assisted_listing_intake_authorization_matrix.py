@@ -91,7 +91,7 @@ def test_ownership_enforcement() -> None:
     headers_user_a = _write_headers(
         "ownership-user-a",
         {
-            "x-subject-id": "user-a",
+            "x-subject-id": "00000000-0000-0000-0000-000000000101",
             "x-roles": "expansion_user",
             "x-operator-role": "expansion-staff",
         },
@@ -139,7 +139,7 @@ def test_self_review_prohibition() -> None:
     headers_user_a = _write_headers(
         "self-review-manager",
         {
-            "x-subject-id": "user-a",
+            "x-subject-id": "00000000-0000-0000-0000-000000000101",
             "x-roles": "site_reviewer,expansion_user",
             "x-operator-role": "expansion-manager",
         },
@@ -152,7 +152,7 @@ def test_self_review_prohibition() -> None:
     assert submit_resp.status_code == 200
     intake_id = submit_resp.json()["id"]
 
-    # Manager user-a tries to promote/approve their own submission -> expect 403 SELF_REVIEW_DENIED
+    # The submitter may request promotion, but may not review their own request.
     promote_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={
@@ -163,8 +163,41 @@ def test_self_review_prohibition() -> None:
         },
         headers=headers_user_a,
     )
-    assert promote_resp.status_code == 403
-    assert promote_resp.json()["detail"] == "SELF_REVIEW_DENIED"
+    assert promote_resp.status_code == 200
+    promote_data = promote_resp.json()
+    assert promote_data["status"] == "PENDING_REVIEW"
+
+    self_review_resp = client.post(
+        f"/api/v1/promotion-decisions/{promote_data['promotion_decision_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "自我核准",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **_write_headers("self-review-manager-review"),
+            "x-subject-id": "00000000-0000-0000-0000-000000000101",
+            "If-Match": f'W/"{promote_data["version"]}"',
+        },
+    )
+    assert self_review_resp.status_code == 403
+    assert self_review_resp.json()["code"] == "SELF_REVIEW_DENIED"
+
+    independent_review_resp = client.post(
+        f"/api/v1/promotion-decisions/{promote_data['promotion_decision_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "獨立覆核通過",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **_write_headers("independent-review-manager"),
+            "x-subject-id": "00000000-0000-0000-0000-000000000102",
+            "If-Match": f'W/"{promote_data["version"]}"',
+        },
+    )
+    assert independent_review_resp.status_code == 200
+    assert independent_review_resp.json()["status"] == "COMPLETED"
 
 
 def test_second_actor_segregation() -> None:

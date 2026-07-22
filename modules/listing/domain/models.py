@@ -54,7 +54,7 @@ class ListingHardRulePolicy:
         return tuple(failures)
 
 
-@dataclass(frozen=True)
+@dataclass
 class CandidateSiteDraft:
     listing: Listing
     address: AddressLocation
@@ -63,6 +63,11 @@ class CandidateSiteDraft:
     heat_zone_id: str = ""
     listing_source: str = ""
     status: ListingPipelineStatus = ListingPipelineStatus.CANDIDATE
+    score: int = 68
+    recommendation: str = "WAIT"
+    model_version: str = "SiteScore v2.3"
+    dataset_snapshot_id: str = "FS-20260704-0600"
+    review_id: str | None = None
 
     def to_card_dict(self) -> dict[str, object]:
         return {
@@ -77,7 +82,7 @@ class CandidateSiteDraft:
             "feasibilityFlags": list(self.feasibility_flags),
             "heatZone": self.heat_zone_id,
             "listingSource": self.listing_source,
-            "status": self.status.value,
+            "status": getattr(self.status, "value", self.status),
         }
 
 

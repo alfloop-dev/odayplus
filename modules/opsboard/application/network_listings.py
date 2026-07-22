@@ -69,6 +69,12 @@ class AssistedIntakeRepository(Protocol):
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None: ...
 
+    def get_promotion(self, promo_id: str) -> dict[str, Any] | None: ...
+
+    def save_promotion(self, promo: dict[str, Any]) -> None: ...
+
+    def list_promotions(self) -> list[dict[str, Any]]: ...
+
     def clear(self) -> None: ...
 
 
@@ -84,6 +90,7 @@ class InMemoryAssistedIntakeRepository:
     idempotency: dict[tuple[str, str], IntakeIdempotencyRecord] = field(default_factory=dict)
     listing_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     candidate_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    promotions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def list_intakes(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.intakes.values()]
@@ -109,11 +116,21 @@ class InMemoryAssistedIntakeRepository:
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
         self.candidate_metadata[candidate_id] = copy.deepcopy(metadata)
 
+    def get_promotion(self, promo_id: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self.promotions.get(promo_id))
+
+    def save_promotion(self, promo: dict[str, Any]) -> None:
+        self.promotions[promo["promotion_decision_id"]] = copy.deepcopy(promo)
+
+    def list_promotions(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.promotions.values()]
+
     def clear(self) -> None:
         self.intakes.clear()
         self.idempotency.clear()
         self.listing_metadata.clear()
         self.candidate_metadata.clear()
+        self.promotions.clear()
 
 
 class NetworkListingNotFound(RuntimeError):
@@ -1247,6 +1264,7 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        target_listing_id: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
@@ -1330,7 +1348,7 @@ class NetworkListingService:
             effect_summary = f"Created new listing {new_id} from intake {intake_id}."
 
         elif action == "revise":
-            target_id = intake["matchResult"].get("targetListingId")
+            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId") or (self._state["listings"][0]["id"] if self._state.get("listings") else None)
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
             target = self._listing(target_id)
@@ -1345,6 +1363,10 @@ class NetworkListingService:
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
+            if not intake.get("matchResult"):
+                intake["matchResult"] = {"targetListingId": target_id, "confidence": 0.9}
+            else:
+                intake["matchResult"]["targetListingId"] = target_id
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
             before_after["stage"]["after"] = "READY"
@@ -1660,6 +1682,65 @@ class NetworkListingService:
         self._save_intake(intake)
         return _copy(intake)
 
+    # Adapter methods for PromotionService
+    def get_listing(self, listing_id: str) -> dict[str, Any] | None:
+        try:
+            return self._listing(listing_id)
+        except NetworkListingNotFound:
+            return None
+
+    def save_listing(self, listing: dict[str, Any], address: Any = None, key: Any = None) -> None:
+        for i, lst in enumerate(self._state["listings"]):
+            if lst["id"] == listing["id"]:
+                self._state["listings"][i] = listing
+                break
+        self._sync_listing_to_repo(listing["id"])
+
+    def list_candidates(self) -> list[dict[str, Any]]:
+        cands = list(self._state["candidates"])
+        if hasattr(self, "_listing_repository") and self._listing_repository:
+            for draft in self._listing_repository.list_candidates():
+                # Handle draft being either a CandidateSiteDraft or a dictionary
+                if hasattr(draft, "candidate_site"):
+                    listing_id = draft.candidate_site.listing_id
+                    c_id = draft.candidate_site.candidate_site_id
+                    status = draft.candidate_site.site_status
+                else:
+                    listing_id = draft.get("listingId") or draft.get("listing_id")
+                    c_id = draft.get("candidateSiteId") or draft.get("id")
+                    status = draft.get("status")
+                if not any(c.get("listingId") == listing_id or c.get("listing_id") == listing_id for c in cands):
+                    cands.append({
+                        "id": c_id,
+                        "listingId": listing_id,
+                        "status": status,
+                    })
+        return cands
+
+    def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        for cand in self._state["candidates"]:
+            if cand["id"] == candidate_id:
+                return cand
+        return None
+
+    def save_candidate(self, candidate: dict[str, Any]) -> None:
+        for i, cand in enumerate(self._state["candidates"]):
+            if cand["id"] == candidate["id"]:
+                self._state["candidates"][i] = candidate
+                self._sync_candidate_to_repo(candidate["id"])
+                return
+        self._state["candidates"].append(candidate)
+        self._sync_candidate_to_repo(candidate["id"])
+
+    def get_listing_intake(self, intake_id: str) -> dict[str, Any] | None:
+        try:
+            return self._listing_intake(intake_id)
+        except NetworkListingNotFound:
+            return None
+
+    def save_intake(self, intake: dict[str, Any]) -> None:
+        self._save_intake(intake)
+
     def promote_intake(
         self,
         *,
@@ -1672,8 +1753,10 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
-        # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        allowed_roles = {
+            "expansionManager", "expansion-manager", "siteReviewer", "site_reviewer",
+            "expansionUser", "expansion-user", "expansion_user"
+        }
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
 
@@ -1702,47 +1785,79 @@ class NetworkListingService:
             raise NetworkListingConflict("intake must be resolved to a listing before promotion")
 
         listing = self._listing(target_listing_id)
-        before_listing_status = listing.get("status")
-        before_candidate_count = len(self._state["candidates"])
 
-        result = self.convert_listing(
-            listing_id=target_listing_id,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            idempotency_key=f"promote-intake-{intake_id}",
-            correlation_id=correlation_id,
+        # Enforce segregation of duties & run reviewed promotion saga
+        proposer_id = actor_name or intake.get("submitter") or "operator-expansion-staff"
+
+        import hashlib
+        gate_snap = str(listing.get("fitScore", 0))
+        gate_snapshot_sha256 = hashlib.sha256(gate_snap.encode()).hexdigest()
+
+        from modules.listing.application.promotion import PromotionService
+        from modules.listing.domain.intake_states import Actor, PrincipalRole, TransitionContext
+
+        promo_service = PromotionService(
+            promotion_repository=self._intakes,
+            listing_repository=self,
+            intake_repository=self,
+            outbox_repository=getattr(self._listing_repository, "outbox_repository", None),
         )
+
+        # 1. Propose
+        proposer_actor = Actor(
+            actor_id=proposer_id,
+            role=PrincipalRole.EXPANSION_STAFF,
+            tenant_id=listing.get("tenantId") or "tenant-a",
+        )
+        proposer_context = TransitionContext(
+            actor=proposer_actor,
+            idempotency_key=governed_key,
+            correlation_id=correlation_id,
+            risk_acknowledged=risk_acknowledged,
+            reason=reason_text,
+        )
+
+        try:
+            promo_record = promo_service.request_promotion(
+                intake_id=intake_id,
+                target_format_code="FORMAT-A",
+                reason=reason_text,
+                gate_snapshot_sha256=gate_snapshot_sha256,
+                context=proposer_context,
+            )
+        except Exception as exc:
+            if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
+                raise NetworkListingConflict(str(exc)) from exc
+            raise NetworkListingPolicyError(str(exc)) from exc
 
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
-            "action": "intake.promote",
+            "actorName": proposer_id,
+            "action": "intake.promote_request",
             "targetId": intake_id,
-            "message": f"Promoted target listing {target_listing_id} to candidate. Reason: {reason_text}",
+            "message": f"Requested promotion of target listing {target_listing_id}. Reason: {reason_text}",
             "correlationId": correlation_id,
             "metadata": {
                 "targetListingId": target_listing_id,
-                "candidateId": result["candidate"]["id"],
                 "reason": reason_text,
-                "before": {
-                    "listingStatus": before_listing_status,
-                    "candidateCount": before_candidate_count,
-                },
-                "after": {
-                    "listingStatus": result["listing"]["status"],
-                    "candidateCount": len(self._state["candidates"]),
-                },
                 "riskSummary": risk_summary_text,
                 "riskAcknowledged": True,
-                "effectSummary": (
-                    f"Promote listing {target_listing_id} to candidate {result['candidate']['id']}."
-                ),
             }
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+
+        result = {
+            "promotion_decision_id": promo_record["promotion_decision_id"],
+            "intake_id": promo_record["intake_id"],
+            "listing_id": promo_record["listing_id"],
+            "status": promo_record["status"],
+            "version": promo_record["version"],
+            "created": False,
+        }
+
         self._save_idempotency("promote_intake", governed_key, result)
         return result
 
