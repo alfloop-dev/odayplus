@@ -14,6 +14,7 @@
     "@deck.gl/core": "^9.3.5",
     "@deck.gl/layers": "^9.3.5",
     "@deck.gl/react": "^9.3.5",
+    "@deck.gl/widgets": "^9.3.5",
     "@oday-plus/design-tokens": "0.1.0",
     "@oday-plus/domain-types": "0.1.0",
     "@oday-plus/openapi-client": "0.1.0",

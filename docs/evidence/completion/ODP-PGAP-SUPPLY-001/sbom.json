@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-135e9fe8ed8c65f2a05b11e5e06043b7",
+  "serialNumber": "urn:uuid:sha256-e3613e422b23148a260203aa49cbc876",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-22T17:13:56.609873+00:00",
+    "timestamp": "2026-07-22T17:20:40.779225+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "d1b2e6f56b17714bffdf31c4d3d091e603765cfb"
+        "value": "449bd49d395377b6388f8ff57d0d953a829ca0d1"
       },
       {
         "name": "sbom-hash",
-        "value": "135e9fe8ed8c65f2a05b11e5e06043b79e5421c733d76274e3c9f29edd0cc87c"
+        "value": "e3613e422b23148a260203aa49cbc876091bb3a2a8b11c5e30cfe02a7e581489"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:61f7e85b2d31ff4ef105108232b5cf056cb71d008cc4570c9399647060bdae92"
+        "value": "sha256:d67d73eeaa6dc6af625b79e42d1b66bfd0fe21650631735315681fd6238dfc14"
       }
     ]
   },
@@ -97,6 +97,13 @@
       "bom-ref": "pkg:npm/@deck.gl/react@9.3.7"
     },
     {
+      "name": "@deck.gl/widgets",
+      "version": "9.3.7",
+      "type": "library",
+      "purl": "pkg:npm/@deck.gl/widgets@9.3.7",
+      "bom-ref": "pkg:npm/@deck.gl/widgets@9.3.7"
+    },
+    {
       "name": "@emnapi/core",
       "version": "1.11.1",
       "type": "library",
@@ -144,6 +151,27 @@
       "type": "library",
       "purl": "pkg:npm/@eslint/js@8.57.1",
       "bom-ref": "pkg:npm/@eslint/js@8.57.1"
+    },
+    {
+      "name": "@floating-ui/core",
+      "version": "1.8.0",
+      "type": "library",
+      "purl": "pkg:npm/@floating-ui/core@1.8.0",
+      "bom-ref": "pkg:npm/@floating-ui/core@1.8.0"
+    },
+    {
+      "name": "@floating-ui/dom",
+      "version": "1.8.0",
+      "type": "library",
+      "purl": "pkg:npm/@floating-ui/dom@1.8.0",
+      "bom-ref": "pkg:npm/@floating-ui/dom@1.8.0"
+    },
+    {
+      "name": "@floating-ui/utils",
+      "version": "0.2.12",
+      "type": "library",
+      "purl": "pkg:npm/@floating-ui/utils@0.2.12",
+      "bom-ref": "pkg:npm/@floating-ui/utils@0.2.12"
     },
     {
       "name": "@humanwhocodes/config-array",
@@ -419,6 +447,34 @@
       "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.19"
     },
     {
+      "name": "@next/swc-darwin-arm64",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.19"
+    },
+    {
+      "name": "@next/swc-darwin-x64",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.19"
+    },
+    {
+      "name": "@next/swc-linux-arm64-gnu",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.19"
+    },
+    {
+      "name": "@next/swc-linux-arm64-musl",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.19"
+    },
+    {
       "name": "@next/swc-linux-x64-gnu",
       "version": "15.5.19",
       "type": "library",
@@ -431,6 +487,20 @@
       "type": "library",
       "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.19",
       "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.19"
+    },
+    {
+      "name": "@next/swc-win32-arm64-msvc",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.19"
+    },
+    {
+      "name": "@next/swc-win32-x64-msvc",
+      "version": "15.5.19",
+      "type": "library",
+      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.19",
+      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.19"
     },
     {
       "name": "@nodelib/fs.scandir",
@@ -2713,6 +2783,13 @@
       "type": "library",
       "purl": "pkg:npm/potpack@2.1.0",
       "bom-ref": "pkg:npm/potpack@2.1.0"
+    },
+    {
+      "name": "preact",
+      "version": "10.29.7",
+      "type": "library",
+      "purl": "pkg:npm/preact@10.29.7",
+      "bom-ref": "pkg:npm/preact@10.29.7"
     },
     {
       "name": "prelude-ls",
