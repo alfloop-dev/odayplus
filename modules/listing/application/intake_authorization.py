@@ -267,9 +267,7 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-        # Segregation of duties: proposer of promotion cannot approve own promotion request
-        if first_actor_id and first_actor_id == principal.subject_id:
-            _raise_and_audit(status_code=403, detail="SELF_REVIEW_DENIED")
+
 
     elif action == "convert":
         if not (is_manager or is_steward):

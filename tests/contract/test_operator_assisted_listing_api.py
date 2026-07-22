@@ -415,8 +415,25 @@ def test_promote_intake_contract_test() -> None:
     )
     assert promote_resp.status_code == 200
     res_data = promote_resp.json()
-    assert res_data["candidate"]["id"] == "CS-1001"
-    assert res_data["listing"]["status"] == "candidate"
+    assert res_data["status"] == "PENDING_REVIEW"
+    assert "candidate" not in res_data
+
+    review_resp = client.post(
+        f"/api/v1/promotion-decisions/{res_data['promotion_decision_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "Independent review approved",
+            "risk_acknowledged": True,
+        },
+        headers={
+            **_write_headers("good-promote-review"),
+            "x-subject-id": "00000000-0000-0000-0000-000000000102",
+            "If-Match": f'W/"{res_data["version"]}"',
+        },
+    )
+    assert review_resp.status_code == 200, review_resp.text
+    assert review_resp.json()["status"] == "COMPLETED"
+    assert review_resp.json()["candidate_site_id"]
 
 
 # --- Risk disclosure contract (ODP-OC-R5-011 review finding P0-2) ---
@@ -580,7 +597,7 @@ def test_promote_persists_caller_risk_summary_in_audit() -> None:
 
     detail = client.get(f"/api/v1/operator/network-listings/intake/{intake_id}", headers=HEADERS)
     audit = detail.json()["auditEvents"][-1]
-    assert audit["action"] == "intake.promote"
+    assert audit["action"] == "intake.promote_request"
     assert audit["metadata"]["riskSummary"] == caller_summary
     assert audit["metadata"]["riskAcknowledged"] is True
 
