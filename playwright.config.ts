@@ -17,9 +17,16 @@ const REUSE_EXISTING_SERVER = process.env.ODP_PLAYWRIGHT_REUSE_EXISTING === "1" 
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  // CI boots ONE shared FastAPI backend + web server, and several product-flow specs
+  // (expansion, ops-intervention, map picking) write API state with FIXED idempotency
+  // keys. Running them fully parallel across multiple workers races that shared state,
+  // producing flaky HeatZone map-pick failures and expansion-flow retry/replay collisions
+  // (a retry re-POSTs the same idempotency key and gets 200-replay instead of 202). Serialize
+  // in CI for deterministic shared-state ordering; keep it parallel locally for speed.
+  fullyParallel: !process.env.CI,
+  workers: process.env.CI ? 1 : undefined,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: process.env.CI ? 2 : 0,
   reporter: "list",
   use: {
     baseURL: BASE_URL,
