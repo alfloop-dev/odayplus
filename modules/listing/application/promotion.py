@@ -153,6 +153,7 @@ class PromotionService:
             "correlation_id": context.correlation_id or str(uuid.uuid4()),
             "tenant_id": context.actor.tenant_id,
             "proposer": context.actor.actor_id,
+            "proposer_subject_id": context.actor.actor_id,
             "gate_snapshot_sha256": gate_snapshot_sha256,
             "target_format_code": target_format_code,
             "reason": reason,
@@ -203,7 +204,7 @@ class PromotionService:
             tenant_id=promo["tenant_id"],
             status=current_state,
             version=promo["version"],
-            proposer_id=promo.get("proposer"),
+            proposer_id=promo.get("proposer_subject_id") or promo.get("proposer"),
         )
 
         target_state = PromotionState.APPROVED if decision == "APPROVE" else PromotionState.REJECTED

@@ -1,6 +1,19 @@
-# ODP-INTAKE-UX-PROMOTION-001 verification transcript (round 2 — production integration)
+# ODP-INTAKE-UX-PROMOTION-001 verification transcript (round 3 — contract closure)
 # repo: alfloop-dev/odayplus  branch: task/ODP-INTAKE-UX-PROMOTION-001
-# date: 2026-07-22T18:47:22Z
+# date: 2026-07-22T19:06:23Z
+
+$ uv run pytest -q tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_promotion_api.py tests/contract/test_assisted_listing_openapi.py
+
+36 passed
+
+$ uv run python scripts/build_validate_assisted_listing_intake_openapi.py
+
+Effective OpenAPI: 1.1.3
+Result: PASS
+
+$ uv run python scripts/openapi/check_drift.py
+
+API contract gate: PASS
 
 $ npm run typecheck --workspace=@oday-plus/web
 

@@ -277,6 +277,20 @@ paths:
         '409': {$ref: '#/components/responses/VersionConflict'}
         '422': {$ref: '#/components/responses/ValidationError'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /v1/jobs/{job_id}/receipt:
+    get:
+      tags: [Jobs]
+      operationId: getJobReceipt
+      summary: Get the authoritative durable job receipt
+      parameters:
+        - {$ref: '#/components/parameters/JobId'}
+      responses:
+        '200':
+          description: Durable job receipt
+          headers: {ETag: {$ref: '#/components/headers/ETag'}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/JobReceipt'}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/intakes/{intake_id}/promotion:
     post:
       tags: [Promotion]

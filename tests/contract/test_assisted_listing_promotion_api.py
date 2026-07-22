@@ -10,6 +10,8 @@ from apps.api.oday_api.main import create_app
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 ACTOR_A = "00000000-0000-0000-0000-000000000101"
 ACTOR_A_REVIEWER = "00000000-0000-0000-0000-000000000102"
+OPERATOR_TENANT = "tenant-a"
+OPERATOR_PROPOSER = "operator-expansion-manager"
 
 HEADERS_A = {
     "x-subject-id": ACTOR_A,
@@ -122,6 +124,7 @@ def test_promotion_api_contract_flow() -> None:
     promo_data = promo_resp.json()
     assert promo_data["intake_id"] == intake_id
     assert promo_data["status"] == "PENDING_REVIEW"
+    assert promo_data["proposer_subject_id"] == ACTOR_A
     promo_decision_id = promo_data["promotion_decision_id"]
 
     # 3. Get promotion decision receipt
@@ -157,5 +160,157 @@ def test_promotion_api_contract_flow() -> None:
     candidate = repository.list_candidates()[0]
     assert candidate.dataset_snapshot_id == "FS-SN-99"
     job = store.jobs[reviewed_data["site_score_job_id"]]
-    assert job["status"] == "COMPLETED"
+    assert job["status"] == "SUCCEEDED"
     assert job["checkpoint"] == "SCORE_QUEUED"
+
+
+def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    submitted = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={
+            "url": "https://www.synthetic.example/detail-88520242.html",
+            "heatZoneId": "HZ-01",
+        },
+        headers={
+            "x-subject-id": OPERATOR_PROPOSER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+            "Idempotency-Key": f"operator-submit-{uuid4()}",
+            "X-Correlation-Id": str(uuid4()),
+        },
+    )
+    assert submitted.status_code == 200, submitted.text
+    intake = submitted.json()
+    assert intake["stage"] == "READY"
+    assert intake["tenantId"] == OPERATOR_TENANT
+    assert intake["version"] == 1
+
+    from modules.listing.domain.models import ListingDedupKey
+    from shared.domain.models import AddressLocation, Listing
+
+    target_listing_id = "L-OPERATOR-PROMOTION"
+    app.state.listing_repository.save_listing(
+        Listing(
+            listing_id=target_listing_id,
+            source_listing_id="SRC-OPERATOR-PROMOTION",
+            source_id="S-OPERATOR",
+            listing_status="watching",
+            address_id="A-OPERATOR-PROMOTION",
+            rent_amount=58000.0,
+            currency="TWD",
+            area_ping=18.0,
+            floor=1,
+            frontage_m=6.0,
+            depth_m=10.0,
+            corner_flag=False,
+            parking_flag=False,
+            utility_electricity_flag=True,
+            utility_drainage_flag=True,
+            utility_gas_flag=False,
+            available_from="2026-08-01",
+            snapshot_id="SN-OPERATOR-PROMOTION",
+            confidence=0.95,
+        ),
+        AddressLocation(
+            address_id="A-OPERATOR-PROMOTION",
+            raw_address="台北市信義區松仁路 96 號 1F",
+            normalized_address="台北市信義區松仁路96號1樓",
+            geocode_confidence=0.95,
+            h3_res_9="892d5444d63ffff",
+        ),
+        ListingDedupKey(
+            source_id="S-OPERATOR",
+            source_listing_id="SRC-OPERATOR-PROMOTION",
+            normalized_address="台北市信義區松仁路96號1樓",
+            rent_amount=58000.0,
+            area_ping=18.0,
+        ),
+    )
+    operator_record = app.state.operator_intake_repository.intakes[intake["id"]]
+    operator_record["matchResult"]["targetListingId"] = target_listing_id
+    app.state.operator_intake_repository.save_intake(operator_record)
+
+    requested = client.post(
+        f"/api/v1/intakes/{intake['id']}/promotion-requests",
+        json={
+            "target_format_code": "FORMAT-A",
+            "reason": "Operator intake promotion through the reviewed v1 contract",
+            "gate_snapshot_sha256": "a" * 64,
+            "risk_acknowledged": True,
+        },
+        headers={
+            "x-subject-id": OPERATOR_PROPOSER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+            "Idempotency-Key": f"operator-promotion-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert requested.status_code == 202, requested.text
+    decision = requested.json()
+    assert decision["proposer_subject_id"] == OPERATOR_PROPOSER
+    assert app.state.operator_intake_repository.get_promotion(
+        decision["promotion_decision_id"]
+    ) is not None
+    persisted = app.state.operator_intake_repository.intakes[intake["id"]]
+    assert persisted["version"] == 2
+
+    reviewed = client.post(
+        f"/api/v1/promotion-decisions/{decision['promotion_decision_id']}/actions/review",
+        json={
+            "decision": "APPROVE",
+            "reason": "Independent manager approved the operator intake",
+            "risk_acknowledged": True,
+        },
+        headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+            "Idempotency-Key": f"operator-review-{uuid4()}",
+            "If-Match": f'W/"{decision["version"]}"',
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    job_id = reviewed.json()["site_score_job_id"]
+    receipt = client.get(
+        f"/api/v1/jobs/{job_id}/receipt",
+        headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+        },
+    )
+    assert receipt.status_code == 200, receipt.text
+    assert receipt.json()["job_id"] == job_id
+    assert receipt.json()["version"] == 1
+
+    # The retry route must resolve the linked operator intake too; otherwise
+    # SCORE_FAILED UI replay would fail with DEPENDENCY_CONFLICT.
+    store = next(store for store in reversed(AssistedIntakeStore._instances) if job_id in store.jobs)
+    store.jobs[job_id]["status"] = "FAILED"
+    retried = client.post(
+        f"/api/v1/jobs/{job_id}/retry",
+        json={
+            "checkpoint": "SCORE_QUEUED",
+            "reason": "Retry authoritative SiteScore checkpoint",
+            "risk_acknowledged": True,
+        },
+        headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+            "Idempotency-Key": f"operator-job-retry-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["status"] == "QUEUED"
+    assert retried.json()["version"] == 2

@@ -65,6 +65,8 @@ const INTAKE_ID = "11111111-1111-4111-8111-111111111111";
 const DECISION_ID = "22222222-2222-4222-8222-222222222222";
 const SCORE_JOB_ID = "33333333-3333-4333-8333-333333333333";
 const CANDIDATE_ID = "44444444-4444-4444-8444-444444444444";
+const PROPOSER_ID = "00000000-0000-0000-0000-000000000101";
+const REVIEWER_ID = "00000000-0000-0000-0000-000000000102";
 
 function readyIntake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
   return {
@@ -104,13 +106,14 @@ function inboxPage(record: AssistedIntake): IntakeInboxPage {
   };
 }
 
-function pendingReviewReceipt() {
+function pendingReviewReceipt(proposerSubjectId = PROPOSER_ID) {
   return {
     promotion_decision_id: DECISION_ID,
     intake_id: INTAKE_ID,
     listing_id: "LST-440",
     status: "PENDING_REVIEW" as const,
     decision_type: "STANDARD" as const,
+    proposer_subject_id: proposerSubjectId,
     reviewer_subject_id: null,
     candidate_site_id: null,
     site_score_job_id: null,
@@ -124,7 +127,7 @@ function scoreFailedReceipt() {
   return {
     ...pendingReviewReceipt(),
     status: "SCORE_FAILED" as const,
-    reviewer_subject_id: "expansion-manager",
+    reviewer_subject_id: REVIEWER_ID,
     candidate_site_id: CANDIDATE_ID,
     site_score_job_id: SCORE_JOB_ID,
     version: 6,
@@ -147,6 +150,7 @@ type CapturedRequest = {
 function buildFetchStub(record: AssistedIntake) {
   const captured: CapturedRequest[] = [];
   const routes: Record<string, (req: CapturedRequest) => Response | Promise<Response>> = {};
+  let proposerSubjectId = PROPOSER_ID;
 
   function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
     return new Response(JSON.stringify(body), {
@@ -158,12 +162,34 @@ function buildFetchStub(record: AssistedIntake) {
   routes[`GET /api/v1/operator/network-listings/intake`] = () => json(inboxPage(record));
   routes[`GET /api/v1/operator/network-listings/intake/${INTAKE_ID}`] = () =>
     json({ ...record, version: record.version + 1 });
-  routes[`POST /api/v1/intakes/${INTAKE_ID}/promotion-requests`] = () =>
-    json(pendingReviewReceipt(), 202, { "Idempotency-Replayed": "false", ETag: 'W/"1"' });
-  routes[`POST /api/v1/promotion-decisions/${DECISION_ID}/actions/review`] = () =>
-    json(scoreFailedReceipt(), 200, { "Idempotency-Replayed": "false", ETag: 'W/"6"' });
+  routes[`POST /api/v1/intakes/${INTAKE_ID}/promotion-requests`] = (req) => {
+    proposerSubjectId = req.headers["x-subject-id"];
+    return json(pendingReviewReceipt(proposerSubjectId), 202, {
+      "Idempotency-Replayed": "false",
+      ETag: 'W/"1"',
+    });
+  };
+  routes[`POST /api/v1/promotion-decisions/${DECISION_ID}/actions/review`] = (req) => {
+    if (req.headers["x-subject-id"] === proposerSubjectId) {
+      return json({ code: "SELF_REVIEW_DENIED", detail: "SELF_REVIEW_DENIED" }, 403);
+    }
+    return json(
+      { ...scoreFailedReceipt(), proposer_subject_id: proposerSubjectId },
+      200,
+      { "Idempotency-Replayed": "false", ETag: 'W/"6"' },
+    );
+  };
   routes[`GET /api/v1/promotion-decisions/${DECISION_ID}`] = () =>
     json(scoreFailedReceipt(), 200, { ETag: 'W/"6"' });
+  routes[`GET /api/v1/jobs/${SCORE_JOB_ID}/receipt`] = () =>
+    json({
+      job_id: SCORE_JOB_ID,
+      status: "FAILED",
+      checkpoint: "SCORE_QUEUED",
+      attempt: 1,
+      version: 4,
+      correlation_id: "corr-promo-1",
+    });
   routes[`POST /api/v1/jobs/${SCORE_JOB_ID}/retry`] = () =>
     json(
       {
@@ -229,6 +255,7 @@ function fillAndSubmitRequestForm() {
 
 beforeEach(() => {
   nav.reset();
+  window.sessionStorage.removeItem("oday.operator.subject");
 });
 
 afterEach(() => {
@@ -242,7 +269,9 @@ describe("promotion saga — live operator route integration", () => {
     const { captured, fetchStub } = buildFetchStub(record);
     vi.stubGlobal("fetch", fetchStub);
 
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" />);
+    const view = render(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+    );
     await openPromotionPanel();
 
     // ---- 1. explicit promotion request -----------------------------------
@@ -267,8 +296,12 @@ describe("promotion saga — live operator route integration", () => {
     });
 
     // ---- 2. independent second-actor review ------------------------------
-    // Proposer (submitter fixture) differs from this console operator.
-    expect(screen.getByTestId("promotion-second-actor-ok")).toBeInTheDocument();
+    // The authenticated proposer cannot review its own request.
+    expect(screen.getByTestId("promotion-self-review-denied")).toBeInTheDocument();
+    view.rerender(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("promotion-second-actor-ok")).toBeInTheDocument());
     fireEvent.change(screen.getByTestId("promotion-review-reason"), {
       target: { value: "已核對 gate snapshot，核准晉升。" },
     });
@@ -285,6 +318,9 @@ describe("promotion saga — live operator route integration", () => {
       "POST",
       `/api/v1/promotion-decisions/${DECISION_ID}/actions/review`,
     )[0];
+    expect(requestCall.headers["x-subject-id"]).toBe(PROPOSER_ID);
+    expect(reviewCall.headers["x-subject-id"]).toBe(REVIEWER_ID);
+    expect(reviewCall.headers["x-subject-id"]).not.toBe(requestCall.headers["x-subject-id"]);
     expect(reviewCall.headers["if-match"]).toBe('W/"1"');
     expect(reviewCall.headers["idempotency-key"]).toMatch(/^promotion-review-/);
     expect(reviewCall.body).toMatchObject({ decision: "APPROVE", risk_acknowledged: true });
@@ -293,6 +329,9 @@ describe("promotion saga — live operator route integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("promotion-status-badge").textContent).toContain("SCORE_FAILED");
     });
+    expect(
+      requestsTo(captured, "GET", `/api/v1/jobs/${SCORE_JOB_ID}/receipt`),
+    ).toHaveLength(1);
     expect(screen.getByTestId("promotion-candidate-id").textContent).toBe(CANDIDATE_ID);
     expect(screen.getByTestId("promotion-score-job-id").textContent).toBe(SCORE_JOB_ID);
     expect(screen.getByTestId("candidate-retained-note")).toBeInTheDocument();
@@ -308,7 +347,7 @@ describe("promotion saga — live operator route integration", () => {
       expect(requestsTo(captured, "POST", `/api/v1/jobs/${SCORE_JOB_ID}/retry`)).toHaveLength(1);
     });
     const retryCall = requestsTo(captured, "POST", `/api/v1/jobs/${SCORE_JOB_ID}/retry`)[0];
-    expect(retryCall.headers["if-match"]).toBe('W/"1"');
+    expect(retryCall.headers["if-match"]).toBe('W/"4"');
     expect(retryCall.headers["idempotency-key"]).toMatch(/^sitescore-replay-/);
     expect(retryCall.body).toMatchObject({
       checkpoint: "SCORE_QUEUED",
@@ -341,7 +380,9 @@ describe("promotion saga — live operator route integration", () => {
     void succeed;
     vi.stubGlobal("fetch", fetchStub);
 
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" />);
+    render(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+    );
     await openPromotionPanel();
 
     fillAndSubmitRequestForm();
@@ -378,14 +419,20 @@ describe("promotion saga — live operator route integration", () => {
       throw new Error("review must NOT be resent by the lookup path");
     };
     vi.stubGlobal("fetch", fetchStub);
-
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" />);
+    const view = render(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+    );
     await openPromotionPanel();
 
     fillAndSubmitRequestForm();
     await waitFor(() => {
       expect(screen.getByTestId("promotion-status-badge").textContent).toContain("PENDING_REVIEW");
     });
+
+    view.rerender(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("promotion-second-actor-ok")).toBeInTheDocument());
 
     fireEvent.change(screen.getByTestId("promotion-review-reason"), {
       target: { value: "已核對 gate snapshot，核准晉升。" },

@@ -818,6 +818,20 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert resp_rev_promo.json()["candidate_site_id"] is not None
     assert resp_rev_promo.json()["site_score_job_id"] is not None
 
+    # 12. getJobReceipt returns the authoritative version/attempt/checkpoint.
+    job_id = resp_rev_promo.json()["site_score_job_id"]
+    resp_get_job = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A_REVIEWER)
+    assert resp_get_job.status_code == 200
+    assert resp_get_job.json() == {
+        "job_id": job_id,
+        "status": "SUCCEEDED",
+        "checkpoint": "SCORE_QUEUED",
+        "attempt": 0,
+        "version": 1,
+        "correlation_id": resp_rev_promo.json()["correlation_id"],
+    }
+    assert resp_get_job.headers["ETag"] == 'W/"1"'
+
 
 
 def test_batch_intake_operation(client: TestClient) -> None:

@@ -975,6 +975,7 @@ export type PromotionDecisionReceipt = {
   intake_id: string;
   listing_id: string;
   promotion_decision_id: string;
+  proposer_subject_id: string;
   reviewer_subject_id?: string | null;
   site_score_job_id?: string | null;
   status: PromotionStatus;
@@ -1434,6 +1435,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/submit": ["POST"],
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
+  "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
   "/api/v1/learninghub/models/{model_name}": ["GET"],

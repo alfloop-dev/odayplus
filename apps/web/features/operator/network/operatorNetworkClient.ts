@@ -55,7 +55,10 @@ export type StatusErrorSpec = { code: string; next: string; retryable: boolean }
  * origin. Note `createOdpApiClient` treats an empty baseUrl as "unconfigured"
  * and returns null, so same-origin must be passed as the concrete origin.
  */
-export function buildOperatorNetworkClient(roleId?: string | null): OdpApiClient | null {
+export function buildOperatorNetworkClient(
+  roleId?: string | null,
+  subjectId?: string | null,
+): OdpApiClient | null {
   const configured = process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
   const baseUrl =
     configured || (typeof window !== "undefined" ? window.location.origin : undefined);
@@ -63,7 +66,7 @@ export function buildOperatorNetworkClient(roleId?: string | null): OdpApiClient
 
   return createOdpApiClient({
     baseUrl,
-    defaultHeaders: operatorSecurityHeaders(roleId),
+    defaultHeaders: operatorSecurityHeaders(roleId, subjectId),
   });
 }
 

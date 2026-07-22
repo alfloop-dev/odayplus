@@ -39,6 +39,7 @@ import {
   type IntakeApiError,
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
+import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
@@ -56,9 +57,11 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 export function AssistedIntakeSection({
   activeRoleId,
+  activeSubjectId,
   selectedHeatZoneId,
 }: {
   activeRoleId: OperatorRoleId;
+  activeSubjectId?: string;
   selectedHeatZoneId?: string;
 }) {
   const router = useRouter();
@@ -113,7 +116,10 @@ export function AssistedIntakeSection({
   }, [urlState, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
-  const client = useMemo(() => buildIntakeClient(activeRoleId), [activeRoleId]);
+  const client = useMemo(
+    () => buildIntakeClient(activeRoleId, activeSubjectId),
+    [activeRoleId, activeSubjectId],
+  );
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
@@ -177,11 +183,9 @@ export function AssistedIntakeSection({
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
 
-  // The promotion request binds to the gate evaluation the operator actually
-  // saw. The UI does not invent gate facts: the hash is SHA-256 over the
-  // canonical, server-provided gate inputs (intake id/version/stage/policy/
-  // match outcome), so the server can prove which snapshot the request was
-  // made against. Keyed by id+version — a refreshed record re-hashes.
+  // Bind the request to the exact version and gate facts displayed by this UI.
+  // The backend retains this digest for lineage; it remains responsible for
+  // re-validating the authoritative promotion gates before execution.
   const gateKey = selected ? `${selected.id}:v${selected.version}` : null;
   useEffect(() => {
     if (!selected || selected.stage !== "READY" || !gateKey) return undefined;
@@ -727,6 +731,14 @@ export function AssistedIntakeSection({
     }
     setPromotionReplayed(result.value.idempotencyReplayed);
     setPromotionReceipts((prev) => ({ ...prev, [selected.id]: result.value.receipt }));
+    if (result.value.receipt.site_score_job_id) {
+      const jobResult = await intakeApi.getScoreJob(client, result.value.receipt.site_score_job_id);
+      if (jobResult.ok) {
+        setScoreJobs((prev) => ({ ...prev, [selected.id]: jobResult.value }));
+      } else {
+        setPromotionError(jobResult.error);
+      }
+    }
     setToast(`審查已寫入 — 決策狀態 ${result.value.receipt.status}`);
   }
 
@@ -745,6 +757,14 @@ export function AssistedIntakeSection({
     setPromotionError(null);
     setPromotionReplayed(false);
     setPromotionReceipts((prev) => ({ ...prev, [selected.id]: result.value }));
+    if (result.value.site_score_job_id) {
+      const jobResult = await intakeApi.getScoreJob(client, result.value.site_score_job_id);
+      if (jobResult.ok) {
+        setScoreJobs((prev) => ({ ...prev, [selected.id]: jobResult.value }));
+      } else {
+        setPromotionError(jobResult.error);
+      }
+    }
     setToast(`已查得決策狀態 ${result.value.status}（未重送任何寫入）`);
   }
 
@@ -784,25 +804,10 @@ export function AssistedIntakeSection({
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
 
   const selectedPromotion = selected ? promotionReceipts[selected.id] ?? null : null;
-  // The score-job receipt shown is the last server JobReceipt (from a retry
-  // response). Before any retry exists, a SCORE_FAILED decision receipt is
-  // bootstrapped into a replayable view: job_id and correlation_id come from
-  // the authoritative promotion receipt; FAILED / SCORE_QUEUED are what the
-  // saga state SCORE_FAILED means by contract; attempt/version use the
-  // server's initial job values — if they are stale, the retry surfaces the
-  // 409 conflict flow instead of silently overwriting anything.
+  // Only an authoritative JobReceipt may enable replay. A promotion receipt
+  // supplies the job ID, but never attempt/version/checkpoint values.
   const selectedScoreJob: JobReceipt | null = selected
-    ? scoreJobs[selected.id] ??
-      (selectedPromotion?.status === "SCORE_FAILED" && selectedPromotion.site_score_job_id
-        ? {
-            job_id: selectedPromotion.site_score_job_id,
-            status: "FAILED",
-            checkpoint: "SCORE_QUEUED",
-            attempt: 1,
-            version: 1,
-            correlation_id: selectedPromotion.correlation_id,
-          }
-        : null)
+    ? scoreJobs[selected.id] ?? null
     : null;
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
@@ -817,7 +822,11 @@ export function AssistedIntakeSection({
         canReplayScore={canPromote}
         canRequest={canPromote}
         canReview={canPromote}
-        currentOperator={{ id: activeRoleId, name: role.label, role: activeRoleId }}
+        currentOperator={{
+          id: operatorSubjectId(activeRoleId, activeSubjectId),
+          name: role.label,
+          role: activeRoleId,
+        }}
         error={promotionError}
         gateSnapshotSha256={promotionGateHash ?? ""}
         idempotencyReplayed={promotionReplayed}

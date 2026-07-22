@@ -4896,6 +4896,11 @@
             "title": "Promotion Decision Id",
             "type": "string"
           },
+          "proposer_subject_id": {
+            "format": "uuid",
+            "title": "Proposer Subject Id",
+            "type": "string"
+          },
           "reviewer_subject_id": {
             "anyOf": [
               {
@@ -4937,7 +4942,8 @@
           "decision_type",
           "version",
           "audit_event_id",
-          "correlation_id"
+          "correlation_id",
+          "proposer_subject_id"
         ],
         "title": "PromotionDecisionReceipt",
         "type": "object"
@@ -15227,6 +15233,67 @@
         "summary": "Get Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/v1/jobs/{job_id}/receipt": {
+      "get": {
+        "operationId": "getJobReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReceipt"
+                }
+              }
+            },
+            "description": "Authoritative durable job receipt",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Job Receipt",
+        "tags": [
+          "assisted-listing-intake"
         ]
       }
     },

@@ -257,6 +257,7 @@ export type PromotionDecisionReceipt = {
   listing_id: string;
   status: "REQUESTED" | "VALIDATING" | "PENDING_REVIEW" | "REJECTED" | "APPROVED" | "CANDIDATE_CREATING" | "CANDIDATE_CREATED" | "SCORE_QUEUED" | "COMPLETED" | "FAILED" | "SCORE_FAILED";
   decision_type: "STANDARD" | "LEGACY_RECONCILED";
+  proposer_subject_id: string;
   reviewer_subject_id?: string | null;
   candidate_site_id?: string | null;
   site_score_job_id?: string | null;
@@ -393,6 +394,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
   "/api/v1/intakes/{intake_id}/promotion-requests": ["POST"],
+  "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/promotion-decisions/{promotion_decision_id}": ["GET"],

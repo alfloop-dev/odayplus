@@ -1534,6 +1534,11 @@ export class OdpApiClient {
     return { receipt: value, idempotencyReplayed: headers.get("Idempotency-Replayed") === "true" };
   }
 
+  /** GET /api/v1/jobs/{job_id}/receipt — authoritative durable job receipt. */
+  async getJobReceipt(jobId: string): Promise<JobReceipt> {
+    return this.request<JobReceipt>(`/api/v1/jobs/${jobId}/receipt`);
+  }
+
   getAvmCase(caseId: string): Promise<AvmCase> {
     return this.request<AvmCase>(`/avm/cases/${caseId}`);
   }

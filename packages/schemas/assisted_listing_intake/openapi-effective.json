@@ -728,6 +728,43 @@
         "summary": "Retry a job from a durable checkpoint"
       }
     },
+    "/v1/jobs/{job_id}/receipt": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "operationId": "getJobReceipt",
+        "summary": "Get the authoritative durable job receipt",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable job receipt",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/v1/saved-views": {
       "get": {
         "tags": [
@@ -3284,6 +3321,7 @@
           "listing_id",
           "status",
           "decision_type",
+          "proposer_subject_id",
           "version",
           "audit_event_id",
           "correlation_id"
@@ -3323,6 +3361,10 @@
               "STANDARD",
               "LEGACY_RECONCILED"
             ]
+          },
+          "proposer_subject_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "reviewer_subject_id": {
             "type": [

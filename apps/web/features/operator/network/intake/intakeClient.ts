@@ -188,6 +188,10 @@ export const intakeApi = {
     return guard(() => client.getIntake(intakeId));
   },
 
+  getScoreJob(client: OdpApiClient, jobId: string): Promise<IntakeResult<JobReceipt>> {
+    return guardPromotion(() => client.getJobReceipt(jobId));
+  },
+
   /**
    * `idempotencyKey` is what makes a double-submit safe server-side; the UI
    * additionally disables the button while in flight, but the key is the

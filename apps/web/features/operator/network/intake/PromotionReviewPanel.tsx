@@ -208,7 +208,7 @@ export function PromotionReviewPanel({
     : null;
 
   const status: PromotionStatus | null = promotion?.status ?? null;
-  const proposerId = proposerIdProp ?? record.submitter ?? "";
+  const proposerId = proposerIdProp ?? promotion?.proposer_subject_id ?? record.submitter ?? "";
   const isSelfReview = Boolean(promotion) && proposerId === currentOperator.id;
 
   const requestOpen =

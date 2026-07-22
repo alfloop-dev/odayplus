@@ -13,7 +13,7 @@ from scripts.openapi.generate_client import render
 EXPECTED_OPERATIONS = {
     "listIntakes", "submitUrlIntake", "submitIntakeBatch", "getIntake",
     "proposeCorrection", "decideMatchCase", "mergeProperties", "splitProperty",
-    "unmergeProperty", "assignIntake", "retryJob", "listSavedViews",
+    "unmergeProperty", "assignIntake", "retryJob", "getJobReceipt", "listSavedViews",
     "createSavedView", "requestCandidatePromotion", "getPromotionDecision",
     "reviewPromotionDecision", "cancelIntake", "quarantineIntake", "reopenIntake",
     "claimAssignment", "transferAssignment", "completeAssignment", "pauseSla",

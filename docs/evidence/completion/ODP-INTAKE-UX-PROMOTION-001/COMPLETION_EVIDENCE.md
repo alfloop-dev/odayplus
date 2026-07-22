@@ -1,8 +1,8 @@
 # ODP-INTAKE-UX-PROMOTION-001 — Completion Evidence
 
 - Task: Implement reviewed Candidate Site promotion and SiteScore job UI
-- Owner: Claude · Reviewer: Codex2 · Target branch: `dev`
-- Baseline: `origin/dev` @ `48bd7913` (includes ODP-INTAKE-PROMOTION-001 backend saga, PR #342)
+- Owner: Codex · Reviewer: Codex2 · Target branch: `dev`
+- Baseline: `origin/dev` @ `017c1f88` (includes promotion and load/recovery contracts)
 - Approved design: Claude Design Package 10 (`prototype sha256
   cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d`) together with
   `ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md`
@@ -16,12 +16,14 @@
 | `apps/web/features/operator/network/intake/PromotionReviewPanel.tsx` | UX-SCR-EXP-003F promotion section: explicit request, second-actor review, full saga rendering, commit-gated IDs, lost-response recovery, durable receipt |
 | `apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx` | SiteScore job slice: all 7 `JobReceipt` states, commit-gated job ID, authorized same-key replay from `SCORE_QUEUED` checkpoint |
 | `apps/web/features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx` | 27 tests encoding the four acceptance criteria + control presence/absence per state |
-| `packages/openapi-client/src/index.ts` | Generated-client methods for the four v1 saga routes (`requestCandidatePromotion`, `reviewPromotionDecision`, `getPromotionDecision`, `retryJob`) with mandatory `If-Match`/`Idempotency-Key` and `Idempotency-Replayed` capture |
+| `packages/openapi-client/src/index.ts` | Typed saga writes/lookups plus authoritative `getJobReceipt`; writes require `If-Match`/`Idempotency-Key` and capture `Idempotency-Replayed` |
 | `apps/web/features/operator/network/intake/intakeClient.ts` | Guarded `intakeApi.requestPromotion` / `reviewPromotion` / `getPromotionDecision` / `retryScoreJob` wrappers + promotion error vocabulary (403/404/409/422/428) |
 | `apps/web/features/operator/network/intake/AssistedIntakeSection.tsx` | **Production mounting** — the live operator container wires all four handlers, computes the gate snapshot SHA-256, holds server receipts, and renders the panel on the READY branch of the real detail dialog |
 | `apps/web/features/operator/network/intake/IntakeDetailDialog.tsx` | `promotionSection` slot on the live detail (after human decision, before durable receipts) |
 | `apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx` | Promotion tab (`tab-promotion`) mounting the panel on the durable processing-detail surface |
-| `apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx` | 3 integration tests mounting the REAL container against a stubbed network boundary and asserting the actual wire traffic of all four calls |
+| `apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx` | 3 live-container integration tests enforcing distinct authenticated proposer/reviewer subjects and authoritative job lookup/replay |
+| `apps/api/app/routes/listings.py` | v1/operator repository bridge, tenant-scoped authoritative JobReceipt lookup, and replay support |
+| `tests/contract/test_assisted_listing_promotion_api.py` | Runtime proof for operator intake request, independent review, job lookup, and retry |
 
 ## Production integration (review round 2)
 
@@ -30,17 +32,13 @@ IntakeDetailDialog(promotionSection) → PromotionReviewPanel → SiteScoreJobSt
 `AssistedIntakeSection` owns the API wiring: every handler goes through
 `intakeApi` → the typed `OdpApiClient` (no raw fetch), receipts are only ever set
 from server responses (non-optimistic), `Idempotency-Replayed` is surfaced from
-the response header, and the `gate_snapshot_sha256` is computed with WebCrypto
-SHA-256 over the canonical server-provided gate inputs
-(`intakeId`/`version`/`stage`/`policy`/`matchOutcome`) so the request provably
-binds to the gate evaluation the operator saw. `IntakeProcessingDetail`
+the response header, and `gate_snapshot_sha256` binds the request to the intake
+version and gate facts shown in the UI. The backend still revalidates the
+authoritative gates before execution. `IntakeProcessingDetail`
 additionally mounts the panel as its promotion tab for the durable
-processing-detail surface. For a `SCORE_FAILED` decision with no prior retry
-receipt, the container bootstraps the replay view strictly from the
-authoritative promotion receipt (`site_score_job_id`, `correlation_id`; status
-`FAILED`/checkpoint `SCORE_QUEUED` are what `SCORE_FAILED` means by contract;
-initial attempt/version use the server's job-creation values and a stale
-version surfaces as the 409 conflict flow, never a silent overwrite).
+processing-detail surface. A `SCORE_FAILED` decision never fabricates job
+attempt, version, status, or checkpoint in the browser. Replay remains disabled
+until `GET /api/v1/jobs/{job_id}/receipt` returns the authoritative receipt.
 
 The components are typed exclusively against the generated
 `@oday-plus/openapi-client` v1 contract (`PromotionDecisionReceipt`, `PromotionStatus`,
@@ -52,6 +50,7 @@ The components are typed exclusively against the generated
 - `POST /api/v1/promotion-decisions/{id}/actions/review` (`PromotionReviewInput`:
   `APPROVE|REJECT`, reason, risk ack, `If-Match: W/"<promotion version>"`)
 - `GET  /api/v1/promotion-decisions/{id}` (lost-response decision lookup)
+- `GET  /api/v1/jobs/{job_id}/receipt` (authoritative job version/attempt/checkpoint)
 - `POST /api/v1/jobs/{job_id}/retry` (`ScoreReplayInput`: checkpoint `SCORE_QUEUED`,
   stable per-(job,attempt) `Idempotency-Key`, `If-Match: W/"<job version>"`)
 
@@ -70,7 +69,8 @@ The components are typed exclusively against the generated
    acknowledgement, If-Match, idempotency, and non-optimistic execution.**
    Request and review both hard-require reason (≥3 chars) + risk ack before the
    control unlocks; every mutation carries `If-Match` and a stable `Idempotency-Key`;
-   `proposer === reviewer` removes the approve/reject controls and shows
+   the receipt's `proposer_subject_id` is compared with authenticated
+   `X-Subject-Id`; equality removes the approve/reject controls and shows
    `SELF_REVIEW_DENIED` (authorization matrix: staff propose, manager approve,
    manager-proposer needs another manager); busy state locks submission and the UI
    never flips saga state locally — only server receipts drive it.
@@ -132,6 +132,11 @@ npm run typecheck --workspace=@oday-plus/openapi-client   # clean (tsc --noEmit)
 npm test --workspace=@oday-plus/web -- PromotionReviewPanel      # 27/27 passed
 npm test --workspace=@oday-plus/web -- PromotionSagaIntegration  # 3/3 passed
 npm test --workspace=@oday-plus/web            # full web suite 83/83 passed
+uv run pytest -q tests/contract/test_assisted_listing_operations.py \
+  tests/contract/test_assisted_listing_promotion_api.py \
+  tests/contract/test_assisted_listing_openapi.py        # 36/36 passed
+uv run python scripts/build_validate_assisted_listing_intake_openapi.py # PASS
+uv run python scripts/openapi/check_drift.py             # PASS
 git diff --check origin/dev...HEAD             # clean
 ```
 

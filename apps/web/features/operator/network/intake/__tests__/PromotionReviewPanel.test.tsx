@@ -146,6 +146,7 @@ function promo(status: PromotionStatus, overrides: Partial<PromotionDecisionRece
     listing_id: "LST-7001",
     status,
     decision_type: "STANDARD",
+    proposer_subject_id: "OP-100",
     reviewer_subject_id: null,
     candidate_site_id: null,
     site_score_job_id: null,
