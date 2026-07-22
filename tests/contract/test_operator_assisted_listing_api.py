@@ -65,6 +65,55 @@ def test_first_submission_contract_test() -> None:
     assert replay.json()["id"] == data["id"]
 
 
+def test_listing_inbox_server_query_contract() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    created_ids: list[str] = []
+    for suffix in ("query-a", "query-b"):
+        response = client.post(
+            "/api/v1/operator/network-listings/intake/submit",
+            json={
+                "url": f"https://www.synthetic.example/detail-{suffix}.html",
+                "heatZoneId": "HZ-01",
+            },
+            headers=_write_headers(suffix),
+        )
+        assert response.status_code == 200
+        assert response.json()["intakeMethod"] == "URL"
+        created_ids.append(response.json()["id"])
+
+    page = client.get(
+        "/api/v1/operator/network-listings/intake",
+        params={
+            "page": 1,
+            "pageSize": 1,
+            "intakeMethod": "URL",
+            "sortBy": "id",
+            "sortOrder": "asc",
+        },
+        headers=HEADERS,
+    )
+    assert page.status_code == 200
+    payload = page.json()
+    assert payload["page"] == 1
+    assert payload["pageSize"] == 1
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == min(created_ids)
+    assert sum(payload["counts"].values()) == 2
+    assert payload["evidenceState"] in {"complete", "partial", "degraded"}
+
+    no_match = client.get(
+        "/api/v1/operator/network-listings/intake",
+        params={"intakeMethod": "APPROVED_FEED"},
+        headers=HEADERS,
+    )
+    assert no_match.status_code == 200
+    assert no_match.json()["items"] == []
+    assert no_match.json()["total"] == 0
+
+
 def test_exact_duplicate_contract_test() -> None:
     app = create_app()
     client = TestClient(app)

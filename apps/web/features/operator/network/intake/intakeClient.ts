@@ -19,6 +19,7 @@ import {
   type ConvertListingResponse,
   type IntakeCorrectPayload,
   type IntakeDecidePayload,
+  type IntakeInboxPage,
   type IntakeSubmitPayload,
   type OdpApiClient,
   type AssignmentReceipt,
@@ -114,8 +115,8 @@ function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
  * generated here rather than left to the caller to remember.
  */
 export const intakeApi = {
-  list(client: OdpApiClient, heatZoneId?: string): Promise<IntakeResult<AssistedIntake[]>> {
-    return guard(() => client.listIntakes({ selectedHeatZoneId: heatZoneId }));
+  list(client: OdpApiClient, query: Parameters<OdpApiClient["listIntakes"]>[0]): Promise<IntakeResult<IntakeInboxPage>> {
+    return guard(() => client.listIntakes(query));
   },
 
   get(client: OdpApiClient, intakeId: string): Promise<IntakeResult<AssistedIntake>> {
