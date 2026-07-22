@@ -16,7 +16,7 @@ const expectedWorkspaces: Record<string, string[]> = {
   "field-lead": ["today", "store"],
   "marketing-manager": ["today", "growth", "govern"],
   "ops-lead": ["today", "store", "growth", "network", "govern"],
-  "pm-audit": ["today", "store", "govern"],
+  "pm-audit": ["today", "store", "network", "govern"],
 };
 
 test.describe.configure({ mode: "serial" });

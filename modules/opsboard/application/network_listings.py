@@ -429,11 +429,13 @@ class NetworkListingService:
     def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
         from modules.listing.domain.models import ListingDedupKey
         from shared.domain.models import AddressLocation, Listing
+        address_id = f"ADDR-{d['id']}"
         lst = Listing(
             listing_id=d["id"],
             source_listing_id=d["sourceListingId"],
             source_id=d["sourceId"],
             listing_status=d["status"],
+            address_id=address_id,
             rent_amount=float(d["rentPerMonth"]),
             area_ping=float(d["areaPing"]),
             floor=d["floor"],
@@ -442,10 +444,13 @@ class NetworkListingService:
             snapshot_id=d.get("sourceUrl") or "",
         )
         addr = AddressLocation(
-            address_id=f"ADDR-{d['id']}",
+            address_id=address_id,
             raw_address=d.get("address") or "",
             normalized_address=d.get("address") or "",
+            latitude=float(d.get("latitude") or d.get("lat") or 25.0339),
+            longitude=float(d.get("longitude") or d.get("lng") or 121.5645),
             geocode_confidence=float(d.get("geocodeConfidence") or 1.0),
+            h3_res_9=d.get("h3Index") or d.get("h3_index") or d.get("heatZoneId") or "",
         )
         key = ListingDedupKey(
             source_id=d["sourceId"],

@@ -1701,6 +1701,8 @@ export type IntakeFieldCell = {
   correctionReason: string | null;
   identity: boolean;
   lowConfidence: boolean;
+  masked?: boolean;
+  mask_reason_code?: string;
 };
 
 export type MatchSignalDto = {

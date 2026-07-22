@@ -129,7 +129,7 @@ export function IntakeDetailDialog({
         {/* 指派與 SLA ASSIGNMENT */}
         <div className={styles.sectionBox} data-testid="intake-assignment-section" style={{ border: "1px solid #eef1f6", borderRadius: "10px", overflow: "hidden" }}>
           <div style={{ background: "#f8fafd", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "10px", fontWeight: 700, color: "#6e7891", letterSpacing: ".06em" }}>
+            <span style={{ fontSize: "10px", fontWeight: 700, color: "#5a6478", letterSpacing: ".06em" }}>
               指派與 SLA ASSIGNMENT
             </span>
             <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: "#eceffb", color: "#2e3a97" }} data-testid="intake-asg-status-badge">
@@ -529,6 +529,12 @@ function FieldRow({
 }) {
   const fixable = stage === "READY" || stage === "NEEDS_REVIEW" || stage === "AWAITING_ASSISTED_ENTRY";
   const corrected = field.correctedValue !== null && field.correctedValue !== undefined && field.correctedValue !== "";
+  const masked = field.masked === true;
+  const maskedValue = (
+    <span className={styles.maskedValue} data-testid={`intake-masked-${field.key}`}>
+      已遮罩 · {field.mask_reason_code ?? "FIELD_MASKED"}
+    </span>
+  );
 
   return (
     <>
@@ -537,10 +543,10 @@ function FieldRow({
         {isIdentityField(field.key) ? <span className={styles.identityMark}>識別欄位</span> : null}
       </div>
       <div className={`${styles.fieldCell} ${styles.sourceValue}`} data-label="來源值">
-        {display(field.sourceValue)}
+        {masked ? maskedValue : display(field.sourceValue)}
       </div>
       <div className={styles.fieldCell} data-label="正規化值">
-        <span className={styles.normalizedValue}>{display(field.normalizedValue)}</span>
+        <span className={styles.normalizedValue}>{masked ? maskedValue : display(field.normalizedValue)}</span>
         {field.lowConfidence && !corrected ? (
           <span className={styles.lowChip} data-testid={`intake-low-${field.key}`}>
             ⚠ 低信心
@@ -549,7 +555,7 @@ function FieldRow({
       </div>
       <div className={styles.fieldCell} data-label="人工修正">
         <span className={corrected ? styles.correctedValue : styles.correctedEmpty}>
-          {corrected ? display(field.correctedValue) : "—"}
+          {masked ? maskedValue : corrected ? display(field.correctedValue) : "—"}
         </span>
         {field.correctionReason ? (
           <span className={styles.metaSub}>原因：{field.correctionReason}</span>
@@ -560,9 +566,9 @@ function FieldRow({
           <button
             className={styles.fixButton}
             data-testid={`intake-fix-${field.key}`}
-            disabled={!canCorrect}
+            disabled={!canCorrect || masked}
             onClick={() => onOpenFix(field.key)}
-            title={canCorrect ? undefined : ACTION_DENIED_NOTE.correct}
+            title={masked ? "此欄位已依資料分級遮罩，無法在目前權限下修正。" : canCorrect ? undefined : ACTION_DENIED_NOTE.correct}
             type="button"
           >
             修正
@@ -779,7 +785,7 @@ function hostOf(url: string): string {
 }
 
 /** A snapshot older than 24h is stale for expansion review purposes. */
-function isSnapshotStale(capturedAt: string | null): boolean {
+export function isSnapshotStale(capturedAt: string | null): boolean {
   if (!capturedAt) return false;
   const captured = Date.parse(capturedAt);
   if (Number.isNaN(captured)) return false;
@@ -830,14 +836,14 @@ function getSlaBg(state?: string | null): string {
 }
 
 function getSlaFg(state?: string | null): string {
-  if (!state) return "#1E7F4F";
+  if (!state) return "#166534";
   const mapping: Record<string, string> = {
-    ON_TRACK: "#1E7F4F",
-    DUE_SOON: "#96610B",
+    ON_TRACK: "#166534",
+    DUE_SOON: "#854D0E",
     OVERDUE: "#B3261E",
     BREACHED: "#B3261E",
     PAUSED: "#5A6472",
-    COMPLETED: "#1E7F4F",
+    COMPLETED: "#166534",
   };
   return mapping[state] || "#5A6472";
 }

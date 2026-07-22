@@ -53,7 +53,7 @@ const workspaceStorageKey = "oday.operator.workspace";
 
 const rolePermissionHeaders: Record<OperatorRoleId, string> = {
   "cs-lead": "operations_manager",
-  "expansion-manager": "expansion_user",
+  "expansion-manager": "expansion_user,site_reviewer",
   "field-lead": "regional_supervisor",
   "marketing-manager": "marketing_manager",
   "ops-lead": "operations_manager",

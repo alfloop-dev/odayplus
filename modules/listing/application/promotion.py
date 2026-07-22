@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,11 +39,13 @@ class PromotionService:
         listing_repository: Any,
         intake_repository: Any,
         outbox_repository: Any = None,
+        score_queue_hook: Callable[[], None] | None = None,
     ) -> None:
         self.promotion_repository = promotion_repository
         self.listing_repository = listing_repository
         self.intake_repository = intake_repository
         self.outbox_repository = outbox_repository
+        self.score_queue_hook = score_queue_hook
 
     def request_promotion(
         self,
@@ -513,6 +516,9 @@ class PromotionService:
             score_job_id = str(uuid.uuid4())
             promo["site_score_job_id"] = score_job_id
             self.promotion_repository.save_promotion(promo)
+
+            if self.score_queue_hook:
+                self.score_queue_hook()
 
             PromotionStateMachine.transition(promo_agg, PromotionState.COMPLETED, system_context)
             promo["status"] = to_status_str(PromotionState.COMPLETED)

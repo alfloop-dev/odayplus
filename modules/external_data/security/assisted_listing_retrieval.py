@@ -321,7 +321,10 @@ class RetrievalSecurityGate:
         current_url = url
         redirects: list[str] = []
         for _ in range(self._limits.max_redirects + 1):
-            target_failure = self.validate_target(current_url)
+            target_failure = self.validate_target(
+                current_url,
+                resolve_dns=retrieval_method != "fixture_replay",
+            )
             if target_failure is not None:
                 return RetrievalSecurityResult(
                     final_url=current_url,
@@ -434,7 +437,12 @@ class RetrievalSecurityGate:
             ),
         )
 
-    def validate_target(self, url: str) -> RetrievalSecurityFailure | None:
+    def validate_target(
+        self,
+        url: str,
+        *,
+        resolve_dns: bool = True,
+    ) -> RetrievalSecurityFailure | None:
         parts = urlsplit((url or "").strip())
         scheme = parts.scheme.lower()
         if scheme not in self._limits.allowed_schemes:
@@ -465,6 +473,13 @@ class RetrievalSecurityGate:
         ip = _ip_address_or_none(host)
         if ip is not None:
             return _network_failure(host) if is_blocked_ip(ip) else None
+
+        # Fixture replay never opens a network socket. Requiring public DNS for
+        # a synthetic corpus host makes deterministic replay depend on external
+        # infrastructure while adding no SSRF protection. Static URL,
+        # credential, metadata-host, and literal-IP checks above still apply.
+        if not resolve_dns:
+            return None
 
         try:
             addresses = self._resolver(host)

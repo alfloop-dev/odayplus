@@ -587,6 +587,7 @@
 }
 
 .shell {
+  box-sizing: border-box;
   width: 100%;
   margin: 0;
   padding: 14px 20px 28px;
@@ -1591,8 +1592,28 @@
 }
 
 @media (max-width: 1240px) {
-  .console {
-    min-width: 1120px;
+  .console,
+  .consoleNetworkParity,
+  .topbar,
+  .shell {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topActions {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .workspaceNav {
+    flex-wrap: wrap;
   }
 
   .brandCluster {
@@ -1990,14 +2011,24 @@
 }
 
 @media (max-width: 768px) {
+  .console,
   .consoleNetworkParity,
-  .topbar {
-    min-width: 100% !important;
+  .topbar,
+  .shell {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0 !important;
     max-width: 100vw !important;
+  }
+
+  .topbar,
+  .topActions,
+  .workspaceNav {
     flex-wrap: wrap !important;
   }
 
-  .workspaceNav {
-    flex-wrap: wrap !important;
+  .topActions {
+    width: 100%;
+    min-width: 0;
   }
 }

@@ -10,6 +10,10 @@
  */
 
 .queue {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-1, #ffffff);
   border: 1px solid var(--border-color, #e3e8f0);
   border-radius: 12px;
@@ -75,7 +79,7 @@
 .countLabel {
   font-size: 10px;
   font-weight: 600;
-  color: #8a93a8;
+  color: #5a6478;
 }
 
 .rows {
@@ -115,7 +119,7 @@
 .rowId {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10px;
-  color: #8a93a8;
+  color: #5a6478;
 }
 
 .srcChip {
@@ -140,7 +144,7 @@
 .rowMeta {
   margin-left: auto;
   font-size: 10px;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .rowAction {
@@ -153,7 +157,7 @@
   padding: 22px 14px;
   text-align: center;
   font-size: 11.5px;
-  color: #8a93a8;
+  color: #5a6478;
 }
 
 .loadingState {
@@ -176,12 +180,12 @@
 
 .chip[data-tone="good"] {
   background: #e5f3ea;
-  color: #1e7f4f;
+  color: #166534;
 }
 
 .chip[data-tone="watch"] {
   background: #fbf1dd;
-  color: #96610b;
+  color: #854d0e;
 }
 
 .chip[data-tone="risk"] {
@@ -365,7 +369,7 @@
 .warnNote {
   font-size: 10.5px;
   font-weight: 600;
-  color: #96610b;
+  color: #854d0e;
 }
 
 .errorText {
@@ -393,14 +397,14 @@
 .errorMeta {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 9.5px;
-  color: #96610b;
+  color: #854d0e;
   word-break: break-all;
 }
 
 .errorNext {
   font-size: 11px;
   font-weight: 600;
-  color: #96610b;
+  color: #854d0e;
 }
 
 .primaryButton {
@@ -445,7 +449,7 @@
 .metaCaption {
   font-size: 9px;
   font-weight: 700;
-  color: #98a1b3;
+  color: #5a6478;
   letter-spacing: 0.06em;
 }
 
@@ -457,13 +461,13 @@
 .metaSub {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 9px;
-  color: #8a93a8;
+  color: #5a6478;
 }
 
 .sectionLabel {
   font-size: 10px;
   font-weight: 700;
-  color: #8a93a8;
+  color: #5a6478;
   letter-spacing: 0.06em;
 }
 
@@ -491,7 +495,7 @@
   font-weight: 700;
   border: 1px solid #d6dce8;
   background: #ffffff;
-  color: #98a1b3;
+  color: #5a6478;
   flex: none;
 }
 
@@ -521,7 +525,7 @@
 
 .stepName {
   font-size: 10px;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .step[data-state="done"] .stepName {
@@ -541,7 +545,7 @@
 .stepCode {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 8px;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .stepArrow {
@@ -560,7 +564,7 @@
   padding: 7px 10px;
   font-size: 9.5px;
   font-weight: 700;
-  color: #8a93a8;
+  color: #5a6478;
   letter-spacing: 0.06em;
   display: flex;
   align-items: center;
@@ -572,7 +576,7 @@
   margin-left: auto;
   font-size: 9.5px;
   font-weight: 400;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .evidenceRow {
@@ -586,7 +590,7 @@
 .evidenceKey {
   width: 88px;
   flex: none;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .evidenceValue {
@@ -602,7 +606,7 @@
 .fieldsHeadCell {
   font-size: 9px;
   font-weight: 700;
-  color: #98a1b3;
+  color: #5a6478;
   background: #fbfcfe;
   padding: 5px 8px;
   border-bottom: 1px solid #f1f3f8;
@@ -625,7 +629,7 @@
 }
 
 .sourceValue {
-  color: #8a93a8;
+  color: #5a6478;
 }
 
 .normalizedValue {
@@ -634,7 +638,7 @@
 }
 
 .correctedValue {
-  color: #1e7f4f;
+  color: #166534;
   font-weight: 700;
 }
 
@@ -642,11 +646,18 @@
   color: #c6ccd8;
 }
 
+.maskedValue {
+  color: #475467;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 .lowChip {
   font-size: 8.5px;
   font-weight: 700;
   background: #fbf1dd;
-  color: #96610b;
+  color: #854d0e;
   border-radius: 4px;
   padding: 1px 5px;
   align-self: flex-start;
@@ -697,7 +708,7 @@
   font-size: 8.5px;
   font-weight: 700;
   background: #fbf1dd;
-  color: #96610b;
+  color: #854d0e;
   border-radius: 4px;
   padding: 1px 5px;
   margin-left: 4px;
@@ -718,7 +729,7 @@
 .signalHeadAgree {
   font-size: 9px;
   font-weight: 700;
-  color: #1e7f4f;
+  color: #166534;
 }
 
 .signalHeadCon {
@@ -743,7 +754,7 @@
 .doneLabel {
   font-size: 12px;
   font-weight: 700;
-  color: #1e7f4f;
+  color: #166534;
 }
 
 .doneMeta {
@@ -773,7 +784,7 @@
 .timelineTime {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 9.5px;
-  color: #98a1b3;
+  color: #5a6478;
   width: 128px;
   flex: none;
 }
@@ -795,7 +806,7 @@
 .summaryKey {
   width: 70px;
   flex: none;
-  color: #98a1b3;
+  color: #5a6478;
 }
 
 .summaryValue {
@@ -896,7 +907,7 @@
     content: attr(data-label);
     font-size: 8.5px;
     font-weight: 700;
-    color: #98a1b3;
+    color: #5a6478;
   }
 
   .compareHide {
@@ -911,7 +922,7 @@
     padding: 9px 10px;
     font-size: 10.5px;
     font-weight: 600;
-    color: #96610b;
+    color: #854d0e;
   }
 
   .panel {
