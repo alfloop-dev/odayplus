@@ -10,6 +10,8 @@ import type {
   IntakeFieldValue,
   IntakeInboxPage,
   IntakeInboxQuery,
+  JobReceipt,
+  PromotionDecisionReceipt,
   SlaReceipt,
 } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
@@ -19,6 +21,12 @@ import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
+import {
+  PromotionReviewPanel,
+  type PromotionRequestInput,
+  type PromotionReviewInput,
+} from "./PromotionReviewPanel";
+import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import { TransferIntakeDialog } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
@@ -31,6 +39,7 @@ import {
   type IntakeApiError,
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
+import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
@@ -48,9 +57,11 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 export function AssistedIntakeSection({
   activeRoleId,
+  activeSubjectId,
   selectedHeatZoneId,
 }: {
   activeRoleId: OperatorRoleId;
+  activeSubjectId?: string;
   selectedHeatZoneId?: string;
 }) {
   const router = useRouter();
@@ -76,6 +87,20 @@ export function AssistedIntakeSection({
   const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
   const [slaReceipts, setSlaReceipts] = useState<Record<string, SlaReceipt>>({});
 
+  // ---- Candidate promotion saga (ODP-INTAKE-UX-PROMOTION-001) -------------
+  // Receipts are keyed by intake id and only ever set from server responses:
+  // the saga's state lives on the server, never optimistically here.
+  const [promotionReceipts, setPromotionReceipts] = useState<Record<string, PromotionDecisionReceipt>>({});
+  const [scoreJobs, setScoreJobs] = useState<Record<string, JobReceipt>>({});
+  const [promotionBusy, setPromotionBusy] = useState(false);
+  const [promotionError, setPromotionError] = useState<IntakeApiError | null>(null);
+  const [promotionReplayed, setPromotionReplayed] = useState(false);
+  const [gateSnapshots, setGateSnapshots] = useState<Record<string, string>>({});
+  const [promotionHydration, setPromotionHydration] = useState<{
+    intakeId: string | null;
+    state: "idle" | "loading" | "ready";
+  }>({ intakeId: null, state: "idle" });
+
   const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
     const nextState = {
       filters: urlState.filters,
@@ -95,7 +120,10 @@ export function AssistedIntakeSection({
   }, [urlState, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
-  const client = useMemo(() => buildIntakeClient(activeRoleId), [activeRoleId]);
+  const client = useMemo(
+    () => buildIntakeClient(activeRoleId, activeSubjectId),
+    [activeRoleId, activeSubjectId],
+  );
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
@@ -153,9 +181,75 @@ export function AssistedIntakeSection({
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
     decisionKeyRef.current = null;
+    setPromotionError(null);
+    setPromotionReplayed(false);
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
+
+  // Restore the durable promotion saga whenever a deep link or reloaded inbox
+  // opens an intake. Until this lookup finishes the request form stays closed,
+  // preventing a stale page from offering a second promotion request.
+  useEffect(() => {
+    if (!client || !selected?.id) {
+      setPromotionHydration({ intakeId: null, state: "idle" });
+      return undefined;
+    }
+    const intakeId = selected.id;
+    let cancelled = false;
+    setPromotionHydration({ intakeId, state: "loading" });
+
+    void (async () => {
+      const result = await intakeApi.getPromotionForIntake(client, intakeId);
+      if (cancelled) return;
+      if (result.ok) {
+        setPromotionReceipts((current) => ({ ...current, [intakeId]: result.value }));
+        if (result.value.site_score_job_id) {
+          const jobResult = await intakeApi.getScoreJob(client, result.value.site_score_job_id);
+          if (cancelled) return;
+          if (jobResult.ok) {
+            setScoreJobs((current) => ({ ...current, [intakeId]: jobResult.value }));
+          } else {
+            setPromotionError(jobResult.error);
+          }
+        }
+      } else if (result.error.status !== 404) {
+        setPromotionError(result.error);
+      }
+      if (!cancelled) setPromotionHydration({ intakeId, state: "ready" });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, selected?.id]);
+
+  // Bind the request to the exact version and gate facts displayed by this UI.
+  // The backend retains this digest for lineage; it remains responsible for
+  // re-validating the authoritative promotion gates before execution.
+  const gateKey = selected ? `${selected.id}:v${selected.version}` : null;
+  useEffect(() => {
+    if (!selected || selected.stage !== "READY" || !gateKey) return undefined;
+    if (gateSnapshots[gateKey]) return undefined;
+    let cancelled = false;
+    const canonical = JSON.stringify({
+      intakeId: selected.id,
+      version: selected.version,
+      stage: selected.stage,
+      policy: selected.policy,
+      matchOutcome: selected.matchResult?.outcome ?? null,
+    });
+    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)).then((digest) => {
+      if (cancelled) return;
+      const hex = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      setGateSnapshots((prev) => ({ ...prev, [gateKey]: hex }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
     updateUrlState({ dialog: null, selectedId: null, fixFieldKey: null, decisionKind: null, receiptId: null });
@@ -619,6 +713,126 @@ export function AssistedIntakeSection({
     }
   }
 
+  // ---- Promotion saga handlers (all four v1 calls go through intakeApi) ---
+
+  async function handleRequestPromotion(input: PromotionRequestInput) {
+    if (!client || !selected || promotionBusy) return;
+    setPromotionBusy(true);
+    setPromotionError(null);
+    const result = await intakeApi.requestPromotion(
+      client,
+      selected.id,
+      {
+        target_format_code: input.targetFormatCode,
+        reason: input.reason,
+        gate_snapshot_sha256: input.gateSnapshotSha256,
+        risk_acknowledged: input.riskAcknowledged,
+        requested_reviewer_id: input.requestedReviewerId ?? null,
+      },
+      { idempotencyKey: input.idempotencyKey, ifMatch: input.ifMatch },
+    );
+    setPromotionBusy(false);
+    if (!result.ok) {
+      setPromotionError(result.error);
+      return;
+    }
+    setPromotionReplayed(result.value.idempotencyReplayed);
+    setPromotionReceipts((prev) => ({ ...prev, [selected.id]: result.value.receipt }));
+    setToast(
+      result.value.idempotencyReplayed
+        ? "伺服器以原持久化收據回應（Idempotency-Replayed）— 未重複建立申請"
+        : `晉升申請已送出（${result.value.receipt.status}）— 等待第二人審查`,
+    );
+    // The request consumed the intake's If-Match; refetch for the new version.
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) applyRecord(getResult.value);
+  }
+
+  async function handleReviewPromotion(input: PromotionReviewInput) {
+    if (!client || !selected || promotionBusy) return;
+    const current = promotionReceipts[selected.id];
+    if (!current) return;
+    setPromotionBusy(true);
+    setPromotionError(null);
+    const result = await intakeApi.reviewPromotion(
+      client,
+      current.promotion_decision_id,
+      {
+        decision: input.decision,
+        reason: input.reason,
+        risk_acknowledged: input.riskAcknowledged,
+        requested_changes: input.requestedChanges,
+      },
+      { idempotencyKey: input.idempotencyKey, ifMatch: input.ifMatch },
+    );
+    setPromotionBusy(false);
+    if (!result.ok) {
+      setPromotionError(result.error);
+      return;
+    }
+    setPromotionReplayed(result.value.idempotencyReplayed);
+    setPromotionReceipts((prev) => ({ ...prev, [selected.id]: result.value.receipt }));
+    if (result.value.receipt.site_score_job_id) {
+      const jobResult = await intakeApi.getScoreJob(client, result.value.receipt.site_score_job_id);
+      if (jobResult.ok) {
+        setScoreJobs((prev) => ({ ...prev, [selected.id]: jobResult.value }));
+      } else {
+        setPromotionError(jobResult.error);
+      }
+    }
+    setToast(`審查已寫入 — 決策狀態 ${result.value.receipt.status}`);
+  }
+
+  async function handleLookupPromotionDecision() {
+    if (!client || !selected) return;
+    const current = promotionReceipts[selected.id];
+    if (!current) return;
+    setPromotionBusy(true);
+    const result = await intakeApi.getPromotionDecision(client, current.promotion_decision_id);
+    setPromotionBusy(false);
+    if (!result.ok) {
+      setPromotionError(result.error);
+      return;
+    }
+    // A successful lookup resolves the lost-response state without resending.
+    setPromotionError(null);
+    setPromotionReplayed(false);
+    setPromotionReceipts((prev) => ({ ...prev, [selected.id]: result.value }));
+    if (result.value.site_score_job_id) {
+      const jobResult = await intakeApi.getScoreJob(client, result.value.site_score_job_id);
+      if (jobResult.ok) {
+        setScoreJobs((prev) => ({ ...prev, [selected.id]: jobResult.value }));
+      } else {
+        setPromotionError(jobResult.error);
+      }
+    }
+    setToast(`已查得決策狀態 ${result.value.status}（未重送任何寫入）`);
+  }
+
+  async function handleReplayScore(input: ScoreReplayInput) {
+    if (!client || !selected || promotionBusy) return;
+    setPromotionBusy(true);
+    setPromotionError(null);
+    const result = await intakeApi.retryScoreJob(
+      client,
+      input.jobId,
+      {
+        checkpoint: input.checkpoint,
+        reason: input.reason,
+        risk_acknowledged: input.riskAcknowledged,
+      },
+      { idempotencyKey: input.idempotencyKey, ifMatch: input.ifMatch },
+    );
+    setPromotionBusy(false);
+    if (!result.ok) {
+      setPromotionError(result.error);
+      return;
+    }
+    setPromotionReplayed(result.value.idempotencyReplayed);
+    setScoreJobs((prev) => ({ ...prev, [selected.id]: result.value.receipt }));
+    setToast(`評分工作已重新排入（attempt ${result.value.receipt.attempt}）`);
+  }
+
   async function handleConflictRefresh() {
     if (!client || !selected) return;
     setActionError(null);
@@ -629,6 +843,56 @@ export function AssistedIntakeSection({
   }
 
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
+
+  const selectedPromotion = selected ? promotionReceipts[selected.id] ?? null : null;
+  // Only an authoritative JobReceipt may enable replay. A promotion receipt
+  // supplies the job ID, but never attempt/version/checkpoint values.
+  const selectedScoreJob: JobReceipt | null = selected
+    ? scoreJobs[selected.id] ?? null
+    : null;
+
+  const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
+  const canPromote = canPerform("promote", activeRoleId);
+  // The promotion section renders on the READY branch of the real detail
+  // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
+  // every later saga state so the receipt and score job remain reachable.
+  const promotionIsHydrating =
+    selected &&
+    promotionHydration.intakeId === selected.id &&
+    promotionHydration.state === "loading";
+  const promotionIsHydrated =
+    selected &&
+    promotionHydration.intakeId === selected.id &&
+    promotionHydration.state === "ready";
+  const promotionSection = promotionIsHydrating ? (
+    <div aria-live="polite" className={styles.noteBox} data-testid="promotion-hydration-status" role="status">
+      正在載入既有晉升決策與工作收據…
+    </div>
+  ) : selected && promotionIsHydrated &&
+    (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
+      <PromotionReviewPanel
+        busy={promotionBusy}
+        canReplayScore={canPromote}
+        canRequest={canPromote}
+        canReview={canPromote}
+        currentOperator={{
+          id: operatorSubjectId(activeRoleId, activeSubjectId),
+          name: role.label,
+          role: activeRoleId,
+        }}
+        error={promotionError}
+        gateSnapshotSha256={promotionGateHash ?? ""}
+        idempotencyReplayed={promotionReplayed}
+        onLookupDecision={selectedPromotion ? handleLookupPromotionDecision : undefined}
+        onRefresh={handleConflictRefresh}
+        onReplayScore={handleReplayScore}
+        onRequestPromotion={handleRequestPromotion}
+        onReviewPromotion={handleReviewPromotion}
+        promotion={selectedPromotion}
+        record={selected}
+        scoreJob={selectedScoreJob}
+      />
+    ) : undefined;
 
   return (
     <>
@@ -691,6 +955,7 @@ export function AssistedIntakeSection({
             updateUrlState({ dialog: "assignmentSla", decisionKind: "pause" });
           }}
           onResumeSla={handleResumeSla}
+          promotionSection={promotionSection}
         />
       ) : null}
 

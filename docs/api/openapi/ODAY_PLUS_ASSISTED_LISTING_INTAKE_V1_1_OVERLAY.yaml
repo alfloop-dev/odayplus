@@ -37,6 +37,17 @@ actions:
             '429': {$ref: '#/components/responses/RateLimited'}
             '503': {$ref: '#/components/responses/Backpressure'}
 
+      /v1/intakes/{intake_id}/promotion-decision:
+        get:
+          tags: [Promotion]
+          operationId: getIntakePromotionDecision
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+          responses:
+            '200': {$ref: '#/components/responses/PromotionDecisionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '404': {$ref: '#/components/responses/NotFound'}
+
       /v1/promotion-decisions/{promotion_decision_id}:
         get:
           tags: [Promotion]
@@ -345,13 +356,14 @@ actions:
           requested_changes: {type: array, items: {type: string}}
       PromotionDecisionReceipt:
         type: object
-        required: [promotion_decision_id, intake_id, listing_id, status, decision_type, version, audit_event_id, correlation_id]
+        required: [promotion_decision_id, intake_id, listing_id, status, decision_type, proposer_subject_id, version, audit_event_id, correlation_id]
         properties:
           promotion_decision_id: {type: string, format: uuid}
           intake_id: {type: string, format: uuid}
           listing_id: {type: string, format: uuid}
           status: {type: string, enum: [REQUESTED, VALIDATING, PENDING_REVIEW, REJECTED, APPROVED, CANDIDATE_CREATING, CANDIDATE_CREATED, SCORE_QUEUED, COMPLETED, FAILED, SCORE_FAILED]}
           decision_type: {type: string, enum: [STANDARD, LEGACY_RECONCILED]}
+          proposer_subject_id: {type: string, format: uuid}
           reviewer_subject_id: {type: [string, 'null'], format: uuid}
           candidate_site_id: {type: [string, 'null'], format: uuid}
           site_score_job_id: {type: [string, 'null'], format: uuid}
