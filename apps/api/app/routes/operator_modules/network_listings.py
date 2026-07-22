@@ -506,15 +506,32 @@ def create_network_listings_sub_router(
             events = item.get("auditEvents") or []
             return (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
 
-        if saved_view == "needsReview": visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
-        elif saved_view == "awaitingEntry": visible = [i for i in visible if i.get("stage") == "AWAITING_ASSISTED_ENTRY"]
-        elif saved_view == "blocked": visible = [i for i in visible if i.get("stage") in {"QUARANTINED", "FAILED"}]
-        elif saved_view == "processing": visible = [i for i in visible if i.get("stage") in processing_stages]
-        elif saved_view == "ready": visible = [i for i in visible if i.get("stage") == "READY"]
-        if intake_method: visible = [i for i in visible if i.get("intakeMethod") == intake_method]
-        if intake_stage: visible = [i for i in visible if i.get("stage") == intake_stage]
-        if match_outcome: visible = [i for i in visible if (i.get("matchResult") or {}).get("outcome") == match_outcome]
-        if sla_state: visible = [i for i in visible if i.get("slaState") == sla_state]
+        if saved_view == "needsReview":
+            visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
+        elif saved_view == "awaitingEntry":
+            visible = [
+                i for i in visible if i.get("stage") == "AWAITING_ASSISTED_ENTRY"
+            ]
+        elif saved_view == "blocked":
+            visible = [
+                i for i in visible if i.get("stage") in {"QUARANTINED", "FAILED"}
+            ]
+        elif saved_view == "processing":
+            visible = [i for i in visible if i.get("stage") in processing_stages]
+        elif saved_view == "ready":
+            visible = [i for i in visible if i.get("stage") == "READY"]
+        if intake_method:
+            visible = [i for i in visible if i.get("intakeMethod") == intake_method]
+        if intake_stage:
+            visible = [i for i in visible if i.get("stage") == intake_stage]
+        if match_outcome:
+            visible = [
+                i
+                for i in visible
+                if (i.get("matchResult") or {}).get("outcome") == match_outcome
+            ]
+        if sla_state:
+            visible = [i for i in visible if i.get("slaState") == sla_state]
         if search:
             needle = search.casefold()
             visible = [i for i in visible if any(needle in str(i.get(k) or "").casefold() for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner"))]
