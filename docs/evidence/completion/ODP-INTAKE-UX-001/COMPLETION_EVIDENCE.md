@@ -3,7 +3,7 @@ task_id: ODP-INTAKE-UX-001
 title: Assisted Listing Intake R7 UI Integration Completion Evidence
 status: pending-review
 owner: Claude2
-reviewer: Antigravity3
+reviewer: Codex2
 integration_verified_commit: 7a292c9c06cf80fa03130d66b7aa8d7aa6ac3b31
 updated_at: 2026-07-22
 ---
@@ -153,7 +153,7 @@ implemented UI at integration commit `7a292c9c` (QA runtime commit
 | Frontend | Independent reviewers of the seven merged UI children (Antigravity3/5/6/7, Claude, Codex2) | APPROVED per child | section 3 matrix |
 | Accessibility | ODP-INTAKE-UX-QA-001 reviewer Antigravity5 | APPROVED (VDC-002/003 verified at runtime) | QA evidence sections 5 and 8 |
 | QA | Antigravity5 | APPROVED (18 runtime tests, real API) | QA evidence section 8 |
-| Integration | Antigravity3 (this task's reviewer) | pending this review | this PR |
+| Integration | Codex2 (this task's reviewer) | pending exact-SHA re-review | this PR |
 
 Release-gate re-confirmation of these dispositions at rollout time remains
 owned by `ODP-INTAKE-RELEASE-001`.
