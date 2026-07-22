@@ -1,12 +1,18 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddListingFromUrlDialog } from "../AddListingFromUrlDialog";
 import type { IntakeApiError } from "../intakeClient";
 
 describe("AddListingFromUrlDialog", () => {
   const mockOnClose = vi.fn();
   const mockOnSubmit = vi.fn();
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
 
   it("renders dialog shell and input elements", () => {
     render(
@@ -93,6 +99,35 @@ describe("AddListingFromUrlDialog", () => {
     expect(submitBtn).toHaveTextContent("送出中…（防止重複送出）");
   });
 
+  it("locks rapid repeated submissions before the parent busy state updates", () => {
+    let resolveSubmit: (() => void) | undefined;
+    const pendingSubmit = vi.fn(
+      () => new Promise<void>((resolve) => {
+        resolveSubmit = resolve;
+      }),
+    );
+    render(
+      <AddListingFromUrlDialog
+        busy={false}
+        error={null}
+        onClose={mockOnClose}
+        onSubmit={pendingSubmit}
+        submitterLabel="展店主管"
+      />
+    );
+
+    fireEvent.change(screen.getByTestId("intake-url-input"), {
+      target: { value: "https://example.com/listing" },
+    });
+    const submitButton = screen.getByTestId("intake-submit-button");
+    fireEvent.click(submitButton);
+    fireEvent.click(submitButton);
+
+    expect(pendingSubmit).toHaveBeenCalledTimes(1);
+    expect(submitButton).toBeDisabled();
+    resolveSubmit?.();
+  });
+
   it("displays source detection preview for recognized real-estate domains", () => {
     render(
       <AddListingFromUrlDialog
@@ -112,6 +147,7 @@ describe("AddListingFromUrlDialog", () => {
   });
 
   it("displays exact duplicate intercept alert when conflict error is passed", () => {
+    const openExisting = vi.fn();
     const conflictError: IntakeApiError = {
       status: 409,
       code: "ODP-INTAKE-CONFLICT",
@@ -127,6 +163,7 @@ describe("AddListingFromUrlDialog", () => {
         busy={false}
         error={conflictError}
         onClose={mockOnClose}
+        onOpenExisting={openExisting}
         onSubmit={mockOnSubmit}
         submitterLabel="展店主管"
       />
@@ -134,5 +171,7 @@ describe("AddListingFromUrlDialog", () => {
 
     expect(screen.getByTestId("intake-exact-duplicate-intercept")).toBeDefined();
     expect(screen.getByTestId("intake-add-error")).toHaveTextContent("此 URL 已在處理中");
+    fireEvent.click(screen.getByTestId("intake-open-existing"));
+    expect(openExisting).toHaveBeenCalledWith("IN-999");
   });
 });

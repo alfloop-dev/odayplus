@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssistedIntake, IntakeStage, MatchOutcome } from "@oday-plus/openapi-client";
 import { queueCounts } from "./intakeTypes";
 
@@ -72,7 +72,7 @@ function parseUrlQueryParams(): Partial<IntakeInboxFilterState> {
   return result;
 }
 
-function updateUrlQueryParams(state: IntakeInboxFilterState) {
+function updateUrlQueryParams(state: IntakeInboxFilterState, mode: "push" | "replace") {
   if (typeof window === "undefined") return;
   const params = new URLSearchParams(window.location.search);
 
@@ -103,7 +103,7 @@ function updateUrlQueryParams(state: IntakeInboxFilterState) {
   const newUrl = `${window.location.pathname}${queryString}${hashString}`;
 
   if (newUrl !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
-    window.history.replaceState(null, "", newUrl);
+    window.history[mode === "push" ? "pushState" : "replaceState"](null, "", newUrl);
   }
 }
 
@@ -112,15 +112,15 @@ export function useIntakeInboxQuery(records: AssistedIntake[]) {
     ...DEFAULT_FILTERS,
     ...parseUrlQueryParams(),
   }));
+  const restoringFromHistory = useRef(false);
+  const hasSyncedInitialState = useRef(false);
 
   // Direct open & back/forward URL restoration support
   useEffect(() => {
     function handlePopState() {
+      restoringFromHistory.current = true;
       const parsed = parseUrlQueryParams();
-      setFilters((current) => ({
-        ...current,
-        ...parsed,
-      }));
+      setFilters({ ...DEFAULT_FILTERS, ...parsed });
     }
     window.addEventListener("popstate", handlePopState);
     window.addEventListener("hashchange", handlePopState);
@@ -132,7 +132,16 @@ export function useIntakeInboxQuery(records: AssistedIntake[]) {
 
   // Sync state to URL
   useEffect(() => {
-    updateUrlQueryParams(filters);
+    if (!hasSyncedInitialState.current) {
+      hasSyncedInitialState.current = true;
+      updateUrlQueryParams(filters, "replace");
+      return;
+    }
+    if (restoringFromHistory.current) {
+      restoringFromHistory.current = false;
+      return;
+    }
+    updateUrlQueryParams(filters, "push");
   }, [filters]);
 
   const updateFilters = useCallback((updates: Partial<IntakeInboxFilterState>) => {
@@ -211,13 +220,11 @@ export function useIntakeInboxQuery(records: AssistedIntake[]) {
       } else if (filters.sortBy === "sourceId") {
         valA = a.sourceId || "";
         valB = b.sourceId || "";
-      } else if (filters.sortBy === "submittedAt") {
-        valA = a.submittedAt || "";
-        valB = b.submittedAt || "";
       } else {
-        // updatedAt default
-        valA = a.updatedAt || a.submittedAt || "";
-        valB = b.updatedAt || b.submittedAt || "";
+        // The intake contract has no synthetic updatedAt field. The newest
+        // persisted audit event (or source capture time) is the durable clock.
+        valA = a.auditEvents?.at(-1)?.occurredAt || a.capturedAt || "";
+        valB = b.auditEvents?.at(-1)?.occurredAt || b.capturedAt || "";
       }
 
       if (valA < valB) return filters.sortOrder === "asc" ? -1 : 1;

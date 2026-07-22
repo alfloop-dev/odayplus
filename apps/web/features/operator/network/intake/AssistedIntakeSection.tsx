@@ -5,8 +5,7 @@ import type { AssistedIntake, IntakeCorrectableField, IntakeFieldValue } from "@
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
-import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
-import { AssistedIntakeQueuePanel } from "./AssistedIntakeQueuePanel";
+import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
@@ -18,7 +17,7 @@ import {
   newIntakeActionIdempotencyKey,
   type IntakeApiError,
 } from "./intakeClient";
-import { NO_ACCESS_NOTE, READ_ONLY_NOTE, canPerform, canView, isReadOnly } from "./intakePermissions";
+import { canPerform, canView } from "./intakePermissions";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
@@ -54,9 +53,6 @@ export function AssistedIntakeSection({
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(() => buildIntakeClient(activeRoleId), [activeRoleId]);
-  const submitterLabel = `${role.label}`;
-  const readOnly = isReadOnly(activeRoleId);
-  const permitted = canView(activeRoleId);
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
@@ -326,65 +322,25 @@ export function AssistedIntakeSection({
 
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
 
-  // Permission-limited state (§7). Rendered instead of the queue — showing an
-  // empty queue would imply "no submissions exist" when the truth is "you may
-  // not see them".
-  if (!permitted) {
-    return (
-      <section
-        aria-label="URL 收件佇列"
-        className={styles.queue}
-        data-screen-label="Network URL 收件佇列"
-        data-testid="intake-queue"
-      >
-        <div className={styles.queueHeader}>
-          <span className={styles.queueHint}>URL 收件佇列</span>
-        </div>
-        <div className={styles.emptyState} data-testid="intake-no-access" role="status">
-          {NO_ACCESS_NOTE}
-        </div>
-      </section>
-    );
-  }
-
   return (
     <>
-      {readOnly ? (
-        <div className={styles.warnNote} data-testid="intake-read-only" role="status">
-          {READ_ONLY_NOTE}
-        </div>
-      ) : null}
-
-      <AssistedIntakeQueuePanel
-        canSubmit={canPerform("submit", activeRoleId)}
-        errorSummary={loadError?.summary}
+      <ListingInboxIntakeView
+        activeRoleId={activeRoleId}
+        actionError={actionError}
+        busy={busy}
+        loadError={loadError}
         loadState={loadState}
-        onAdd={() => {
-          submitKeyRef.current = null;
-          setActionError(null);
-          setDialog("add");
-        }}
-        onOpen={openDetail}
+        onAddSubmit={handleSubmit}
+        onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}
         records={records}
-        selectedIntakeId={selectedId}
+        selectedHeatZoneId={selectedHeatZoneId}
       />
 
       {toast ? (
         <div className={styles.noteBox} data-testid="intake-toast" role="status">
           {toast}
         </div>
-      ) : null}
-
-      {dialog === "add" ? (
-        <AddListingFromUrlDialog
-          busy={busy}
-          defaultHeatZoneId={selectedHeatZoneId}
-          error={actionError}
-          onClose={closeDialog}
-          onSubmit={handleSubmit}
-          submitterLabel={submitterLabel}
-        />
       ) : null}
 
       {dialog === "detail" && selected ? (

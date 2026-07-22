@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
@@ -410,6 +410,10 @@ export function ListingInboxIntakeView({
           defaultHeatZoneId={selectedHeatZoneId}
           error={actionError ?? null}
           onClose={() => setIsAddDialogOpen(false)}
+          onOpenExisting={(intakeId) => {
+            setIsAddDialogOpen(false);
+            onOpenDetail(intakeId);
+          }}
           onSubmit={async (input) => {
             await onAddSubmit(input);
             setIsAddDialogOpen(false);

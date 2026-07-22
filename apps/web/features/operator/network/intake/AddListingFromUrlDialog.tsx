@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
@@ -31,6 +31,7 @@ export function AddListingFromUrlDialog({
   defaultHeatZoneId,
   error,
   onClose,
+  onOpenExisting,
   onSubmit,
   submitterLabel,
 }: {
@@ -38,12 +39,15 @@ export function AddListingFromUrlDialog({
   defaultHeatZoneId?: string;
   error: IntakeApiError | null;
   onClose: () => void;
-  onSubmit: (input: { url: string; heatZoneId: string }) => void;
+  onOpenExisting?: (intakeId: string) => void;
+  onSubmit: (input: { url: string; heatZoneId: string }) => void | Promise<void>;
   submitterLabel: string;
 }) {
   const [url, setUrl] = useState("");
   const [heatZoneId, setHeatZoneId] = useState(defaultHeatZoneId ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false);
 
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
@@ -51,8 +55,8 @@ export function AddListingFromUrlDialog({
   const sourceInfo = useMemo(() => (looksValid ? detectSource(trimmed) : null), [looksValid, trimmed]);
   const canonicalPreview = useMemo(() => (looksValid ? computeCanonicalUrlPreview(trimmed) : null), [looksValid, trimmed]);
 
-  function handleSubmit() {
-    if (busy) return; // re-entrancy guard: never post twice from one dialog
+  async function handleSubmit() {
+    if (busy || submitLock.current) return;
     if (!trimmed) {
       setLocalError("請輸入物件頁網址");
       return;
@@ -62,11 +66,21 @@ export function AddListingFromUrlDialog({
       return;
     }
     setLocalError(null);
-    onSubmit({ url: trimmed, heatZoneId });
+    submitLock.current = true;
+    setSubmitting(true);
+    try {
+      await onSubmit({ url: trimmed, heatZoneId });
+    } finally {
+      submitLock.current = false;
+      setSubmitting(false);
+    }
   }
 
   const shownError = localError ?? error?.summary ?? null;
   const isExactDuplicate = error?.code === "ODP-INTAKE-CONFLICT" || (error?.summary ?? "").includes("已存在");
+  const existingIntakeId = isExactDuplicate
+    ? /\b(IN-[A-Za-z0-9-]+)\b/.exec(error?.summary ?? "")?.[1] ?? null
+    : null;
 
   return (
     <IntakeDialogShell
@@ -95,7 +109,7 @@ export function AddListingFromUrlDialog({
             id="intake-url"
             onChange={(event) => setUrl(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") handleSubmit();
+              if (event.key === "Enter") void handleSubmit();
             }}
             placeholder="https://www.591.com.tw/rent-detail-XXXXXXXX.html"
             type="url"
@@ -159,6 +173,16 @@ export function AddListingFromUrlDialog({
         {isExactDuplicate ? (
           <div className={styles.warnNote} data-testid="intake-exact-duplicate-intercept" role="alert">
             ⚡ 識別檢查攔截：此網址已被收錄。系統已提供短路徑可直接導向既有物件紀錄。
+            {existingIntakeId && onOpenExisting ? (
+              <button
+                className={styles.secondaryButton}
+                data-testid="intake-open-existing"
+                onClick={() => onOpenExisting(existingIntakeId)}
+                type="button"
+              >
+                開啟既有收件 {existingIntakeId}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -186,11 +210,11 @@ export function AddListingFromUrlDialog({
         <button
           className={styles.primaryButton}
           data-testid="intake-submit-button"
-          disabled={busy || !trimmed}
-          onClick={handleSubmit}
+          disabled={busy || submitting || !trimmed}
+          onClick={() => void handleSubmit()}
           type="button"
         >
-          {busy ? "送出中…（防止重複送出）" : "送出 URL"}
+          {busy || submitting ? "送出中…（防止重複送出）" : "送出 URL"}
         </button>
       </div>
     </IntakeDialogShell>
@@ -205,21 +229,20 @@ function isHttpUrl(value: string): boolean {
     return false;
   }
 }
-
 function detectSource(url: string): { name: string; policy: string; isApproved: boolean } {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    if (host.includes("591.com.tw")) {
+    if (host === "591.com.tw" || host.endsWith(".591.com.tw")) {
       return { name: "591 房屋交易網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
     }
-    if (host.includes("rakuya.com.tw")) {
+    if (host === "rakuya.com.tw" || host.endsWith(".rakuya.com.tw")) {
       return { name: "樂屋網", policy: "使用者提交單頁擷取（需人工覆核或補錄）", isApproved: false };
     }
-    if (host.includes("sinyi.com.tw")) {
+    if (host === "sinyi.com.tw" || host.endsWith(".sinyi.com.tw")) {
       return { name: "信義房屋", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
     }
-    if (host.includes("yungching.com.tw")) {
+    if (host === "yungching.com.tw" || host.endsWith(".yungching.com.tw")) {
       return { name: "永慶房產集團", policy: "已核准來源推送（可自動處理擷取）", isApproved: true };
     }
     return { name: host || "外部網站", policy: "單頁網址送件（由系統判定來源政策）", isApproved: false };
@@ -249,4 +272,3 @@ function computeCanonicalUrlPreview(url: string): string {
     return url;
   }
 }
-
