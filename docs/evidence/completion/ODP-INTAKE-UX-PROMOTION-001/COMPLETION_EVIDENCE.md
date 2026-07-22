@@ -167,3 +167,17 @@ decision lookup path never resends the review write.
 Transcripts: `verification-transcript.txt` (typecheck + focused + integration +
 full suite), `test-run-verbose.txt` (per-test listing for the original promotion
 slice).
+
+## Closeout
+
+Codex2 independently approved runtime head
+`8c5e581532a2d88b1bafdbdcc2058fb4dad86b07` on 2026-07-22 after confirming the
+reload-hydration and retry-response-header findings were closed. The owner then
+re-ran the task-brief verification from that exact head before finalization:
+
+- `npm run typecheck --workspace=@oday-plus/web` — passed
+- `npm test --workspace=@oday-plus/web -- PromotionReviewPanel` — 27/27 passed
+- `git diff --check origin/dev...HEAD` — passed
+
+This closeout update changes only task-scoped evidence; it does not change the
+reviewed runtime, API, schema, or UI behavior.
