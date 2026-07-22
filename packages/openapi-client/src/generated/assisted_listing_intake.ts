@@ -166,6 +166,11 @@ export type IntakeDetail = IntakeSummary & {
   processing_history: TransitionReceipt[];
   fields: FieldValue[];
   audit: AuditReference[];
+  assignment_id?: string | null;
+  assignment_status?: string | null;
+  sla_instance_id?: string | null;
+  sla_state?: string | null;
+  sla_receipt?: string | null;
 };
 
 export type IntakePage = {

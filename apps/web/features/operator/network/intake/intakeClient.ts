@@ -21,6 +21,12 @@ import {
   type IntakeDecidePayload,
   type IntakeSubmitPayload,
   type OdpApiClient,
+  type AssignmentReceipt,
+  type AssignmentTransferRequest,
+  type AssignmentRequest,
+  type ReasonCommand,
+  type SlaPauseRequest,
+  type SlaReceipt,
 } from "@oday-plus/openapi-client";
 import {
   buildOperatorNetworkClient,
@@ -94,7 +100,7 @@ export function missingClientError(): IntakeApiError {
 }
 
 export type IntakeResult<T> = OperatorApiResult<T>;
-type IntakeWriteOptions = { idempotencyKey: string; correlationId?: string };
+type IntakeWriteOptions = { idempotencyKey: string; correlationId?: string; ifMatch?: string };
 
 function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
   return guardCall(run, toIntakeApiError);
@@ -144,6 +150,7 @@ export const intakeApi = {
       client.correctIntake(intakeId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
         idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
       }),
     );
   },
@@ -158,6 +165,7 @@ export const intakeApi = {
       client.decideIntake(intakeId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
         idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
       }),
     );
   },
@@ -194,6 +202,96 @@ export const intakeApi = {
           idempotencyKey: options.idempotencyKey,
         },
       ),
+    );
+  },
+
+  claimAssignment(
+    client: OdpApiClient,
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<AssignmentReceipt>> {
+    return guard(() =>
+      client.claimAssignment(assignmentId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  transferAssignment(
+    client: OdpApiClient,
+    assignmentId: string,
+    payload: AssignmentTransferRequest,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<AssignmentReceipt>> {
+    return guard(() =>
+      client.transferAssignment(assignmentId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  completeAssignment(
+    client: OdpApiClient,
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<AssignmentReceipt>> {
+    return guard(() =>
+      client.completeAssignment(assignmentId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  pauseSla(
+    client: OdpApiClient,
+    slaInstanceId: string,
+    payload: SlaPauseRequest,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<SlaReceipt>> {
+    return guard(() =>
+      client.pauseSla(slaInstanceId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  resumeSla(
+    client: OdpApiClient,
+    slaInstanceId: string,
+    payload: ReasonCommand,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<SlaReceipt>> {
+    return guard(() =>
+      client.resumeSla(slaInstanceId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  assign(
+    client: OdpApiClient,
+    intakeId: string,
+    payload: AssignmentRequest,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<AssignmentReceipt>> {
+    return guard(() =>
+      client.assignIntake(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
     );
   },
 };

@@ -2534,6 +2534,29 @@
             ],
             "title": "Assigned To"
           },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "assignment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Status"
+          },
           "audit": {
             "items": {
               "$ref": "#/components/schemas/AuditReference"
@@ -2650,6 +2673,40 @@
           },
           "scope": {
             "$ref": "#/components/schemas/ScopeContext"
+          },
+          "sla_instance_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Instance Id"
+          },
+          "sla_receipt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Receipt"
+          },
+          "sla_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla State"
           },
           "source_id": {
             "anyOf": [
