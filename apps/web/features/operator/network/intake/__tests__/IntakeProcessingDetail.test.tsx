@@ -5,6 +5,7 @@ import { EvidencePanel } from "../EvidencePanel";
 import { IntakeErrorRecovery } from "../IntakeErrorRecovery";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import { IntakeStageTimeline } from "../IntakeStageTimeline";
+import { isSnapshotStale } from "../IntakeDetailDialog";
 
 // Sample fixture record for testing
 const sampleIntake: AssistedIntake = {
@@ -53,6 +54,14 @@ const failedIntake: AssistedIntake = {
 };
 
 describe("IntakeProcessingDetail & Sub-components Test Suite", () => {
+  describe("source freshness", () => {
+    it("marks old evidence stale without treating missing or future timestamps as stale", () => {
+      expect(isSnapshotStale("2000-01-01T00:00:00Z")).toBe(true);
+      expect(isSnapshotStale("2999-01-01T00:00:00Z")).toBe(false);
+      expect(isSnapshotStale(null)).toBe(false);
+    });
+  });
+
   describe("IntakeStageTimeline", () => {
     it("renders exact intake stages without fabricated percentages", () => {
       // Test props mapping

@@ -90,7 +90,7 @@ export const OPERATOR_ROLES: OperatorRole[] = [
     id: "pm-audit",
     label: "PM／稽核",
     subtitle: "模型、決策追蹤與稽核線索",
-    allowedWorkspaces: ["today", "store", "govern"],
+    allowedWorkspaces: ["today", "store", "network", "govern"],
   },
 ];
 

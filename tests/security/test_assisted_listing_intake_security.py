@@ -133,6 +133,31 @@ def test_dns_resolution_blocks_private_targets_before_fetch() -> None:
     assert fetcher.calls == []
 
 
+def test_fixture_replay_is_dns_independent_but_keeps_static_ssrf_checks() -> None:
+    fetcher = CountingFetcher()
+
+    def unexpected_dns(_host: str) -> tuple[str, ...]:
+        raise AssertionError("fixture replay must not resolve DNS or open a socket")
+
+    gate = RetrievalSecurityGate(resolver=unexpected_dns, fetcher=fetcher)
+
+    replay = gate.fetch(
+        "https://synthetic.example/detail-1",
+        policy="APPROVED_RETRIEVAL",
+        retrieval_method="fixture_replay",
+    )
+    blocked = gate.fetch(
+        "http://127.0.0.1/detail-1",
+        policy="APPROVED_RETRIEVAL",
+        retrieval_method="fixture_replay",
+    )
+
+    assert replay.ok
+    assert len(fetcher.calls) == 1
+    assert blocked.failure is not None
+    assert blocked.failure.code == "ODP-INTAKE-RETRIEVAL-NETWORK-BLOCKED"
+
+
 def test_redirect_hop_is_revalidated_before_second_fetch() -> None:
     fetcher = CountingFetcher(
         [

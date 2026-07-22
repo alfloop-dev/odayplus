@@ -3553,11 +3553,27 @@ else:
                 )
 
                 repository = _repository(request)
+                test_fault = request.headers.get("x-odp-test-fault")
+                score_queue_hook = None
+                if test_fault:
+                    import os
+
+                    if os.getenv("CI") != "1":
+                        raise HTTPException(403, "TEST_CONTROL_DENIED")
+                    if test_fault != "score-failure":
+                        raise HTTPException(422, "UNKNOWN_TEST_FAULT")
+
+                    def fail_score_queue() -> None:
+                        raise RuntimeError("ODP_TEST_SCORE_FAILURE")
+
+                    score_queue_hook = fail_score_queue
+
                 promo_service = PromotionService(
                     promotion_repository=V1PromotionRepositoryAdapter(active, request.app.state),
                     listing_repository=V1ListingRepositoryAdapter(repository),
                     intake_repository=V1IntakeRepositoryAdapter(active, request.app.state),
                     outbox_repository=getattr(request.app.state, "outbox_repository", None) or getattr(repository, "outbox_repository", None),
+                    score_queue_hook=score_queue_hook,
                 )
 
                 reviewer_actor = Actor(

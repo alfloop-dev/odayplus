@@ -1,6 +1,7 @@
 .workspace {
   display: grid;
   gap: 12px;
+  min-width: 0;
   color: #172033;
 }
 
@@ -74,6 +75,9 @@
 .tabs {
   display: flex;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
   border-bottom: 1px solid #dbe2ee;
 }
@@ -1004,9 +1008,21 @@
     flex-direction: column;
   }
 
+  .header,
+  .header > *,
   .headerStats,
+  .expansionStepper,
   .detailActions {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     justify-content: flex-start;
+  }
+
+  .headerSummary,
+  .kicker {
+    overflow-wrap: anywhere;
   }
 
   .lensBar,
@@ -1070,12 +1086,18 @@
 .tabPanel {
   display: grid;
   gap: 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .complianceBanner {
   display: flex;
   align-items: flex-start;
   gap: 9px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid #dccff2;
   border-radius: 10px;
   background: #f0ebfa;
@@ -2664,6 +2686,24 @@
 }
 
 @media (max-width: 640px) {
+  .workspace {
+    overflow-x: clip;
+  }
+
+  .workspace > * {
+    box-sizing: border-box;
+    width: calc(100vw - 40px);
+    min-width: 0;
+    max-width: calc(100vw - 40px);
+  }
+
+  .tabPanel > * {
+    box-sizing: border-box;
+    width: calc(100vw - 40px);
+    min-width: 0;
+    max-width: calc(100vw - 40px);
+  }
+
   .reviewMetaGrid,
   .reviewMetricGrid {
     grid-template-columns: repeat(2, 1fr);

@@ -10,7 +10,8 @@
 //
 // A call must clear BOTH, and the intersection is narrower than either. Of the
 // console's roles, operatorSecurityHeaders() maps only `expansion-manager` onto
-// an API role (expansion_user) holding listing:UPDATE. `site-reviewer` passes
+// the expansion_user + site_reviewer claims required for both listing:UPDATE
+// and activation of the manager role. `site-reviewer` passes
 // the service allowlist but maps to site_reviewer, which holds listing VIEW and
 // CREATE but NOT UPDATE — so it would 403 at the HTTP guard.
 //

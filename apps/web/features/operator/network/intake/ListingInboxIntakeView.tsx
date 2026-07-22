@@ -54,6 +54,7 @@ export function ListingInboxIntakeView({
   const readOnly = isReadOnly(activeRoleId);
   const permitted = canView(activeRoleId);
   const canSubmit = canPerform("submit", activeRoleId);
+  const canRetry = canPerform("retry", activeRoleId);
 
   const {
     filters,
@@ -129,15 +130,16 @@ export function ListingInboxIntakeView({
             </button>
           </div>
 
-          <button
-            className={styles.addButton}
-            data-testid="intake-add-button"
-            disabled={!canSubmit}
-            onClick={() => setIsAddDialogOpen(true)}
-            type="button"
-          >
-            ＋ 從網址新增物件
-          </button>
+          {canSubmit ? (
+            <button
+              className={styles.addButton}
+              data-testid="intake-add-button"
+              onClick={() => setIsAddDialogOpen(true)}
+              type="button"
+            >
+              ＋ 從網址新增物件
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -169,8 +171,9 @@ export function ListingInboxIntakeView({
           value={filters.search}
         />
 
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <select
+            aria-label="依收件方式篩選"
             className={styles.select}
             data-testid="intake-filter-method"
             onChange={(e) => updateFilters({ intakeMethod: e.target.value })}
@@ -184,6 +187,7 @@ export function ListingInboxIntakeView({
           </select>
 
           <select
+            aria-label="依處理階段篩選"
             className={styles.select}
             data-testid="intake-filter-stage"
             onChange={(e) => updateFilters({ intakeStage: e.target.value })}
@@ -201,6 +205,7 @@ export function ListingInboxIntakeView({
           </select>
 
           <select
+            aria-label="依比對結果篩選"
             className={styles.select}
             data-testid="intake-filter-outcome"
             onChange={(e) => updateFilters({ matchOutcome: e.target.value })}
@@ -366,13 +371,23 @@ export function ListingInboxIntakeView({
                     data-testid={`intake-row-action-${record.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (record.stage === "FAILED" && record.failure?.retryable && onRetryIntake) onRetryIntake(record.id);
+                      if (record.stage === "FAILED" && record.failure?.retryable && canRetry && onRetryIntake) onRetryIntake(record.id);
                       else onOpenDetail(record.id);
                     }}
                     type="button"
                     style={{ fontSize: "0.8rem", padding: "0.2rem 0.5rem" }}
                   >
-                    {record.stage === "FAILED" && record.failure?.retryable ? "重試" : record.stage === "NEEDS_REVIEW" ? "覆核" : !record.owner ? "認領" : record.stage === "AWAITING_ASSISTED_ENTRY" ? "要求補正" : rowActionLabel(record)} →
+                    {readOnly
+                      ? "開啟"
+                      : record.stage === "FAILED" && record.failure?.retryable
+                        ? "重試"
+                        : record.stage === "NEEDS_REVIEW"
+                          ? "覆核"
+                          : !record.owner
+                            ? "認領"
+                            : record.stage === "AWAITING_ASSISTED_ENTRY"
+                              ? "要求補正"
+                              : rowActionLabel(record)} →
                   </button>
                 </div>
               );
@@ -395,6 +410,7 @@ export function ListingInboxIntakeView({
 
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <select
+              aria-label="每頁筆數"
               className={styles.select}
               data-testid="intake-page-size-select"
               onChange={(e) => updateFilters({ pageSize: parseInt(e.target.value, 10), page: 1 })}
