@@ -927,6 +927,7 @@ class NetworkListingService:
 
         intake = {
             "id": intake_id,
+            "tenantId": tenant_id or "tenant-a",
             "originalUrl": url,
             "canonicalUrl": canon_url,
             "submitter": actor_name or "林曉青（展店）",
@@ -947,6 +948,7 @@ class NetworkListingService:
             "matchResult": None,
             "auditEvents": [],
             "idempotencyKey": idempotency_key,
+            "version": 1,
         }
 
         if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:

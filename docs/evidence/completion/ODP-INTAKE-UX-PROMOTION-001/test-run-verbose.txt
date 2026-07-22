@@ -1,0 +1,42 @@
+# ODP-INTAKE-UX-PROMOTION-001 verbose test run (promotion slice, round 2)
+# date: 2026-07-22T18:47:53Z
+
+$ npx vitest run --reporter=verbose PromotionReviewPanel PromotionSagaIntegration  (in apps/web)
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/oday-plus/odp-intake-ux-promotion-001/apps/web
+
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — saga states are never compressed (acceptance 1) > renders a distinct badge and stepper node for every canonical promotion state 165ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — saga states are never compressed (acceptance 1) > shows the full happy path for COMPLETED and the real failure branch otherwise 16ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — saga states are never compressed (acceptance 1) > renders no stepper and an explicit 尚未提出 badge before any request 19ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > keeps submit locked until reason and risk acknowledgement are provided 39ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > submits target format, gate snapshot, If-Match and an idempotency key — without optimistic state 64ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > locks the submit control while busy instead of double-sending 42ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > reuses the SAME idempotency key when the operator retries a failed submit 77ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > removes the request form entirely for unauthorized roles and non-READY intakes 17ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — explicit request contract (acceptance 2) > hides the request form once a promotion is in flight, but reopens it after REJECTED with a fresh key 101ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > lets a different manager approve with reason, risk ack, If-Match and idempotency key 89ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > blocks self-review: proposer sees SELF_REVIEW_DENIED and no approve/reject controls 21ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > removes review controls for unauthorized roles and outside PENDING_REVIEW 26ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — IDs only after authoritative commit (acceptance 3) > shows pending placeholders before the creation transaction commits 49ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — IDs only after authoritative commit (acceptance 3) > refuses to display IDs the server leaked before their commit point 28ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — IDs only after authoritative commit (acceptance 3) > reveals the candidate ID at CANDIDATE_CREATED and the job ID at SCORE_QUEUED 50ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — IDs only after authoritative commit (acceptance 3) > keeps the candidate visible on SCORE_FAILED and offers authorized same-key replay 110ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — IDs only after authoritative commit (acceptance 3) > hides the replay control from unauthorized users 26ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — lost response, receipts and conflicts (acceptance 4) > offers same-key retry and decision lookup after a lost response 93ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — lost response, receipts and conflicts (acceptance 4) > labels an idempotent replayed response as recovered, not re-created 10ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — lost response, receipts and conflicts (acceptance 4) > renders the durable promotion receipt with audit and correlation evidence 8ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — lost response, receipts and conflicts (acceptance 4) > preserves operator input on 409 conflict and offers refresh 37ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — lost response, receipts and conflicts (acceptance 4) > surfaces 428 PRECONDITION_REQUIRED explicitly 6ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > SiteScoreJobStatus — every job state distinct, ID only from receipts > renders all seven canonical job states distinctly 13ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > SiteScoreJobStatus — every job state distinct, ID only from receipts > shows a placeholder — never a fabricated job ID — before the server commits one 10ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > SiteScoreJobStatus — every job state distinct, ID only from receipts > exposes attempt, checkpoint, version and correlation from the receipt 9ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > SiteScoreJobStatus — every job state distinct, ID only from receipts > requires reason and risk ack before replay is enabled 9ms
+ ✓ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > SiteScoreJobStatus — every job state distinct, ID only from receipts > rotates the replay idempotency key only when the server bumps the attempt 7ms
+ ✓ features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx > promotion saga — live operator route integration > drives request → second-actor review → score replay through the generated client 842ms
+ ✓ features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx > promotion saga — live operator route integration > recovers a lost request response by retrying with the SAME idempotency key 203ms
+ ✓ features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx > promotion saga — live operator route integration > recovers a lost review response via decision lookup without resending 174ms
+
+ Test Files  2 passed (2)
+      Tests  30 passed (30)
+   Start at  18:47:54
+   Duration  3.36s (transform 1.14s, setup 0ms, import 1.95s, tests 2.37s, environment 1.22s)

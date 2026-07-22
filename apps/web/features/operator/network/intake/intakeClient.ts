@@ -21,11 +21,16 @@ import {
   type IntakeDecidePayload,
   type IntakeInboxPage,
   type IntakeSubmitPayload,
+  type JobReceipt,
   type OdpApiClient,
   type AssignmentReceipt,
   type AssignmentTransferRequest,
   type AssignmentRequest,
+  type PromotionDecisionReceipt,
+  type PromotionRequest,
   type ReasonCommand,
+  type RetryRequest,
+  type ReviewDecisionRequest,
   type SlaPauseRequest,
   type SlaReceipt,
 } from "@oday-plus/openapi-client";
@@ -77,6 +82,51 @@ const INTAKE_ERRORS: Record<number, StatusErrorSpec> = {
   },
 };
 
+/**
+ * Promotion-saga error vocabulary (v1 promotion routes). The 409 here is a
+ * concurrency/duplicate-candidate conflict, NOT the submit surface's
+ * "URL already processing" 409, so it carries its own next action; 428 means
+ * the mandatory If-Match header was missing or malformed.
+ */
+const PROMOTION_ERRORS: Record<number, StatusErrorSpec> = {
+  403: {
+    code: "ODP-PROMOTION-FORBIDDEN",
+    next: "晉升申請/審查需要展店角色授權；提案者不得自行核准（SELF_REVIEW_DENIED）。",
+    retryable: false,
+  },
+  404: {
+    code: "ODP-PROMOTION-NOT-FOUND",
+    next: "找不到收件或晉升決策，請重新整理後再試。",
+    retryable: false,
+  },
+  409: {
+    code: "ODP-PROMOTION-CONFLICT",
+    next: "版本衝突或已有重複 Candidate。請重新整理取得最新 If-Match 後，以同一 Idempotency-Key 重試。",
+    retryable: true,
+  },
+  422: {
+    code: "ODP-PROMOTION-POLICY",
+    next: "請依提示補齊原因、風險確認與 gate snapshot 後再送出。",
+    retryable: false,
+  },
+  428: {
+    code: "ODP-PROMOTION-PRECONDITION",
+    next: "此操作必須攜帶 If-Match 版本，請重新整理後重試。",
+    retryable: true,
+  },
+};
+
+export function toPromotionApiError(error: unknown): IntakeApiError {
+  return toOperatorApiError(error, {
+    byStatus: PROMOTION_ERRORS,
+    fallbackPrefix: "ODP-PROMOTION",
+    roleDenied: ROLE_DENIED,
+    timeoutSummary: "連線逾時 — 晉升操作結果未確認，可以同一 Idempotency-Key 重試或查詢決策狀態。",
+    networkSummary: "無法連線至後端服務 — 晉升操作結果未確認。",
+    transportNextAction: "以同一 Idempotency-Key 重試只會取回原收據；也可查詢決策狀態（不重送）。",
+  });
+}
+
 export function toIntakeApiError(error: unknown): IntakeApiError {
   return toOperatorApiError(error, {
     byStatus: INTAKE_ERRORS,
@@ -107,6 +157,21 @@ function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
   return guardCall(run, toIntakeApiError);
 }
 
+function guardPromotion<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
+  return guardCall(run, toPromotionApiError);
+}
+
+/** Server receipt plus whether it was answered from a prior durable receipt. */
+export type PromotionWriteResult = {
+  receipt: PromotionDecisionReceipt;
+  idempotencyReplayed: boolean;
+};
+
+export type ScoreJobWriteResult = {
+  receipt: JobReceipt;
+  idempotencyReplayed: boolean;
+};
+
 /**
  * Every write carries a correlation ID. The server persists whatever arrives in
  * X-Correlation-Id onto the intake record, and that value is what the detail
@@ -121,6 +186,17 @@ export const intakeApi = {
 
   get(client: OdpApiClient, intakeId: string): Promise<IntakeResult<AssistedIntake>> {
     return guard(() => client.getIntake(intakeId));
+  },
+
+  getScoreJob(client: OdpApiClient, jobId: string): Promise<IntakeResult<JobReceipt>> {
+    return guardPromotion(() => client.getJobReceipt(jobId));
+  },
+
+  getPromotionForIntake(
+    client: OdpApiClient,
+    intakeId: string,
+  ): Promise<IntakeResult<PromotionDecisionReceipt>> {
+    return guardPromotion(() => client.getIntakePromotionDecision(intakeId));
   },
 
   /**
@@ -289,6 +365,69 @@ export const intakeApi = {
   ): Promise<IntakeResult<AssignmentReceipt>> {
     return guard(() =>
       client.assignIntake(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  // ---- Candidate promotion saga (ODP-INTAKE-UX-PROMOTION-001) ------------
+  // v1 contract routes. If-Match is REQUIRED on every write (the server
+  // answers 428 without it), so these wrappers take it as a non-optional
+  // field instead of inheriting IntakeWriteOptions' optional one.
+
+  /** POST /api/v1/intakes/{id}/promotion-requests — explicit promotion request. */
+  requestPromotion(
+    client: OdpApiClient,
+    intakeId: string,
+    payload: PromotionRequest,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<PromotionWriteResult>> {
+    return guardPromotion(() =>
+      client.requestCandidatePromotion(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  /** POST /api/v1/promotion-decisions/{id}/actions/review — second-actor review. */
+  reviewPromotion(
+    client: OdpApiClient,
+    promotionDecisionId: string,
+    payload: ReviewDecisionRequest,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<PromotionWriteResult>> {
+    return guardPromotion(() =>
+      client.reviewPromotionDecision(promotionDecisionId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  /** GET /api/v1/promotion-decisions/{id} — lost-response recovery (no resend). */
+  getPromotionDecision(
+    client: OdpApiClient,
+    promotionDecisionId: string,
+  ): Promise<IntakeResult<PromotionDecisionReceipt>> {
+    return guardPromotion(() =>
+      client.getPromotionDecision(promotionDecisionId, { correlationId: newCorrelationId() }),
+    );
+  },
+
+  /** POST /api/v1/jobs/{id}/retry — authorized replay from a durable checkpoint. */
+  retryScoreJob(
+    client: OdpApiClient,
+    jobId: string,
+    payload: RetryRequest,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<ScoreJobWriteResult>> {
+    return guardPromotion(() =>
+      client.retryJob(jobId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
         idempotencyKey: options.idempotencyKey,
         ifMatch: options.ifMatch,
