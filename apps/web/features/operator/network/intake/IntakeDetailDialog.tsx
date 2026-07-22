@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { AssistedIntake, IntakeFieldCell } from "@oday-plus/openapi-client";
+import type { AssignmentReceipt, AssistedIntake, IntakeFieldCell, SlaReceipt } from "@oday-plus/openapi-client";
 import { ASSISTED_ENTRY_REQUIRED_FIELDS } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
 import { ACTION_DENIED_NOTE } from "./intakePermissions";
+import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import {
   decisionOptions,
   isIdentityField,
@@ -38,6 +39,12 @@ export function IntakeDetailDialog({
   onOpenFix,
   onRetry,
   record,
+  assignmentReceipt,
+  slaReceipt,
+  onClaimAssignment,
+  onOpenTransfer,
+  onOpenPause,
+  onResumeSla,
 }: {
   busy: boolean;
   canCorrect: boolean;
@@ -54,6 +61,12 @@ export function IntakeDetailDialog({
   onOpenFix: (fieldKey: string) => void;
   onRetry: () => void;
   record: AssistedIntake;
+  assignmentReceipt?: AssignmentReceipt;
+  slaReceipt?: SlaReceipt;
+  onClaimAssignment?: () => void;
+  onOpenTransfer?: () => void;
+  onOpenPause?: () => void;
+  onResumeSla?: () => void;
 }) {
   const steps = stageSteps(record);
   const fields = useMemo(() => Object.values(record.parsedFields ?? {}), [record.parsedFields]);
@@ -62,6 +75,9 @@ export function IntakeDetailDialog({
   const canonicalDiffers = record.originalUrl !== record.canonicalUrl;
   const isStale = isSnapshotStale(record.capturedAt);
   const decided = record.stage === "READY" && Boolean(record.matchResult) && isDecided(record);
+
+  const showClaim = canDecide && (!record.assignmentStatus || record.assignmentStatus === "ASSIGNED") && record.stage !== "READY";
+  const showMg = canDecide && record.assignmentStatus !== "COMPLETED" && record.stage !== "READY";
 
   return (
     <IntakeDialogShell
@@ -100,6 +116,82 @@ export function IntakeDetailDialog({
           <Meta caption="送出時間" value={record.capturedAt ?? "—"} />
           <Meta caption="Owner" value={record.owner} />
           <Meta caption="HeatZone" value={record.heatZoneId ?? "未指定"} />
+        </div>
+
+        {/* 指派與 SLA ASSIGNMENT */}
+        <div className={styles.sectionBox} data-testid="intake-assignment-section" style={{ border: "1px solid #eef1f6", borderRadius: "10px", overflow: "hidden" }}>
+          <div style={{ background: "#f8fafd", padding: "7px 12px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "10px", fontWeight: 700, color: "#6e7891", letterSpacing: ".06em" }}>
+              指派與 SLA ASSIGNMENT
+            </span>
+            <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: "#eceffb", color: "#2e3a97" }} data-testid="intake-asg-status-badge">
+              {record.assignmentStatus ? translateAsgStatus(record.assignmentStatus) : "未指派"}
+            </span>
+            <span style={{ padding: "1px 8px", borderRadius: "999px", fontSize: "9.5px", fontWeight: 700, background: getSlaBg(record.slaState), color: getSlaFg(record.slaState) }} data-testid="intake-sla-status-badge">
+              {translateSlaState(record.slaState)}
+            </span>
+
+            <span style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+              {showClaim ? (
+                <button
+                  onClick={onClaimAssignment}
+                  className={styles.primaryButton}
+                  style={{ padding: "4px 12px", fontSize: "10.5px" }}
+                  data-testid="intake-claim-button"
+                  type="button"
+                >
+                  認領此收件
+                </button>
+              ) : null}
+
+              {showMg ? (
+                <>
+                  <button
+                    onClick={onOpenTransfer}
+                    className={styles.secondaryButton}
+                    style={{ padding: "4px 11px", fontSize: "10px" }}
+                    data-testid="intake-transfer-button"
+                    type="button"
+                  >
+                    轉交
+                  </button>
+                  {record.slaState === "PAUSED" ? (
+                    <button
+                      onClick={onResumeSla}
+                      className={styles.secondaryButton}
+                      style={{ padding: "4px 11px", fontSize: "10px" }}
+                      data-testid="intake-resume-button"
+                      type="button"
+                    >
+                      恢復 SLA
+                    </button>
+                  ) : (
+                    <button
+                      onClick={onOpenPause}
+                      className={styles.secondaryButton}
+                      style={{ padding: "4px 11px", fontSize: "10px" }}
+                      data-testid="intake-pause-button"
+                      type="button"
+                    >
+                      暫停 SLA
+                    </button>
+                  )}
+                </>
+              ) : null}
+            </span>
+          </div>
+
+          <div style={{ padding: "7px 12px", display: "flex", gap: "16px", flexWrap: "wrap", fontSize: "10.5px", color: "#3a4362" }}>
+            <span>佇列：<b>Triage Queue</b></span>
+            <span>認領人：<b>{record.owner || "—"}</b></span>
+            <span>到期時間：<b>{record.dueAt ? new Date(record.dueAt).toLocaleString() : "—"}</b></span>
+          </div>
+
+          {record.slaReceipt ? (
+            <div style={{ padding: "0 12px 8px", fontSize: "10px", color: "#1e7f4f", fontFamily: "monospace" }} data-testid="intake-sla-receipt">
+              receipt {record.slaReceipt}
+            </div>
+          ) : null}
         </div>
 
         {/* 2. Processing status — real stages, never a fabricated percentage */}
@@ -285,6 +377,13 @@ export function IntakeDetailDialog({
             </div>
           </div>
         ) : null}
+
+        {/* Durable Receipts Panel */}
+        <DurableReceiptPanel
+          record={record}
+          assignmentReceipt={assignmentReceipt}
+          slaReceipt={slaReceipt}
+        />
 
         {/* 7. Timeline and audit history */}
         <div className={styles.timeline} data-testid="intake-timeline">
@@ -679,4 +778,55 @@ function isSnapshotStale(capturedAt: string | null): boolean {
 /** A record whose audit trail already carries a decide event is closed out. */
 function isDecided(record: AssistedIntake): boolean {
   return (record.auditEvents ?? []).some((event) => event.action.startsWith("intake.decide"));
+}
+
+function translateAsgStatus(status?: string | null): string {
+  if (!status) return "未指派";
+  const mapping: Record<string, string> = {
+    ASSIGNED: "已指派",
+    CLAIMED: "已認領",
+    TRANSFERRED: "已轉交",
+    ESCALATED: "已升級",
+    COMPLETED: "已完成",
+  };
+  return mapping[status] || status;
+}
+
+function translateSlaState(state?: string | null): string {
+  if (!state) return "● ON_TRACK 進度內";
+  const mapping: Record<string, string> = {
+    ON_TRACK: "● ON_TRACK 進度內",
+    DUE_SOON: "▲ DUE_SOON 將到期",
+    OVERDUE: "▲ OVERDUE 已逾期",
+    BREACHED: "✕ BREACHED 已違約",
+    PAUSED: "∥ PAUSED 暫停",
+    COMPLETED: "✓ COMPLETED",
+  };
+  return mapping[state] || state;
+}
+
+function getSlaBg(state?: string | null): string {
+  if (!state) return "#E5F3EA";
+  const mapping: Record<string, string> = {
+    ON_TRACK: "#E5F3EA",
+    DUE_SOON: "#FBF1DD",
+    OVERDUE: "#FBE9E7",
+    BREACHED: "#FBE9E7",
+    PAUSED: "#EEF1F5",
+    COMPLETED: "#E5F3EA",
+  };
+  return mapping[state] || "#EEF1F5";
+}
+
+function getSlaFg(state?: string | null): string {
+  if (!state) return "#1E7F4F";
+  const mapping: Record<string, string> = {
+    ON_TRACK: "#1E7F4F",
+    DUE_SOON: "#96610B",
+    OVERDUE: "#B3261E",
+    BREACHED: "#B3261E",
+    PAUSED: "#5A6472",
+    COMPLETED: "#1E7F4F",
+  };
+  return mapping[state] || "#5A6472";
 }

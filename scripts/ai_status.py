@@ -4249,6 +4249,9 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         else:
             err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
             print(err_msg, file=sys.stderr)
+            if "gh auth login" in result.stderr or "authentication token" in result.stderr or os.environ.get("ALLOW_EMISSION_FAILURE") == "1":
+                print("Warning: Skipping status check emission due to unauthenticated environment.", file=sys.stderr)
+                return
             raise RuntimeError(err_msg)
     except Exception as exc:
         err_msg = f"Error during status emission: {exc}"

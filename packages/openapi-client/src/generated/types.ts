@@ -536,6 +536,8 @@ export type IntakeDecidePayload = {
 /** IntakeDetail */
 export type IntakeDetail = {
   assigned_to?: string | null;
+  assignment_id?: string | null;
+  assignment_status?: string | null;
   audit: AuditReference[];
   canonical_url: string | null;
   due_at?: string | null;
@@ -550,6 +552,9 @@ export type IntakeDetail = {
   policy_state: SourcePolicyState | null;
   processing_history: TransitionReceipt[];
   scope: ScopeContext;
+  sla_instance_id?: string | null;
+  sla_receipt?: string | null;
+  sla_state?: string | null;
   source_id?: string | null;
   source_snapshot_id?: string | null;
   state: IntakeState;

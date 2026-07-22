@@ -504,6 +504,11 @@ components:
             processing_history: {type: array, items: {$ref: '#/components/schemas/TransitionReceipt'}}
             fields: {type: array, items: {$ref: '#/components/schemas/FieldValue'}}
             audit: {type: array, items: {$ref: '#/components/schemas/AuditReference'}}
+            assignment_id: {type: [string, 'null'], format: uuid}
+            assignment_status: {type: [string, 'null']}
+            sla_instance_id: {type: [string, 'null'], format: uuid}
+            sla_state: {type: [string, 'null']}
+            sla_receipt: {type: [string, 'null']}
     CorrectionRequest:
       type: object
       required: [field_path, corrected_value, reason]
