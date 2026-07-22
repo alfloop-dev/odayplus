@@ -65,3 +65,39 @@ $ npm test --workspace=@oday-plus/web  (full suite, tail)
       Tests  83 passed (83)
    Start at  18:47:38
    Duration  5.07s (transform 3.15s, setup 0ms, import 6.63s, tests 5.50s, environment 7.89s)
+
+# Round 4 — independent review finding closure
+# reviewed finding source: Codex2 against 4962fb4b
+# date: 2026-07-22T19:22:00Z
+
+$ npm run typecheck --workspace=@oday-plus/openapi-client
+$ npm run typecheck --workspace=@oday-plus/web
+
+Both passed (tsc --noEmit).
+
+$ npm test --workspace=@oday-plus/web -- PromotionSagaIntegration PromotionReviewPanel
+
+Test Files  2 passed (2)
+Tests      31 passed (31)
+
+$ npm test --workspace=@oday-plus/web
+
+Test Files  8 passed (8)
+Tests      84 passed (84)
+
+$ uv run pytest -q tests/contract/test_assisted_listing_promotion_api.py tests/contract/test_assisted_listing_openapi.py tests/contract/test_assisted_listing_operations.py
+
+57 passed
+
+$ uv run python scripts/build_validate_assisted_listing_intake_openapi.py
+
+Effective OpenAPI: 1.1.3
+Result: PASS
+
+$ uv run python scripts/openapi/check_drift.py
+
+API contract gate: PASS (2 additive operations, 0 unapproved breaking changes)
+
+$ uv run ruff check apps/api/app/routes/listings.py tests/contract/test_assisted_listing_promotion_api.py tests/contract/test_assisted_listing_openapi.py tests/contract/test_assisted_listing_operations.py
+
+All checks passed!

@@ -1496,6 +1496,17 @@ export class OdpApiClient {
     );
   }
 
+  /** GET /api/v1/intakes/{intake_id}/promotion-decision — durable reload recovery. */
+  getIntakePromotionDecision(
+    intakeId: string,
+    options: { correlationId?: string } = {},
+  ): Promise<PromotionDecisionReceipt> {
+    return this.request<PromotionDecisionReceipt>(
+      `/api/v1/intakes/${intakeId}/promotion-decision`,
+      { correlationId: options.correlationId },
+    );
+  }
+
   /** POST /api/v1/promotion-decisions/{id}/actions/review — independent second-actor decision. */
   async reviewPromotionDecision(
     promotionDecisionId: string,

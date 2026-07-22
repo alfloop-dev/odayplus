@@ -13393,6 +13393,67 @@
         ]
       }
     },
+    "/api/v1/intakes/{intake_id}/promotion-decision": {
+      "get": {
+        "operationId": "getIntakePromotionDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotionDecisionReceipt"
+                }
+              }
+            },
+            "description": "Latest durable promotion decision for the intake",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Intake Promotion",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/intakes/{intake_id}/promotion-requests": {
       "post": {
         "operationId": "requestCandidatePromotion",
@@ -15353,7 +15414,20 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Replay queued from a durable checkpoint",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
           },
           "403": {
             "content": {

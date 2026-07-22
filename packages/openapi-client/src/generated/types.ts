@@ -1420,6 +1420,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/actions/reopen": ["POST"],
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
+  "/api/v1/intakes/{intake_id}/promotion-decision": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-requests": ["POST"],
   "/api/v1/interventions": ["GET", "POST"],
   "/api/v1/interventions/{intervention_id}": ["GET"],

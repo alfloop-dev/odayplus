@@ -16,14 +16,14 @@
 | `apps/web/features/operator/network/intake/PromotionReviewPanel.tsx` | UX-SCR-EXP-003F promotion section: explicit request, second-actor review, full saga rendering, commit-gated IDs, lost-response recovery, durable receipt |
 | `apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx` | SiteScore job slice: all 7 `JobReceipt` states, commit-gated job ID, authorized same-key replay from `SCORE_QUEUED` checkpoint |
 | `apps/web/features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx` | 27 tests encoding the four acceptance criteria + control presence/absence per state |
-| `packages/openapi-client/src/index.ts` | Typed saga writes/lookups plus authoritative `getJobReceipt`; writes require `If-Match`/`Idempotency-Key` and capture `Idempotency-Replayed` |
-| `apps/web/features/operator/network/intake/intakeClient.ts` | Guarded `intakeApi.requestPromotion` / `reviewPromotion` / `getPromotionDecision` / `retryScoreJob` wrappers + promotion error vocabulary (403/404/409/422/428) |
+| `packages/openapi-client/src/index.ts` | Typed saga writes/lookups plus intake-scoped promotion hydration and authoritative `getJobReceipt`; writes require `If-Match`/`Idempotency-Key` and capture `Idempotency-Replayed` |
+| `apps/web/features/operator/network/intake/intakeClient.ts` | Guarded `intakeApi.requestPromotion` / `getPromotionForIntake` / `reviewPromotion` / `getPromotionDecision` / `retryScoreJob` wrappers + promotion error vocabulary (403/404/409/422/428) |
 | `apps/web/features/operator/network/intake/AssistedIntakeSection.tsx` | **Production mounting** — the live operator container wires all four handlers, computes the gate snapshot SHA-256, holds server receipts, and renders the panel on the READY branch of the real detail dialog |
 | `apps/web/features/operator/network/intake/IntakeDetailDialog.tsx` | `promotionSection` slot on the live detail (after human decision, before durable receipts) |
 | `apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx` | Promotion tab (`tab-promotion`) mounting the panel on the durable processing-detail surface |
-| `apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx` | 3 live-container integration tests enforcing distinct authenticated proposer/reviewer subjects and authoritative job lookup/replay |
-| `apps/api/app/routes/listings.py` | v1/operator repository bridge, tenant-scoped authoritative JobReceipt lookup, and replay support |
-| `tests/contract/test_assisted_listing_promotion_api.py` | Runtime proof for operator intake request, independent review, job lookup, and retry |
+| `apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx` | 4 live-container integration tests enforcing durable reload hydration, distinct authenticated proposer/reviewer subjects, and authoritative job lookup/replay |
+| `apps/api/app/routes/listings.py` | v1/operator repository bridge, intake-scoped promotion lookup, tenant-scoped authoritative JobReceipt lookup, and replay headers |
+| `tests/contract/test_assisted_listing_promotion_api.py` | Runtime proof for operator intake request, reload hydration, independent review, job lookup, fresh retry, and idempotent retry replay |
 
 ## Production integration (review round 2)
 
@@ -49,6 +49,8 @@ The components are typed exclusively against the generated
   `Idempotency-Key`, `If-Match: W/"<intake version>"`)
 - `POST /api/v1/promotion-decisions/{id}/actions/review` (`PromotionReviewInput`:
   `APPROVE|REJECT`, reason, risk ack, `If-Match: W/"<promotion version>"`)
+- `GET  /api/v1/intakes/{intake_id}/promotion-decision` (latest durable saga
+  hydration before the request form can open)
 - `GET  /api/v1/promotion-decisions/{id}` (lost-response decision lookup)
 - `GET  /api/v1/jobs/{job_id}/receipt` (authoritative job version/attempt/checkpoint)
 - `POST /api/v1/jobs/{job_id}/retry` (`ScoreReplayInput`: checkpoint `SCORE_QUEUED`,
@@ -104,6 +106,22 @@ The components are typed exclusively against the generated
    receipt with audit and correlation evidence", "preserves operator input on 409
    conflict…", "surfaces 428 PRECONDITION_REQUIRED explicitly".
 
+## Independent review finding closure (round 4)
+
+Codex2 returned two concrete findings against commit `4962fb4b`: reload did not
+restore an existing promotion saga, and job retry did not emit the replay header
+that its client contract consumed. Both are closed in the resubmission:
+
+- `GET /api/v1/intakes/{intake_id}/promotion-decision` selects the latest durable
+  intake-scoped decision, applies tenant/view authorization, and returns its ETag.
+  The mounted UI performs this lookup before enabling a new request and hydrates
+  the linked authoritative JobReceipt. The reload integration test proves an
+  existing `SCORE_FAILED` saga cannot render a fresh request form.
+- `POST /api/v1/jobs/{job_id}/retry` now declares and emits `ETag` plus
+  `Idempotency-Replayed` on both fresh and replayed receipts. The backend contract
+  retries the exact same body/key after state mutation and proves the second
+  response is the unchanged durable receipt with `Idempotency-Replayed: true`.
+
 ## Binding VDC Conditions (Review 003) — this task's slice
 
 - **VDC-001 (control presence/absence testing)**: the tests assert control PRESENCE
@@ -130,11 +148,11 @@ npm ci
 npm run typecheck --workspace=@oday-plus/web              # clean (tsc --noEmit)
 npm run typecheck --workspace=@oday-plus/openapi-client   # clean (tsc --noEmit)
 npm test --workspace=@oday-plus/web -- PromotionReviewPanel      # 27/27 passed
-npm test --workspace=@oday-plus/web -- PromotionSagaIntegration  # 3/3 passed
-npm test --workspace=@oday-plus/web            # full web suite 83/83 passed
+npm test --workspace=@oday-plus/web -- PromotionSagaIntegration  # 4/4 passed
+npm test --workspace=@oday-plus/web            # full web suite 84/84 passed
 uv run pytest -q tests/contract/test_assisted_listing_operations.py \
   tests/contract/test_assisted_listing_promotion_api.py \
-  tests/contract/test_assisted_listing_openapi.py        # 36/36 passed
+  tests/contract/test_assisted_listing_openapi.py        # 57/57 passed
 uv run python scripts/build_validate_assisted_listing_intake_openapi.py # PASS
 uv run python scripts/openapi/check_drift.py             # PASS
 git diff --check origin/dev...HEAD             # clean
@@ -147,5 +165,5 @@ labeling, `gate_snapshot_sha256` format, commit-gated ID display, and that the
 decision lookup path never resends the review write.
 
 Transcripts: `verification-transcript.txt` (typecheck + focused + integration +
-full suite), `test-run-verbose.txt` (per-test listing, 30 passed across the
-promotion slice).
+full suite), `test-run-verbose.txt` (per-test listing for the original promotion
+slice).

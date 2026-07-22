@@ -704,6 +704,14 @@
         "responses": {
           "202": {
             "description": "Replay queued from a durable checkpoint",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -886,6 +894,31 @@
           }
         },
         "summary": "Request candidate-site promotion"
+      }
+    },
+    "/v1/intakes/{intake_id}/promotion-decision": {
+      "get": {
+        "tags": [
+          "Promotion"
+        ],
+        "operationId": "getIntakePromotionDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IntakeId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PromotionDecisionOk"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Get the latest intake promotion decision"
       }
     },
     "/v1/promotion-decisions/{promotion_decision_id}": {

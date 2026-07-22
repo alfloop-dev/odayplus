@@ -192,6 +192,13 @@ export const intakeApi = {
     return guardPromotion(() => client.getJobReceipt(jobId));
   },
 
+  getPromotionForIntake(
+    client: OdpApiClient,
+    intakeId: string,
+  ): Promise<IntakeResult<PromotionDecisionReceipt>> {
+    return guardPromotion(() => client.getIntakePromotionDecision(intakeId));
+  },
+
   /**
    * `idempotencyKey` is what makes a double-submit safe server-side; the UI
    * additionally disables the button while in flight, but the key is the

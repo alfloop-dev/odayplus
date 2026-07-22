@@ -15,8 +15,9 @@ import { AssistedIntakeSection } from "../AssistedIntakeSection";
 //
 //   1. POST /api/v1/intakes/{id}/promotion-requests   (explicit request)
 //   2. POST /api/v1/promotion-decisions/{id}/actions/review (second actor)
-//   3. GET  /api/v1/promotion-decisions/{id}          (lost-response lookup)
-//   4. POST /api/v1/jobs/{id}/retry                   (authorized replay)
+//   3. GET  /api/v1/intakes/{id}/promotion-decision   (durable reload)
+//   4. GET  /api/v1/promotion-decisions/{id}          (lost-response lookup)
+//   5. POST /api/v1/jobs/{id}/retry                   (authorized replay)
 //
 // Nothing here mocks the intake feature's own modules — the only test double
 // is the network boundary.
@@ -162,6 +163,8 @@ function buildFetchStub(record: AssistedIntake) {
   routes[`GET /api/v1/operator/network-listings/intake`] = () => json(inboxPage(record));
   routes[`GET /api/v1/operator/network-listings/intake/${INTAKE_ID}`] = () =>
     json({ ...record, version: record.version + 1 });
+  routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () =>
+    json({ code: "NOT_FOUND", detail: "promotion decision not found" }, 404);
   routes[`POST /api/v1/intakes/${INTAKE_ID}/promotion-requests`] = (req) => {
     proposerSubjectId = req.headers["x-subject-id"];
     return json(pendingReviewReceipt(proposerSubjectId), 202, {
@@ -264,6 +267,37 @@ afterEach(() => {
 });
 
 describe("promotion saga — live operator route integration", () => {
+  it("hydrates an existing promotion and authoritative job receipt after reload", async () => {
+    const record = readyIntake();
+    const { captured, routes, fetchStub } = buildFetchStub(record);
+    routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () =>
+      new Response(JSON.stringify(scoreFailedReceipt()), {
+        status: 200,
+        headers: { "content-type": "application/json", ETag: 'W/"6"' },
+      });
+    vi.stubGlobal("fetch", fetchStub);
+
+    render(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+    );
+    const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
+    fireEvent.click(row);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("promotion-status-badge").textContent).toContain("SCORE_FAILED");
+    });
+    expect(
+      requestsTo(captured, "GET", `/api/v1/intakes/${INTAKE_ID}/promotion-decision`),
+    ).toHaveLength(1);
+    expect(requestsTo(captured, "GET", `/api/v1/jobs/${SCORE_JOB_ID}/receipt`)).toHaveLength(1);
+    expect(screen.queryByTestId("promotion-request-form")).not.toBeInTheDocument();
+    expect(screen.getByTestId("promotion-candidate-id").textContent).toBe(CANDIDATE_ID);
+    expect(screen.getByTestId("sitescore-job-version").textContent).toContain("4");
+    expect(
+      requestsTo(captured, "POST", `/api/v1/intakes/${INTAKE_ID}/promotion-requests`),
+    ).toHaveLength(0);
+  });
+
   it("drives request → second-actor review → score replay through the generated client", async () => {
     const record = readyIntake();
     const { captured, fetchStub } = buildFetchStub(record);

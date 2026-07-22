@@ -734,6 +734,23 @@ else:
                 value.setdefault("proposer_subject_id", value.get("proposer"))
             return values
 
+        def get_promotion_for_intake(self, intake_id: str) -> dict[str, Any] | None:
+            values = [
+                value
+                for value in self.list_promotions()
+                if value.get("intake_id") == intake_id
+            ]
+            if not values:
+                return None
+            return max(
+                values,
+                key=lambda value: (
+                    str(value.get("created_at") or ""),
+                    int(value.get("version") or 0),
+                    str(value.get("promotion_decision_id") or ""),
+                ),
+            )
+
     class V1IntakeRepositoryAdapter:
         def __init__(self, active_store, app_state=None):
             self.active_store = active_store
@@ -1985,7 +2002,14 @@ else:
             operation_id="retryJob",
             status_code=202,
             response_model=JobReceipt,
-            responses=api_error_responses(403, 409, 422, 428),
+            responses={
+                202: {
+                    "model": JobReceipt,
+                    "description": "Replay queued from a durable checkpoint",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
         )
         def retry_job(
             job_id: UuidString,
@@ -2025,6 +2049,8 @@ else:
             if prior is not None:
                 val, code = prior
                 response.status_code = code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                response.headers["Idempotency-Replayed"] = "true"
                 return JobReceipt(**val)
 
             intake_id = job.get("intake_id")
@@ -2081,6 +2107,8 @@ else:
                 resource_id=job_id,
             )
             response.status_code = code
+            response.headers["ETag"] = f'W/"{val["version"]}"'
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             return JobReceipt(**val)
 
         @router.get(
@@ -2360,6 +2388,52 @@ else:
             )
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            response.headers["ETag"] = f'W/"{val["version"]}"'
+            return PromotionDecisionReceipt(**val)
+
+        @router.get(
+            "/intakes/{intake_id}/promotion-decision",
+            operation_id="getIntakePromotionDecision",
+            response_model=PromotionDecisionReceipt,
+            responses={
+                200: {
+                    "model": PromotionDecisionReceipt,
+                    "description": "Latest durable promotion decision for the intake",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 404),
+            },
+        )
+        def get_intake_promotion(
+            intake_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> PromotionDecisionReceipt:
+            intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
+            intake = intake_repository.get_listing_intake(intake_id)
+            if intake is None:
+                raise HTTPException(404, "intake not found")
+            intake_tenant = intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")
+            if intake_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            authorize_intake_action(
+                get_principal(request),
+                "view",
+                resource=intake_auth_resource(intake),
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
+            val = V1PromotionRepositoryAdapter(
+                active, request.app.state
+            ).get_promotion_for_intake(intake_id)
+            if val is None:
+                raise HTTPException(404, "promotion decision not found")
+            if val.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return PromotionDecisionReceipt(**val)
 

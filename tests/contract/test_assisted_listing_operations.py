@@ -287,6 +287,14 @@ NEGATIVE_OPERATION_CASES = [
         id="requestCandidatePromotion",
     ),
     pytest.param(
+        "getIntakePromotionDecision",
+        "GET",
+        "/api/v1/intakes/invalid-uuid/promotion-decision",
+        {"headers": HEADERS_A},
+        404,
+        id="getIntakePromotionDecision",
+    ),
+    pytest.param(
         "getPromotionDecision",
         "GET",
         "/api/v1/promotion-decisions/invalid-uuid",
@@ -788,7 +796,16 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert promo_receipt["status"] == "PENDING_REVIEW"
     promo_id = promo_receipt["promotion_decision_id"]
 
-    # 10. getPromotionDecision (GET /api/v1/promotion-decisions/{id})
+    # 10. getIntakePromotionDecision restores the durable saga after reload.
+    resp_get_intake_promo = client.get(
+        f"/api/v1/intakes/{intake_id}/promotion-decision",
+        headers=HEADERS_A,
+    )
+    assert resp_get_intake_promo.status_code == 200
+    assert resp_get_intake_promo.json()["promotion_decision_id"] == promo_id
+    assert "ETag" in resp_get_intake_promo.headers
+
+    # 11. getPromotionDecision (GET /api/v1/promotion-decisions/{id})
     resp_get_promo = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_A)
     assert resp_get_promo.status_code == 200
     assert resp_get_promo.json()["promotion_decision_id"] == promo_id
@@ -798,7 +815,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     resp_get_promo_b = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_B)
     assert resp_get_promo_b.status_code == 403
 
-    # 11. reviewPromotionDecision (POST /api/v1/promotion-decisions/{id}/actions/review)
+    # 12. reviewPromotionDecision (POST /api/v1/promotion-decisions/{id}/actions/review)
     review_promo_payload = {
         "decision": "APPROVE",
         "reason": "Reviewer approves promotion",
@@ -818,7 +835,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert resp_rev_promo.json()["candidate_site_id"] is not None
     assert resp_rev_promo.json()["site_score_job_id"] is not None
 
-    # 12. getJobReceipt returns the authoritative version/attempt/checkpoint.
+    # 13. getJobReceipt returns the authoritative version/attempt/checkpoint.
     job_id = resp_rev_promo.json()["site_score_job_id"]
     resp_get_job = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A_REVIEWER)
     assert resp_get_job.status_code == 200

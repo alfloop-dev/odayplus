@@ -37,6 +37,17 @@ actions:
             '429': {$ref: '#/components/responses/RateLimited'}
             '503': {$ref: '#/components/responses/Backpressure'}
 
+      /v1/intakes/{intake_id}/promotion-decision:
+        get:
+          tags: [Promotion]
+          operationId: getIntakePromotionDecision
+          parameters:
+            - $ref: '#/components/parameters/IntakeId'
+          responses:
+            '200': {$ref: '#/components/responses/PromotionDecisionOk'}
+            '403': {$ref: '#/components/responses/Forbidden'}
+            '404': {$ref: '#/components/responses/NotFound'}
+
       /v1/promotion-decisions/{promotion_decision_id}:
         get:
           tags: [Promotion]

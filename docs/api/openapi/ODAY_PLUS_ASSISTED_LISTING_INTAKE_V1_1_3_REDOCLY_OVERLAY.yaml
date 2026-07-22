@@ -69,6 +69,8 @@ actions:
         '422': {$ref: '#/components/responses/ValidationError'}
   - target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
     update: {summary: Request candidate-site promotion}
+  - target: $.paths['/v1/intakes/{intake_id}/promotion-decision'].get
+    update: {summary: Get the latest intake promotion decision}
   - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get
     update: {summary: Get a promotion decision}
   - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post

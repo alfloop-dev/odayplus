@@ -260,6 +260,19 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
     persisted = app.state.operator_intake_repository.intakes[intake["id"]]
     assert persisted["version"] == 2
 
+    hydrated = client.get(
+        f"/api/v1/intakes/{intake['id']}/promotion-decision",
+        headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+        },
+    )
+    assert hydrated.status_code == 200, hydrated.text
+    assert hydrated.json()["promotion_decision_id"] == decision["promotion_decision_id"]
+    assert hydrated.headers["etag"] == f'W/"{decision["version"]}"'
+
     reviewed = client.post(
         f"/api/v1/promotion-decisions/{decision['promotion_decision_id']}/actions/review",
         json={
@@ -295,22 +308,37 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
     # SCORE_FAILED UI replay would fail with DEPENDENCY_CONFLICT.
     store = next(store for store in reversed(AssistedIntakeStore._instances) if job_id in store.jobs)
     store.jobs[job_id]["status"] = "FAILED"
+    retry_key = f"operator-job-retry-{uuid4()}"
+    retry_body = {
+        "checkpoint": "SCORE_QUEUED",
+        "reason": "Retry authoritative SiteScore checkpoint",
+        "risk_acknowledged": True,
+    }
+    retry_headers = {
+        "x-subject-id": ACTOR_A_REVIEWER,
+        "x-tenant-id": OPERATOR_TENANT,
+        "x-roles": "site_reviewer,data_owner,expansion_user",
+        "x-operator-role": "expansion-manager",
+        "Idempotency-Key": retry_key,
+        "If-Match": 'W/"1"',
+    }
     retried = client.post(
         f"/api/v1/jobs/{job_id}/retry",
-        json={
-            "checkpoint": "SCORE_QUEUED",
-            "reason": "Retry authoritative SiteScore checkpoint",
-            "risk_acknowledged": True,
-        },
-        headers={
-            "x-subject-id": ACTOR_A_REVIEWER,
-            "x-tenant-id": OPERATOR_TENANT,
-            "x-roles": "site_reviewer,data_owner,expansion_user",
-            "x-operator-role": "expansion-manager",
-            "Idempotency-Key": f"operator-job-retry-{uuid4()}",
-            "If-Match": 'W/"1"',
-        },
+        json=retry_body,
+        headers=retry_headers,
     )
     assert retried.status_code == 202, retried.text
     assert retried.json()["status"] == "QUEUED"
     assert retried.json()["version"] == 2
+    assert retried.headers["idempotency-replayed"] == "false"
+    assert retried.headers["etag"] == 'W/"2"'
+
+    replayed = client.post(
+        f"/api/v1/jobs/{job_id}/retry",
+        json=retry_body,
+        headers=retry_headers,
+    )
+    assert replayed.status_code == 202, replayed.text
+    assert replayed.json() == retried.json()
+    assert replayed.headers["idempotency-replayed"] == "true"
+    assert replayed.headers["etag"] == 'W/"2"'

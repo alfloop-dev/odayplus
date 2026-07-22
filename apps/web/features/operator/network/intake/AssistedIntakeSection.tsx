@@ -96,6 +96,10 @@ export function AssistedIntakeSection({
   const [promotionError, setPromotionError] = useState<IntakeApiError | null>(null);
   const [promotionReplayed, setPromotionReplayed] = useState(false);
   const [gateSnapshots, setGateSnapshots] = useState<Record<string, string>>({});
+  const [promotionHydration, setPromotionHydration] = useState<{
+    intakeId: string | null;
+    state: "idle" | "loading" | "ready";
+  }>({ intakeId: null, state: "idle" });
 
   const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
     const nextState = {
@@ -182,6 +186,43 @@ export function AssistedIntakeSection({
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
+
+  // Restore the durable promotion saga whenever a deep link or reloaded inbox
+  // opens an intake. Until this lookup finishes the request form stays closed,
+  // preventing a stale page from offering a second promotion request.
+  useEffect(() => {
+    if (!client || !selected?.id) {
+      setPromotionHydration({ intakeId: null, state: "idle" });
+      return undefined;
+    }
+    const intakeId = selected.id;
+    let cancelled = false;
+    setPromotionHydration({ intakeId, state: "loading" });
+
+    void (async () => {
+      const result = await intakeApi.getPromotionForIntake(client, intakeId);
+      if (cancelled) return;
+      if (result.ok) {
+        setPromotionReceipts((current) => ({ ...current, [intakeId]: result.value }));
+        if (result.value.site_score_job_id) {
+          const jobResult = await intakeApi.getScoreJob(client, result.value.site_score_job_id);
+          if (cancelled) return;
+          if (jobResult.ok) {
+            setScoreJobs((current) => ({ ...current, [intakeId]: jobResult.value }));
+          } else {
+            setPromotionError(jobResult.error);
+          }
+        }
+      } else if (result.error.status !== 404) {
+        setPromotionError(result.error);
+      }
+      if (!cancelled) setPromotionHydration({ intakeId, state: "ready" });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, selected?.id]);
 
   // Bind the request to the exact version and gate facts displayed by this UI.
   // The backend retains this digest for lineage; it remains responsible for
@@ -815,8 +856,20 @@ export function AssistedIntakeSection({
   // The promotion section renders on the READY branch of the real detail
   // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
   // every later saga state so the receipt and score job remain reachable.
-  const promotionSection =
-    selected && (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
+  const promotionIsHydrating =
+    selected &&
+    promotionHydration.intakeId === selected.id &&
+    promotionHydration.state === "loading";
+  const promotionIsHydrated =
+    selected &&
+    promotionHydration.intakeId === selected.id &&
+    promotionHydration.state === "ready";
+  const promotionSection = promotionIsHydrating ? (
+    <div aria-live="polite" className={styles.noteBox} data-testid="promotion-hydration-status" role="status">
+      正在載入既有晉升決策與工作收據…
+    </div>
+  ) : selected && promotionIsHydrated &&
+    (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
       <PromotionReviewPanel
         busy={promotionBusy}
         canReplayScore={canPromote}
