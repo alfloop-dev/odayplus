@@ -161,6 +161,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.AUDITOR: frozenset(
         _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW)
         | _grant("audit", Action.VIEW, Action.EXPORT)
         | _grant("model", Action.VIEW)
         | _grant("decision", Action.VIEW)

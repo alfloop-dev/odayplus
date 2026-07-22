@@ -25,6 +25,12 @@ OPS_HEADERS = {
     "X-Tenant-Id": "tenant-a",
     "X-Operator-Role": "ops-lead",
 }
+CS_HEADERS = {
+    "X-Subject-Id": "operator-cs-lead",
+    "X-Roles": "operations_manager",
+    "X-Tenant-Id": "tenant-a",
+    "X-Operator-Role": "cs-lead",
+}
 AUDITOR_HEADERS = {
     "X-Subject-Id": "operator-pm-audit",
     "X-Roles": "auditor",
@@ -75,6 +81,13 @@ def _security_denials(audit_log: InMemoryAuditLog) -> list:
         for event in audit_log.list_events()
         if event.event_type == SECURITY_EVENT_TYPE and event.outcome == "deny"
     ]
+
+
+def test_operations_manager_can_select_narrow_cs_lead_persona() -> None:
+    response = _client().get("/api/v1/operator/bootstrap", headers=CS_HEADERS)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["meta"]["role"]["id"] == "cs-lead"
 
 
 @pytest.mark.parametrize("path", READ_PATHS)

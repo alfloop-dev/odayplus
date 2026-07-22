@@ -8,12 +8,9 @@
 //   2. NetworkListingService's per-action actorRoleId allowlists.
 //
 // A call must clear BOTH. Of the console's roles, operatorSecurityHeaders()
-// maps only `expansion-manager` onto an API role (expansion_user) that holds
-// any `listing` grant at all — operations_manager, regional_supervisor,
-// marketing_manager and auditor hold none, not even VIEW. So every other role
-// is permission-limited/read-only here, and the queue must not even attempt a
-// read for them (a guaranteed 403 is not a load error, it is a permission
-// state, and §7 requires that state to be designed).
+// maps `expansion-manager` to an API role with listing mutation grants and
+// `pm-audit` to the governance/auditor read-only grant. Every other console
+// role has no listing grant, so the queue must not attempt a guaranteed 403.
 //
 // These guards are presentation only and are deliberately no MORE permissive
 // than the server's; the server re-checks every read and write.
@@ -33,7 +30,7 @@ export type IntakeAction = "view" | "submit" | "correct" | "decide" | "retry" | 
  * with listing:UPDATE is added later, only this table needs to change.
  */
 const ALLOWED: Record<IntakeAction, readonly OperatorRoleId[]> = {
-  view: ["expansion-manager"],
+  view: ["expansion-manager", "pm-audit"],
   // submit/retry have no service-side allowlist — the listing:UPDATE HTTP
   // guard is their only gate.
   submit: ["expansion-manager"],

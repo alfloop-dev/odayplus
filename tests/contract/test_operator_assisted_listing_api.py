@@ -250,6 +250,61 @@ def test_ambiguous_entity_match_review_test() -> None:
     assert corrected_data["matchResult"]["outcome"] == "NEW"
 
 
+def test_created_listing_keeps_address_and_heat_zone_for_v1_promotion_gate() -> None:
+    app = create_app()
+    client = TestClient(app)
+    submitted = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={
+            "url": "https://www.synthetic.example/detail-99310418.html",
+            "heatZoneId": "HZ-02",
+        },
+        headers=_write_headers("promotion-gate-submit"),
+    )
+    assert submitted.status_code == 200
+
+    intake = submitted.json()
+    decided = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake['id']}/decide",
+        json={
+            "action": "create",
+            "reason": "來源與樓層證據顯示為獨立物件",
+            "riskSummary": "建立新物件後將可另行提出 Candidate 晉升。",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansion-manager",
+        },
+        headers=_write_headers("promotion-gate-decide"),
+    )
+    assert decided.status_code == 200
+    listing_id = decided.json()["matchResult"]["targetListingId"]
+
+    repository = app.state.listing_repository
+    listing = repository.get_listing(listing_id)
+    assert listing is not None
+    assert listing.address_id == f"ADDR-{listing_id}"
+    address = next(item for item in repository.addresses if item.address_id == listing.address_id)
+    assert address.normalized_address
+    assert address.h3_res_9 == "HZ-02"
+
+    promotion = client.post(
+        f"/api/v1/intakes/{intake['id']}/promotion-requests",
+        json={
+            "target_format_code": "FMT-STANDARD-STORE",
+            "reason": "商圈缺口與物件資料均已覆核，提出 Candidate 晉升申請。",
+            "gate_snapshot_sha256": "a" * 64,
+            "risk_acknowledged": True,
+        },
+        headers={
+            **HEADERS,
+            "X-Correlation-Id": "corr-promotion-gate-request",
+            "Idempotency-Key": "promotion-gate-request-001",
+            "If-Match": f'W/"{decided.json()["version"]}"',
+        },
+    )
+    assert promotion.status_code == 202
+    assert promotion.json()["status"] == "PENDING_REVIEW"
+
+
 def test_malformed_payload_contract_test() -> None:
     app = create_app()
     client = TestClient(app)

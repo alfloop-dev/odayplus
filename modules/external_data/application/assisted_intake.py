@@ -381,6 +381,7 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
             "floor": "2F",
             "listing_type": "店面",
             "listing_status": "active",
+            "contact_phone": "02-5550-1842",
             "confidence": 0.71,
         },
     ),
@@ -638,6 +639,13 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
             normalized_value=str(raw.get("listing_status", "")).strip(),
         ),
     }
+    if raw.get("contact_phone") is not None:
+        fields["contactPhone"] = _field(
+            key="contactPhone",
+            label="聯絡電話",
+            source_value=str(raw.get("contact_phone", "")),
+            normalized_value=str(raw.get("contact_phone", "")).strip(),
+        )
     return fields
 
 

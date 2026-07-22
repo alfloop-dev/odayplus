@@ -16,7 +16,7 @@ const expectedWorkspaces: Record<string, string[]> = {
   "field-lead": ["today", "store"],
   "marketing-manager": ["today", "growth", "govern"],
   "ops-lead": ["today", "store", "growth", "network", "govern"],
-  "pm-audit": ["today", "store", "govern"],
+  "pm-audit": ["today", "store", "network", "govern"],
 };
 
 test.describe.configure({ mode: "serial" });
@@ -105,7 +105,7 @@ function systemRoleFor(roleId: string) {
     case "marketing-manager":
       return "marketing_manager";
     case "expansion-manager":
-      return "expansion_user";
+      return "expansion_user,site_reviewer";
     case "pm-audit":
       return "auditor";
     default:
