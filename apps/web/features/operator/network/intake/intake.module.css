@@ -929,3 +929,186 @@
     max-height: 96vh;
   }
 }
+
+.intakeMapLayout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 22rem);
+  margin-top: 0.75rem;
+}
+
+.intakeMapCanvas {
+  background: #eef2f6;
+  border: 1px solid #cbd5e1;
+  height: min(62vh, 36rem);
+  min-height: 22rem;
+  position: relative;
+  width: 100%;
+}
+
+.intakeMapCanvas :global(.maplibregl-map),
+.intakeMapCanvas :global(.maplibregl-canvas) {
+  height: 100%;
+  width: 100%;
+}
+
+.intakeMapMarker {
+  align-items: center;
+  background: #0f766e;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgb(15 23 42 / 35%);
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 1rem;
+  font-weight: 700;
+  height: 1.75rem;
+  justify-content: center;
+  text-decoration: none;
+  width: 1.75rem;
+}
+
+.intakeMapMarker:focus-visible {
+  outline: 3px solid #0f172a;
+  outline-offset: 2px;
+}
+
+.intakeUnlocated {
+  border-left: 1px solid #cbd5e1;
+  min-width: 0;
+  padding-left: 1rem;
+}
+
+.intakeUnlocated ul {
+  display: grid;
+  gap: 0.65rem;
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.intakeUnlocated li {
+  border-bottom: 1px solid #e2e8f0;
+  display: grid;
+  gap: 0.2rem;
+  padding-bottom: 0.65rem;
+}
+
+.intakeUnlocated span {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.intakeTableWrap {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.intakeTable {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  min-width: 112rem;
+  width: 100%;
+}
+
+.intakeTable caption {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+.intakeTable th,
+.intakeTable td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.55rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.intakeTable th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 650;
+  position: sticky;
+  top: 0;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.intakeTable tbody tr[data-selected="true"] {
+  background: #ecfeff;
+}
+
+.intakeTable tbody tr:focus-within {
+  outline: 2px solid #0f766e;
+  outline-offset: -2px;
+}
+
+.intakeTableSort {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.intakeTableActions {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-width: 15rem;
+}
+
+.intakeFilterGrid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(10rem, 1fr));
+}
+
+.intakeFilterAdvanced {
+  border: 1px solid #cbd5e1;
+  margin-top: 0.5rem;
+  padding: 0.65rem;
+}
+
+.intakeFilterAdvanced summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.intakeActionReceipt {
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+  color: #14532d;
+  display: grid;
+  gap: 0.2rem;
+  margin: 0.5rem 0;
+  padding: 0.65rem;
+}
+
+@media (max-width: 960px) {
+  .intakeFilterGrid {
+    grid-template-columns: repeat(2, minmax(10rem, 1fr));
+  }
+
+  .intakeMapLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .intakeUnlocated {
+    border-left: 0;
+    border-top: 1px solid #cbd5e1;
+    padding-left: 0;
+    padding-top: 1rem;
+  }
+}
+
+@media (max-width: 560px) {
+  .intakeFilterGrid {
+    grid-template-columns: 1fr;
+  }
+}
