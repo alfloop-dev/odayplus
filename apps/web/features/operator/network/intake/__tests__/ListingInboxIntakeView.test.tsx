@@ -92,6 +92,25 @@ const mockRecords: AssistedIntake[] = [
   }),
 ];
 
+const managerPermissionContext = {
+  resourceInScope: true,
+  isOwner: true,
+  isAssigned: true,
+  sourceInScope: true,
+  purposeDeclared: true,
+  fieldClassification: "INTERNAL" as const,
+  workflowState: "NEEDS_REVIEW",
+};
+
+const managerPermissionProps = {
+  permissionContext: managerPermissionContext,
+  submitPermissionContext: managerPermissionContext,
+  permissionContextForRecord: (record: AssistedIntake) => ({
+    ...managerPermissionContext,
+    workflowState: record.stage,
+  }),
+};
+
 describe("ListingInboxIntakeView", () => {
   const mockOnAddSubmit = vi.fn().mockResolvedValue(undefined);
   const mockOnOpenDetail = vi.fn();
@@ -107,6 +126,7 @@ describe("ListingInboxIntakeView", () => {
   it("renders header, saved view tabs, and data table rows", () => {
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -130,6 +150,7 @@ describe("ListingInboxIntakeView", () => {
     const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -150,6 +171,7 @@ describe("ListingInboxIntakeView", () => {
     const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -169,6 +191,7 @@ describe("ListingInboxIntakeView", () => {
   it("toggles between list mode and map mode", () => {
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -195,6 +218,7 @@ describe("ListingInboxIntakeView", () => {
     const onQueryChange = vi.fn();
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -218,6 +242,7 @@ describe("ListingInboxIntakeView", () => {
   it("triggers detail modal on row action button click", () => {
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -242,6 +267,7 @@ describe("ListingInboxIntakeView", () => {
     });
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
@@ -262,6 +288,7 @@ describe("ListingInboxIntakeView", () => {
   it("renders permission denied note for unauthorized role", () => {
     render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="ops-lead"
         busy={false}
         loadState="ready"
@@ -278,6 +305,7 @@ describe("ListingInboxIntakeView", () => {
   it("renders loading and error states correctly", () => {
     const { rerender } = render(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="loading"
@@ -291,6 +319,7 @@ describe("ListingInboxIntakeView", () => {
 
     rerender(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadError={{

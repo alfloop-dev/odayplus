@@ -32,6 +32,7 @@ export function IntakeDetailDialog({
   canCorrect,
   canDecide,
   canRetry,
+  permissionDenials,
   error,
   onAssistedEntrySave,
   onClose,
@@ -51,6 +52,11 @@ export function IntakeDetailDialog({
   canCorrect: boolean;
   canDecide: boolean;
   canRetry: boolean;
+  permissionDenials?: {
+    correct?: string | null;
+    decide?: string | null;
+    retry?: string | null;
+  };
   error: IntakeApiError | null;
   onAssistedEntrySave: (input: {
     fields: Record<string, string>;
@@ -356,6 +362,9 @@ export function IntakeDetailDialog({
             {!canDecide ? (
               <div className={styles.warnNote} data-testid="intake-decide-denied">
                 {ACTION_DENIED_NOTE.decide}
+                {permissionDenials?.decide ? (
+                  <> 後端拒絕代碼：<code>{permissionDenials.decide}</code></>
+                ) : null}
               </div>
             ) : null}
             <div className={styles.actionRow} data-testid="intake-decision-actions">
@@ -568,7 +577,7 @@ function FieldRow({
             data-testid={`intake-fix-${field.key}`}
             disabled={!canCorrect || masked}
             onClick={() => onOpenFix(field.key)}
-            title={masked ? "此欄位已依資料分級遮罩，無法在目前權限下修正。" : canCorrect ? undefined : ACTION_DENIED_NOTE.correct}
+                  title={masked ? "此欄位已依資料分級遮罩，無法在目前權限下修正。" : canCorrect ? undefined : ACTION_DENIED_NOTE.correct}
             type="button"
           >
             修正

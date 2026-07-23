@@ -8,7 +8,7 @@ import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import { AccessibleDrawer } from "./AccessibleDrawer.tsx";
 import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
 import { AssistedIntakeSection } from "../operator/network/intake/AssistedIntakeSection.tsx";
-import type { OperatorRoleId } from "../operator/navigation.ts";
+import type { IntakeOperatorSession } from "../operator/network/intake/intakeOperatorSession.ts";
 import {
   candidates,
   decisionTone,
@@ -32,6 +32,7 @@ type ExpansionWorkspaceProps = {
   reportId?: string;
   searchParams?: SearchParams;
   liveFreshness?: FreshnessBinding;
+  operatorSession?: IntakeOperatorSession;
 };
 
 /**
@@ -65,9 +66,12 @@ export function ExpansionWorkspace({
   reportId,
   searchParams = {},
   liveFreshness,
+  operatorSession,
 }: ExpansionWorkspaceProps) {
   if (view === "heatzone") return <HeatZonePage searchParams={searchParams} />;
-  if (view === "listings") return <ListingsPage searchParams={searchParams} />;
+  if (view === "listings") {
+    return <ListingsPage operatorSession={operatorSession} searchParams={searchParams} />;
+  }
   if (view === "candidates") return <CandidatesPage searchParams={searchParams} />;
   if (view === "sitescore") return <SiteScoreListPage searchParams={searchParams} />;
   if (view === "sitescoreDetail") return <SiteScoreDetailPage reportId={reportId} />;
@@ -357,13 +361,15 @@ function HeatZoneScoreCard({ zone }: { zone: (typeof heatZones)[number] }) {
   );
 }
 
-function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
+function ListingsPage({
+  searchParams,
+  operatorSession,
+}: {
+  searchParams: SearchParams;
+  operatorSession?: IntakeOperatorSession;
+}) {
   const selected = selectedFromQuery(searchParams.selected) ?? listings[0].id;
   const listing = listings.find((item) => item.id === selected) ?? listings[0];
-  const requestedRole = selectedFromQuery(searchParams.role);
-  const activeRoleId: OperatorRoleId = isOperatorRoleId(requestedRole)
-    ? requestedRole
-    : "expansion-manager";
   const selectedHeatZoneId = selectedFromQuery(searchParams.heatZone);
   return (
     <>
@@ -375,7 +381,7 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       <section aria-label="Listing inbox workspace" className="odp-content" data-testid="exp-listings-page">
         <WorkspaceNav active="listings" />
         <AssistedIntakeSection
-          activeRoleId={activeRoleId}
+          operatorSession={operatorSession}
           selectedHeatZoneId={selectedHeatZoneId}
         />
         <ImportSummary />
@@ -419,22 +425,6 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       </section>
     </>
   );
-}
-
-function isOperatorRoleId(value: string | undefined): value is OperatorRoleId {
-  return value !== undefined && [
-    "expansion-staff",
-    "expansion-manager",
-    "data-steward",
-    "governance-reviewer",
-    "privacy-officer",
-    "permission-limited",
-    "ops-lead",
-    "cs-lead",
-    "field-lead",
-    "marketing-manager",
-    "pm-audit",
-  ].includes(value);
 }
 
 function CandidatesPage({ searchParams }: { searchParams: SearchParams }) {

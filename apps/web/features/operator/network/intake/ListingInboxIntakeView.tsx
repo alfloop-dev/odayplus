@@ -14,7 +14,13 @@ import {
   stageLabel,
   stageTone,
 } from "./intakeTypes";
-import { canPerform, canView, isReadOnly, NO_ACCESS_NOTE, READ_ONLY_NOTE } from "./intakePermissions";
+import {
+  evaluateIntakePermission,
+  isReadOnly,
+  NO_ACCESS_NOTE,
+  READ_ONLY_NOTE,
+  type IntakePermissionContext,
+} from "./intakePermissions";
 import { type IntakeApiError } from "./intakeClient";
 import { useIntakeInboxQuery, type SavedViewType } from "./useIntakeInboxQuery";
 
@@ -32,6 +38,9 @@ export function ListingInboxIntakeView({
   onRetryIntake,
   pageData,
   onQueryChange,
+  permissionContext,
+  submitPermissionContext,
+  permissionContextForRecord,
 }: {
   activeRoleId: OperatorRoleId;
   records: AssistedIntake[];
@@ -46,15 +55,23 @@ export function ListingInboxIntakeView({
   onRetryIntake?: (intakeId: string) => void;
   pageData?: IntakeInboxPage;
   onQueryChange?: (query: IntakeInboxQuery) => void;
+  permissionContext: IntakePermissionContext;
+  submitPermissionContext: IntakePermissionContext;
+  permissionContextForRecord: (record: AssistedIntake) => IntakePermissionContext;
 }) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
   const role = getOperatorRole(activeRoleId);
   const submitterLabel = `${role.label}`;
   const readOnly = isReadOnly(activeRoleId);
-  const permitted = canView(activeRoleId);
-  const canSubmit = canPerform("submit", activeRoleId);
-  const canRetry = canPerform("retry", activeRoleId);
+  const viewDecision = evaluateIntakePermission("view", activeRoleId, permissionContext);
+  const submitDecision = evaluateIntakePermission(
+    "submit",
+    activeRoleId,
+    submitPermissionContext,
+  );
+  const permitted = viewDecision.allowed;
+  const canSubmit = submitDecision.allowed;
 
   const {
     filters,
@@ -98,6 +115,12 @@ export function ListingInboxIntakeView({
           {READ_ONLY_NOTE}
         </div>
       ) : null}
+      {permissionContext.maskingReasonCode ? (
+        <div className={styles.warnNote} data-testid="intake-masking-reason" role="status">
+          部分欄位依 authoritative field policy 遮罩。後端遮罩代碼：
+          <code>{permissionContext.maskingReasonCode}</code>
+        </div>
+      ) : null}
 
       {/* Header & Primary Actions */}
       <div className={styles.queueHeader}>
@@ -130,18 +153,29 @@ export function ListingInboxIntakeView({
             </button>
           </div>
 
-          {canSubmit ? (
-            <button
-              className={styles.addButton}
-              data-testid="intake-add-button"
-              onClick={() => setIsAddDialogOpen(true)}
-              type="button"
-            >
-              ＋ 從網址新增物件
-            </button>
-          ) : null}
+          <button
+            aria-describedby={!canSubmit ? "intake-submit-denial" : undefined}
+            className={styles.addButton}
+            data-testid="intake-add-button"
+            disabled={!canSubmit}
+            onClick={() => setIsAddDialogOpen(true)}
+            type="button"
+          >
+            ＋ 從網址新增物件
+          </button>
         </div>
       </div>
+      {!canSubmit && submitDecision.reasonCode ? (
+        <div
+          className={styles.warnNote}
+          data-testid="intake-submit-denial"
+          id="intake-submit-denial"
+          role="status"
+        >
+          新增收件已停用。後端拒絕代碼：
+          <code>{submitDecision.reasonCode}</code>
+        </div>
+      ) : null}
 
       {/* Saved View Tabs */}
       <div style={{ display: "flex", gap: "0.5rem", margin: "0.5rem 0", flexWrap: "wrap" }}>
@@ -322,6 +356,11 @@ export function ListingInboxIntakeView({
             {paginatedRecords.map((record) => {
               const outcome = record.matchResult?.outcome;
               const isSelected = record.id === filters.selectedIntakeId;
+              const retryDecision = evaluateIntakePermission(
+                "retry",
+                activeRoleId,
+                permissionContextForRecord(record),
+              );
 
               return (
                 <div
@@ -367,12 +406,27 @@ export function ListingInboxIntakeView({
                     {record.rawSnapshot ? "證據已擷取" : "證據待補"} · {record.stage === "QUARANTINED" ? "已隔離" : record.failure ? (record.failure.retryable ? "可重試" : "不可重試") : "未隔離"}
                   </span>
                   <button
+                    aria-describedby={
+                      record.stage === "FAILED" &&
+                      record.failure?.retryable &&
+                      !retryDecision.allowed
+                        ? `intake-row-denial-${record.id}`
+                        : undefined
+                    }
                     className={styles.primaryButton}
                     data-testid={`intake-row-action-${record.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (record.stage === "FAILED" && record.failure?.retryable && canRetry && onRetryIntake) onRetryIntake(record.id);
-                      else onOpenDetail(record.id);
+                      if (
+                        record.stage === "FAILED" &&
+                        record.failure?.retryable &&
+                        retryDecision.allowed &&
+                        onRetryIntake
+                      ) {
+                        onRetryIntake(record.id);
+                      } else {
+                        onOpenDetail(record.id);
+                      }
                     }}
                     type="button"
                     style={{ fontSize: "0.8rem", padding: "0.2rem 0.5rem" }}
@@ -389,6 +443,18 @@ export function ListingInboxIntakeView({
                               ? "要求補正"
                               : rowActionLabel(record)} →
                   </button>
+                  {record.stage === "FAILED" &&
+                  record.failure?.retryable &&
+                  !retryDecision.allowed &&
+                  retryDecision.reasonCode ? (
+                    <span
+                      className={styles.rowMeta}
+                      data-testid={`intake-row-denial-${record.id}`}
+                      id={`intake-row-denial-${record.id}`}
+                    >
+                      <code>{retryDecision.reasonCode}</code>
+                    </span>
+                  ) : null}
                 </div>
               );
             })}

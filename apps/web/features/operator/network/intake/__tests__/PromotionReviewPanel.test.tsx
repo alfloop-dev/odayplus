@@ -186,6 +186,7 @@ const ALL_PROMOTION_STATUSES: PromotionStatus[] = [
 function renderPanel(props: Partial<React.ComponentProps<typeof PromotionReviewPanel>> = {}) {
   return render(
     <PromotionReviewPanel
+      canExecute
       currentOperator={manager}
       gateSnapshotSha256={GATE_SHA}
       record={readyRecord}
@@ -421,6 +422,30 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     );
     expect(screen.queryByTestId("promotion-review-section")).toBeNull();
     expect(screen.queryByTestId("promotion-approve-btn")).toBeNull();
+  });
+
+  it("separates review permission from Candidate execution permission", () => {
+    renderPanel({
+      promotion: promo("PENDING_REVIEW"),
+      proposerId: "OP-100",
+      canReview: true,
+      canExecute: false,
+      executeDeniedReason: "EXECUTION_SCOPE_DENIED",
+    });
+
+    fireEvent.change(screen.getByTestId("promotion-review-reason"), {
+      target: { value: "證據不足，駁回本次申請。" },
+    });
+    fireEvent.click(screen.getByTestId("promotion-review-ack"));
+    expect(
+      (screen.getByTestId("promotion-reject-btn") as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByTestId("promotion-approve-btn") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      screen.getByTestId("promotion-execute-denied").textContent,
+    ).toContain("EXECUTION_SCOPE_DENIED");
   });
 });
 

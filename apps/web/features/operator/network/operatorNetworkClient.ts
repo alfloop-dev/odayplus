@@ -23,6 +23,7 @@ import {
   type OdpApiClient,
 } from "@oday-plus/openapi-client";
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
+import type { OperatorSecurityContext } from "../operatorSecurityHeaders";
 
 /**
  * Structured, renderable failure. `summary` is the server's own operator-facing
@@ -58,7 +59,19 @@ export type StatusErrorSpec = { code: string; next: string; retryable: boolean }
 export function buildOperatorNetworkClient(
   roleId?: string | null,
   subjectId?: string | null,
+  securityContext: OperatorSecurityContext = {},
 ): OdpApiClient | null {
+  if (
+    securityContext.authoritative &&
+    (
+      !roleId?.trim() ||
+      !subjectId?.trim() ||
+      !securityContext.tenantId?.trim() ||
+      !securityContext.systemRoles?.length
+    )
+  ) {
+    return null;
+  }
   const configured = process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
   const baseUrl =
     configured || (typeof window !== "undefined" ? window.location.origin : undefined);
@@ -66,7 +79,7 @@ export function buildOperatorNetworkClient(
 
   return createOdpApiClient({
     baseUrl,
-    defaultHeaders: operatorSecurityHeaders(roleId, subjectId),
+    defaultHeaders: operatorSecurityHeaders(roleId, subjectId, securityContext),
   });
 }
 
