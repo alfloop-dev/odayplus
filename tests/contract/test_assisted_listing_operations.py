@@ -5,7 +5,8 @@ import hashlib
 import hmac
 import json
 import re
-from uuid import uuid4
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,10 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
+from modules.external_data.application.assisted_intake import RetrievalResult
+from modules.opsboard.application.network_listings import NetworkListingService
 from scripts.generate_assisted_listing_intake_client import ARTIFACT
+from shared.jobs.queue import JobStatus
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -127,12 +131,64 @@ def client() -> TestClient:
     return ContractTestClient(app)
 
 
-def _store_with_intake(intake_id: str) -> AssistedIntakeStore:
+def _runtime_intake(client: TestClient, intake_id: str) -> dict:
+    repository = client.app.state.operator_intake_repository
     return next(
-        store
-        for store in reversed(AssistedIntakeStore._instances)
-        if intake_id in store.intakes
+        intake
+        for intake in repository.list_intakes()
+        if intake["id"] == intake_id
     )
+
+
+def _save_runtime_intake(client: TestClient, intake: dict) -> None:
+    client.app.state.operator_intake_repository.save_intake(intake)
+
+
+def _force_failed_job(
+    client: TestClient,
+    *,
+    intake_id: str,
+    job_id: str,
+    checkpoint: str,
+) -> int:
+    runtime = _runtime_intake(client, intake_id)
+    runtime["stage"] = "FAILED"
+    runtime["failure"] = {
+        "code": "TEST_TRANSIENT_FAILURE",
+        "summary": "Synthetic contract-test failure.",
+        "nextAction": f"Retry from {checkpoint}.",
+        "retryable": True,
+    }
+    transition = {
+        "transitionId": str(uuid4()),
+        "fromStage": runtime["processingHistory"][-1]["toStage"],
+        "toStage": "FAILED",
+        "occurredAt": runtime["processingHistory"][-1]["occurredAt"],
+        "actor": ACTOR_A,
+        "checkpoint": checkpoint,
+        "attempt": 1,
+        "timeoutSeconds": 300,
+        "failure": runtime["failure"],
+        "reasonCode": runtime["failure"]["code"],
+        "versionAfter": int(runtime["version"]) + 1,
+    }
+    runtime["processingHistory"].append(transition)
+    runtime["version"] = transition["versionAfter"]
+    _save_runtime_intake(client, runtime)
+
+    queue = client.app.state.job_queue
+    queued = queue.get(job_id)
+    assert queued is not None
+    queue._jobs[job_id] = replace(
+        queued,
+        status=JobStatus.FAILED,
+        payload={
+            **queued.payload,
+            "checkpoint": checkpoint,
+            "current_stage": checkpoint,
+        },
+    )
+    return queue.get(job_id).version
 
 
 MUTATION_VALIDATION_HEADERS = {
@@ -551,8 +607,10 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert assign_receipt["owner_subject_id"] == OWNER_STEWARD
     new_version = assign_receipt["version"]
 
-    store = _store_with_intake(intake_id)
-    store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
+    runtime = _runtime_intake(client, intake_id)
+    runtime["stage"] = "NEEDS_REVIEW"
+    _save_runtime_intake(client, runtime)
+    new_version = runtime["version"]
 
     # 5. proposeCorrection (POST /api/v1/intakes/{id}/corrections)
     correct_payload = {
@@ -574,10 +632,8 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     correct_receipt = resp_correct.json()
     assert correct_receipt["status"] == "PENDING_REVIEW"
     assert correct_receipt["intake_id"] == intake_id
-    assert not any(
-        field.get("field_path") == "rent_amount"
-        for field in store.intakes[intake_id]["fields"]
-    )
+    persisted_after_proposal = _runtime_intake(client, intake_id)
+    assert "rent_amount" not in persisted_after_proposal["parsedFields"]
 
     self_review = client.post(
         f"/api/v1/identity-decisions/{correct_receipt['correction_id']}/actions/review",
@@ -609,16 +665,13 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         },
     )
     assert correction_review.status_code == 200
-    assert correction_review.json()["status"] == "APPROVED"
+    assert correction_review.json()["status"] == "EXECUTED"
     assert "ETag" in correction_review.headers
-    assert any(
-        field.get("field_path") == "rent_amount"
-        and field.get("corrected") == 1500.0
-        for field in store.intakes[intake_id]["fields"]
-    )
-    version_after_correct = store.intakes[intake_id]["version"]
-
-    store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
+    runtime = _runtime_intake(client, intake_id)
+    assert runtime["parsedFields"]["rent"]["correctedValue"] == 1500.0
+    version_after_correct = runtime["version"]
+    runtime["stage"] = "NEEDS_REVIEW"
+    _save_runtime_intake(client, runtime)
 
     # 6. quarantineIntake (POST /api/v1/intakes/{id}/actions/quarantine)
     quarantine_payload = {"reason": "Quarantine due to active incident triage", "risk_acknowledged": True, "incident_or_change_id": "INC-101"}
@@ -679,7 +732,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert resp_reopen.status_code == 200
     reopen_receipt = resp_reopen.json()
     assert reopen_receipt["from_state"] == "QUARANTINED"
-    assert reopen_receipt["to_state"] == "CHECKING_SOURCE_POLICY"
+    assert reopen_receipt["to_state"] == "NEEDS_REVIEW"
     version_after_reopen = reopen_receipt["version_after"]
 
     # 8. cancelIntake on a separate SUBMITTED intake.
@@ -717,14 +770,16 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert cancelled_quarantine.status_code == 409
     assert cancelled_quarantine.json()["code"] == "WORKFLOW_STATE_DENIED"
 
-    # Transition the intake state to READY in store to satisfy the promotion prerequisite
-    store.intakes[intake_id]["state"] = "READY"
+    # Transition the authoritative intake to READY and bind a real Listing.
+    runtime = _runtime_intake(client, intake_id)
+    runtime["stage"] = "READY"
     target_listing_id = str(uuid4())
-    store.intakes[intake_id]["matchResult"] = {
+    runtime["matchResult"] = {
         "targetListingId": target_listing_id,
         "confidence": 0.95,
         "contradictorySignals": [],
     }
+    _save_runtime_intake(client, runtime)
 
     repository = getattr(client.app.state, "listing_repository", None)
     if repository is None:
@@ -830,8 +885,8 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "If-Match": f'W/"{promo_receipt["version"]}"'
         }
     )
-    assert resp_rev_promo.status_code == 200
-    assert resp_rev_promo.json()["status"] == "COMPLETED"
+    assert resp_rev_promo.status_code == 200, resp_rev_promo.text
+    assert resp_rev_promo.json()["status"] == "SCORE_QUEUED"
     assert resp_rev_promo.json()["candidate_site_id"] is not None
     assert resp_rev_promo.json()["site_score_job_id"] is not None
 
@@ -839,14 +894,16 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     job_id = resp_rev_promo.json()["site_score_job_id"]
     resp_get_job = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A_REVIEWER)
     assert resp_get_job.status_code == 200
-    assert resp_get_job.json() == {
+    job_receipt = resp_get_job.json()
+    assert job_receipt == {
         "job_id": job_id,
-        "status": "SUCCEEDED",
+        "status": "QUEUED",
         "checkpoint": "SCORE_QUEUED",
         "attempt": 0,
         "version": 1,
-        "correlation_id": resp_rev_promo.json()["correlation_id"],
+        "correlation_id": job_receipt["correlation_id"],
     }
+    UUID(job_receipt["correlation_id"])
     assert resp_get_job.headers["ETag"] == 'W/"1"'
 
 
@@ -887,8 +944,6 @@ def test_batch_intake_operation(client: TestClient) -> None:
 
 
 def test_job_retry_operation(client: TestClient) -> None:
-    # Set up a fake job in store
-    # Since our store is in memory, let's create a submitUrlIntake to auto-register a job
     payload = {
         "original_url": "https://example.com/listings/job-test",
         "scope": {"tenant_id": TENANT_A}
@@ -900,10 +955,12 @@ def test_job_retry_operation(client: TestClient) -> None:
     )
     receipt = resp.json()
     job_id = receipt["job_id"]
-    store = _store_with_intake(receipt["intake_id"])
-    store.jobs[job_id]["status"] = "FAILED"
-    store.jobs[job_id]["checkpoint"] = "PARSING"
-    store.intakes[receipt["intake_id"]]["state"] = "FAILED"
+    job_version = _force_failed_job(
+        client,
+        intake_id=receipt["intake_id"],
+        job_id=job_id,
+        checkpoint="PARSING",
+    )
 
     retry_payload = {
         "checkpoint": "PARSING",
@@ -917,7 +974,7 @@ def test_job_retry_operation(client: TestClient) -> None:
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-retry-{uuid4()}",
-            "If-Match": 'W/"1"'
+            "If-Match": f'W/"{job_version}"'
         }
     )
     assert resp_retry.status_code == 202
@@ -960,10 +1017,12 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
     )
     assert submitted.status_code == 202
     receipt = submitted.json()
-    store = _store_with_intake(receipt["intake_id"])
-    store.jobs[receipt["job_id"]]["status"] = "FAILED"
-    store.jobs[receipt["job_id"]]["checkpoint"] = "PARSING"
-    store.intakes[receipt["intake_id"]]["state"] = "FAILED"
+    job_version = _force_failed_job(
+        client,
+        intake_id=receipt["intake_id"],
+        job_id=receipt["job_id"],
+        checkpoint="PARSING",
+    )
 
     retried = client.post(
         f"/api/v1/jobs/{receipt['job_id']}/retry",
@@ -974,7 +1033,7 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
         headers={
             **staff_headers,
             "Idempotency-Key": f"idem-staff-retry-{uuid4()}",
-            "If-Match": 'W/"1"',
+            "If-Match": f'W/"{job_version}"',
         },
     )
 
@@ -1002,12 +1061,12 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
         },
     )
     receipt = submitted.json()
-    store = _store_with_intake(receipt["intake_id"])
-    job = store.jobs[receipt["job_id"]]
-    intake = store.intakes[receipt["intake_id"]]
-    job["status"] = "FAILED"
-    job["checkpoint"] = "PARSING"
-    intake["state"] = "FAILED"
+    job_version = _force_failed_job(
+        client,
+        intake_id=receipt["intake_id"],
+        job_id=receipt["job_id"],
+        checkpoint="PARSING",
+    )
     retry_body = {
         "checkpoint": "PARSING",
         "reason": "Retry and preserve the immutable accepted receipt",
@@ -1015,7 +1074,7 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
     retry_headers = {
         **staff_headers,
         "Idempotency-Key": f"idem-retry-replay-{uuid4()}",
-        "If-Match": 'W/"1"',
+        "If-Match": f'W/"{job_version}"',
     }
 
     first = client.post(
@@ -1027,8 +1086,10 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
 
     # Ownership is mutable after acceptance. It must not invalidate replay of
     # the exact prior command and receipt for the same actor.
-    intake["submitted_by"] = ACTOR_C
-    intake["assigned_to"] = ACTOR_C
+    intake = _runtime_intake(client, receipt["intake_id"])
+    intake["submitter"] = ACTOR_C
+    intake["owner"] = ACTOR_C
+    _save_runtime_intake(client, intake)
     replayed = client.post(
         f"/api/v1/jobs/{receipt['job_id']}/retry",
         json=retry_body,
@@ -1054,10 +1115,22 @@ def test_retry_orphan_job_fails_closed_for_same_tenant_staff(
         },
     )
     receipt = submitted.json()
-    store = _store_with_intake(receipt["intake_id"])
-    store.jobs[receipt["job_id"]]["status"] = "FAILED"
-    store.jobs[receipt["job_id"]]["checkpoint"] = "PARSING"
-    del store.intakes[receipt["intake_id"]]
+    job_version = _force_failed_job(
+        client,
+        intake_id=receipt["intake_id"],
+        job_id=receipt["job_id"],
+        checkpoint="PARSING",
+    )
+    repository = client.app.state.operator_intake_repository
+    if hasattr(repository, "intakes"):
+        repository.intakes.pop(receipt["intake_id"], None)
+    else:
+        repository._store.delete(
+            repository._INTAKES,
+            receipt["intake_id"],
+        )
+    for store in AssistedIntakeStore._instances:
+        store.intakes.pop(receipt["intake_id"], None)
 
     response = client.post(
         f"/api/v1/jobs/{receipt['job_id']}/retry",
@@ -1070,7 +1143,7 @@ def test_retry_orphan_job_fails_closed_for_same_tenant_staff(
             "x-tenant-id": TENANT_A,
             "x-roles": "expansion_user",
             "Idempotency-Key": f"idem-orphan-retry-{uuid4()}",
-            "If-Match": 'W/"1"',
+            "If-Match": f'W/"{job_version}"',
         },
     )
 
@@ -1215,18 +1288,39 @@ def test_assignment_actions(client: TestClient) -> None:
 
 
 def test_sla_actions(client: TestClient) -> None:
-    sla_id = str(uuid4())
-    latest_store = AssistedIntakeStore._instances[-1]
-    latest_store.slas[sla_id] = {
-        "sla_instance_id": sla_id,
-        "state": "ON_TRACK",
-        "due_at": "2026-07-25T12:00:00Z",
-        "paused_duration_seconds": 0,
-        "version": 1,
-        "audit_event_id": str(uuid4()),
-        "correlation_id": str(uuid4()),
-        "tenant_id": TENANT_A,
-    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/sla-actions",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-sla-setup-{uuid4()}",
+        },
+    )
+    intake_id = submitted.json()["intake_id"]
+    assigned = client.put(
+        f"/api/v1/intakes/{intake_id}/assignment",
+        json={
+            "owner_subject_id": ACTOR_A,
+            "owner_role": "reviewer",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Create the SLA attached to this intake",
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-sla-assign-{uuid4()}",
+            "If-Match": submitted.headers["ETag"],
+        },
+    )
+    assert assigned.status_code == 200
+    sla = next(
+        sla
+        for sla in client.app.state.operator_intake_repository.list_slas()
+        if sla["intake_id"] == intake_id
+    )
+    sla_id = sla["sla_instance_id"]
 
     # 1. pauseSla
     resp_pause = client.post(
@@ -1252,14 +1346,46 @@ def test_sla_actions(client: TestClient) -> None:
 
 
 def test_identity_and_match_case_operations(client: TestClient) -> None:
-    match_case_id = str(uuid4())
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://www.synthetic.example/detail-identity-contract.html",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-match-case-setup-{uuid4()}",
+        },
+    )
+    intake_id = submitted.json()["intake_id"]
+    service = NetworkListingService(
+        listing_repository=client.app.state.listing_repository,
+        intake_repository=client.app.state.operator_intake_repository,
+    )
+    processed = service.process_queued_intake(
+        intake_id=intake_id,
+        retrieval_provider=lambda _url, *, policy: RetrievalResult(
+            snapshot_id=str(uuid4()),
+            captured_at="2026-07-23T12:30:00Z",
+            raw={
+                "source_listing_id": "synthetic-identity-contract",
+                "address_raw": "台北市信義區松仁路 96 號 1F",
+                "rent_amount": 55000,
+                "area_ping": 18.0,
+                "floor": "1F 臨路",
+                "listing_type": "店面",
+                "listing_status": "active",
+            },
+        ),
+    )
+    assert processed["matchCaseId"]
+    match_case_id = processed["matchCaseId"]
 
     # 1. decideMatchCase
     decision_payload = {
-        "decision_type": "MERGE",
-        "reason": "Same physical property verified",
+        "decision_type": "REVISE",
+        "reason": "Same property and changed commercial facts verified",
         "risk_acknowledged": True,
-        "target_property_id": str(uuid4())
     }
     resp_decide = client.post(
         f"/api/v1/match-cases/{match_case_id}/decisions",
@@ -1290,13 +1416,8 @@ def test_identity_and_match_case_operations(client: TestClient) -> None:
         headers={**HEADERS_A_REVIEWER, "Idempotency-Key": f"idem-rev-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_rev.status_code == 200
-    assert resp_rev.json()["status"] == "APPROVED"
+    assert resp_rev.json()["status"] == "EXECUTED"
     version_after_rev = resp_rev.headers["ETag"].strip('W/"')
-
-    # Execution is owned by the identity service; reversal is only legal once
-    # that durable graph mutation has reached EXECUTED.
-    latest_store = AssistedIntakeStore._instances[-1]
-    latest_store.decisions[decision_id]["status"] = "EXECUTED"
 
     # 4. requestIdentityDecisionReversal
     resp_reverse = client.post(
@@ -1463,19 +1584,19 @@ def test_restricted_v1_fields_are_masked_in_the_http_detail_response(
         headers={**HEADERS_A, "Idempotency-Key": f"idem-mask-setup-{uuid4()}"},
     )
     intake_id = submitted.json()["intake_id"]
-    store = _store_with_intake(intake_id)
-    store.intakes[intake_id]["fields"] = [
-        {
-            "field_path": "broker.contact_phone",
+    runtime = _runtime_intake(client, intake_id)
+    runtime["parsedFields"] = {
+        "broker.contact_phone": {
+            "key": "broker.contact_phone",
             "classification": "RESTRICTED",
             "masked": False,
-            "parsed": "+886-2-5555-0101",
-            "normalized": "+886255550101",
-            "corrected": "+886-2-5555-0199",
-            "effective": "+886-2-5555-0199",
-            "confidence": 0.99,
+            "sourceValue": "+886-2-5555-0101",
+            "normalizedValue": "+886255550101",
+            "correctedValue": "+886-2-5555-0199",
+            "lowConfidence": False,
         }
-    ]
+    }
+    _save_runtime_intake(client, runtime)
 
     response = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_A)
 
@@ -1636,6 +1757,11 @@ def test_assign_intake_rejects_a_second_active_assignment_with_fresh_etag(
         },
     )
     assert first.status_code == 200
+    current_detail = client.get(
+        f"/api/v1/intakes/{intake_id}",
+        headers=HEADERS_A,
+    )
+    assert current_detail.status_code == 200
 
     second = client.put(
         f"/api/v1/intakes/{intake_id}/assignment",
@@ -1648,7 +1774,7 @@ def test_assign_intake_rejects_a_second_active_assignment_with_fresh_etag(
         headers={
             **HEADERS_A,
             "Idempotency-Key": f"idem-owner-conflict-second-{uuid4()}",
-            "If-Match": first.headers["ETag"],
+            "If-Match": current_detail.headers["ETag"],
         },
     )
 

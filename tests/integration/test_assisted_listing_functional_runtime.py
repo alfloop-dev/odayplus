@@ -188,6 +188,14 @@ def test_canonical_api_submit_runs_through_production_worker_and_persisted_get(
     assert detail.status_code == 200
     body = detail.json()
     assert body["state"] in {"READY", "NEEDS_REVIEW"}
+    assert detail.headers["etag"] == body["evidence"]["etag"]
+    assert body["version"] == body["evidence"]["resource_version"]
+    assert body["evidence"]["policy_reason"]
+    assert body["evidence"]["policy_version"] == (
+        "assisted-intake-source-policy-2026.07"
+    )
+    assert body["evidence"]["policy_evaluated_at"]
+    assert body["evidence"]["policy_expires_at"]
     stages = [transition["to_state"] for transition in body["processing_history"]]
     assert stages == [
         "SUBMITTED",
@@ -198,6 +206,17 @@ def test_canonical_api_submit_runs_through_production_worker_and_persisted_get(
         "MATCHING",
         body["state"],
     ]
+    second_detail = client.get(
+        f"/api/v1/intakes/{receipt['intake_id']}",
+        headers=_api_headers(SUBMITTER),
+    )
+    assert second_detail.status_code == 200
+    second_body = second_detail.json()
+    assert second_detail.headers["etag"] == detail.headers["etag"]
+    assert second_body["processing_history"] == body["processing_history"]
+    assert second_body["audit"] == body["audit"]
+    assert second_body["evidence"] == body["evidence"]
+    assert second_body["correlation_id"] == body["correlation_id"]
     persisted = NetworkListingService(
         listing_repository=bundle.listing_repository,
         intake_repository=DurableAssistedIntakeRepository(
@@ -314,6 +333,16 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
         promotion["promotion_decision_id"]
     )
     assert queued.payload["candidate_site_id"] == receipt["candidate_site_id"]
+    assert [
+        transition["to_state"] for transition in receipt["status_history"]
+    ] == [
+        "REQUESTED",
+        "VALIDATING",
+        "APPROVED",
+        "CANDIDATE_CREATING",
+        "CANDIDATE_CREATED",
+        "SCORE_QUEUED",
+    ]
     detail = client.get(
         f"/api/v1/intakes/{processed['id']}",
         headers=_api_headers(REVIEWER, reviewer=True),
@@ -336,6 +365,17 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
         queued_readback.json()["lifecycle"]["promotion"]["status"]
         == "SCORE_QUEUED"
     )
+    assert [
+        row["status"]
+        for row in queued_readback.json()["lifecycle"]["promotion_history"]
+    ] == [
+        "REQUESTED",
+        "VALIDATING",
+        "APPROVED",
+        "CANDIDATE_CREATING",
+        "CANDIDATE_CREATED",
+        "SCORE_QUEUED",
+    ]
     assert queued_readback.json()["lifecycle"]["job"]["status"] == "QUEUED"
 
     assert ODayWorker(persistence=restarted_bundle).run_once() is True
@@ -348,6 +388,18 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
     assert restarted_bundle.sitescore_repository.latest(
         receipt["candidate_site_id"]
     )
+    promotion_after_worker = (
+        restarted_bundle.operator_intake_repository.get_promotion(
+            promotion["promotion_decision_id"]
+        )
+    )
+    assert promotion_after_worker is not None
+    assert promotion_after_worker["status"] == "COMPLETED"
+    assert promotion_after_worker["status_history"][-1]["to_state"] == "COMPLETED"
+    assert (
+        promotion_after_worker["status_history"][-1]["occurred_at"]
+        == completed_job.payload["result"]["completed_at"]
+    )
     restarted_bundle.engine.close()
 
     final_bundle = _durable_bundle(db_path)
@@ -359,6 +411,18 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
     assert final_detail.status_code == 200, final_detail.text
     final_body = final_detail.json()
     assert final_body["lifecycle"]["promotion"]["status"] == "COMPLETED"
+    assert [
+        row["status"] for row in final_body["lifecycle"]["promotion_history"]
+    ][-1] == "COMPLETED"
+    first_completed_history = final_body["lifecycle"]["promotion_history"]
+    repeated_final = final_client.get(
+        f"/api/v1/intakes/{processed['id']}",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert (
+        repeated_final.json()["lifecycle"]["promotion_history"]
+        == first_completed_history
+    )
     assert final_body["lifecycle"]["job"]["status"] == "SUCCEEDED"
     assert final_body["lifecycle"]["job"]["job_id"] == (
         receipt["site_score_job_id"]
@@ -1336,6 +1400,14 @@ def test_identity_graph_reversal_and_quarantine_effects_survive_readback(
     )
     assert reviewed["status"] == "EXECUTED"
     assert reviewed["effectReceipt"]["identityEdgeIds"]
+    assert [
+        transition["toStatus"] for transition in reviewed["statusHistory"]
+    ] == [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "EXECUTING",
+        "EXECUTED",
+    ]
 
     reversal = service.request_identity_reversal(
         tenant_id=TENANT_ID,
@@ -1356,6 +1428,101 @@ def test_identity_graph_reversal_and_quarantine_effects_survive_readback(
         correlation_id=correlation_id,
     )
     assert reversed_decision["status"] == "EXECUTED"
+    assert [
+        transition["toStatus"]
+        for transition in reversed_decision["statusHistory"]
+    ] == [
+        "PENDING_REVIEW",
+        "REVERSAL_PENDING",
+        "APPROVED",
+        "EXECUTING",
+        "EXECUTED",
+    ]
+    original_readback = service.get_identity_decision(
+        tenant_id=TENANT_ID,
+        decision_id=proposed["decisionId"],
+    )
+    assert original_readback is not None
+    assert original_readback["status"] == "REVERSED"
+    assert original_readback["statusHistory"][-1]["toStatus"] == "REVERSED"
+
+    rejected = service.propose_identity_decision(
+        tenant_id=TENANT_ID,
+        action="merge",
+        plan={
+            "sourcePropertyIds": ["property-rejected"],
+            "targetPropertyId": "property-target",
+            "relatedIds": {},
+            "evidenceState": "COMPLETE",
+        },
+        actor_role_id="dataSteward",
+        actor_name=SUBMITTER,
+        reason="Propose another identity merge for independent review.",
+        risk_acknowledged=True,
+        correlation_id=correlation_id,
+    )
+    rejected = service.review_identity_decision(
+        tenant_id=TENANT_ID,
+        decision_id=rejected["decisionId"],
+        approve=False,
+        reviewer_role_id="expansionManager",
+        reviewer_name=REVIEWER,
+        reason="Independent reviewer rejects the proposed identity merge.",
+        risk_acknowledged=True,
+        correlation_id=correlation_id,
+    )
+    assert rejected["status"] == "REJECTED"
+    assert [
+        transition["toStatus"] for transition in rejected["statusHistory"]
+    ] == ["PENDING_REVIEW", "REJECTED"]
+
+    failing = service.propose_identity_decision(
+        tenant_id=TENANT_ID,
+        action="merge",
+        plan={
+            "sourcePropertyIds": ["property-cycle"],
+            "targetPropertyId": "property-cycle",
+            "relatedIds": {},
+            "evidenceState": "COMPLETE",
+        },
+        actor_role_id="dataSteward",
+        actor_name=SUBMITTER,
+        reason="Exercise persisted execution failure handling.",
+        risk_acknowledged=True,
+        correlation_id=correlation_id,
+    )
+    try:
+        service.review_identity_decision(
+            tenant_id=TENANT_ID,
+            decision_id=failing["decisionId"],
+            approve=True,
+            reviewer_role_id="expansionManager",
+            reviewer_name=REVIEWER,
+            reason="Attempt the invalid cycle to verify durable failure history.",
+            risk_acknowledged=True,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        failed = service.fail_identity_decision(
+            tenant_id=TENANT_ID,
+            decision_id=failing["decisionId"],
+            actor_role_id="expansionManager",
+            actor_name=REVIEWER,
+            reason=str(exc),
+            correlation_id=correlation_id,
+        )
+    else:
+        raise AssertionError("identity cycle should fail")
+    assert failed is not None
+    assert failed["status"] == "FAILED"
+    assert [
+        transition["toStatus"] for transition in failed["statusHistory"]
+    ] == [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "EXECUTING",
+        "FAILED",
+    ]
 
     quarantined = service.submit_intake(
         url="https://unknown.example/listing/1",
@@ -1585,6 +1752,11 @@ def test_canonical_api_revision_review_and_persisted_readback() -> None:
     assert proposal_body["graph_plan"]["expected_graph_version"] >= 0
     assert proposal_body["graph_plan"]["lineage_impact"]["append_only"] is True
     assert proposal_body["graph_plan"]["proposer"]["subject_id"] == SUBMITTER
+    assert [
+        transition["toStatus"]
+        for transition in proposal_body["status_history"]
+    ] == ["PENDING_REVIEW"]
+    assert proposal_body["lifecycle_contract"]["non_persisted_states"]["DRAFT"]
 
     reviewed = client.post(
         f"/api/v1/identity-decisions/{decision_id}/actions/review",
@@ -1604,6 +1776,15 @@ def test_canonical_api_revision_review_and_persisted_readback() -> None:
     )
     assert reviewed.status_code == 200, reviewed.text
     assert reviewed.json()["status"] == "EXECUTED"
+    assert [
+        transition["toStatus"]
+        for transition in reviewed.json()["status_history"]
+    ] == [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "EXECUTING",
+        "EXECUTED",
+    ]
 
     revisions = client.get(
         "/api/v1/listings/L-2024/revisions",
@@ -1613,6 +1794,17 @@ def test_canonical_api_revision_review_and_persisted_readback() -> None:
     revision_rows = revisions.json()["revisions"]
     assert revision_rows[-1]["effectiveValues"]["rentPerMonth"] == 55000
     assert app.state.listing_repository.get_listing("L-2024").rent_amount == 58000
+
+    listing_detail = client.get(
+        "/api/v1/listings/L-2024",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert listing_detail.status_code == 200
+    listing_body = listing_detail.json()
+    assert listing_body["listing_id"] == "L-2024"
+    assert listing_body["current_revision_id"] == revision_rows[-1]["revisionId"]
+    assert listing_body["current_values"]["rent_per_month"] == 55000
+    assert listing_body["revisions"][-1]["revisionId"] == revision_rows[-1]["revisionId"]
 
     edge_readback = client.get(
         "/api/v1/identity/edges",
@@ -1702,6 +1894,27 @@ def test_canonical_api_quarantine_release_requires_persisted_second_actor(
     assert proposal_receipt["from_state"] == "QUARANTINED"
     assert proposal_receipt["to_state"] == "QUARANTINED"
     assert proposal_receipt["reason_code"] == "SECOND_ACTOR_REQUIRED"
+
+    proposer_readback = client.get(
+        f"/api/v1/intakes/{submitted['intake_id']}",
+        headers=_api_headers(SUBMITTER, reviewer=True),
+    )
+    assert proposer_readback.status_code == 200
+    proposer_facts = proposer_readback.json()["lifecycle"]["actor_facts"]
+    assert proposer_facts["second_actor"]["required"] is True
+    assert proposer_facts["second_actor"]["self_review_denied"] is True
+    assert proposer_facts["second_actor"]["reason_code"] == "SELF_REVIEW_DENIED"
+    assert proposer_facts["denied_action_reasons"]["REOPEN"] == "SELF_REVIEW_DENIED"
+
+    reviewer_readback = client.get(
+        f"/api/v1/intakes/{submitted['intake_id']}",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert reviewer_readback.status_code == 200
+    reviewer_facts = reviewer_readback.json()["lifecycle"]["actor_facts"]
+    assert reviewer_facts["second_actor"]["required"] is True
+    assert reviewer_facts["second_actor"]["self_review_denied"] is False
+    assert "REOPEN" in reviewer_facts["allowed_actions"]
 
     self_review = client.post(
         f"/api/v1/intakes/{submitted['intake_id']}/actions/reopen",
@@ -2027,4 +2240,60 @@ def test_new_possible_match_and_assisted_entry_effects_survive_readback(tmp_path
     persisted_assisted = restarted.get_intake(assisted["id"])
     assert persisted_assisted["parsedFields"]["address"]["correctedValue"]
     assert persisted_assisted["parsedFields"]["address"]["correctionActor"] == REVIEWER
+    bundle.engine.close()
+
+
+def test_assisted_intake_retry_exhaustion_persists_failed_state_and_dlq_receipt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bundle = _durable_bundle(str(tmp_path / "retry-exhaustion.sqlite3"))
+    app = create_app(persistence=bundle)
+    client = TestClient(app)
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://www.synthetic.example/retry-exhaustion.html",
+            "scope": {"tenant_id": TENANT_ID},
+            "purpose": "Verify terminal retry exhaustion readback.",
+        },
+        headers=_api_headers(
+            SUBMITTER,
+            key=f"retry-exhaustion-{uuid4()}",
+        ),
+    )
+    assert submitted.status_code == 202, submitted.text
+    receipt = submitted.json()
+
+    worker = ODayWorker(persistence=bundle)
+
+    def fail_execution(_job) -> None:
+        raise RuntimeError("synthetic permanent retrieval failure")
+
+    monkeypatch.setattr(worker, "execute_job", fail_execution)
+    for _ in range(4):
+        assert worker.run_once() is True
+
+    queued = bundle.job_queue.get(receipt["job_id"])
+    assert queued is not None
+    assert queued.status == JobStatus.FAILED
+
+    detail = client.get(
+        f"/api/v1/intakes/{receipt['intake_id']}",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["state"] == "FAILED"
+    assert body["processing_history"][-1]["reason_code"] == "MAX_RETRIES_EXHAUSTED"
+    assert body["issue"] == "MAX_RETRIES_EXHAUSTED"
+    assert body["retryable"] is False
+    assert body["next_action"] == "REPLAY_FROM_CHECKPOINT"
+    assert body["lifecycle"]["job"]["status"] == "FAILED"
+    assert any(
+        row["action"] == "DEAD_LETTER"
+        and row["status"] == "DEAD_LETTER"
+        and row["receipt"]["job_id"] == receipt["job_id"]
+        for row in body["lifecycle"]["job_history"]
+    )
     bundle.engine.close()

@@ -295,7 +295,11 @@ export function evaluateIntakePermission(
     );
   }
 
-  if (context.fieldMasked) {
+  if (
+    context.fieldMasked &&
+    action !== "view" &&
+    action !== "viewEvidence"
+  ) {
     return denied(
       profile,
       (context.maskingReasonCode as IntakeDenialReasonCode | null) ?? "FIELD_MASKED",

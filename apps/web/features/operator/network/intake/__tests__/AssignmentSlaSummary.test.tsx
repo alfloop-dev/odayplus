@@ -124,7 +124,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).toContain("asg-btn-pause");
     });
 
-    it("shows unavailable instead of deriving missing assignment or SLA data", () => {
+    it("shows canonical UNASSIGNED and marks unavailable SLA facts", () => {
       const html = renderToString(
         <AssignmentSlaSummary
           allowedActions={[]}
@@ -134,8 +134,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       );
 
       expect(html).toContain("[? UNAVAILABLE]");
-      expect(html).toContain("伺服器未提供");
-      expect(html).not.toContain("UNASSIGNED");
+      expect(html).toContain("API 未回傳");
+      expect(html).toContain("UNASSIGNED");
       expect(html).not.toContain("ON_TRACK");
     });
 
@@ -189,6 +189,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       );
 
       expect(html).toContain('data-testid="transfer-intake-dialog"');
+      expect(html).toContain('data-testid="transfer-target-subject"');
       expect(html).toContain('data-testid="transfer-target-select"');
       expect(html).toContain('data-testid="transfer-handoff-note"');
       expect(html).toContain('data-testid="transfer-risk-summary"');
@@ -198,8 +199,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).not.toContain('data-testid="pause-reason-input"');
       expect(html).not.toContain('data-testid="pause-resume-time-input"');
 
-      expect(DEFAULT_TRANSFER_TARGETS.length).toBeGreaterThan(0);
-      expect(DEFAULT_TRANSFER_TARGETS[0].id).toBe("actor-mgr");
+      expect(DEFAULT_TRANSFER_TARGETS).toEqual([]);
     });
 
     it("preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion", () => {
@@ -651,15 +651,18 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v3");
 
       // Enter user draft inputs on mounted component DOM
+      const targetSubject = container.querySelector('[data-testid="transfer-target-subject"]') as HTMLInputElement;
       const targetSelect = container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement;
       const handoffTextarea = container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement;
       const riskCheckbox = container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement;
 
-      setInputValue(targetSelect, "actor-steward");
+      setInputValue(targetSubject, "00000000-0000-4000-8000-000000000104");
+      setInputValue(targetSelect, "data-steward");
       setInputValue(handoffTextarea, "Preserved draft handoff note across 409 refresh");
       setInputValue(riskCheckbox, true);
 
-      expect(targetSelect.value).toBe("actor-steward");
+      expect(targetSubject.value).toBe("00000000-0000-4000-8000-000000000104");
+      expect(targetSelect.value).toBe("data-steward");
       expect(handoffTextarea.value).toBe("Preserved draft handoff note across 409 refresh");
       expect(riskCheckbox.checked).toBe(true);
 
@@ -672,7 +675,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v4");
       expect(container.querySelector('[data-testid="transfer-record-owner"]')?.textContent).toBe("周育安（資料管理員）");
 
-      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("actor-steward");
+      expect((container.querySelector('[data-testid="transfer-target-subject"]') as HTMLInputElement).value).toBe("00000000-0000-4000-8000-000000000104");
+      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("data-steward");
       expect((container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement).value).toBe("Preserved draft handoff note across 409 refresh");
       expect((container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement).checked).toBe(true);
 
@@ -684,7 +688,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(onSubmitSpy).toHaveBeenCalledTimes(1);
       expect(onSubmitSpy).toHaveBeenCalledWith(
         {
-          target_owner_subject_id: "actor-steward",
+          target_owner_subject_id: "00000000-0000-4000-8000-000000000104",
           target_owner_role: "data-steward",
           handoff_note: "Preserved draft handoff note across 409 refresh",
           riskSummary: expect.any(String),

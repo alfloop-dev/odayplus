@@ -36,7 +36,25 @@ export function useModalDialogBehavior({
 
     return () => {
       // Returning focus to the invoker keeps keyboard context after close.
-      restoreRef.current?.focus?.();
+      const restoreTarget = restoreRef.current;
+      const testId = restoreTarget?.dataset.testid;
+      requestAnimationFrame(() => {
+        const currentTarget =
+          restoreTarget?.isConnected && restoreTarget.offsetParent !== null
+            ? restoreTarget
+            : testId
+              ? Array.from(
+                  document.querySelectorAll<HTMLElement>(
+                    `[data-testid="${testId}"]`,
+                  ),
+                ).find(
+                  (candidate) =>
+                    !candidate.hasAttribute("disabled") &&
+                    candidate.offsetParent !== null,
+                ) ?? null
+              : null;
+        currentTarget?.focus({ preventScroll: true });
+      });
     };
   }, []);
 

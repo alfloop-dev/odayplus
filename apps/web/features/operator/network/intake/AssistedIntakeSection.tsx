@@ -48,6 +48,7 @@ import type {
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import { TransferIntakeDialog } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
+import { ReopenIntakeDialog } from "./ReopenIntakeDialog";
 import {
   buildIntakeClient,
   intakeApi,
@@ -76,14 +77,19 @@ import {
   canonicalAuditToStructured,
   canonicalBootstrapToInbox,
   canonicalCommandReceiptToIdentity,
+  canonicalCorrectionsByField,
+  canonicalDetailPresentationFacts,
   canonicalDetailToLifecycle,
   canonicalDetailToRecord,
   canonicalGraphPlan,
+  canonicalHumanDecisionEvidence,
   canonicalIdentityReceipt,
   canonicalIdentityWorkflow,
   canonicalMatchToComparison,
   canonicalPageToInbox,
   canonicalSavedViewsToInbox,
+  canonicalSensitiveEvidenceAccess,
+  canonicalSourceEvidence,
   inboxContractToCanonicalQuery,
 } from "./canonicalIntakeAdapters";
 import {
@@ -96,6 +102,47 @@ import type {
   IdentityDecisionCommand,
   IdentityDecisionReceipt,
 } from "./identityTypes";
+import type { AuthoritativeRecoveryContext } from "./evidenceContracts";
+
+function restoreFocusAfterDialogClose(
+  dialogTestId: string,
+  triggerTestId: string,
+) {
+  let stableChecks = 0;
+  const restore = () => {
+    const dialog = document.querySelector(
+      `[data-testid="${dialogTestId}"]`,
+    );
+    const trigger = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        `[data-testid="${triggerTestId}"]`,
+      ),
+    ).find(
+      (candidate) =>
+        !candidate.hasAttribute("disabled") &&
+        candidate.offsetParent !== null,
+    );
+
+    if (!dialog && trigger) {
+      if (document.activeElement !== trigger) {
+        trigger.focus({ preventScroll: true });
+      }
+      stableChecks =
+        document.activeElement === trigger ? stableChecks + 1 : 0;
+      return stableChecks >= 4;
+    }
+    stableChecks = 0;
+    return false;
+  };
+
+  if (restore()) return;
+  const interval = window.setInterval(() => {
+    if (restore()) window.clearInterval(interval);
+  }, 100);
+  window.setTimeout(() => {
+    window.clearInterval(interval);
+  }, 12_000);
+}
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
 //
@@ -262,6 +309,8 @@ function AuthorizedAssistedIntakeSection({
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
+  const [actionRecovery, setActionRecovery] =
+    useState<AuthoritativeRecoveryContext | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
   const [slaReceipts, setSlaReceipts] = useState<Record<string, SlaReceipt>>({});
@@ -424,7 +473,6 @@ function AuthorizedAssistedIntakeSection({
       };
     },
     [
-      activeRoleId,
       assignmentReceipts,
       canonicalDetails,
       operatorSession,
@@ -435,8 +483,37 @@ function AuthorizedAssistedIntakeSection({
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
+  const reopenKeyRef = useRef<string | null>(null);
   const assistedEntryKeyRef = useRef<string | null>(null);
   const decisionKeyRef = useRef<string | null>(null);
+  const savedViewKeyRef = useRef<string | null>(null);
+  const assignmentTriggerRef = useRef<HTMLElement | null>(null);
+  const assignmentDialogOpen =
+    dialog === "assignmentSla" && asgKind !== null;
+
+  useEffect(() => {
+    if (assignmentDialogOpen || !assignmentTriggerRef.current) return;
+    const trigger = assignmentTriggerRef.current;
+    const frame = requestAnimationFrame(() => {
+      const testId = trigger.dataset.testid;
+      const currentTrigger = trigger.isConnected && trigger.offsetParent !== null
+        ? trigger
+        : testId
+          ? Array.from(
+              document.querySelectorAll<HTMLElement>(
+                `[data-testid="${testId}"]`,
+              ),
+            ).find(
+              (candidate) =>
+                !candidate.hasAttribute("disabled") &&
+                candidate.offsetParent !== null,
+            ) ?? null
+          : null;
+      currentTrigger?.focus({ preventScroll: true });
+      assignmentTriggerRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [assignmentDialogOpen]);
 
   const refresh = useCallback(async () => {
     // A role without listing:VIEW would get a guaranteed 403. That is a
@@ -534,8 +611,44 @@ function AuthorizedAssistedIntakeSection({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  const handleCreateSavedView = useCallback(
+    async (name: string, query: IntakeInboxQueryContract) => {
+      if (!client) {
+        return { ok: false as const, error: missingClientError() };
+      }
+      savedViewKeyRef.current ??= newIntakeActionIdempotencyKey(
+        subjectId,
+        "saved-view",
+      );
+      const result = await intakeApi.createSavedView(
+        client,
+        {
+          name,
+          query: inboxContractToCanonicalQuery({
+            ...query,
+            savedView: undefined,
+          }),
+          resource: "intake",
+          visibility: "PRIVATE",
+        },
+        { idempotencyKey: savedViewKeyRef.current },
+      );
+      if (!result.ok) return result;
+
+      savedViewKeyRef.current = null;
+      const value = canonicalSavedViewsToInbox([result.value])[0];
+      setSavedViews((current) => [
+        ...(current ?? []).filter((view) => view.id !== value.id),
+        value,
+      ]);
+      return { ok: true as const, value };
+    },
+    [client, subjectId],
+  );
+
   useEffect(() => {
     correctionKeyRef.current = null;
+    reopenKeyRef.current = null;
     assistedEntryKeyRef.current = null;
     decisionKeyRef.current = null;
     setPromotionError(null);
@@ -710,6 +823,39 @@ function AuthorizedAssistedIntakeSection({
     return record;
   }
 
+  async function recordActionFailure(
+    error: IntakeApiError,
+    operation: string,
+    preservedInput: Record<string, unknown>,
+  ) {
+    setActionError(error);
+    let authoritative = selected ? canonicalDetails[selected.id] : undefined;
+    if (client && selected) {
+      const readback = await intakeApi.get(client, selected.id);
+      if (readback.ok) {
+        authoritative = readback.value;
+        applyCanonicalDetail(readback.value);
+      }
+    }
+    setActionRecovery({
+      operation,
+      current_state:
+        error.currentState ?? authoritative?.state ?? selected?.stage ?? null,
+      current_version:
+        error.currentVersion ?? authoritative?.version ?? selected?.version ?? null,
+      server_value: authoritative
+        ? {
+            intake_id: authoritative.intake_id,
+            state: authoritative.state,
+            version: authoritative.version,
+            assignment: authoritative.lifecycle.assignment,
+            sla: authoritative.lifecycle.sla,
+          }
+        : null,
+      preserved_input: preservedInput,
+    });
+  }
+
   async function handleSubmit({ url, heatZoneId }: { url: string; heatZoneId: string }) {
     if (!client || busy) return;
     setBusy(true);
@@ -734,18 +880,19 @@ function AuthorizedAssistedIntakeSection({
     }
     submitKeyRef.current = null;
     const record = applyCanonicalDetail(result.value);
+    const submissionListingId =
+      record.submissionReceipt?.existingListingId ??
+      (record.matchResult?.outcome === "EXACT_DUPLICATE"
+        ? record.matchResult.targetListingId
+        : null);
     setToast(
-      record.matchResult?.outcome === "EXACT_DUPLICATE"
-        ? `已於識別檢查攔截 — 此 URL 已存在（${record.matchResult.targetListingId ?? record.id}），未執行擷取`
+      submissionListingId
+        ? `已於識別檢查攔截 — 此 URL 已存在（${submissionListingId}），未執行擷取`
         : `收件 ${record.id} 已建立 — ${record.policyLabel}`,
     );
-    const existingListingId =
-      record.matchResult?.outcome === "EXACT_DUPLICATE"
-        ? record.matchResult.targetListingId
-        : null;
     router.push(
-      existingListingId
-        ? existingListingHref(existingListingId)
+      submissionListingId
+        ? existingListingHref(submissionListingId)
         : intakeDetailHref(record.id, searchParams),
     );
     return record;
@@ -805,6 +952,7 @@ function AuthorizedAssistedIntakeSection({
     if (!client || !selected || busy) return;
     setBusy(true);
     setActionError(null);
+    setActionRecovery(null);
     if (!assistedEntryKeyRef.current) {
       assistedEntryKeyRef.current = newIntakeActionIdempotencyKey(selected.id, "assisted-entry");
     }
@@ -1023,6 +1171,53 @@ function AuthorizedAssistedIntakeSection({
     void refresh();
   }
 
+  async function handleReopen({
+    reason,
+    riskAcknowledged,
+  }: {
+    reason: string;
+    riskAcknowledged: true;
+  }) {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+    if (!reopenKeyRef.current) {
+      reopenKeyRef.current = newIntakeActionIdempotencyKey(selected.id, "reopen");
+    }
+    const result = await intakeApi.reopen(
+      client,
+      selected.id,
+      {
+        reason,
+        risk_acknowledged: riskAcknowledged,
+      },
+      {
+        idempotencyKey: reopenKeyRef.current,
+        ifMatch: `W/"${selected.version}"`,
+      },
+    );
+    setBusy(false);
+    if (!result.ok) {
+      await recordActionFailure(result.error, "QUARANTINE_REOPEN", {
+        reason,
+        risk_acknowledged: riskAcknowledged,
+      });
+      return;
+    }
+    reopenKeyRef.current = null;
+    const updated = applyCanonicalDetail(result.value);
+    updateUrlState({
+      dialog: isDurableDetailPage ? null : "detail",
+      activeSection: "timeline",
+    });
+    setToast(
+      updated.stage === "QUARANTINED"
+        ? "解除隔離提案已記錄；等待另一位具權限人員覆核"
+        : "隔離已由獨立覆核者解除，durable receipt 已寫入",
+    );
+    void refresh();
+  }
+
   async function handleInboxRetry(intakeId: string) {
     if (!client || busy) return;
     setBusy(true);
@@ -1031,6 +1226,15 @@ function AuthorizedAssistedIntakeSection({
     setBusy(false);
     if (!result.ok) {
       setActionError(result.error);
+      setActionRecovery({
+        operation: "INTAKE_RETRY",
+        current_state: result.error.currentState ?? null,
+        current_version: result.error.currentVersion ?? null,
+        preserved_input: {
+          intake_id: intakeId,
+          actor_role_id: activeRoleId,
+        },
+      });
       return;
     }
     applyCanonicalDetail(result.value);
@@ -1097,6 +1301,7 @@ function AuthorizedAssistedIntakeSection({
     if (!client || !selected || busy) return;
     setBusy(true);
     setActionError(null);
+    setActionRecovery(null);
 
     const key = newIntakeActionIdempotencyKey(selected.id, "claim-asg");
     const correlationId = newCorrelationId();
@@ -1133,7 +1338,13 @@ function AuthorizedAssistedIntakeSection({
         );
     setBusy(false);
     if (!result.ok) {
-      setActionError(result.error);
+      await recordActionFailure(result.error, "ASSIGNMENT_CLAIM", {
+        assignment_id: selected.assignmentId,
+        intake_id: selected.id,
+        reason: selected.assignmentId
+          ? "Claiming existing assignment"
+          : "Claiming assignment for manual triage review",
+      });
       return;
     }
     const receipt = result.value;
@@ -1152,6 +1363,7 @@ function AuthorizedAssistedIntakeSection({
     if (!client || !selected || busy) return;
     setBusy(true);
     setActionError(null);
+    setActionRecovery(null);
 
     const asgId = selected.assignmentId;
     if (!asgId) {
@@ -1192,7 +1404,7 @@ function AuthorizedAssistedIntakeSection({
       );
     setBusy(false);
     if (!result.ok) {
-      setActionError(result.error);
+      await recordActionFailure(result.error, "ASSIGNMENT_TRANSFER", payload);
       return;
     }
     const receipt = result.value;
@@ -1434,6 +1646,43 @@ function AuthorizedAssistedIntakeSection({
     await handleConflictRefresh();
   }
 
+  async function handleCancelJob(jobId: string) {
+    if (!client || !selected || busy) return;
+    const job =
+      lifecycleState.snapshot?.jobs.find((entry) => entry.job_id === jobId) ??
+      (canonicalDetail?.lifecycle.job?.job_id === jobId
+        ? canonicalDetail.lifecycle.job
+        : null);
+    if (!job || job.version === null) return;
+
+    setBusy(true);
+    setActionError(null);
+    const result = await intakeApi.cancelJob(
+      client,
+      jobId,
+      { reason: "Operator cancelled active intake job" },
+      {
+        idempotencyKey: newIntakeActionIdempotencyKey(
+          selected.id,
+          "cancel-job",
+          jobId,
+        ),
+        correlationId: newCorrelationId(),
+        ifMatch: `W/"${job.version}"`,
+      },
+    );
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    setScoreJobs((current) => ({
+      ...current,
+      [selected.id]: result.value.receipt,
+    }));
+    await handleConflictRefresh();
+  }
+
   // ---- Promotion saga handlers (all four v1 calls go through intakeApi) ---
 
   async function handleRequestPromotion(input: PromotionRequestInput) {
@@ -1639,6 +1888,14 @@ function AuthorizedAssistedIntakeSection({
       fieldClassification: "INTERNAL",
     }),
   );
+  const reopenDecision = evaluateIntakePermission(
+    "reopenQuarantine",
+    activeRoleId,
+    permissionContextFor(selected, "reopenQuarantine", {
+      fieldClassification: "INTERNAL",
+      riskLevel: "CRITICAL",
+    }),
+  );
   // The promotion section renders on the READY branch of the real detail
   // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
   // every later saga state so the receipt and score job remain reachable.
@@ -1654,6 +1911,22 @@ function AuthorizedAssistedIntakeSection({
     urlState.activeSection,
     actionError ? "error" : "timeline",
   );
+  const persistedDetailError: IntakeApiError | null =
+    selected?.failure
+      ? {
+          status: selected.stage === "FAILED" ? 500 : 409,
+          code: selected.failure.code,
+          summary: selected.failure.summary,
+          nextAction: selected.failure.nextAction,
+          correlationId: selected.correlationId,
+          occurredAt:
+            canonicalDetail?.updated_at ?? new Date(0).toISOString(),
+          retryable: selected.failure.retryable,
+          currentState: selected.stage,
+          currentVersion: selected.version,
+          reasonCode: selected.failure.code,
+        }
+      : null;
   const compareTargetId =
     searchParams.get("compareTarget") ?? selected?.matchResult?.targetListingId ?? null;
   const currentOperator = {
@@ -1671,6 +1944,21 @@ function AuthorizedAssistedIntakeSection({
     : null;
   const canonicalGraph = canonicalDetail?.match_case
     ? canonicalGraphPlan(canonicalDetail.match_case.graph_plan, identityActor)
+    : null;
+  const canonicalCorrections = canonicalDetail
+    ? canonicalCorrectionsByField(canonicalDetail)
+    : {};
+  const canonicalPresentationFacts = canonicalDetail
+    ? canonicalDetailPresentationFacts(canonicalDetail)
+    : null;
+  const canonicalEvidence = canonicalDetail
+    ? canonicalSourceEvidence(canonicalDetail)
+    : null;
+  const canonicalEvidenceAccess = canonicalDetail
+    ? canonicalSensitiveEvidenceAccess(canonicalDetail)
+    : null;
+  const canonicalDecisionEvidence = canonicalDetail
+    ? canonicalHumanDecisionEvidence(canonicalDetail)
     : null;
   const canonicalReviewSection =
     selected && canonicalDetail ? (
@@ -1697,6 +1985,7 @@ function AuthorizedAssistedIntakeSection({
           fields={buildCanonicalFieldReview(canonicalDetail.fields, {
             sourceSnapshotId: canonicalDetail.source_snapshot_id,
             parserRunId: canonicalDetail.parser_run_id,
+            correctionsByField: canonicalCorrections,
           })}
           onCorrect={(field) => openFix(field.fieldPath)}
         />
@@ -1757,6 +2046,7 @@ function AuthorizedAssistedIntakeSection({
   }
 
   function openAssignment(kind: "transfer" | "pause") {
+    assignmentTriggerRef.current = document.activeElement as HTMLElement | null;
     setActionError(null);
     updateUrlState(
       { dialog: "assignmentSla", decisionKind: kind },
@@ -1764,17 +2054,44 @@ function AuthorizedAssistedIntakeSection({
     );
   }
 
+  function openReopen() {
+    if (!selected || selected.stage !== "QUARANTINED") return;
+    reopenKeyRef.current = newIntakeActionIdempotencyKey(selected.id, "reopen");
+    setActionError(null);
+    updateUrlState(
+      { dialog: "reopen" },
+      isDurableDetailPage ? "push" : "replace",
+    );
+  }
+
   function closeChildDialog(kind: "fix" | "decision" | "assignment") {
     if (busy || promotionBusy) return;
+    const assignmentKind = kind === "assignment" ? asgKind : null;
     updateUrlState({
       dialog: isDurableDetailPage ? null : "detail",
       fixFieldKey: kind === "fix" ? null : urlState.fixFieldKey,
       decisionKind: kind === "decision" || kind === "assignment" ? null : urlState.decisionKind,
     });
-    setActionError(null);
+    if (assignmentKind === "transfer") {
+      restoreFocusAfterDialogClose(
+        "transfer-intake-dialog",
+        "asg-btn-transfer",
+      );
+    } else if (assignmentKind === "pause") {
+      restoreFocusAfterDialogClose("pause-sla-dialog", "asg-btn-pause");
+    }
     if (kind === "fix") correctionKeyRef.current = null;
     if (kind === "decision") decisionKeyRef.current = null;
   }
+
+  const handleInboxQueryChange = useCallback(
+    (next: IntakeInboxQueryContract) => {
+      setInboxQuery((current) =>
+        JSON.stringify(current) === JSON.stringify(next) ? current : next,
+      );
+    },
+    [],
+  );
 
   const actionDialogs = selected ? (
     <>
@@ -1817,6 +2134,26 @@ function AuthorizedAssistedIntakeSection({
           onClose={() => closeChildDialog("assignment")}
           onConflictRefresh={handleConflictRefresh}
           onSubmit={handlePauseSubmit}
+          record={selected}
+        />
+      ) : null}
+
+      {dialog === "reopen" && selected.stage === "QUARANTINED" ? (
+        <ReopenIntakeDialog
+          busy={busy}
+          error={actionError}
+          independentReviewRequired={Boolean(
+            canonicalDetail?.lifecycle.actor_facts.second_actor.required,
+          )}
+          onClose={() => {
+            if (busy) return;
+            updateUrlState({
+              dialog: isDurableDetailPage ? null : "detail",
+            });
+            setActionError(null);
+            reopenKeyRef.current = null;
+          }}
+          onSubmit={handleReopen}
           record={selected}
         />
       ) : null}
@@ -1884,17 +2221,28 @@ function AuthorizedAssistedIntakeSection({
           canCorrect={correctionDecision.allowed}
           canDecide={intakeDecision.allowed}
           canReplay={retryDecision.allowed}
+          canCancelJob={Boolean(
+            lifecycleState.snapshot?.allowed_actions.includes("CANCEL_JOB"),
+          )}
+          canReopen={reopenDecision.allowed}
           canReplayScore={replayScoreDecision.allowed}
           canRequestPromotion={requestPromotionDecision.allowed}
           canReviewPromotion={reviewPromotionDecision.allowed}
           canExecutePromotion={executePromotionDecision.allowed}
           canRetry={retryDecision.allowed}
           compareTargetId={compareTargetId}
+          correctionsByField={canonicalCorrections}
           currentOperator={currentOperator}
-          error={actionError}
+          detailFacts={canonicalPresentationFacts}
+          error={actionError ?? persistedDetailError}
+          evidenceAccess={canonicalEvidenceAccess}
+          evidenceVerification={null}
+          exportReceipt={null}
+          recovery={actionRecovery}
           fields={canonicalDetail?.fields}
           gateSnapshotSha256={promotionGateHash}
           history={canonicalDetail?.processing_history}
+          humanDecisionEvidence={canonicalDecisionEvidence}
           identitySection={canonicalIdentitySection}
           jobs={
             lifecycleState.snapshot?.jobs ??
@@ -1912,6 +2260,7 @@ function AuthorizedAssistedIntakeSection({
           }}
           onClaimAssignment={handleClaim}
           onCancel={handleCancelIntake}
+          onCancelJob={handleCancelJob}
           onClose={() => router.push(intakeInboxHref(searchParams))}
           onCompleteAssignment={handleCompleteAssignment}
           onDecide={openDecision}
@@ -1925,6 +2274,7 @@ function AuthorizedAssistedIntakeSection({
           onRefresh={handleConflictRefresh}
           onReplayScore={handleReplayScore}
           onReplayDlq={handleReplayDlq}
+          onReopen={openReopen}
           onRequestPromotion={handleRequestPromotion}
           onResumeSla={handleResumeSla}
           onRetry={handleRetry}
@@ -1939,11 +2289,13 @@ function AuthorizedAssistedIntakeSection({
           promotionReplayDeniedReason={replayScoreDecision.reasonCode}
           promotionRequestDeniedReason={requestPromotionDecision.reasonCode}
           promotionReviewDeniedReason={reviewPromotionDecision.reasonCode}
+          reopenDeniedReason={reopenDecision.reasonCode}
           record={selected}
           reviewSection={canonicalReviewSection}
           scoreJob={selectedScoreJob}
           sla={lifecycleState.snapshot?.sla ?? undefined}
           slaReceipt={slaReceipts[selected.id]}
+          sourceEvidence={canonicalEvidence}
           testId="intake-processing-page"
         />
         {toast ? (
@@ -1968,9 +2320,10 @@ function AuthorizedAssistedIntakeSection({
         onAddSubmit={handleSubmit}
         onOpenDetail={openDetail}
         onClaimIntake={handleInboxClaim}
+        onCreateSavedView={handleCreateSavedView}
         onRetryLoad={() => void refresh()}
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
-        onQueryChange={setInboxQuery}
+        onQueryChange={handleInboxQueryChange}
         pageData={pageData}
         permissionContext={permissionContextFor(null, "view", {
           fieldClassification: "INTERNAL",
@@ -1986,7 +2339,8 @@ function AuthorizedAssistedIntakeSection({
             riskLevel:
               action === "decide" ||
               action === "reviewIdentity" ||
-              action === "reviewPromotion"
+              action === "reviewPromotion" ||
+              action === "replayScore"
                 ? "HIGH"
                 : undefined,
           })

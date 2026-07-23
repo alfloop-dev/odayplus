@@ -231,6 +231,7 @@ else:
         PENDING_REVIEW = "PENDING_REVIEW"
 
     class DecisionStatus(str, Enum):
+        DRAFT = "DRAFT"
         PENDING_REVIEW = "PENDING_REVIEW"
         APPROVED = "APPROVED"
         REJECTED = "REJECTED"
@@ -239,6 +240,7 @@ else:
         FAILED = "FAILED"
         REVERSAL_PENDING = "REVERSAL_PENDING"
         REVERSED = "REVERSED"
+        SUPERSEDED = "SUPERSEDED"
 
     class PromotionStatus(str, Enum):
         REQUESTED = "REQUESTED"
@@ -462,12 +464,18 @@ else:
         canonical_url: str | None = None
         source_id: str | None = None
         policy_state: SourcePolicyState | None = None
+        policy_reason: str | None = None
+        policy_version: str | None = None
+        policy_evaluated_at: DateTimeString | None = None
+        policy_expires_at: DateTimeString | None = None
         source_snapshot_id: str | None = None
         captured_at: DateTimeString | None = None
         parser_run_id: str | None = None
         parser_version: str | None = None
         correlation_id: str
         freshness_state: Literal["CURRENT", "STALE", "NOT_CAPTURED"]
+        resource_version: int = Field(..., ge=1)
+        etag: str
 
     class MatchComparisonField(BaseModel):
         field_path: str
@@ -729,6 +737,7 @@ else:
         submission_receipt: SubmissionLifecycleReceipt | None = None
 
     class IntakeDetail(IntakeSummary):
+        correlation_id: UuidString
         original_url: str | None
         canonical_url: str | None
         policy_state: SourcePolicyState | None
@@ -747,6 +756,19 @@ else:
         sla_state: str | None = None
         sla_receipt: str | None = None
         lifecycle: LifecycleAggregate
+
+    class ListingDetail(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        listing_id: str
+        status: str | None = None
+        source_id: str | None = None
+        source_url: str | None = None
+        current_revision_id: str | None = None
+        revision_sequence: int | None = Field(None, ge=1)
+        current_values: dict[str, Any]
+        revisions: list[dict[str, Any]]
+        identity_edges: list[dict[str, Any]]
+        masked_fields: list[str] = Field(default_factory=list)
 
     class IntakePage(BaseModel):
         items: list[IntakeSummary]
@@ -837,6 +859,8 @@ else:
         reverses_decision_id: UuidString | None = None
         created_at: DateTimeString | None = None
         updated_at: DateTimeString | None = None
+        status_history: list[dict[str, Any]] = Field(default_factory=list)
+        lifecycle_contract: dict[str, Any] = Field(default_factory=dict)
 
     class CandidateReassignment(BaseModel):
         candidate_site_id: UuidString
@@ -906,6 +930,7 @@ else:
         proposer_subject_id: UuidString
         reviewer_subject_id: UuidString | None = None
         site_score_job_id: UuidString | None = None
+        status_history: list[dict[str, Any]] = Field(default_factory=list)
 
     class ReviewDecisionRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -1054,16 +1079,26 @@ else:
             self.active_store = active_store
             self.op_repo = getattr(app_state, "operator_intake_repository", None)
 
+        def _ensure_status_history(
+            self,
+            promo: dict[str, Any],
+        ) -> dict[str, Any]:
+            # Lifecycle transitions are written by the command or worker that
+            # performs them. Read paths never synthesize audit history.
+            promo.setdefault("status_history", [])
+            return promo
+
         def get_promotion(self, promotion_decision_id: str) -> dict[str, Any] | None:
             if self.op_repo:
                 val = self.op_repo.get_promotion(promotion_decision_id)
                 if val:
                     val.setdefault("proposer_subject_id", val.get("proposer"))
-                    return val
+                    return self._ensure_status_history(val)
             val = self.active_store.promotions.get(promotion_decision_id)
             if val:
                 val.setdefault("proposer_subject_id", val.get("proposer"))
-            return val
+                return self._ensure_status_history(val)
+            return None
 
         def save_promotion(self, promo: dict[str, Any]) -> None:
             promo.setdefault("proposer_subject_id", promo.get("proposer"))
@@ -1078,7 +1113,7 @@ else:
                 values = list(self.active_store.promotions.values())
             for value in values:
                 value.setdefault("proposer_subject_id", value.get("proposer"))
-            return values
+            return [self._ensure_status_history(value) for value in values]
 
         def get_promotion_for_intake(self, intake_id: str) -> dict[str, Any] | None:
             values = [
@@ -1349,7 +1384,16 @@ else:
                     listing = self.repo.get_listing(draft.listing.listing_id)
                     address = None
                     if listing is not None:
-                        if hasattr(self.repo, "get_address"):
+                        if hasattr(self.repo, "addresses"):
+                            address = next(
+                                (
+                                    item
+                                    for item in self.repo.addresses
+                                    if item.address_id == listing.address_id
+                                ),
+                                None,
+                            )
+                        elif hasattr(self.repo, "get_address"):
                             address = self.repo.get_address(listing.address_id)
                         elif hasattr(self.repo, "_store") and hasattr(
                             self.repo, "_ADDRESSES"
@@ -1519,7 +1563,7 @@ else:
                 values.append(
                     {
                         "field_path": field_path,
-                        "classification": "INTERNAL",
+                        "classification": cell.get("classification") or "INTERNAL",
                         "masked": bool(cell.get("masked")),
                         "parsed": parsed,
                         "normalized": normalized,
@@ -1712,8 +1756,7 @@ else:
                     if original
                     else None
                 ),
-                "generated_at": pick(graph_plan, "generated_at", "generatedAt")
-                or now(),
+                "generated_at": pick(graph_plan, "generated_at", "generatedAt"),
             }
 
         def mutation_receipt_to_api(
@@ -1842,14 +1885,18 @@ else:
             submitted_by: str | None = None,
         ) -> dict[str, Any]:
             history = runtime.get("processingHistory") or []
-            submitted_at = history[0].get("occurredAt") if history else now()
+            if not history:
+                raise ValueError(
+                    f"intake {runtime.get('id')} has no persisted processing history"
+                )
+            submitted_at = history[0]["occurredAt"]
             canonical_history = [
                 {
-                    "transition_id": transition.get("transitionId") or str(uuid4()),
+                    "transition_id": transition["transitionId"],
                     "from_state": transition.get("fromStage"),
-                    "to_state": transition.get("toStage") or runtime.get("stage"),
-                    "occurred_at": transition.get("occurredAt") or now(),
-                    "actor": transition.get("actor") or "system",
+                    "to_state": transition["toStage"],
+                    "occurred_at": transition["occurredAt"],
+                    "actor": transition["actor"],
                     "reason_code": transition.get("reasonCode"),
                     "version_after": int(
                         transition.get("versionAfter") or runtime.get("version") or 1
@@ -1859,9 +1906,9 @@ else:
             ]
             canonical_audit = [
                 {
-                    "audit_event_id": event.get("id") or str(uuid4()),
+                    "audit_event_id": event["id"],
                     "action": event.get("action") or "intake.event",
-                    "occurred_at": event.get("occurredAt") or now(),
+                    "occurred_at": event["occurredAt"],
                     "result": ("FAILED" if runtime.get("stage") == "FAILED" else "SUCCEEDED"),
                     "reason_code": (
                         (event.get("metadata") or {}).get("reasonCode")
@@ -1912,13 +1959,17 @@ else:
                 "updated_at": (history[-1].get("occurredAt") if history else submitted_at),
                 "version": int(runtime.get("version") or 1),
                 "job_id": runtime.get("jobId"),
-                "correlation_id": runtime.get("correlationId") or str(uuid4()),
+                "correlation_id": runtime["correlationId"],
                 "submitted_by": submitted_by or runtime.get("submitter") or "system",
                 "assigned_to": runtime.get("owner"),
                 "original_url": runtime.get("originalUrl"),
                 "canonical_url": runtime.get("canonicalUrl"),
                 "source_id": runtime.get("sourceId"),
                 "policy_state": runtime.get("policy"),
+                "policy_reason": runtime.get("policyReason"),
+                "policy_version": runtime.get("policyVersion"),
+                "policy_evaluated_at": runtime.get("policyEvaluatedAt"),
+                "policy_expires_at": runtime.get("policyExpiresAt"),
                 "match_outcome": ((runtime.get("matchResult") or {}).get("outcome")),
                 "target_listing_id": target_listing_id,
                 "match_case_id": runtime.get("matchCaseId"),
@@ -1976,7 +2027,7 @@ else:
                 "resource_versions": resource_versions,
                 "job_id": None,
                 "audit_event_id": decision["auditEventId"],
-                "correlation_id": decision.get("correlationId") or str(uuid4()),
+                "correlation_id": decision["correlationId"],
                 "version": int(decision.get("version") or 1),
                 "action": decision.get("action"),
                 "tenant_id": decision["tenantId"],
@@ -1988,6 +2039,28 @@ else:
                 "reverses_decision_id": decision.get("reversesDecisionId"),
                 "created_at": decision.get("createdAt"),
                 "updated_at": decision.get("updatedAt"),
+                "status_history": copy.deepcopy(
+                    decision.get("statusHistory") or []
+                ),
+                "lifecycle_contract": {
+                    "persisted_states": [
+                        "PENDING_REVIEW",
+                        "APPROVED",
+                        "REJECTED",
+                        "EXECUTING",
+                        "EXECUTED",
+                        "FAILED",
+                        "REVERSAL_PENDING",
+                        "REVERSED",
+                        "SUPERSEDED",
+                    ],
+                    "non_persisted_states": {
+                        "DRAFT": (
+                            "Client request construction only; the server does not "
+                            "claim a durable decision before submission."
+                        )
+                    },
+                },
             }
 
         def canonical_role_mode(principal: Principal) -> str:
@@ -2089,6 +2162,10 @@ else:
                 and promotion.get("status") in {"REQUESTED", "VALIDATING", "APPROVED"}
                 else None
             )
+            pending_quarantine_release = (
+                (value.get("runtime_record") or {}).get("pendingQuarantineRelease")
+                or value.get("pending_quarantine_release")
+            )
             proposers = {
                 decision.get("proposer")
                 for decision in pending_decisions
@@ -2096,6 +2173,8 @@ else:
             }
             if pending_promotion and pending_promotion.get("proposer_subject_id"):
                 proposers.add(pending_promotion["proposer_subject_id"])
+            if pending_quarantine_release and pending_quarantine_release.get("proposer"):
+                proposers.add(pending_quarantine_release["proposer"])
             self_review_denied = principal.subject_id in proposers
             if self_review_denied:
                 for action in {
@@ -2117,10 +2196,20 @@ else:
                 for action in sorted(all_actions - set(allowed))
             }
             second_actor = {
-                "required": bool(pending_decisions or pending_promotion),
+                "required": bool(
+                    pending_decisions
+                    or pending_promotion
+                    or pending_quarantine_release
+                ),
                 "pending_decision_ids": [
                     decision["decision_id"] for decision in pending_decisions
-                ],
+                ]
+                + (
+                    [pending_quarantine_release["proposalId"]]
+                    if pending_quarantine_release
+                    and pending_quarantine_release.get("proposalId")
+                    else []
+                ),
                 "proposer_subject_ids": sorted(proposers),
                 "self_review_denied": self_review_denied,
                 "reason_code": (
@@ -2293,6 +2382,47 @@ else:
                 }
                 for receipt in runtime.get("decisionReceipts") or []
             )
+            raw_receipts.extend(
+                {
+                    "receiptId": transition.get("transitionId"),
+                    "category": "decision",
+                    "action": transition.get("toStatus"),
+                    "resourceId": decision.get("decision_id"),
+                    "resourceVersion": transition.get("versionAfter"),
+                    "status": transition.get("toStatus"),
+                    "actor": transition.get("actor"),
+                    "correlationId": transition.get("correlationId"),
+                    "occurredAt": transition.get("occurredAt"),
+                    "receipt": {
+                        **copy.deepcopy(transition),
+                        "from_state": transition.get("fromStatus"),
+                        "to_state": transition.get("toStatus"),
+                    },
+                }
+                for decision in decisions
+                for transition in decision.get("status_history") or []
+            )
+            raw_receipts.extend(
+                {
+                    "receiptId": transition.get("transition_id"),
+                    "category": "promotion",
+                    "action": transition.get("to_state"),
+                    "resourceId": (
+                        promotion.get("promotion_decision_id")
+                        if promotion
+                        else None
+                    ),
+                    "resourceVersion": transition.get("version_after"),
+                    "status": transition.get("to_state"),
+                    "actor": transition.get("actor"),
+                    "correlationId": transition.get("correlation_id"),
+                    "occurredAt": transition.get("occurred_at"),
+                    "receipt": copy.deepcopy(transition),
+                }
+                for transition in (
+                    (promotion or {}).get("status_history") or []
+                )
+            )
 
             def lifecycle_receipt_to_api(
                 receipt_value: dict[str, Any],
@@ -2373,6 +2503,13 @@ else:
                     if receipt_value["category"] == category
                 ]
 
+            def transition_history(category: str) -> list[dict[str, Any]]:
+                return [
+                    receipt_value
+                    for receipt_value in history(category)
+                    if (receipt_value.get("receipt") or {}).get("to_state")
+                ]
+
             return {
                 "intake_id": intake_id,
                 "version": int(value["version"]),
@@ -2385,8 +2522,8 @@ else:
                 "job": job,
                 "assignment_history": history("assignment"),
                 "sla_history": history("sla"),
-                "decision_history": history("decision"),
-                "promotion_history": history("promotion"),
+                "decision_history": transition_history("decision"),
+                "promotion_history": transition_history("promotion"),
                 "job_history": history("job"),
                 "mutation_receipts": mutation_receipts,
                 "latest_decision_receipt": decision_receipt_to_api(
@@ -2436,7 +2573,7 @@ else:
                 "current_stage"
             )
             intake_id = value.get("intake_id")
-            if intake_id:
+            if intake_id and not value.get("checkpoint"):
                 try:
                     runtime = runtime_service(request).get_intake(intake_id)
                 except Exception:
@@ -2453,13 +2590,16 @@ else:
             return value, queue
 
         def job_receipt_value(job: dict[str, Any]) -> dict[str, Any]:
+            correlation_id = job.get("correlation_id")
+            if not correlation_id:
+                raise HTTPException(409, "WORK_INCOMPLETE")
             return {
                 "job_id": job["job_id"],
                 "status": str(job["status"]).upper(),
                 "checkpoint": job.get("checkpoint") or "SUBMITTED",
                 "attempt": int(job.get("attempt") or job.get("attempts") or 0),
                 "version": int(job.get("version") or 1),
-                "correlation_id": job.get("correlation_id") or str(uuid4()),
+                "correlation_id": correlation_id,
             }
 
         def get_principal(request: Request) -> Principal:
@@ -3232,7 +3372,7 @@ else:
                 snapshot_time = cursor_data["snapshot_time"]
 
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -3528,7 +3668,7 @@ else:
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -3638,7 +3778,7 @@ else:
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -3743,11 +3883,15 @@ else:
             tenant_id: str = Depends(require_actor),
         ) -> IntakeDetail:
             hydrate_auxiliary_state(request)
-            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
-                intake_id
+            service = runtime_service(request)
+            from modules.opsboard.application.network_listings import (
+                NetworkListingNotFound,
             )
-            if persisted is None:
-                raise HTTPException(404, "intake not found")
+
+            try:
+                persisted = service.get_intake(intake_id)
+            except NetworkListingNotFound as exc:
+                raise HTTPException(404, "intake not found") from exc
             if persisted.get("stage") is not None:
                 value = canonicalize_runtime_intake(persisted)
                 active.intakes[intake_id] = value
@@ -3758,7 +3902,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             resource_for_auth = intake_auth_resource(value)
 
@@ -3837,9 +3981,10 @@ else:
                     ),
                 ),
                 masked_fields=masked_val.get("masked_fields") or [],
+                correlation_id=masked_val["correlation_id"],
                 original_url=masked_val.get("original_url"),
                 canonical_url=masked_val.get("canonical_url"),
-                policy_state=masked_val.get("policy_state") or "APPROVED_RETRIEVAL",
+                policy_state=masked_val.get("policy_state"),
                 source_snapshot_id=masked_val.get("source_snapshot_id"),
                 parser_run_id=masked_val.get("parser_run_id"),
                 match_case_id=masked_val.get("match_case_id"),
@@ -3853,6 +3998,10 @@ else:
                     canonical_url=masked_val.get("canonical_url"),
                     source_id=masked_val.get("source_id"),
                     policy_state=masked_val.get("policy_state"),
+                    policy_reason=masked_val.get("policy_reason"),
+                    policy_version=masked_val.get("policy_version"),
+                    policy_evaluated_at=masked_val.get("policy_evaluated_at"),
+                    policy_expires_at=masked_val.get("policy_expires_at"),
                     source_snapshot_id=masked_val.get("source_snapshot_id"),
                     captured_at=(
                         (masked_val.get("runtime_record") or {}).get("capturedAt")
@@ -3871,6 +4020,8 @@ else:
                         if masked_val.get("source_snapshot_id")
                         else "NOT_CAPTURED"
                     ),
+                    resource_version=masked_val["version"],
+                    etag=f'W/"{masked_val["version"]}"',
                 ),
                 sla_receipt=active_sla.get("receipt") if active_sla else None,
                 lifecycle=lifecycle,
@@ -3920,7 +4071,7 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             is_identity_affecting = is_identity_affecting_field(body.field_path)
             canonical_field_path = canonical_correction_field_path(
@@ -4350,7 +4501,7 @@ else:
             if intake_tenant != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -4683,7 +4834,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             resource_for_auth = intake_auth_resource(current)
 
@@ -4904,6 +5055,67 @@ else:
             return PromotionDecisionReceipt(**val)
 
         @router.get(
+            "/listings/{listing_id}",
+            operation_id="getListing",
+            response_model=ListingDetail,
+            responses={
+                200: {
+                    "model": ListingDetail,
+                    "description": "Authoritative effective Listing with revision and identity lineage",
+                },
+                **api_error_responses(403, 404),
+            },
+        )
+        def get_listing(
+            listing_id: str,
+            request: Request,
+            tenant_id: str = Depends(require_actor),
+        ) -> ListingDetail:
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={"tenant_id": tenant_id},
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
+            try:
+                listing = runtime_service(request).get_listing_detail(listing_id)
+            except Exception as exc:
+                raise HTTPException(404, str(exc)) from exc
+            current_values = {
+                "address": listing.get("address"),
+                "district": listing.get("district"),
+                "rent_per_month": listing.get("rentPerMonth"),
+                "area_ping": listing.get("areaPing"),
+                "floor": listing.get("floor"),
+                "listing_type": listing.get("listingType"),
+                "currency": listing.get("currency"),
+            }
+            masked_fields: list[str] = []
+            if canonical_role_mode(principal) == "permission-limited":
+                masked_fields = [
+                    key for key, current_value in current_values.items()
+                    if current_value is not None
+                ]
+                current_values = {
+                    key: None for key in current_values
+                }
+            return ListingDetail(
+                listing_id=listing_id,
+                status=listing.get("status"),
+                source_id=listing.get("sourceId"),
+                source_url=listing.get("sourceUrl"),
+                current_revision_id=listing.get("currentRevisionId"),
+                revision_sequence=listing.get("revisionSequence"),
+                current_values=current_values,
+                revisions=listing.get("listingRevisions") or [],
+                identity_edges=listing.get("identityEdges") or [],
+                masked_fields=masked_fields,
+            )
+
+        @router.get(
             "/listings/{listing_id}/revisions",
             operation_id="listListingRevisions",
             responses=api_error_responses(403, 404),
@@ -5093,7 +5305,7 @@ else:
         ) -> DecisionReceipt:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -5197,7 +5409,7 @@ else:
         ) -> DecisionReceipt:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -5261,7 +5473,7 @@ else:
         ) -> DecisionReceipt:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -5333,7 +5545,7 @@ else:
         ) -> DecisionReceipt:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,
@@ -5450,7 +5662,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             resource_for_auth = intake_auth_resource(current)
 
@@ -5478,6 +5690,8 @@ else:
                             job_queue=getattr(request.app.state, "job_queue", None),
                         )
                     except Exception as exc:
+                        if "WORKFLOW_STATE_DENIED" in str(exc):
+                            raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
                         raise HTTPException(409, str(exc)) from exc
                     active.intakes[intake_id] = canonicalize_runtime_intake(updated_runtime)
                     transition = updated_runtime["processingHistory"][-1]
@@ -5554,9 +5768,16 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
             validate_idempotency_key(key)
-            current = active.intakes.get(intake_id)
-            if current is None:
+            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                intake_id
+            )
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            runtime_record = persisted if persisted.get("stage") else None
+            current = (
+                canonicalize_runtime_intake(persisted) if runtime_record is not None else persisted
+            )
+            active.intakes[intake_id] = current
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -5581,6 +5802,31 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if runtime_record is not None:
+                    require_version(if_match, runtime_record["version"])
+                    try:
+                        updated_runtime = runtime_service(request).quarantine_intake(
+                            intake_id=intake_id,
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            reason=body.reason,
+                            correlation_id=request_correlation_id(request),
+                        )
+                    except Exception as exc:
+                        if "WORKFLOW_STATE_DENIED" in str(exc):
+                            raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                        raise HTTPException(409, str(exc)) from exc
+                    active.intakes[intake_id] = canonicalize_runtime_intake(updated_runtime)
+                    transition = updated_runtime["processingHistory"][-1]
+                    return {
+                        "transition_id": transition["transitionId"],
+                        "from_state": transition["fromStage"],
+                        "to_state": transition["toStage"],
+                        "occurred_at": transition["occurredAt"],
+                        "actor": transition["actor"],
+                        "reason_code": transition["reasonCode"],
+                        "version_after": transition["versionAfter"],
+                    }, 200
                 if current.get("state") != "NEEDS_REVIEW":
                     raise HTTPException(
                         409,
@@ -5659,7 +5905,7 @@ else:
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             resource_for_auth = intake_auth_resource(current)
 
@@ -6256,8 +6502,12 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            intake = linked_intake(request, current)
+            if intake is None:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT")
+            require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
             )
@@ -6339,8 +6589,12 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            intake = linked_intake(request, current)
+            if intake is None:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT")
+            require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
             )
@@ -6621,6 +6875,7 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 if service_decision is not None:
+                    review_correlation_id = request_correlation_id(request)
                     try:
                         reviewed = service.review_identity_decision(
                             tenant_id=tenant_id,
@@ -6630,10 +6885,18 @@ else:
                             reviewer_name=actor_id,
                             reason=body.reason,
                             risk_acknowledged=body.risk_acknowledged,
-                            correlation_id=request_correlation_id(request),
+                            correlation_id=review_correlation_id,
                         )
                     except Exception as exc:
                         message = str(exc)
+                        service.fail_identity_decision(
+                            tenant_id=tenant_id,
+                            decision_id=decision_id,
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            reason=message,
+                            correlation_id=review_correlation_id,
+                        )
                         status_code = 403 if "SELF_REVIEW_DENIED" in message else 409
                         raise HTTPException(status_code, message) from exc
                     updated = identity_decision_to_api(reviewed)
@@ -6726,7 +6989,7 @@ else:
             if intake is not None:
                 require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request_correlation_id(request)
 
             authorize_intake_action(
                 principal,

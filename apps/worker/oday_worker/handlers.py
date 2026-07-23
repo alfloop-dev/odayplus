@@ -14,6 +14,7 @@ package into the process.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,47 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 FORECAST_JOB_TYPE = "forecast"
 EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
 SITESCORE_CANDIDATE_JOB_TYPE = "sitescore-candidate"
+
+
+def _append_promotion_transition(
+    promotion: dict,
+    *,
+    from_state: str,
+    to_state: str,
+    version_after: int,
+    correlation_id: str | None,
+    reason: str,
+    occurred_at: str | None = None,
+) -> None:
+    history = promotion.setdefault("status_history", [])
+    if (
+        history
+        and history[-1].get("to_state") == to_state
+        and int(history[-1].get("version_after") or 0) == version_after
+    ):
+        return
+    transition_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            (
+                f"oday-plus:promotion:{promotion['promotion_decision_id']}:"
+                f"{version_after}:{to_state}"
+            ),
+        )
+    )
+    history.append(
+        {
+            "transition_id": transition_id,
+            "from_state": from_state,
+            "to_state": to_state,
+            "occurred_at": occurred_at or datetime.now(UTC).isoformat(),
+            "actor": "sitescore-worker",
+            "actor_role": "svc_promotion",
+            "reason": reason,
+            "correlation_id": correlation_id,
+            "version_after": version_after,
+        }
+    )
 
 
 def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
@@ -159,6 +201,7 @@ def handle_sitescore_candidate(
     )
 
     if aggregate.status == PromotionState.SCORE_FAILED:
+        prior_state = aggregate.status.value
         PromotionStateMachine.transition(
             aggregate,
             PromotionState.SCORE_QUEUED,
@@ -166,6 +209,14 @@ def handle_sitescore_candidate(
         )
         promotion["status"] = PromotionState.SCORE_QUEUED.value
         promotion["version"] = aggregate.version
+        _append_promotion_transition(
+            promotion,
+            from_state=prior_state,
+            to_state=PromotionState.SCORE_QUEUED.value,
+            version_after=aggregate.version,
+            correlation_id=job.correlation_id,
+            reason="Authorized SiteScore replay started from the persisted checkpoint.",
+        )
         repository.save_promotion(promotion)
     elif aggregate.status != PromotionState.SCORE_QUEUED:
         raise ValueError(
@@ -194,6 +245,7 @@ def handle_sitescore_candidate(
             payload=updated_payload,
         )
     except Exception:
+        failed_at = datetime.now(UTC).isoformat()
         PromotionStateMachine.transition(
             aggregate,
             PromotionState.SCORE_FAILED,
@@ -201,7 +253,16 @@ def handle_sitescore_candidate(
         )
         promotion["status"] = PromotionState.SCORE_FAILED.value
         promotion["version"] = aggregate.version
-        promotion["score_failed_at"] = datetime.now(UTC).isoformat()
+        promotion["score_failed_at"] = failed_at
+        _append_promotion_transition(
+            promotion,
+            from_state=PromotionState.SCORE_QUEUED.value,
+            to_state=PromotionState.SCORE_FAILED.value,
+            version_after=aggregate.version,
+            correlation_id=job.correlation_id,
+            reason="SiteScore worker failed; Candidate remains committed.",
+            occurred_at=failed_at,
+        )
         repository.save_promotion(promotion)
         raise
 
@@ -219,6 +280,15 @@ def handle_sitescore_candidate(
     promotion["site_score_run_ids"] = [
         report.sitescore_run_id for report in result.reports
     ]
+    _append_promotion_transition(
+        promotion,
+        from_state=PromotionState.SCORE_QUEUED.value,
+        to_state=PromotionState.COMPLETED.value,
+        version_after=aggregate.version,
+        correlation_id=job.correlation_id,
+        reason="SiteScore worker completed and persisted score reports.",
+        occurred_at=result.completed_at.isoformat(),
+    )
     repository.save_promotion(promotion)
 
 

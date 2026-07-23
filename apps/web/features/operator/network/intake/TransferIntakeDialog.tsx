@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
@@ -10,12 +10,17 @@ export interface TransferTargetOption {
   role: string;
 }
 
-export const DEFAULT_TRANSFER_TARGETS: TransferTargetOption[] = [
-  { id: "actor-mgr", name: "吳孟哲（展店主管）", role: "expansion-manager" },
-  { id: "actor-steward", name: "周育安（資料管理員）", role: "data-steward" },
-  { id: "actor-staff", name: "許庭瑜（展店）", role: "expansion-staff" },
-  { id: "gov-queue", name: "治理覆核佇列", role: "site-reviewer" },
-];
+export const DEFAULT_TRANSFER_TARGETS: TransferTargetOption[] = [];
+
+const TRANSFER_ROLES = [
+  ["expansion-staff", "展店專員"],
+  ["expansion-manager", "展店經理"],
+  ["data-steward", "資料管理員"],
+  ["governance-reviewer", "治理審查員"],
+] as const;
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface TransferIntakeDialogProps {
   busy: boolean;
@@ -48,25 +53,21 @@ export function TransferIntakeDialog({
   targetOptions = DEFAULT_TRANSFER_TARGETS,
 }: TransferIntakeDialogProps) {
   const [targetId, setTargetId] = useState(targetOptions[0]?.id || "");
+  const [targetRole, setTargetRole] = useState(
+    targetOptions[0]?.role || "data-steward",
+  );
   const [handoffNote, setHandoffNote] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const activeBeforeOpen = document.activeElement as HTMLElement | null;
-    return () => {
-      if (activeBeforeOpen && typeof activeBeforeOpen.focus === "function") {
-        activeBeforeOpen.focus();
-      }
-    };
-  }, []);
-
-  const selectedTarget =
-    targetOptions.find((o) => o.id === targetId) || targetOptions[0] || { id: "", name: "未指定", role: "" };
+  const selectedTarget = targetOptions.find((option) => option.id === targetId);
+  const targetLabel =
+    selectedTarget?.name ??
+    (targetId ? `${targetRole} (${targetId})` : "尚未指定 canonical subject");
 
   const title = "轉交收件（Transfer）";
   const riskSummary =
-    `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
+    `將收件 ${record.id} 轉交給 ${targetLabel}。` +
     `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
 
   function safeClose() {
@@ -82,14 +83,19 @@ export function TransferIntakeDialog({
       return;
     }
 
+    if (!UUID_PATTERN.test(targetId)) {
+      setLocalError("請輸入 canonical subject UUID；展示名稱或本機假 ID 不可送出。");
+      return;
+    }
+
     if (!riskAcknowledged) {
       setLocalError("請先勾選確認你已閱讀並了解上述風險。");
       return;
     }
 
     onSubmit({
-      target_owner_subject_id: selectedTarget.id,
-      target_owner_role: selectedTarget.role,
+      target_owner_subject_id: targetId,
+      target_owner_role: selectedTarget?.role ?? targetRole,
       handoff_note: handoffNote.trim(),
       riskSummary,
       riskAcknowledged,
@@ -141,24 +147,72 @@ export function TransferIntakeDialog({
           <span data-testid="transfer-record-version">v{record.version || 1}</span>
         </div>
 
-        <div>
-          <label className={styles.fieldLabel} htmlFor="transfer-target-select">
-            轉交對象
-          </label>
-          <select
-            className={styles.select}
-            data-testid="transfer-target-select"
-            id="transfer-target-select"
-            onChange={(e) => setTargetId(e.target.value)}
-            value={targetId}
-          >
-            {targetOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {targetOptions.length > 0 ? (
+          <div>
+            <label className={styles.fieldLabel} htmlFor="transfer-target-select">
+              轉交對象
+            </label>
+            <select
+              className={styles.select}
+              data-testid="transfer-target-select"
+              id="transfer-target-select"
+              onChange={(event) => {
+                const option = targetOptions.find(
+                  (target) => target.id === event.target.value,
+                );
+                setTargetId(event.target.value);
+                if (option) setTargetRole(option.role);
+              }}
+              value={targetId}
+            >
+              {targetOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <>
+            <div>
+              <label
+                className={styles.fieldLabel}
+                htmlFor="transfer-target-subject"
+              >
+                轉交對象 Subject UUID
+              </label>
+              <input
+                className={styles.input}
+                data-testid="transfer-target-subject"
+                id="transfer-target-subject"
+                onChange={(event) => setTargetId(event.target.value.trim())}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                value={targetId}
+              />
+            </div>
+            <div>
+              <label
+                className={styles.fieldLabel}
+                htmlFor="transfer-target-select"
+              >
+                轉交角色
+              </label>
+              <select
+                className={styles.select}
+                data-testid="transfer-target-select"
+                id="transfer-target-select"
+                onChange={(event) => setTargetRole(event.target.value)}
+                value={targetRole}
+              >
+                {TRANSFER_ROLES.map(([role, label]) => (
+                  <option key={role} value={role}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
 
         <div>
           <label className={styles.fieldLabel} htmlFor="transfer-handoff-note">

@@ -1,10 +1,16 @@
 {
   "schema": "oday-plus.assisted-listing-intake.functional-closure-tasks.v1",
   "doc_id": "ODP-INTAKE-FUNCTIONAL-CLOSURE-EXEC-001",
-  "status": "approved_for_dispatch",
+  "status": "implemented_pending_independent_functional_acceptance",
   "audited_commit": "eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585",
-  "target_branch": "task/ODP-INTAKE-FUNCTIONAL-CLOSURE-001",
+  "target_branch": "task/ODP-INTAKE-FCL-INTEGRATION-001",
   "audit": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_COMPLETENESS_AUDIT_2026-07-23.md",
+  "requirement_trace": {
+    "path": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_REQUIREMENT_TRACE_2026-07-23.md",
+    "first_id": "FTR-001",
+    "last_id": "FTR-197",
+    "requires_independent_row_disposition": true
+  },
   "completion_disallows": [
     "unmounted_component",
     "unit_test_only",
@@ -18,6 +24,7 @@
   "tasks": [
     {
       "id": "ODP-INTAKE-FCL-RUNTIME-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Claude2",
@@ -34,6 +41,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-SHELL-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Codex2",
@@ -50,6 +58,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-ROLES-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Codex",
@@ -65,6 +74,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-INBOX-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity3",
@@ -81,6 +91,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-REVIEW-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity4",
@@ -97,6 +108,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-IDENTITY-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity5",
@@ -113,6 +125,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-EVIDENCE-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity6",
@@ -129,6 +142,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-LIFECYCLE-001",
+      "status": "integrated",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity7",
@@ -145,6 +159,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-INTEGRATION-001",
+      "status": "verified_pending_commit",
       "wave": 2,
       "priority": "P0",
       "owner": "Claude",
@@ -171,6 +186,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-ACCEPTANCE-001",
+      "status": "pending_exact_commit",
       "wave": 3,
       "priority": "P0",
       "owner": "Codex2",
@@ -179,6 +195,7 @@
       "title": "Independent functional closure audit",
       "acceptance": [
         "Re-run all verification from the integrated commit.",
+        "Inspect and disposition every FTR-001 through FTR-197.",
         "Inspect production routes and import graph.",
         "Inspect persisted revisions, identity edges, histories, receipts, and audit.",
         "Mark every complete audit row PASS.",

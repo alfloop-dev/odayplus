@@ -30,6 +30,15 @@ export type IntakeInboxSavedView = {
   count?: number | null;
 };
 
+export type CreateIntakeSavedViewResult =
+  | { ok: true; value: IntakeInboxSavedView }
+  | { ok: false; error: AuthoritativeInboxError };
+
+export type CreateIntakeSavedViewCommand = (
+  name: string,
+  query: IntakeInboxQueryContract,
+) => Promise<CreateIntakeSavedViewResult>;
+
 export type IntakeInboxHeatZone = {
   id: string;
   label: string;

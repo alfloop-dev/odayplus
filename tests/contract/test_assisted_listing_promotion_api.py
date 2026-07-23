@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
+from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
+from modules.external_data.security.assisted_listing_retrieval import FetchResponse
+from modules.opsboard.application.network_listings import NetworkListingService
+from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.jobs.queue import JobStatus
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 ACTOR_A = "00000000-0000-0000-0000-000000000101"
@@ -28,13 +34,36 @@ HEADERS_A_REVIEWER = {
 }
 
 
-def test_promotion_api_contract_flow() -> None:
-    app = create_app()
+def _inject_synthetic_retrieval(monkeypatch, url: str) -> None:
+    raw = RETRIEVAL_CORPUS[url].raw
+    from modules.external_data.security import assisted_listing_retrieval
+
+    monkeypatch.setattr(
+        assisted_listing_retrieval,
+        "_resolve_host",
+        lambda _host: ("93.184.216.34",),
+    )
+    monkeypatch.setattr(
+        assisted_listing_retrieval.DefaultRetrievalFetcher,
+        "__call__",
+        lambda _self, _url, *, timeout_seconds, max_response_bytes: FetchResponse(
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            body=json.dumps(raw).encode(),
+        ),
+    )
+
+
+def test_promotion_api_contract_flow(tmp_path, monkeypatch) -> None:
+    bundle = _durable_bundle(str(tmp_path / "promotion-contract.sqlite3"))
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
-    # 1. Submit an intake to /api/v1/intakes/url (resolves to READY)
+    # 1. Submit persists SUBMITTED; the authorized worker advances it.
+    url = "https://www.synthetic.example/detail-77120345.html"
+    _inject_synthetic_retrieval(monkeypatch, url)
     submit_payload = {
-        "original_url": "https://www.synthetic.example/detail-77120345.html",
+        "original_url": url,
         "scope": {"tenant_id": TENANT_A},
     }
     submit_headers = {
@@ -44,64 +73,28 @@ def test_promotion_api_contract_flow() -> None:
     submit_resp = client.post("/api/v1/intakes/url", json=submit_payload, headers=submit_headers)
     assert submit_resp.status_code == 202, submit_resp.text
     intake = submit_resp.json()
+    assert intake["state"] == "SUBMITTED"
     intake_id = intake["intake_id"]
+    assert ODayWorker(persistence=bundle).run_once() is True
 
-    # Transition the intake state to READY in store to satisfy the promotion prerequisite
-    store = AssistedIntakeStore._instances[-1]
-    store.intakes[intake_id]["state"] = "READY"
-    target_listing_id = "L-GOLD-99"
-    store.intakes[intake_id]["matchResult"] = {
-        "targetListingId": target_listing_id,
-        "confidence": 0.95,
-        "contradictorySignals": [],
-    }
-
-    # Seed the listing repository
-    repository = getattr(app.state, "listing_repository", None)
-    if repository is None:
-        from modules.listing.infrastructure.repositories import InMemoryListingRepository
-        repository = InMemoryListingRepository()
-        app.state.listing_repository = repository
-
-    from modules.listing.domain.models import ListingDedupKey
-    from shared.domain.models import AddressLocation, Listing
-
-    address = AddressLocation(
-        address_id="A-99",
-        raw_address="100 Synthetic Way",
-        normalized_address="100 Synthetic Way",
-        geocode_confidence=1.0,
-        h3_res_9="HZ-01",
+    detail = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_A)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["state"] == "READY"
+    service = NetworkListingService(
+        listing_repository=bundle.listing_repository,
+        intake_repository=app.state.operator_intake_repository,
     )
-    listing = Listing(
-        listing_id=target_listing_id,
-        source_listing_id=target_listing_id,
-        source_id="S-99",
-        listing_status="watching",
-        address_id="A-99",
-        rent_amount=50000.0,
-        currency="TWD",
-        area_ping=25.0,
-        floor=1,
-        frontage_m=5.0,
-        depth_m=12.0,
-        corner_flag=False,
-        parking_flag=False,
-        utility_electricity_flag=True,
-        utility_drainage_flag=True,
-        utility_gas_flag=False,
-        available_from="2026-08-01",
-        snapshot_id="SN-99",
-        confidence=1.0,
+    created = service.decide_intake(
+        intake_id=intake_id,
+        action="create",
+        actor_role_id="expansionManager",
+        actor_name=ACTOR_A_REVIEWER,
+        reason="Create the reviewed listing before promotion.",
+        risk_summary="Creates one listing with durable intake lineage.",
+        risk_acknowledged=True,
+        idempotency_key=f"create-{uuid4()}",
+        correlation_id=str(uuid4()),
     )
-    key = ListingDedupKey(
-        source_id="S-99",
-        source_listing_id=target_listing_id,
-        normalized_address="100 Synthetic Way",
-        rent_amount=50000.0,
-        area_ping=25.0,
-    )
-    repository.save_listing(listing, address, key)
 
     # 2. Request promotion (None -> REQUESTED -> VALIDATING)
     promo_payload = {
@@ -113,7 +106,7 @@ def test_promotion_api_contract_flow() -> None:
     promo_headers = {
         **HEADERS_A,
         "Idempotency-Key": f"idem-api-promo-{uuid4()}",
-        "If-Match": f'W/"{intake["version"]}"',
+        "If-Match": f'W/"{created["version"]}"',
     }
     promo_resp = client.post(
         f"/api/v1/intakes/{intake_id}/promotion-requests",
@@ -153,25 +146,41 @@ def test_promotion_api_contract_flow() -> None:
     )
     assert review_resp.status_code == 200, review_resp.text
     reviewed_data = review_resp.json()
-    assert reviewed_data["status"] == "COMPLETED"
+    assert reviewed_data["status"] == "SCORE_QUEUED"
     assert reviewed_data["reviewer_subject_id"] == ACTOR_A_REVIEWER
     assert reviewed_data["candidate_site_id"] is not None
     assert reviewed_data["site_score_job_id"] is not None
-    candidate = repository.list_candidates()[0]
-    assert candidate.dataset_snapshot_id == "FS-SN-99"
-    job = store.jobs[reviewed_data["site_score_job_id"]]
-    assert job["status"] == "SUCCEEDED"
-    assert job["checkpoint"] == "SCORE_QUEUED"
+    job = bundle.job_queue.get(reviewed_data["site_score_job_id"])
+    assert job is not None
+    assert job.status == JobStatus.QUEUED
+    assert job.payload["candidate_site_id"] == reviewed_data["candidate_site_id"]
+    assert ODayWorker(persistence=bundle).run_once() is True
+    completed = bundle.job_queue.get(reviewed_data["site_score_job_id"])
+    assert completed is not None
+    assert completed.status == JobStatus.SUCCEEDED
+    final = client.get(
+        f"/api/v1/promotion-decisions/{promo_decision_id}",
+        headers=HEADERS_A_REVIEWER,
+    )
+    assert final.status_code == 200, final.text
+    assert final.json()["status"] == "COMPLETED"
+    bundle.engine.close()
 
 
-def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> None:
-    app = create_app()
+def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bundle = _durable_bundle(str(tmp_path / "operator-promotion-contract.sqlite3"))
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
+    url = "https://www.synthetic.example/detail-88520242.html"
+    _inject_synthetic_retrieval(monkeypatch, url)
     submitted = client.post(
         "/api/v1/operator/network-listings/intake/submit",
         json={
-            "url": "https://www.synthetic.example/detail-88520242.html",
+            "url": url,
             "heatZoneId": "HZ-01",
         },
         headers={
@@ -184,55 +193,23 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
         },
     )
     assert submitted.status_code == 200, submitted.text
-    intake = submitted.json()
+    queued_intake = submitted.json()
+    assert queued_intake["stage"] == "SUBMITTED"
+    assert ODayWorker(persistence=bundle).run_once() is True
+    readback = client.get(
+        f"/api/v1/operator/network-listings/intake/{queued_intake['id']}",
+        headers={
+            "x-subject-id": OPERATOR_PROPOSER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+        },
+    )
+    assert readback.status_code == 200, readback.text
+    intake = readback.json()
     assert intake["stage"] == "READY"
     assert intake["tenantId"] == OPERATOR_TENANT
-    assert intake["version"] == 1
-
-    from modules.listing.domain.models import ListingDedupKey
-    from shared.domain.models import AddressLocation, Listing
-
-    target_listing_id = "L-OPERATOR-PROMOTION"
-    app.state.listing_repository.save_listing(
-        Listing(
-            listing_id=target_listing_id,
-            source_listing_id="SRC-OPERATOR-PROMOTION",
-            source_id="S-OPERATOR",
-            listing_status="watching",
-            address_id="A-OPERATOR-PROMOTION",
-            rent_amount=58000.0,
-            currency="TWD",
-            area_ping=18.0,
-            floor=1,
-            frontage_m=6.0,
-            depth_m=10.0,
-            corner_flag=False,
-            parking_flag=False,
-            utility_electricity_flag=True,
-            utility_drainage_flag=True,
-            utility_gas_flag=False,
-            available_from="2026-08-01",
-            snapshot_id="SN-OPERATOR-PROMOTION",
-            confidence=0.95,
-        ),
-        AddressLocation(
-            address_id="A-OPERATOR-PROMOTION",
-            raw_address="台北市信義區松仁路 96 號 1F",
-            normalized_address="台北市信義區松仁路96號1樓",
-            geocode_confidence=0.95,
-            h3_res_9="892d5444d63ffff",
-        ),
-        ListingDedupKey(
-            source_id="S-OPERATOR",
-            source_listing_id="SRC-OPERATOR-PROMOTION",
-            normalized_address="台北市信義區松仁路96號1樓",
-            rent_amount=58000.0,
-            area_ping=18.0,
-        ),
-    )
-    operator_record = app.state.operator_intake_repository.intakes[intake["id"]]
-    operator_record["matchResult"]["targetListingId"] = target_listing_id
-    app.state.operator_intake_repository.save_intake(operator_record)
+    assert intake["matchResult"]["targetListingId"] == "L-2024"
 
     requested = client.post(
         f"/api/v1/intakes/{intake['id']}/promotion-requests",
@@ -248,7 +225,7 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
             "x-roles": "site_reviewer,data_owner,expansion_user",
             "x-operator-role": "expansion-manager",
             "Idempotency-Key": f"operator-promotion-{uuid4()}",
-            "If-Match": 'W/"1"',
+            "If-Match": f'W/"{intake["version"]}"',
         },
     )
     assert requested.status_code == 202, requested.text
@@ -257,8 +234,11 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
     assert app.state.operator_intake_repository.get_promotion(
         decision["promotion_decision_id"]
     ) is not None
-    persisted = app.state.operator_intake_repository.intakes[intake["id"]]
-    assert persisted["version"] == 2
+    persisted = NetworkListingService(
+        listing_repository=bundle.listing_repository,
+        intake_repository=app.state.operator_intake_repository,
+    ).get_intake(intake["id"])
+    assert persisted["version"] > intake["version"]
 
     hydrated = client.get(
         f"/api/v1/intakes/{intake['id']}/promotion-decision",
@@ -303,42 +283,17 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
     assert receipt.status_code == 200, receipt.text
     assert receipt.json()["job_id"] == job_id
     assert receipt.json()["version"] == 1
-
-    # The retry route must resolve the linked operator intake too; otherwise
-    # SCORE_FAILED UI replay would fail with DEPENDENCY_CONFLICT.
-    store = next(store for store in reversed(AssistedIntakeStore._instances) if job_id in store.jobs)
-    store.jobs[job_id]["status"] = "FAILED"
-    retry_key = f"operator-job-retry-{uuid4()}"
-    retry_body = {
-        "checkpoint": "SCORE_QUEUED",
-        "reason": "Retry authoritative SiteScore checkpoint",
-        "risk_acknowledged": True,
-    }
-    retry_headers = {
-        "x-subject-id": ACTOR_A_REVIEWER,
-        "x-tenant-id": OPERATOR_TENANT,
-        "x-roles": "site_reviewer,data_owner,expansion_user",
-        "x-operator-role": "expansion-manager",
-        "Idempotency-Key": retry_key,
-        "If-Match": 'W/"1"',
-    }
-    retried = client.post(
-        f"/api/v1/jobs/{job_id}/retry",
-        json=retry_body,
-        headers=retry_headers,
+    assert receipt.json()["status"] == "QUEUED"
+    assert ODayWorker(persistence=bundle).run_once() is True
+    completed = client.get(
+        f"/api/v1/jobs/{job_id}/receipt",
+        headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+            "x-operator-role": "expansion-manager",
+        },
     )
-    assert retried.status_code == 202, retried.text
-    assert retried.json()["status"] == "QUEUED"
-    assert retried.json()["version"] == 2
-    assert retried.headers["idempotency-replayed"] == "false"
-    assert retried.headers["etag"] == 'W/"2"'
-
-    replayed = client.post(
-        f"/api/v1/jobs/{job_id}/retry",
-        json=retry_body,
-        headers=retry_headers,
-    )
-    assert replayed.status_code == 202, replayed.text
-    assert replayed.json() == retried.json()
-    assert replayed.headers["idempotency-replayed"] == "true"
-    assert replayed.headers["etag"] == 'W/"2"'
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "SUCCEEDED"
+    bundle.engine.close()

@@ -13,6 +13,7 @@ from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.infrastructure.persistence.operator_network_listings import (
     DurableAssistedIntakeRepository,
 )
+from shared.jobs.queue import JobStatus
 from tests.integration._authz import auth_headers
 
 HEADERS = {
@@ -39,6 +40,43 @@ def _write_headers(key: str) -> dict[str, str]:
         "X-Correlation-Id": f"corr-{key}",
         "Idempotency-Key": f"idem-{key}",
     }
+
+
+def _advance_submitted_intake(
+    client: TestClient,
+    submitted: dict,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict:
+    assert submitted["stage"] == "SUBMITTED"
+    queue = client.app.state.job_queue
+    job = queue.claim_next(worker_id="persistence-intake-worker")
+    assert job is not None
+    assert job.job_type == "assisted-listing-intake"
+    assert job.payload["intake_id"] == submitted["id"]
+    assert job.status == JobStatus.RUNNING
+
+    from modules.external_data.application.assisted_intake import retrieve
+    from modules.opsboard.application.network_listings import NetworkListingService
+
+    service = NetworkListingService(
+        listing_repository=client.app.state.listing_repository,
+        intake_repository=client.app.state.operator_intake_repository,
+    )
+    service.process_queued_intake(
+        intake_id=submitted["id"],
+        retrieval_provider=retrieve,
+        correlation_id=job.correlation_id,
+        attempt=job.attempts,
+    )
+    assert queue.complete(job.job_id)
+
+    readback = client.get(
+        f"/api/v1/operator/network-listings/intake/{submitted['id']}",
+        headers=headers or HEADERS,
+    )
+    assert readback.status_code == 200, readback.text
+    return readback.json()
 
 
 @pytest.fixture
@@ -68,9 +106,11 @@ def test_first_submission_contract_test() -> None:
     assert data["id"].startswith("IN-")
     assert data["originalUrl"] == url
     assert data["canonicalUrl"] == url
-    assert data["stage"] == "READY"
+    assert data["stage"] == "SUBMITTED"
     assert data["policy"] == "APPROVED_RETRIEVAL"
-    assert data["matchResult"]["outcome"] == "NEW"
+    processed = _advance_submitted_intake(client, data)
+    assert processed["stage"] == "READY"
+    assert processed["matchResult"]["outcome"] == "NEW"
 
     # Replay with idempotency key
     replay = client.post(
@@ -99,7 +139,9 @@ def test_duplicate_and_revision_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["matchResult"]["outcome"] == "REVISION"
     assert data["matchResult"]["targetListingId"] == "L-2024"
 
@@ -138,7 +180,9 @@ def test_ambiguous_entity_match_review_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "NEEDS_REVIEW"
     assert data["matchResult"]["outcome"] == "POSSIBLE_MATCH"
     assert data["matchResult"]["targetListingId"] == "L-2025"
@@ -173,7 +217,9 @@ def test_malformed_payload_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "AWAITING_ASSISTED_ENTRY"
 
 
@@ -189,7 +235,9 @@ def test_unapproved_source_fail_closed_test() -> None:
         headers=HEADERS,
     )
     assert resp_591.status_code == 200
-    data_591 = resp_591.json()
+    queued_591 = resp_591.json()
+    assert queued_591["stage"] == "SUBMITTED"
+    data_591 = _advance_submitted_intake(client, queued_591)
     assert data_591["stage"] == "AWAITING_ASSISTED_ENTRY"
     assert data_591["policy"] == "ASSISTED_ENTRY_ONLY"
 
@@ -201,7 +249,9 @@ def test_unapproved_source_fail_closed_test() -> None:
         headers=HEADERS,
     )
     assert resp_unknown.status_code == 200
-    data_unknown = resp_unknown.json()
+    queued_unknown = resp_unknown.json()
+    assert queued_unknown["stage"] == "SUBMITTED"
+    data_unknown = _advance_submitted_intake(client, queued_unknown)
     assert data_unknown["stage"] == "QUARANTINED"
     assert data_unknown["policy"] == "POLICY_UNKNOWN"
 
@@ -218,7 +268,9 @@ def test_timeout_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "FAILED"
     assert data["failure"]["code"] == "ODP-INTAKE-RETRIEVAL-TIMEOUT"
 
@@ -245,7 +297,11 @@ def test_timeout_contract_test() -> None:
     )
     assert retry_resp.status_code == 200
     retried_data = retry_resp.json()
+    assert retried_data["stage"] == "SUBMITTED"
     assert retried_data["parsedFields"]["rent"]["correctedValue"] == 48000
+    failed_again = _advance_submitted_intake(client, retried_data)
+    assert failed_again["stage"] == "FAILED"
+    assert failed_again["parsedFields"]["rent"]["correctedValue"] == 48000
 
 
 def test_process_restart_survival(db_path) -> None:
@@ -263,7 +319,11 @@ def test_process_restart_survival(db_path) -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 200
-        intake_id = resp.json()["id"]
+        submitted = resp.json()
+        assert submitted["stage"] == "SUBMITTED"
+        processed = _advance_submitted_intake(client, submitted)
+        assert processed["stage"] == "READY"
+        intake_id = processed["id"]
     finally:
         bundle.engine.close()
 
@@ -412,7 +472,9 @@ def test_service_replays_idempotent_write_through_repository_after_restart(db_pa
             headers={**HEADERS, "Idempotency-Key": "idem-restart"},
         )
         assert resp.status_code == 200
-        intake_id = resp.json()["id"]
+        submitted = resp.json()
+        assert submitted["stage"] == "SUBMITTED"
+        intake_id = _advance_submitted_intake(client, submitted)["id"]
     finally:
         bundle.engine.close()
 

@@ -1,0 +1,550 @@
+{
+  "intake_id": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+  "state": "FAILED",
+  "intake_method": "URL",
+  "source_id": "SRC-SYNTHETIC",
+  "original_url": "https://www.synthetic.example/detail-50000002.html",
+  "canonical_url": "https://www.synthetic.example/detail-50000002.html",
+  "policy_state": "APPROVED_RETRIEVAL",
+  "match_outcome": null,
+  "submitted_by": "00000000-0000-4000-8000-000000000202",
+  "assigned_to": "00000000-0000-4000-8000-000000000202",
+  "assignment_id": null,
+  "assignment_status": null,
+  "assignment_version": null,
+  "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+  "queue_id": null,
+  "sla_instance_id": null,
+  "sla_state": null,
+  "sla_version": null,
+  "due_at": null,
+  "last_observed_at": "2026-07-23T21:45:49.708269Z",
+  "submitted_at": "2026-07-23T21:45:49.708269Z",
+  "updated_at": "2026-07-23T21:45:49.979064Z",
+  "version": 8,
+  "scope": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "assigned_area_id": null,
+    "brand_id": null,
+    "heat_zone_id": null,
+    "region_id": null
+  },
+  "issue": "AUTH_WALL_ENCOUNTERED",
+  "next_action": "REPLAY_FROM_CHECKPOINT",
+  "retryable": false,
+  "quarantined": false,
+  "failed": true,
+  "location": {
+    "address": null,
+    "district": null,
+    "assigned_area_id": null,
+    "heat_zone_id": null,
+    "latitude": null,
+    "longitude": null,
+    "confidence": null,
+    "source": null
+  },
+  "masking": {
+    "restricted_data": false,
+    "has_masked_fields": false,
+    "masked_fields": [],
+    "reason_codes": []
+  },
+  "masked_fields": [],
+  "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+  "source_snapshot_id": null,
+  "parser_run_id": null,
+  "match_case_id": "91b8afc2-7911-4c58-b6bf-9b0883e3de51",
+  "match_case_version": 0,
+  "match_case": null,
+  "processing_history": [
+    {
+      "transition_id": "a80b2e43-ccc1-4af5-bf7f-35d57811984c",
+      "from_state": null,
+      "to_state": "SUBMITTED",
+      "occurred_at": "2026-07-23T21:45:49.708269Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 1
+    },
+    {
+      "transition_id": "ef0e33b4-fe2a-41a5-bbc0-d7348c4078d2",
+      "from_state": "SUBMITTED",
+      "to_state": "CHECKING_IDENTITY",
+      "occurred_at": "2026-07-23T21:45:49.788427Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 3
+    },
+    {
+      "transition_id": "2fe46286-b066-4ff5-bd31-73a49df90e3e",
+      "from_state": "CHECKING_IDENTITY",
+      "to_state": "CHECKING_SOURCE_POLICY",
+      "occurred_at": "2026-07-23T21:45:49.900875Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 4
+    },
+    {
+      "transition_id": "0c16b443-8f3a-4173-8910-e0505e54e1cd",
+      "from_state": "CHECKING_SOURCE_POLICY",
+      "to_state": "RETRIEVING",
+      "occurred_at": "2026-07-23T21:45:49.929190Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 5
+    },
+    {
+      "transition_id": "1acf5392-d994-474f-afdb-965ddfd68d24",
+      "from_state": "RETRIEVING",
+      "to_state": "FAILED",
+      "occurred_at": "2026-07-23T21:45:49.940753Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": "AUTH_WALL_ENCOUNTERED",
+      "version_after": 6
+    },
+    {
+      "transition_id": "acfb2f4a-490d-4328-bc68-8babba8ec073",
+      "from_state": "FAILED",
+      "to_state": "FAILED",
+      "occurred_at": "2026-07-23T21:45:49.979064Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": "MAX_RETRIES_EXHAUSTED",
+      "version_after": 7
+    }
+  ],
+  "fields": [],
+  "audit": [
+    {
+      "audit_event_id": "7d12ff07-0cc3-4434-8cc2-e287001fc182",
+      "action": "intake.create",
+      "occurred_at": "2026-07-23T21:45:49.710755Z",
+      "result": "FAILED",
+      "reason_code": "User-submitted listing intake",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "expansionManager",
+      "before": null,
+      "after": {
+        "stage": "SUBMITTED",
+        "version": 1
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 1,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "c4a35e13-c990-425e-b558-40dc530b4bf3",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T21:45:49.788427Z",
+      "result": "FAILED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "SUBMITTED"
+      },
+      "after": {
+        "stage": "CHECKING_IDENTITY",
+        "version": 3
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 3,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "034781c9-938d-4813-8497-c387434affd7",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T21:45:49.900875Z",
+      "result": "FAILED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "CHECKING_IDENTITY"
+      },
+      "after": {
+        "stage": "CHECKING_SOURCE_POLICY",
+        "version": 4
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 4,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "19c8d82c-5f74-4b12-ac73-0cba748b09d8",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T21:45:49.929190Z",
+      "result": "FAILED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "CHECKING_SOURCE_POLICY"
+      },
+      "after": {
+        "stage": "RETRIEVING",
+        "version": 5
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 5,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "7eec2a18-5106-42e0-904b-fab6f2042f9e",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T21:45:49.940753Z",
+      "result": "FAILED",
+      "reason_code": "AUTH_WALL_ENCOUNTERED",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "RETRIEVING"
+      },
+      "after": {
+        "stage": "FAILED",
+        "version": 6
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 6,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "a2ef5f43-3187-4e36-a3d2-5139509df66e",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T21:45:49.979064Z",
+      "result": "FAILED",
+      "reason_code": "MAX_RETRIES_EXHAUSTED",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "FAILED"
+      },
+      "after": {
+        "stage": "FAILED",
+        "version": 7
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+        "jobId": "0bebd03a-549f-4a1b-a441-905aa48f8839"
+      },
+      "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+      "resource_version": 7,
+      "evidence_state": "PARTIAL"
+    }
+  ],
+  "evidence": {
+    "original_url": "https://www.synthetic.example/detail-50000002.html",
+    "canonical_url": "https://www.synthetic.example/detail-50000002.html",
+    "source_id": "SRC-SYNTHETIC",
+    "policy_state": "APPROVED_RETRIEVAL",
+    "policy_reason": "模擬測試專用之核准擷取來源（控制實驗 fixture）。",
+    "policy_version": "assisted-intake-source-policy-2026.07",
+    "policy_evaluated_at": "2026-07-23T21:45:49.708182Z",
+    "policy_expires_at": "2026-08-22T21:45:49Z",
+    "source_snapshot_id": null,
+    "captured_at": null,
+    "parser_run_id": null,
+    "parser_version": "listing-parser v1.4",
+    "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+    "freshness_state": "NOT_CAPTURED",
+    "resource_version": 8,
+    "etag": "W/\"8\""
+  },
+  "sla_receipt": null,
+  "lifecycle": {
+    "intake_id": "c012aae5-90cc-4361-b6a5-e1c05b1511cc",
+    "version": 8,
+    "etag": "W/\"8\"",
+    "actor_facts": {
+      "role_mode": "expansion-manager",
+      "allowed_actions": [
+        "ASSIGN",
+        "CANCEL",
+        "CANCEL_JOB",
+        "CLAIM",
+        "COMPLETE",
+        "CORRECT",
+        "ESCALATE",
+        "MERGE",
+        "PAUSE_SLA",
+        "REPLAY_JOB",
+        "RESUME_SLA",
+        "RETRY",
+        "REVERSE",
+        "REVIEW_PROMOTION",
+        "SPLIT",
+        "SUBMIT_URL",
+        "TRANSFER",
+        "UNMERGE",
+        "VIEW"
+      ],
+      "denied_action_reasons": {
+        "DECIDE_MATCH": "WORKFLOW_STATE_DENIED",
+        "EXPORT_EVIDENCE": "ROLE_DENIED",
+        "REOPEN": "WORKFLOW_STATE_DENIED",
+        "REQUEST_PROMOTION": "WORKFLOW_STATE_DENIED"
+      },
+      "scope": {
+        "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+        "resource": {
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "assigned_area_id": null,
+          "brand_id": null,
+          "heat_zone_id": null,
+          "region_id": null
+        },
+        "in_scope": true
+      },
+      "masking": {
+        "masked_fields": [],
+        "reason_codes": [],
+        "has_masked_fields": false,
+        "clearance": "CONFIDENTIAL"
+      },
+      "purpose": {
+        "value": "Functional coverage verification",
+        "required": false,
+        "bound": true,
+        "reason_code": null
+      },
+      "second_actor": {
+        "required": false,
+        "pending_decision_ids": [],
+        "proposer_subject_ids": [],
+        "self_review_denied": false,
+        "reason_code": null
+      }
+    },
+    "assignment": null,
+    "sla": null,
+    "decisions": [],
+    "promotion": null,
+    "job": {
+      "job_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+      "status": "FAILED",
+      "attempt": 1,
+      "checkpoint": "RETRIEVING",
+      "next_retry_at": null,
+      "fence_token": 1,
+      "version": 7
+    },
+    "assignment_history": [],
+    "sla_history": [],
+    "decision_history": [],
+    "promotion_history": [],
+    "job_history": [
+      {
+        "receipt_id": "96338063-a502-47a2-85c5-8247a83fedee",
+        "category": "job",
+        "action": "RUN",
+        "resource_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+        "resource_version": 2,
+        "status": "RUNNING",
+        "actor": "oday-worker",
+        "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+        "occurred_at": "2026-07-23T21:45:49.748714+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "RUNNING",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 2,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "CHECKING_IDENTITY",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T21:45:49.748714+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      },
+      {
+        "receipt_id": "2a15a965-8fba-444f-8aeb-8564a2a0101c",
+        "category": "job",
+        "action": "DEAD_LETTER",
+        "resource_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+        "resource_version": 7,
+        "status": "DEAD_LETTER",
+        "actor": "oday-worker",
+        "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+        "occurred_at": "2026-07-23T21:45:49.978995+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "DEAD_LETTER",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 7,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "RETRIEVING",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T21:45:49.978995+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      }
+    ],
+    "mutation_receipts": [
+      {
+        "receipt_id": "96338063-a502-47a2-85c5-8247a83fedee",
+        "category": "job",
+        "action": "RUN",
+        "resource_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+        "resource_version": 2,
+        "status": "RUNNING",
+        "actor": "oday-worker",
+        "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+        "occurred_at": "2026-07-23T21:45:49.748714+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "RUNNING",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 2,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "CHECKING_IDENTITY",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T21:45:49.748714+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      },
+      {
+        "receipt_id": "2a15a965-8fba-444f-8aeb-8564a2a0101c",
+        "category": "job",
+        "action": "DEAD_LETTER",
+        "resource_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+        "resource_version": 7,
+        "status": "DEAD_LETTER",
+        "actor": "oday-worker",
+        "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+        "occurred_at": "2026-07-23T21:45:49.978995+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "0bebd03a-549f-4a1b-a441-905aa48f8839",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "DEAD_LETTER",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 7,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "RETRIEVING",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T21:45:49.978995+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      }
+    ],
+    "latest_decision_receipt": null,
+    "submission_receipt": null
+  }
+}

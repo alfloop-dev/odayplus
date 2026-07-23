@@ -306,7 +306,7 @@ class RetrievalResult:
 
     snapshot_id: str
     captured_at: str
-    raw: dict[str, Any] = field(default_factory=dict)
+    raw: Any = field(default_factory=dict)
     failure: RetrievalFailure | None = None
 
     @property
@@ -412,6 +412,52 @@ RETRIEVAL_CORPUS: dict[str, RetrievalResult] = {
             next_action="稍後重試；已填寫的修正內容會保留。",
             retryable=True,
         ),
+    ),
+    # Authentication wall returned by an otherwise approved source adapter.
+    "https://www.synthetic.example/detail-50000002.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-50000002",
+        captured_at="2026-07-15T02:42:00Z",
+        failure=RetrievalFailure(
+            code="AUTH_WALL_ENCOUNTERED",
+            summary="來源頁要求核准帳號存取，系統未擷取受保護內容。",
+            next_action="改用人工補錄，或由治理流程確認核准的帳號存取方式。",
+            retryable=False,
+        ),
+    ),
+    # Bot challenge is distinct from policy denial and parser failure.
+    "https://www.synthetic.example/detail-50000003.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-50000003",
+        captured_at="2026-07-15T02:43:00Z",
+        failure=RetrievalFailure(
+            code="BOT_CHALLENGE_ENCOUNTERED",
+            summary="來源頁回傳人機驗證挑戰，系統停止擷取。",
+            next_action="改用人工補錄；不得要求使用者提供 cookie 或繞過挑戰。",
+            retryable=False,
+        ),
+    ),
+    # A successful retrieval whose payload cannot be interpreted as a listing.
+    "https://www.synthetic.example/detail-50000004.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-50000004",
+        captured_at="2026-07-15T02:44:00Z",
+        raw={"_parser_failure": "permanent"},
+    ),
+    # A structurally valid listing observation that is too old to decide from.
+    "https://www.synthetic.example/detail-50000005.html": RetrievalResult(
+        snapshot_id="SNAP-SYNTHETIC-50000005",
+        captured_at="2025-01-15T02:45:00Z",
+        raw={
+            "source_listing_id": "synthetic-50000005",
+            "title": "過期來源快照",
+            "address_raw": "台北市中正區忠孝西路一段 1 號 1F",
+            "rent_text": "NT$60,000 / 月",
+            "rent_amount": 60000,
+            "area_text": "20 坪",
+            "area_ping": 20.0,
+            "floor": "1F",
+            "listing_type": "店面",
+            "listing_status": "active",
+            "confidence": 0.90,
+        },
     ),
 }
 
@@ -589,6 +635,14 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
     """
 
     raw = retrieval.raw
+    if not isinstance(raw, dict):
+        raise PermanentParserFailure(
+            "Retrieved source payload is not a supported listing object."
+        )
+    if raw.get("_parser_failure") == "permanent":
+        raise PermanentParserFailure(
+            "Retrieved source payload is not supported by the bound parser."
+        )
     confidence = _as_float(raw.get("confidence")) or 0.0
     fields = {
         "providerListingId": _field(
@@ -684,6 +738,11 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
             normalized_value=str(raw.get("contact_phone", "")).strip(),
         )
     return fields
+
+
+class PermanentParserFailure(ValueError):
+    """The retrieved representation cannot be parsed by the bound parser."""
+
 
 
 def _field(

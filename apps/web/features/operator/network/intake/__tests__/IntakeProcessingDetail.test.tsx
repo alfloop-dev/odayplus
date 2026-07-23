@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import React from "react";
+import "@testing-library/jest-dom/vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake, ApiError } from "@oday-plus/openapi-client";
 import { DurableReceiptPanel } from "../DurableReceiptPanel";
 import { EvidencePanel } from "../EvidencePanel";
@@ -6,6 +9,8 @@ import { IntakeErrorRecovery } from "../IntakeErrorRecovery";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import { IntakeStageTimeline } from "../IntakeStageTimeline";
 import { isSnapshotStale } from "../IntakeDetailDialog";
+
+afterEach(() => cleanup());
 
 // Sample fixture record for testing
 const sampleIntake: AssistedIntake = {
@@ -54,6 +59,179 @@ const failedIntake: AssistedIntake = {
 };
 
 describe("IntakeProcessingDetail & Sub-components Test Suite", () => {
+  it("renders authoritative submission summary including scope, ETag, version and explicit unavailable policy facts", () => {
+    render(
+      <IntakeProcessingDetail
+        detailFacts={{
+          sourceId: "591-housing",
+          originalUrl: sampleIntake.originalUrl,
+          canonicalUrl: sampleIntake.canonicalUrl,
+          submitter: sampleIntake.submitter,
+          owner: sampleIntake.owner,
+          submittedAt: "2026-07-21T04:00:00Z",
+          updatedAt: "2026-07-21T04:02:00Z",
+          scope: {
+            tenant_id: "tenant-001",
+            heat_zone_id: "HZ-TAIPEI-01",
+          },
+          policyState: "APPROVED_RETRIEVAL",
+          policyReason: null,
+          policyVersion: null,
+          policyExpiresAt: null,
+          etag: 'W/"3"',
+          version: 3,
+        }}
+        onClose={vi.fn()}
+        presentation="page"
+        record={sampleIntake}
+      />,
+    );
+
+    expect(screen.getByTestId("intake-summary-source")).toHaveTextContent(
+      "591-housing",
+    );
+    expect(screen.getByTestId("intake-summary-scope")).toHaveTextContent(
+      "tenant-001",
+    );
+    expect(screen.getByTestId("intake-summary-etag")).toHaveTextContent('W/"3"');
+    expect(screen.getByTestId("intake-summary-version")).toHaveTextContent("3");
+    expect(screen.getByTestId("intake-summary-policy-version")).toHaveTextContent(
+      "API 未回傳",
+    );
+    expect(
+      screen.getByTestId("intake-summary-submitted-at").querySelector("time"),
+    ).toHaveAttribute("title", expect.stringContaining("2026-07-21T04:00:00.000Z"));
+  });
+
+  it("moves field-error focus from recovery to the exact parsed field row", () => {
+    render(
+      <IntakeProcessingDetail
+        error={{
+          status: 422,
+          code: "VALIDATION_FAILED",
+          summary: "Address is invalid",
+          nextAction: "Correct the address",
+          correlationId: "correlation-field-error-001",
+          occurredAt: "2026-07-23T11:00:00Z",
+          retryable: false,
+          fieldErrors: [
+            {
+              field: "address_raw",
+              code: "FIELD_REQUIRED",
+              message: "Address is required",
+            },
+          ],
+        }}
+        onClose={vi.fn()}
+        presentation="page"
+        record={failedIntake}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("field-error-link-address_raw"));
+
+    expect(screen.getByTestId("tab-review")).toHaveAccessibleName(/資料覆核/);
+    expect(screen.getByTestId("field-lineage-row-address_raw")).toHaveFocus();
+  });
+
+  it("passes authoritative purpose/classification facts to evidence and marks absent receipts unavailable", () => {
+    render(
+      <IntakeProcessingDetail
+        evidenceAccess={{
+          purpose: "Expansion listing review",
+          purpose_binding_id: null,
+          classification: "RESTRICTED",
+          expires_at: null,
+          masked: true,
+          mask_reason_code: "FIELD_MASKED",
+          audit_notice: "Purpose-bound access is audited",
+          legal_hold_state: null,
+          legal_hold_id: null,
+          legal_hold_expires_at: null,
+        }}
+        evidenceVerification={null}
+        exportReceipt={null}
+        onClose={vi.fn()}
+        presentation="page"
+        record={sampleIntake}
+        sourceEvidence={{
+          original_url: sampleIntake.originalUrl,
+          canonical_url: sampleIntake.canonicalUrl,
+          source_snapshot_id: "SNAP-100",
+          parser_run_id: "parser-run-100",
+          parser_version: "1.0.0",
+          captured_at: "2026-07-21T04:00:00Z",
+          policy_state: "APPROVED_RETRIEVAL",
+          policy_version: null,
+          policy_expires_at: null,
+          correlation_id: "CORR-TEST-998811",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("tab-evidence"));
+
+    expect(screen.getByTestId("evidence-access-section")).toHaveTextContent(
+      "Expansion listing review",
+    );
+    expect(screen.getByTestId("evidence-access-section")).toHaveTextContent(
+      "RESTRICTED",
+    );
+    expect(screen.getByTestId("evidence-access-section")).toHaveTextContent(
+      "API 未回傳",
+    );
+    expect(
+      screen.getByTestId("evidence-verification-unavailable"),
+    ).toHaveTextContent("不推算狀態或識別碼");
+    expect(screen.getByTestId("evidence-export-unavailable")).toHaveTextContent(
+      "不推算狀態或識別碼",
+    );
+  });
+
+  it("renders persisted job transitions from the authoritative lifecycle snapshot", () => {
+    const onCancelJob = vi.fn();
+    render(
+      <IntakeProcessingDetail
+        canCancelJob
+        jobs={[
+          {
+            job_id: "JOB-SCORE-001",
+            status: "QUEUED",
+            checkpoint: "SCORE_QUEUED",
+            attempt: 1,
+            version: 1,
+            correlation_id: "CORR-SCORE-001",
+          } as any,
+        ]}
+        lifecycle={{
+          job_history: [
+            {
+              transition_id: "TRANSITION-JOB-001",
+              stream: "JOB",
+              from_state: null,
+              to_state: "QUEUED",
+              occurred_at: "2026-07-23T11:05:00Z",
+              actor: "promotion-service",
+              version_after: 1,
+              reason: "JOB-SCORE-001",
+              correlation_id: "CORR-SCORE-001",
+            },
+          ],
+        } as any}
+        onCancelJob={onCancelJob}
+        onClose={vi.fn()}
+        presentation="page"
+        record={sampleIntake}
+      />,
+    );
+
+    expect(screen.getByTestId("timeline-job-history-JOB-SCORE-001")).toHaveTextContent(
+      "QUEUED",
+    );
+    fireEvent.click(screen.getByTestId("timeline-cancel-job-JOB-SCORE-001"));
+    expect(onCancelJob).toHaveBeenCalledWith("JOB-SCORE-001");
+  });
+
   describe("source freshness", () => {
     it("marks old evidence stale without treating missing or future timestamps as stale", () => {
       expect(isSnapshotStale("2000-01-01T00:00:00Z")).toBe(true);

@@ -5218,6 +5218,107 @@
         "title": "LineageImpact",
         "type": "object"
       },
+      "ListingDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "current_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Revision Id"
+          },
+          "current_values": {
+            "additionalProperties": true,
+            "title": "Current Values",
+            "type": "object"
+          },
+          "identity_edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Identity Edges",
+            "type": "array"
+          },
+          "listing_id": {
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "masked_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Masked Fields",
+            "type": "array"
+          },
+          "revision_sequence": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Sequence"
+          },
+          "revisions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "listing_id",
+          "current_values",
+          "revisions",
+          "identity_edges"
+        ],
+        "title": "ListingDetail",
+        "type": "object"
+      },
       "ListingImportPayload": {
         "properties": {
           "records": {
@@ -20012,6 +20113,58 @@
         "summary": "Import Listings",
         "tags": [
           "listings"
+        ]
+      }
+    },
+    "/api/v1/listings/{listing_id}": {
+      "get": {
+        "operationId": "getListing",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listing_id",
+            "required": true,
+            "schema": {
+              "title": "Listing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingDetail"
+                }
+              }
+            },
+            "description": "Authoritative effective Listing with revision and identity lineage"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Listing",
+        "tags": [
+          "assisted-listing-intake"
         ]
       }
     },

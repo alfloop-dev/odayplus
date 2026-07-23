@@ -65,6 +65,7 @@ export type IntakeStageTimelineProps = {
   canCancel?: boolean;
   canRetry?: boolean;
   canReopen?: boolean;
+  reopenDeniedReason?: string | null;
   canReplay?: boolean;
   canCancelJob?: boolean;
   onCancel?: () => void;
@@ -90,6 +91,7 @@ export function IntakeStageTimeline({
   canCancel,
   canRetry,
   canReopen,
+  reopenDeniedReason,
   canReplay = false,
   canCancelJob = false,
   onCancel,
@@ -106,7 +108,7 @@ export function IntakeStageTimeline({
   const transitions = sortedHistory(history);
   const persistedJobs = jobs as JobLifecycleReceipt[];
   const isCancelled = stage === "CANCELLED";
-  const isControlledReopen = stage === "FAILED" || stage === "QUARANTINED";
+  const isControlledReopen = stage === "QUARANTINED";
   const activeJob =
     [...persistedJobs].reverse().find((job) => ACTIVE_JOB_STATES.has(job.status)) ??
     persistedJobs[persistedJobs.length - 1] ??
@@ -343,6 +345,11 @@ export function IntakeStageTimeline({
             >
               受控重新開啟 {stage}
             </button>
+          ) : null}
+          {isControlledReopen && !reopenAllowed && reopenDeniedReason ? (
+            <div className={styles.warnNote} data-testid="timeline-reopen-denied" role="status">
+              此角色目前不能解除隔離：<code>{reopenDeniedReason}</code>
+            </div>
           ) : null}
         </div>
       )}

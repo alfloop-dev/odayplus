@@ -32,8 +32,11 @@ from __future__ import annotations
 import copy
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+
+ASSISTED_INTAKE_SOURCE_POLICY_VERSION = "assisted-intake-source-policy-2026.07"
+ASSISTED_INTAKE_SOURCE_POLICY_REVIEW_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -235,7 +238,14 @@ def _require_governed_write_context(
 
 
 def _now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _policy_expiry(evaluated_at: str) -> str:
+    evaluated = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00"))
+    return (
+        evaluated + timedelta(days=ASSISTED_INTAKE_SOURCE_POLICY_REVIEW_DAYS)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -493,6 +503,12 @@ class NetworkListingService:
         self._listing(listing_id)
         return _copy(self._listing_runtime_metadata(listing_id)["listingRevisions"])
 
+    def get_listing_detail(self, listing_id: str) -> dict[str, Any]:
+        """Return the effective Listing plus immutable revision and identity lineage."""
+
+        self._load_listings()
+        return _copy(self._effective_listing(self._listing(listing_id)))
+
     def list_identity_edges(
         self,
         *,
@@ -713,17 +729,55 @@ class NetworkListingService:
         ]
 
     @staticmethod
+    def _append_decision_status(
+        decision: dict[str, Any],
+        *,
+        to_status: str,
+        actor: str,
+        actor_role_id: str,
+        correlation_id: str | None,
+        reason: str | None,
+        occurred_at: str | None = None,
+        increment_version: bool = True,
+    ) -> dict[str, Any]:
+        history = decision.setdefault("statusHistory", [])
+        from_status = decision.get("status")
+        if (
+            history
+            and history[-1].get("toStatus") == to_status
+            and history[-1].get("versionAfter") == decision.get("version")
+        ):
+            return history[-1]
+        if increment_version:
+            decision["version"] = int(decision.get("version") or 0) + 1
+        transition = {
+            "transitionId": _uuid(),
+            "fromStatus": from_status,
+            "toStatus": to_status,
+            "occurredAt": occurred_at or _now(),
+            "actor": actor,
+            "actorRoleId": actor_role_id,
+            "reason": reason,
+            "correlationId": correlation_id,
+            "versionAfter": int(decision.get("version") or 1),
+        }
+        decision["status"] = to_status
+        decision["updatedAt"] = transition["occurredAt"]
+        history.append(transition)
+        return transition
+
+    @staticmethod
     def _identity_nodes_for_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
         nodes: dict[tuple[str, str], dict[str, Any]] = {}
         for edge in edges:
-            for field, node_type in (
+            for field_name, node_type in (
                 ("sourcePropertyId", "PROPERTY"),
                 ("targetPropertyId", "PROPERTY"),
                 ("propertyId", "PROPERTY"),
                 ("listingId", "LISTING"),
                 ("intakeId", "INTAKE"),
             ):
-                node_id = edge.get(field)
+                node_id = edge.get(field_name)
                 if node_id:
                     nodes[(node_type, str(node_id))] = {
                         "nodeId": str(node_id),
@@ -992,7 +1046,18 @@ class NetworkListingService:
             "updatedAt": timestamp,
             "effectReceipt": None,
             "reversesDecisionId": None,
+            "statusHistory": [],
         }
+        self._append_decision_status(
+            decision,
+            to_status="PENDING_REVIEW",
+            actor=actor_name,
+            actor_role_id=actor_role_id,
+            correlation_id=correlation_id,
+            reason=reason,
+            occurred_at=timestamp,
+            increment_version=False,
+        )
         graph["decisions"][decision_id] = decision
         graph["version"] = int(graph.get("version") or 0) + 1
         graph["auditEvents"].append(
@@ -1423,6 +1488,23 @@ class NetworkListingService:
         edge_ids: list[str] = []
         runtime_receipt: dict[str, Any] | None = None
         if approve:
+            self._append_decision_status(
+                decision,
+                to_status="APPROVED",
+                actor=reviewer_name,
+                actor_role_id=reviewer_role_id,
+                correlation_id=correlation_id,
+                reason=reason,
+            )
+            self._append_decision_status(
+                decision,
+                to_status="EXECUTING",
+                actor=reviewer_name,
+                actor_role_id=reviewer_role_id,
+                correlation_id=correlation_id,
+                reason=reason,
+            )
+            self._save_identity_graph(tenant_id, graph)
             plan = decision["plan"]
             action = decision["action"]
             if action == "match_decision":
@@ -1574,9 +1656,46 @@ class NetworkListingService:
                             supersedes_edge_ids=[edge_id],
                         )["edgeId"]
                     )
-            decision["status"] = "EXECUTED"
+            self._append_decision_status(
+                decision,
+                to_status="EXECUTED",
+                actor=reviewer_name,
+                actor_role_id=reviewer_role_id,
+                correlation_id=correlation_id,
+                reason=reason,
+            )
+            original_decision_id = (
+                decision.get("reversesDecisionId")
+                if action == "reversal"
+                else plan.get("originalDecisionId")
+                if action == "unmerge"
+                else None
+            )
+            original = (
+                graph["decisions"].get(original_decision_id)
+                if original_decision_id
+                else None
+            )
+            if original is not None:
+                self._append_decision_status(
+                    original,
+                    to_status=(
+                        "REVERSED" if action == "reversal" else "SUPERSEDED"
+                    ),
+                    actor=reviewer_name,
+                    actor_role_id=reviewer_role_id,
+                    correlation_id=correlation_id,
+                    reason=reason,
+                )
         else:
-            decision["status"] = "REJECTED"
+            self._append_decision_status(
+                decision,
+                to_status="REJECTED",
+                actor=reviewer_name,
+                actor_role_id=reviewer_role_id,
+                correlation_id=correlation_id,
+                reason=reason,
+            )
             if decision["action"] == "identity_correction":
                 plan = decision["plan"]
                 rejected_intake = self._listing_intake(plan["intakeId"])
@@ -1604,8 +1723,6 @@ class NetworkListingService:
                 "nodes": self._identity_nodes_for_edges(applied_edges),
                 "edges": applied_edges,
             }
-        decision["version"] = int(decision["version"]) + 1
-        decision["updatedAt"] = _now()
         audit_event_id = _uuid()
         decision["auditEventId"] = audit_event_id
         decision["correlationId"] = correlation_id
@@ -1652,6 +1769,32 @@ class NetworkListingService:
         self._save_identity_graph(tenant_id, graph)
         return _copy(decision)
 
+    def fail_identity_decision(
+        self,
+        *,
+        tenant_id: str,
+        decision_id: str,
+        actor_role_id: str,
+        actor_name: str,
+        reason: str,
+        correlation_id: str | None,
+    ) -> dict[str, Any] | None:
+        graph = self._identity_graph(tenant_id)
+        decision = graph["decisions"].get(decision_id)
+        if decision is None or decision.get("status") != "EXECUTING":
+            return _copy(decision) if decision is not None else None
+        self._append_decision_status(
+            decision,
+            to_status="FAILED",
+            actor=actor_name,
+            actor_role_id=actor_role_id,
+            correlation_id=correlation_id,
+            reason=reason,
+        )
+        graph["version"] = int(graph.get("version") or 0) + 1
+        self._save_identity_graph(tenant_id, graph)
+        return _copy(decision)
+
     def request_identity_reversal(
         self,
         *,
@@ -1684,7 +1827,6 @@ class NetworkListingService:
         graph = self._identity_graph(tenant_id)
         persisted = graph["decisions"][reversal["decisionId"]]
         persisted["action"] = "reversal"
-        persisted["status"] = "REVERSAL_PENDING"
         persisted["reversesDecisionId"] = original_decision_id
         persisted["plan"]["planType"] = "REVERSAL"
         persisted["plan"]["originalDecisionId"] = original_decision_id
@@ -1698,6 +1840,14 @@ class NetworkListingService:
             "originalDecisionId": original_decision_id
         }
         persisted["plan"]["evidenceState"] = "COMPLETE"
+        self._append_decision_status(
+            persisted,
+            to_status="REVERSAL_PENDING",
+            actor=actor_name,
+            actor_role_id=actor_role_id,
+            correlation_id=correlation_id,
+            reason=reason,
+        )
         self._save_identity_graph(tenant_id, graph)
         return _copy(persisted)
 
@@ -1863,6 +2013,59 @@ class NetworkListingService:
             "actorRoleId": actor_role_id,
             "reason": reason,
             "jobId": job_id,
+            "correlationId": correlation_id,
+            "version": intake["version"],
+            "issuedAt": _now(),
+            "evidenceState": "COMPLETE",
+        }
+        intake.setdefault("decisionReceipts", []).append(receipt)
+        intake["latestDecisionReceipt"] = receipt
+        self._save_intake(intake)
+        return _copy(intake)
+
+    def quarantine_intake(
+        self,
+        *,
+        intake_id: str,
+        actor_role_id: str,
+        actor_name: str,
+        reason: str,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        intake = self._listing_intake(intake_id)
+        if intake["stage"] != "NEEDS_REVIEW":
+            raise NetworkListingConflict(
+                "WORKFLOW_STATE_DENIED: "
+                f"intake {intake_id} cannot be quarantined from {intake['stage']}"
+            )
+
+        match_result = intake.get("matchResult") or {}
+        match_result.update(
+            {
+                "outcome": "QUARANTINED",
+                "outcomeLabel": "已隔離",
+                "summary": f"已送交隔離。原因：{reason}",
+            }
+        )
+        intake["matchResult"] = match_result
+        self._append_processing_transition(
+            intake,
+            to_stage="QUARANTINED",
+            actor=actor_name,
+            correlation_id=correlation_id,
+            checkpoint="HUMAN_DECISION",
+            attempt=0,
+            timeout_seconds=None,
+            reason_code="QUARANTINED_BY_REVIEWER",
+        )
+        receipt = {
+            "receiptId": _uuid(),
+            "decision": "QUARANTINE",
+            "status": "EXECUTED",
+            "intakeId": intake_id,
+            "actor": actor_name,
+            "actorRoleId": actor_role_id,
+            "reason": reason,
             "correlationId": correlation_id,
             "version": intake["version"],
             "issuedAt": _now(),
@@ -2514,6 +2717,7 @@ class NetworkListingService:
         policy = resolve_source_policy(url)
         intake_id = intake_id or f"IN-{3001 + len(self._state['assistedIntakes'])}"
 
+        policy_evaluated_at = _now()
         intake = {
             "id": intake_id,
             "tenantId": tenant_id or "tenant-a",
@@ -2535,6 +2739,9 @@ class NetworkListingService:
             "policy": policy.policy,
             "policyLabel": policy.policy_label,
             "policyReason": policy.policy_reason,
+            "policyVersion": ASSISTED_INTAKE_SOURCE_POLICY_VERSION,
+            "policyEvaluatedAt": policy_evaluated_at,
+            "policyExpiresAt": _policy_expiry(policy_evaluated_at),
             "rawSnapshot": None,
             "snapshotId": None,
             "capturedAt": None,
@@ -2779,6 +2986,9 @@ class NetworkListingService:
             "policy": policy,
             "policyLabel": policy,
             "policyReason": "Structured data was supplied without page retrieval.",
+            "policyVersion": ASSISTED_INTAKE_SOURCE_POLICY_VERSION,
+            "policyEvaluatedAt": created_at,
+            "policyExpiresAt": _policy_expiry(created_at),
             "rawSnapshot": None,
             "snapshotId": None,
             "capturedAt": created_at,
@@ -2908,18 +3118,112 @@ class NetworkListingService:
     def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
         self._load_intakes()
         self._state.setdefault("assistedIntakes", [])
-        intakes = self._state["assistedIntakes"]
+        intakes = [
+            self.ensure_intake_durable_facts(item["id"])
+            for item in list(self._state["assistedIntakes"])
+        ]
         if selected_heat_zone_id is not None:
             intakes = [item for item in intakes if item.get("heatZoneId") == selected_heat_zone_id]
         return _copy(intakes)
 
     def get_intake(self, intake_id: str) -> dict[str, Any]:
         self._load_intakes()
-        self._state.setdefault("assistedIntakes", [])
-        for intake in self._state["assistedIntakes"]:
-            if intake["id"] == intake_id:
-                return _copy(intake)
-        raise NetworkListingNotFound(f"assisted intake record {intake_id} not found")
+        return self.ensure_intake_durable_facts(intake_id)
+
+    def ensure_intake_durable_facts(self, intake_id: str) -> dict[str, Any]:
+        """Persist legacy-missing canonical facts once, then return a stable record."""
+
+        intake = self._listing_intake(intake_id)
+        changed = False
+        history = intake.setdefault("processingHistory", [])
+        if not history:
+            occurred_at = (
+                intake.get("submittedAt")
+                or intake.get("capturedAt")
+                or intake.get("createdAt")
+                or _now()
+            )
+            history.append(
+                {
+                    "transitionId": _uuid(),
+                    "fromStage": None,
+                    "toStage": intake.get("stage") or "SUBMITTED",
+                    "occurredAt": occurred_at,
+                    "actor": intake.get("submitter") or "system",
+                    "correlationId": intake.get("correlationId"),
+                    "checkpoint": intake.get("stage") or "SUBMITTED",
+                    "attempt": 0,
+                    "timeoutSeconds": None,
+                    "failure": None,
+                    "nextRetryAt": None,
+                    "reasonCode": "LEGACY_FACTS_RECONCILED",
+                    "versionAfter": int(intake.get("version") or 1),
+                }
+            )
+            changed = True
+
+        correlation_id = intake.get("correlationId")
+        if not correlation_id:
+            correlation_id = _uuid()
+            intake["correlationId"] = correlation_id
+            changed = True
+
+        anchor_time = (
+            history[0].get("occurredAt")
+            or intake.get("capturedAt")
+            or intake.get("submittedAt")
+            or _now()
+        )
+        for index, transition in enumerate(history):
+            if not transition.get("transitionId"):
+                transition["transitionId"] = _uuid()
+                changed = True
+            if not transition.get("occurredAt"):
+                transition["occurredAt"] = anchor_time
+                changed = True
+            if not transition.get("correlationId"):
+                transition["correlationId"] = correlation_id
+                changed = True
+            if not transition.get("actor"):
+                transition["actor"] = "system"
+                changed = True
+            if not transition.get("toStage"):
+                transition["toStage"] = intake.get("stage") or "SUBMITTED"
+                changed = True
+            if not transition.get("versionAfter"):
+                transition["versionAfter"] = max(
+                    1,
+                    int(intake.get("version") or 1) - len(history) + index + 1,
+                )
+                changed = True
+
+        for event in intake.setdefault("auditEvents", []):
+            if not event.get("id"):
+                event["id"] = _uuid()
+                changed = True
+            if not event.get("occurredAt"):
+                event["occurredAt"] = anchor_time
+                changed = True
+            if not event.get("correlationId"):
+                event["correlationId"] = correlation_id
+                changed = True
+
+        if intake.get("policy"):
+            evaluated_at = intake.get("policyEvaluatedAt")
+            if not evaluated_at:
+                evaluated_at = anchor_time
+                intake["policyEvaluatedAt"] = evaluated_at
+                changed = True
+            if not intake.get("policyVersion"):
+                intake["policyVersion"] = ASSISTED_INTAKE_SOURCE_POLICY_VERSION
+                changed = True
+            if "policyExpiresAt" not in intake:
+                intake["policyExpiresAt"] = _policy_expiry(evaluated_at)
+                changed = True
+
+        if changed:
+            self._save_intake(intake)
+        return _copy(intake)
 
     def correct_intake(
         self,
@@ -3598,6 +3902,10 @@ class NetworkListingService:
         intake["policy"] = policy.policy
         intake["policyLabel"] = policy.policy_label
         intake["policyReason"] = policy.policy_reason
+        policy_evaluated_at = _now()
+        intake["policyVersion"] = ASSISTED_INTAKE_SOURCE_POLICY_VERSION
+        intake["policyEvaluatedAt"] = policy_evaluated_at
+        intake["policyExpiresAt"] = _policy_expiry(policy_evaluated_at)
 
         if policy.quarantines or policy.policy in {
             "POLICY_UNKNOWN",

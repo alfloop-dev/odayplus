@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   AssignmentReceipt,
   AssistedIntake,
@@ -20,12 +20,17 @@ import { EvidencePanel } from "./EvidencePanel";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
+import type { AuthoritativeRecoveryContext } from "./evidenceContracts";
 import type { IntakeApiError } from "./intakeClient";
 import { IntakeStageTimeline } from "./IntakeStageTimeline";
 import {
   ParsedDataReview,
   buildLegacyFieldReview,
 } from "./ParsedDataReview";
+import {
+  fieldLineageDomId,
+  type FieldCorrectionLineage,
+} from "./FieldLineageRow";
 import {
   PromotionReviewPanel,
   type PromotionActor,
@@ -38,6 +43,17 @@ import type {
   JobLifecycleReceipt,
   SlaLifecycleReceipt,
 } from "./useIntakeLifecycle";
+import type {
+  AuthoritativeEvidenceVerification,
+  AuthoritativeExportReceipt,
+  AuthoritativeHumanDecisionEvidence,
+  AuthoritativeSensitiveEvidenceAccess,
+  AuthoritativeSourceEvidence,
+} from "./evidenceContracts";
+import {
+  formatIntakeDateTime,
+  type IntakeDetailPresentationFacts,
+} from "./types";
 import {
   decisionOptions,
   matchLabel,
@@ -65,8 +81,12 @@ export type IntakeProcessingDetailProps = {
   canCorrect?: boolean;
   canDecide?: boolean;
   canRetry?: boolean;
+  canReopen?: boolean;
   canReplay?: boolean;
+  canCancelJob?: boolean;
+  reopenDeniedReason?: string | null;
   error?: IntakeApiError | null;
+  recovery?: AuthoritativeRecoveryContext | null;
   history?: TransitionReceipt[];
   jobs?: Array<JobReceipt | JobLifecycleReceipt>;
   sla?: SlaReceipt | SlaLifecycleReceipt;
@@ -77,6 +97,15 @@ export type IntakeProcessingDetailProps = {
   decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
   slaReceipt?: SlaReceipt;
   correctionReceipts?: CorrectionReceipt[];
+  correctionsByField?: Readonly<
+    Record<string, readonly FieldCorrectionLineage[]>
+  >;
+  detailFacts?: IntakeDetailPresentationFacts | null;
+  sourceEvidence?: AuthoritativeSourceEvidence | null;
+  evidenceAccess?: AuthoritativeSensitiveEvidenceAccess | null;
+  humanDecisionEvidence?: AuthoritativeHumanDecisionEvidence | null;
+  evidenceVerification?: AuthoritativeEvidenceVerification | null;
+  exportReceipt?: AuthoritativeExportReceipt | null;
   lifecycle?: IntakeLifecycleSnapshot | null;
   onClose: () => void;
   presentation?: "dialog" | "page";
@@ -89,7 +118,9 @@ export type IntakeProcessingDetailProps = {
   auditSection?: ReactNode;
   onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
+  onReopen?: () => void;
   onReplayDlq?: (jobId?: string) => void;
+  onCancelJob?: (jobId: string) => void;
   onCancel?: () => void;
   onOverride?: (reason: string) => void;
   onClaimAssignment?: () => void;
@@ -131,8 +162,12 @@ export function IntakeProcessingDetail({
   canCorrect = true,
   canDecide = true,
   canRetry = true,
+  canReopen = false,
   canReplay = true,
+  canCancelJob = false,
+  reopenDeniedReason = null,
   error = null,
+  recovery = null,
   history = [],
   jobs = [],
   sla,
@@ -143,6 +178,13 @@ export function IntakeProcessingDetail({
   decisionReceipt,
   slaReceipt,
   correctionReceipts = [],
+  correctionsByField = {},
+  detailFacts = null,
+  sourceEvidence = null,
+  evidenceAccess = null,
+  humanDecisionEvidence = null,
+  evidenceVerification = null,
+  exportReceipt = null,
   lifecycle = null,
   onClose,
   presentation = "dialog",
@@ -155,8 +197,10 @@ export function IntakeProcessingDetail({
   auditSection,
   onOpenFix,
   onRetry,
+  onReopen,
   onReplayDlq,
   onCancel,
+  onCancelJob,
   onOverride,
   onClaimAssignment,
   onOpenTransfer,
@@ -192,11 +236,28 @@ export function IntakeProcessingDetail({
     isFailedOrQuarantined ? "error" : "timeline",
   );
   const [maskedView, setMaskedView] = useState(false);
+  const [pendingFieldFocus, setPendingFieldFocus] = useState<string | null>(null);
   const activeTab = controlledActiveTab ?? internalActiveTab;
   const setActiveTab = (tab: IntakeDetailTab) => {
     setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
   };
+
+  useEffect(() => {
+    if (activeTab !== "review" || !pendingFieldFocus) return;
+    const target =
+      document.getElementById(fieldLineageDomId(pendingFieldFocus)) ??
+      [...document.querySelectorAll<HTMLElement>("[data-field-path]")].find(
+        (element) => {
+          const path = element.dataset.fieldPath;
+          return path === pendingFieldFocus || path?.endsWith(`.${pendingFieldFocus}`);
+        },
+      );
+    if (!target) return;
+    target.focus();
+    target.scrollIntoView?.({ block: "center" });
+    setPendingFieldFocus(null);
+  }, [activeTab, pendingFieldFocus]);
 
   const options = decisionOptions(record);
   const outcome = record.matchResult?.outcome;
@@ -204,8 +265,9 @@ export function IntakeProcessingDetail({
     () =>
       buildLegacyFieldReview(record.parsedFields ?? {}, {
         sourceSnapshotId: record.snapshotId,
+        correctionsByField,
       }),
-    [record.parsedFields, record.snapshotId],
+    [correctionsByField, record.parsedFields, record.snapshotId],
   );
 
   // The promotion tab exists only when the container wired the saga slice —
@@ -250,16 +312,22 @@ export function IntakeProcessingDetail({
           <span className={styles.deepLink} data-testid="intake-detail-deeplink">
             /w/expansion/listings/intake/{record.id}
           </span>
-          <a
-            className={styles.secondaryButton}
-            data-testid="intake-open-source-link"
-            href={record.originalUrl}
-            rel="noopener noreferrer"
-            target="_blank"
-            title="在新視窗開啟來源；目前收件頁面與操作狀態會保留"
-          >
-            開啟來源
-          </a>
+          {record.originalUrl ? (
+            <a
+              className={styles.secondaryButton}
+              data-testid="intake-open-source-link"
+              href={record.originalUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+              title="在新視窗開啟來源；目前收件頁面與操作狀態會保留"
+            >
+              開啟來源
+            </a>
+          ) : (
+            <span className={styles.metaSub} data-testid="intake-source-link-unavailable">
+              來源網址已遮罩或不可用
+            </span>
+          )}
           {onRefresh && (
             <button
               type="button"
@@ -282,6 +350,86 @@ export function IntakeProcessingDetail({
           </button>
         </div>
       </div>
+
+      <section
+        aria-label="收件摘要"
+        className={styles.sectionBox}
+        data-testid="intake-detail-summary"
+      >
+        <div className={styles.sectionHead}>收件摘要 SUBMISSION SUMMARY</div>
+        <dl className={styles.metaGrid}>
+          <DetailValue
+            label="Source"
+            testId="intake-summary-source"
+            value={detailFacts ? detailFacts.sourceId : record.sourceId}
+          />
+          <DetailValue
+            label="Original URL"
+            testId="intake-summary-original-url"
+            value={detailFacts ? detailFacts.originalUrl : record.originalUrl}
+          />
+          <DetailValue
+            label="Canonical URL"
+            testId="intake-summary-canonical-url"
+            value={detailFacts ? detailFacts.canonicalUrl : record.canonicalUrl}
+          />
+          <DetailValue
+            label="Submitter"
+            testId="intake-summary-submitter"
+            value={detailFacts ? detailFacts.submitter : record.submitter}
+          />
+          <DetailValue
+            label="Owner"
+            testId="intake-summary-owner"
+            value={detailFacts ? detailFacts.owner : record.owner}
+          />
+          <DetailTime
+            label="Submitted at"
+            testId="intake-summary-submitted-at"
+            value={detailFacts?.submittedAt}
+          />
+          <DetailTime
+            label="Updated at"
+            testId="intake-summary-updated-at"
+            value={detailFacts?.updatedAt}
+          />
+          <DetailValue
+            label="Scope"
+            testId="intake-summary-scope"
+            value={detailFacts ? JSON.stringify(detailFacts.scope) : null}
+          />
+          <DetailValue
+            label="Policy state"
+            testId="intake-summary-policy-state"
+            value={detailFacts ? detailFacts.policyState : record.policy}
+          />
+          <DetailValue
+            label="Policy reason"
+            testId="intake-summary-policy-reason"
+            value={detailFacts ? detailFacts.policyReason : record.policyReason || null}
+          />
+          <DetailValue
+            label="Policy version"
+            testId="intake-summary-policy-version"
+            value={detailFacts?.policyVersion}
+          />
+          <DetailTime
+            label="Policy expires at"
+            testId="intake-summary-policy-expires-at"
+            value={detailFacts?.policyExpiresAt}
+          />
+          <DetailValue
+            label="ETag"
+            testId="intake-summary-etag"
+            value={detailFacts?.etag}
+          />
+          <DetailValue
+            label="Version"
+            testId="intake-summary-version"
+            value={detailFacts ? detailFacts.version : record.version}
+          />
+        </dl>
+      </section>
 
       {/* Sub-nav Tabs */}
       <div
@@ -496,9 +644,17 @@ export function IntakeProcessingDetail({
             record={record}
             history={history}
             jobs={jobs}
+            jobHistory={lifecycle?.job_history}
             sla={sla}
             canReplay={canReplay}
+            canRetry={canRetry}
+            canReopen={canReopen}
+            reopenDeniedReason={reopenDeniedReason}
+            canCancelJob={canCancelJob}
             onReplayJob={onReplayDlq}
+            onCancelJob={onCancelJob}
+            onRetry={() => onRetry?.()}
+            onReopen={onReopen}
             onCancel={onCancel}
           />
         )}
@@ -524,7 +680,13 @@ export function IntakeProcessingDetail({
             <EvidencePanel
               record={record}
               fields={fields}
+              sourceEvidence={sourceEvidence}
+              access={evidenceAccess}
+              humanDecision={humanDecisionEvidence}
+              verification={evidenceVerification}
+              exportReceipt={exportReceipt}
               auditReferences={auditReferences}
+              etag={detailFacts?.etag}
               onOpenFix={onOpenFix}
               maskedView={maskedView}
             />
@@ -623,6 +785,7 @@ export function IntakeProcessingDetail({
         {activeTab === "error" && (
           <IntakeErrorRecovery
             error={error}
+            recovery={recovery}
             stage={record.stage}
             correlationId={record.correlationId}
             preservedInput={record.parsedFields ? Object.fromEntries(Object.values(record.parsedFields).map(f => [f.key, (f as any).value ?? f.normalizedValue ?? f.sourceValue])) : null}
@@ -630,7 +793,15 @@ export function IntakeProcessingDetail({
             onReplayDlq={onReplayDlq}
             onCancel={onCancel}
             onOverride={onOverride}
-            onCorrectInput={onOpenFix ? () => onOpenFix(Object.keys(record.parsedFields ?? {})[0] ?? "address_raw") : undefined}
+            onCorrectInput={(fieldKey) => {
+              const target =
+                fieldKey ??
+                Object.keys(record.parsedFields ?? {})[0] ??
+                null;
+              if (!target) return;
+              setPendingFieldFocus(target);
+              setActiveTab("review");
+            }}
           />
         )}
       </div>
@@ -669,6 +840,60 @@ export function IntakeProcessingDetail({
         </div>
       )}
     </IntakeDialogShell>
+  );
+}
+
+function DetailValue({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: unknown;
+  testId: string;
+}) {
+  const unavailable = value === null || value === undefined || value === "";
+  return (
+    <div>
+      <dt className={styles.metaCaption}>{label}</dt>
+      <dd
+        className={styles.metaValue}
+        data-authoritative={unavailable ? "missing" : "present"}
+        data-testid={testId}
+      >
+        {unavailable ? "API 未回傳" : String(value)}
+      </dd>
+    </div>
+  );
+}
+
+function DetailTime({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value?: string | null;
+  testId: string;
+}) {
+  const formatted = formatIntakeDateTime(value);
+  return (
+    <div>
+      <dt className={styles.metaCaption}>{label}</dt>
+      <dd
+        className={styles.metaValue}
+        data-authoritative={formatted ? "present" : "missing"}
+        data-testid={testId}
+      >
+        {formatted && value ? (
+          <time dateTime={value} title={formatted.title}>
+            {formatted.text}
+          </time>
+        ) : (
+          "API 未回傳"
+        )}
+      </dd>
+    </div>
   );
 }
 

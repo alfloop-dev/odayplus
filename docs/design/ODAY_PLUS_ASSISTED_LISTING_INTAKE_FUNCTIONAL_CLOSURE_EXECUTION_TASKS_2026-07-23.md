@@ -1,12 +1,12 @@
 ---
 doc_id: ODP-INTAKE-FUNCTIONAL-CLOSURE-EXEC-001
 title: ODay Plus Assisted Listing Intake Functional Closure Execution Tasks
-version: 1.0.0
-status: approved-for-dispatch
+version: 1.1.0
+status: implemented-pending-independent-functional-acceptance
 owner: Product Platform Engineering
 audit: ODP-INTAKE-FUNCTIONAL-AUDIT-001
 audited_commit: eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585
-target_branch: task/ODP-INTAKE-FUNCTIONAL-CLOSURE-001
+target_branch: task/ODP-INTAKE-FCL-INTEGRATION-001
 updated_at: 2026-07-23
 ---
 
@@ -26,6 +26,13 @@ implementation commit.
 Machine-readable authority:
 
 `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_CLOSURE_EXECUTION_TASKS_2026-07-23.json`
+
+Clause-level acceptance authority:
+
+`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_REQUIREMENT_TRACE_2026-07-23.md`
+
+Integration and Acceptance must report every `FTR-001` through `FTR-197`.
+A chapter-level summary cannot substitute for this trace.
 
 ## 2. Completion Rules
 
@@ -55,18 +62,18 @@ Every implementation task must provide:
 
 ## 3. Task Waves
 
-| Wave | Task | Owner | Depends on | Functional scope |
-|---|---|---|---|---|
-| 1 | `ODP-INTAKE-FCL-RUNTIME-001` | Claude2 | Approved contracts | Canonical intake runtime, revision, identity, lifecycle persistence |
-| 1 | `ODP-INTAKE-FCL-SHELL-001` | Codex2 | None | Durable routes and production detail composition |
-| 1 | `ODP-INTAKE-FCL-ROLES-001` | Codex | None | Six role and permission modes |
-| 1 | `ODP-INTAKE-FCL-INBOX-001` | Antigravity3 | None | Complete Inbox, map, filters, Add URL |
-| 1 | `ODP-INTAKE-FCL-REVIEW-001` | Antigravity4 | None | Field lineage, assisted entry, durable drafts |
-| 1 | `ODP-INTAKE-FCL-IDENTITY-001` | Antigravity5 | Approved identity contract | Compare and reversible identity decisions |
-| 1 | `ODP-INTAKE-FCL-EVIDENCE-001` | Antigravity6 | None | Authoritative receipts, audit, evidence, errors |
-| 1 | `ODP-INTAKE-FCL-LIFECYCLE-001` | Antigravity7 | None | Stage/job updates, assignment/SLA, cancel/retry/DLQ |
-| 2 | `ODP-INTAKE-FCL-INTEGRATION-001` | Claude | All Wave 1 tasks | Mount, integrate, and prove complete application flows |
-| 3 | `ODP-INTAKE-FCL-ACCEPTANCE-001` | Codex2 | Integration | Independent requirement-by-requirement acceptance |
+| Wave | Task | Owner | Status | Depends on | Functional scope |
+|---|---|---|---|---|---|
+| 1 | `ODP-INTAKE-FCL-RUNTIME-001` | Runtime Fleet | Integrated | Approved contracts | Canonical intake runtime, revision, identity, lifecycle persistence |
+| 1 | `ODP-INTAKE-FCL-SHELL-001` | Shell Fleet | Integrated | None | Durable routes and production detail composition |
+| 1 | `ODP-INTAKE-FCL-ROLES-001` | Roles Fleet | Integrated | None | Six role and permission modes |
+| 1 | `ODP-INTAKE-FCL-INBOX-001` | Inbox Fleet | Integrated | None | Complete Inbox, map, filters, Add URL |
+| 1 | `ODP-INTAKE-FCL-REVIEW-001` | Review Fleet | Integrated | None | Field lineage, assisted entry, durable drafts |
+| 1 | `ODP-INTAKE-FCL-IDENTITY-001` | Identity Fleet | Integrated | Approved identity contract | Compare and reversible identity decisions |
+| 1 | `ODP-INTAKE-FCL-EVIDENCE-001` | Evidence Fleet | Integrated | None | Authoritative receipts, audit, evidence, errors |
+| 1 | `ODP-INTAKE-FCL-LIFECYCLE-001` | Lifecycle Fleet | Integrated | None | Stage/job updates, assignment/SLA, cancel/retry/DLQ |
+| 2 | `ODP-INTAKE-FCL-INTEGRATION-001` | Integration Fleet | Verified, pending commit | All Wave 1 tasks | Mount, integrate, and prove complete application flows |
+| 3 | `ODP-INTAKE-FCL-ACCEPTANCE-001` | Independent Acceptance Fleet | Pending exact commit | Integration | Independent requirement-by-requirement acceptance |
 
 ## 4. Task Contracts
 
@@ -368,14 +375,36 @@ Required outcomes:
 2. inspect production import graph and routes;
 3. inspect persisted ListingRevision, identity edge, stage history, receipts,
    and audit readbacks;
-4. verify every requirement trace row is `PASS`;
+4. verify every `FTR-001` through `FTR-197` requirement trace row is `PASS`
+   or has an explicitly approved `NOT_APPLICABLE` reason;
 5. reject closure when evidence is indirect, missing, fixture-only, or limited
    to component tests.
 
 The umbrella closes only when the independent reviewer records
 `FUNCTIONALLY_COMPLETE` against the exact integrated commit.
 
-## 5. Dispatch and Merge Policy
+## 5. Integrated Verification
+
+The integration worktree has completed the implementation and pre-commit
+verification phase:
+
+| Verification | Result |
+|---|---|
+| Canonical production browser suite | `23 passed`, `0 failed`, `0 skipped/fixme` |
+| Supplemental browser coverage | `6 passed`, `0 failed`, `0 skipped`, `0 flaky` |
+| Web component/integration tests | `213 passed` |
+| Typed OpenAPI client tests | `5 passed` |
+| Web and OpenAPI client typecheck | PASS |
+| Next production build | PASS |
+| Backend contract/integration/unit selection | `182 passed`; `14` PostgreSQL/live-environment cases excluded by the repository marker |
+| Design and effective OpenAPI validators | PASS |
+| Requirement trace | `FTR-001` through `FTR-197`, no missing or duplicate ID |
+
+This section records integration evidence, not independent acceptance. The
+commit containing these changes must be pushed before
+`ODP-INTAKE-FCL-ACCEPTANCE-001` starts.
+
+## 6. Dispatch and Merge Policy
 
 - Every Fleet starts from the pushed functional-closure baseline.
 - Wave 1 tasks use isolated worktrees and disjoint owned paths.
@@ -385,4 +414,3 @@ The umbrella closes only when the independent reviewer records
 - No previous `done` status is inherited.
 - No task is terminal until its code is integrated into the functional-closure
   branch and its acceptance evidence still passes there.
-

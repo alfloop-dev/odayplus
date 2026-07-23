@@ -2,7 +2,8 @@
 task_id: ODP-INTAKE-FCL-INTEGRATION-001
 artifact: canonical-browser-e2e-verification
 status: passed
-verified_at: 2026-07-23
+verified_at: 2026-07-23T21:49:32Z
+worktree_head: 47daa5918400e9823a3a2dd3bf758c46a13cab42
 suite: tests/e2e/operator-assisted-listing-intake-functional-closure.spec.ts
 test_count: 23
 ---
@@ -12,8 +13,9 @@ test_count: 23
 ## Current Result
 
 The canonical Playwright suite contains 23 tests and contains no `skip`,
-`fixme`, or expected-failure declaration. The latest full run completed in one
-uninterrupted serial invocation.
+`fixme`, or expected-failure declaration. The latest run used the current
+shared integration worktree and completed in one uninterrupted serial
+invocation.
 
 Exact result:
 
@@ -22,7 +24,7 @@ Exact result:
 0 failed
 0 did not run
 0 declared skips
-Duration: 6.3 minutes
+Duration: 6.9 minutes
 ```
 
 Command:
@@ -43,39 +45,41 @@ The run proves:
   receipts;
 - all six role modes, masking/purpose binding, desktop/tablet/mobile fallback,
   assignment claim/transfer, and SLA pause/resume/escalate/complete readback;
-- authoritative FAILED retry/cancel/DLQ/replay history and two-actor quarantine
-  release;
+- authoritative `RUN`, FAILED retry/cancel/DLQ/replay history and two-actor
+  quarantine release;
 - complete 428, 409, 403, and 422 recovery envelopes with draft preservation;
 - zero serious or critical Axe violations, keyboard focus containment/return,
   and reduced-motion behavior on the canonical durable route.
 
-## Focused Gate
+## Focused Recheck
 
-The keyboard/focus gate also passed alone before the complete run:
+The FAILED retry/cancel/DLQ/replay test passed alone before the complete run:
 
 ```text
 1 passed
 0 failed
 0 skipped
-Duration: 9.7 seconds
+Duration: 55.9 seconds
 ```
 
 Command:
 
 ```bash
 python3 scripts/e2e/run_assisted_intake_functional_runtime.py \
-  --grep "canonical durable intake dialog is keyboard operable"
+  --grep "FAILED intake exposes retry/cancel/DLQ/replay controls"
 ```
+
+The subsequent complete serial run also passed the same lifecycle assertions.
 
 ## Responsive Evidence
 
-The responsive test passed in the latest full run and wrote:
+The responsive test passed in the complete run and wrote:
 
 | Viewport | File | Dimensions | SHA-256 |
 |---|---|---:|---|
-| Mobile | `screenshots/viewport-390.png` | 390 x 1012 | `0a095ad65af19a980e496a50bf73384a76aab9efe595b8fd4e80f78941168097` |
-| Tablet | `screenshots/viewport-1024.png` | 1024 x 901 | `15ef71a8462e7507352bfc6853b489dc417abc05ab85711244236ffb8268947a` |
-| Desktop | `screenshots/viewport-1440.png` | 1440 x 968 | `13b52050a742f58fdc332de20154ca643c185b30ac65e23da2bb9bf2800b88fb` |
+| Mobile | `screenshots/viewport-390.png` | 390 x 1012 | `23755c5da0d1b513ccc6ea9fabfcc011c18c652c465285c9b0a857ae3debe48b` |
+| Tablet | `screenshots/viewport-1024.png` | 1024 x 901 | `b7a17b1a14e9ad054de92c0e8a5168b7f60ed785f1c9cdb39212471141d74f49` |
+| Desktop | `screenshots/viewport-1440.png` | 1440 x 968 | `802277f3fa617d8554c2216a90dfef677413885d5f3eb8ead8dd1c8f33544c68` |
 
 ## Evidence Boundary
 

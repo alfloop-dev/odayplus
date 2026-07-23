@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -25,6 +26,64 @@ from shared.observability import AlertRouter, default_registry
 logger = logging.getLogger("assisted-listing-intake-worker")
 
 INTAKE_JOB_TYPE = "assisted-listing-intake"
+
+
+class AssistedIntakeStageError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        code: str,
+        summary: str,
+        next_action: str,
+        retryable: bool,
+    ) -> None:
+        super().__init__(summary)
+        self.code = code
+        self.summary = summary
+        self.next_action = next_action
+        self.retryable = retryable
+
+
+def stage_failure(stage_name: str, error: Exception) -> dict[str, Any]:
+    if isinstance(error, AssistedIntakeStageError):
+        return {
+            "code": error.code,
+            "summary": error.summary,
+            "nextAction": error.next_action,
+            "retryable": error.retryable,
+        }
+    if isinstance(error, TimeoutError):
+        return {
+            "code": f"ODP-INTAKE-{stage_name}-TIMEOUT",
+            "summary": str(error),
+            "nextAction": "Retry from the persisted stage checkpoint.",
+            "retryable": True,
+        }
+    return {
+        "code": f"ODP-INTAKE-{stage_name}-FAILED",
+        "summary": str(error),
+        "nextAction": "Review the persisted failure and retry when permitted.",
+        "retryable": stage_name in {"RETRIEVING", "PARSING", "MATCHING"},
+    }
+
+
+def source_observation_is_stale(
+    observed_at: str | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not observed_at:
+        return False
+    try:
+        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    max_age_seconds = int(
+        os.environ.get("ODP_INTAKE_STALE_SNAPSHOT_SECONDS", str(30 * 24 * 60 * 60))
+    )
+    return ((now or datetime.now(UTC)) - observed).total_seconds() > max_age_seconds
 
 
 def ensure_uuid(val: Any, default: str = "00000000-0000-0000-0000-000000000000") -> str:
@@ -106,6 +165,24 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
     expected_version = job.version
     fence_token = job.fence_token
     job_queue = persistence.job_queue
+    claimed_job = job_queue.get(job.job_id) or job
+    service.record_lifecycle_receipt(
+        intake_id=intake_id,
+        category="job",
+        action="RUN",
+        receipt={
+            "job_id": job.job_id,
+            "status": "RUNNING",
+            "checkpoint": payload.get("current_stage") or "CHECKING_IDENTITY",
+            "attempt": int(claimed_job.attempts),
+            "version": int(claimed_job.version),
+            "fence_token": claimed_job.fence_token,
+            "correlation_id": job.correlation_id,
+            "occurred_at": datetime.now(UTC).isoformat(),
+        },
+        actor="oday-worker",
+        correlation_id=job.correlation_id,
+    )
 
     # Define stage details: (soft timeout, hard timeout, max attempts)
     stage_rules = {
@@ -269,12 +346,34 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                     f"Stage {stage_name} failed (local attempt {local_att}/{max_local_att}): {exc}"
                 )
 
-                if local_att < max_local_att:
+                should_retry_locally = not (
+                    isinstance(exc, AssistedIntakeStageError)
+                    and not exc.retryable
+                )
+                if local_att < max_local_att and should_retry_locally:
                     sleep_time = backoff_base * (2 ** (local_att - 1))
                     logger.info(f"Retrying stage {stage_name} in {sleep_time}s...")
                     time.sleep(sleep_time)
                     check_cancellation_and_fence()
                 else:
+                    failure = stage_failure(stage_name, exc)
+                    failed_intake = service.get_intake(intake_id)
+                    failed_intake["failure"] = failure
+                    service._append_processing_transition(
+                        failed_intake,
+                        to_stage="FAILED",
+                        actor=payload.get(
+                            "actor_name",
+                            "Assisted Intake Worker",
+                        ),
+                        correlation_id=job.correlation_id,
+                        checkpoint=stage_name,
+                        attempt=current_att + local_att,
+                        timeout_seconds=hard_to,
+                        failure=failure,
+                        reason_code=failure["code"],
+                    )
+                    intake_repo.save_intake(failed_intake)
                     # Emit failure metrics & audit events
                     try:
                         if stage_name == "RETRIEVING":
@@ -324,6 +423,11 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                     except Exception as audit_exc:
                         logger.exception("Failed to write failure audit log: %s", audit_exc)
 
+                    if (
+                        isinstance(exc, AssistedIntakeStageError)
+                        and not exc.retryable
+                    ):
+                        raise NonRetryableJobError(exc.summary) from exc
                     raise exc
 
         # -------------------------------------------------------------
@@ -469,13 +573,11 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             )
             intake_repo.save_intake(intake)
             return
-
         # -------------------------------------------------------------
         # 3. Retrieval
         # -------------------------------------------------------------
         def do_retrieval():
             import json
-            import os
 
             from modules.external_data.application.assisted_intake import normalize_url
             from modules.external_data.application.source_snapshots import (
@@ -501,8 +603,28 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 retrieval_method="server_http",
             )
             if not retrieval_res.ok:
-                raise RuntimeError(
-                    f"Retrieval failed: {retrieval_res.failure.summary if retrieval_res.failure else 'unknown'}"
+                retrieval_failure = retrieval_res.failure
+                raise AssistedIntakeStageError(
+                    code=(
+                        retrieval_failure.code
+                        if retrieval_failure is not None
+                        else "ODP-INTAKE-RETRIEVAL-UNKNOWN"
+                    ),
+                    summary=(
+                        retrieval_failure.summary
+                        if retrieval_failure is not None
+                        else "Approved retrieval failed for an unknown reason."
+                    ),
+                    next_action=(
+                        retrieval_failure.next_action
+                        if retrieval_failure is not None
+                        else "Review the source and retrieval policy."
+                    ),
+                    retryable=(
+                        retrieval_failure.retryable
+                        if retrieval_failure is not None
+                        else False
+                    ),
                 )
             
             raw_dict = json.loads(retrieval_res.body.decode("utf-8"))
@@ -510,6 +632,18 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             redacted_data = json.dumps(redacted_raw).encode("utf-8")
             
             snapshot_bucket = os.environ.get("ODP_SNAPSHOT_BUCKET", "").strip() or "taiwan-snapshots"
+            captured_now = datetime.now(UTC)
+            observed_at = captured_now
+            if retrieval_res.source_observed_at:
+                try:
+                    observed_at = datetime.fromisoformat(
+                        retrieval_res.source_observed_at.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    observed_at = captured_now
+                if observed_at.tzinfo is None:
+                    observed_at = observed_at.replace(tzinfo=UTC)
+
             snapshot_id = snapshot_service.create_snapshot(
                 tenant_id=resolved_tenant_id,
                 intake_id=intake_id,
@@ -521,21 +655,58 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 capture_method="SERVER_RETRIEVAL",
                 retention_class="STANDARD",
                 encryption_key_ref="kms://default-key",
-                observed_at=datetime.now(UTC),
-                captured_at=datetime.now(UTC),
+                observed_at=observed_at,
+                captured_at=captured_now,
                 bucket=snapshot_bucket,
                 redacted_data=redacted_data,
             )
             
-            return redacted_raw, snapshot_id, datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            return (
+                redacted_raw,
+                snapshot_id,
+                captured_now.isoformat().replace("+00:00", "Z"),
+                retrieval_res.source_observed_at,
+            )
 
-        raw_snapshot, snapshot_id, captured_at = run_stage("RETRIEVING", do_retrieval)
+        (
+            raw_snapshot,
+            snapshot_id,
+            captured_at,
+            source_observed_at,
+        ) = run_stage("RETRIEVING", do_retrieval)
+
+        if source_observation_is_stale(source_observed_at):
+            intake = service.get_intake(intake_id)
+            intake["rawSnapshot"] = raw_snapshot
+            intake["snapshotId"] = snapshot_id
+            intake["capturedAt"] = captured_at
+            intake["sourceObservedAt"] = source_observed_at
+            intake["failure"] = {
+                "code": "STALE_SOURCE_SNAPSHOT",
+                "summary": "來源觀測時間已超過允許的新鮮度，必須重新取得或人工確認。",
+                "nextAction": "REFRESH_SOURCE_OR_REVIEW",
+                "retryable": False,
+            }
+            service._append_processing_transition(
+                intake,
+                to_stage="NEEDS_REVIEW",
+                actor=payload.get("actor_name", "Assisted Intake Worker"),
+                correlation_id=job.correlation_id,
+                checkpoint="RETRIEVING",
+                attempt=job.attempts,
+                timeout_seconds=120,
+                failure=intake["failure"],
+                reason_code="STALE_SOURCE_SNAPSHOT",
+            )
+            intake_repo.save_intake(intake)
+            return
 
         # -------------------------------------------------------------
         # 4. Parsing
         # -------------------------------------------------------------
         def do_parsing():
             from modules.external_data.application.assisted_intake import (
+                PermanentParserFailure,
                 RetrievalResult,
                 parse_snapshot,
             )
@@ -546,8 +717,15 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 raw=raw_snapshot,
             )
 
-            parsed_fields_val = parse_snapshot(retrieval)
-            return parsed_fields_val
+            try:
+                return parse_snapshot(retrieval)
+            except PermanentParserFailure as exc:
+                raise AssistedIntakeStageError(
+                    code="PARSER_PERMANENT_FAILURE",
+                    summary=str(exc),
+                    next_action="Use assisted entry or update the parser binding.",
+                    retryable=False,
+                ) from exc
 
         parsed_fields = run_stage("PARSING", do_parsing)
 
@@ -599,7 +777,6 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             intake_repo.save_intake(intake)
             return
         intake_repo.save_intake(intake)
-
         # -------------------------------------------------------------
         # 5. Matching
         # -------------------------------------------------------------
@@ -646,3 +823,97 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         )
 
         intake_repo.save_intake(intake)
+
+
+def finalize_assisted_listing_intake_failure(
+    job: JobRecord,
+    persistence: PersistenceBundle,
+    error: Exception,
+) -> None:
+    """Persist the terminal intake and DLQ receipt after retry exhaustion."""
+
+    intake_id = str(job.payload.get("intake_id") or "")
+    if job.job_type != INTAKE_JOB_TYPE or not intake_id:
+        return
+
+    if persistence.is_durable:
+        doc_store = SqliteDocumentStore(persistence.engine)
+        intake_repo = DurableAssistedIntakeRepository(doc_store)
+    else:
+        intake_repo = InMemoryAssistedIntakeRepository()
+
+    service = NetworkListingService(
+        listing_repository=persistence.listing_repository,
+        intake_repository=intake_repo,
+    )
+    intake = service.get_intake(intake_id)
+    current_job = persistence.job_queue.get(job.job_id)
+    current_payload = dict(current_job.payload if current_job is not None else job.payload)
+    checkpoint = (
+        current_payload.get("current_stage")
+        or current_payload.get("checkpoint")
+        or intake.get("stage")
+        or "SUBMITTED"
+    )
+    attempt = int(current_job.attempts if current_job is not None else job.attempts)
+    job_version = int(current_job.version if current_job is not None else job.version)
+    occurred_at = datetime.now(UTC).isoformat()
+    originating_failure = dict(intake.get("failure") or {})
+    originating_code = originating_failure.get("code")
+    failure = {
+        "code": originating_code or "MAX_RETRIES_EXHAUSTED",
+        "summary": originating_failure.get("summary") or str(error),
+        "retryable": False,
+        "occurredAt": occurred_at,
+        "checkpoint": checkpoint,
+        "attempt": attempt,
+        "nextAction": "REPLAY_FROM_CHECKPOINT",
+        "terminalCode": "MAX_RETRIES_EXHAUSTED",
+    }
+
+    if intake.get("stage") not in {
+        "CANCELLED",
+        "READY",
+        "NEEDS_REVIEW",
+        "QUARANTINED",
+        "AWAITING_ASSISTED_ENTRY",
+    }:
+        service._append_processing_transition(
+            intake,
+            to_stage="FAILED",
+            actor=current_payload.get("actor_name", "Assisted Intake Worker"),
+            correlation_id=job.correlation_id,
+            checkpoint=str(checkpoint),
+            attempt=attempt,
+            timeout_seconds=None,
+            failure={
+                **failure,
+                "originatingCode": originating_code,
+            },
+            next_retry_at=None,
+            reason_code="MAX_RETRIES_EXHAUSTED",
+        )
+        intake = service.get_intake(intake_id)
+
+    intake["failure"] = failure
+    service._save_intake(intake)
+
+    service.record_lifecycle_receipt(
+        intake_id=intake_id,
+        category="job",
+        action="DEAD_LETTER",
+        receipt={
+            "job_id": job.job_id,
+            "status": "DEAD_LETTER",
+            "checkpoint": checkpoint,
+            "attempt": attempt,
+            "version": job_version,
+            "correlation_id": job.correlation_id,
+            "occurred_at": occurred_at,
+            "error_code": failure["code"],
+            "error_summary": failure["summary"],
+            "next_retry_at": None,
+        },
+        actor="oday-worker",
+        correlation_id=job.correlation_id,
+    )

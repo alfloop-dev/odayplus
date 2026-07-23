@@ -2,6 +2,7 @@
 
 import type { IntakeFieldCell } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
+import { formatIntakeDateTime } from "./types";
 
 export type FieldGroupId =
   | "identity"
@@ -24,11 +25,11 @@ export type FieldCorrectionLineage = {
   correctedValue: unknown;
   beforeEffectiveValue: unknown;
   afterEffectiveValue: unknown;
-  actorSubjectId: string;
+  actorSubjectId: string | null;
   actorName: string | null;
   actorRole: string | null;
   correctedAt: string;
-  reason: string;
+  reason: string | null;
   reviewerSubjectId: string | null;
   reviewerName: string | null;
   reviewedAt: string | null;
@@ -308,9 +309,12 @@ export function FieldLineageRow({
   return (
     <tr
       aria-label={summary}
+      className={styles.fieldLineageRow}
       data-field-path={field.fieldPath}
       data-group={field.group}
       data-testid={`field-lineage-row-${field.fieldPath}`}
+      id={fieldLineageDomId(field.fieldPath)}
+      tabIndex={-1}
     >
       <th className={styles.fieldCell} scope="row">
         <span className={styles.fieldLabelText}>{field.label}</span>
@@ -415,18 +419,18 @@ function LineageDetails({ field }: { field: FieldLineageField }) {
           <li data-testid={`field-correction-${correction.correctionId}`} key={correction.correctionId}>
             <div>
               <strong>
-                {correction.actorName ?? correction.actorSubjectId}
+                {correction.actorName ?? correction.actorSubjectId ?? "API 未回傳"}
                 {correction.actorRole ? ` · ${correction.actorRole}` : ""}
               </strong>
-              <time dateTime={correction.correctedAt}> · {correction.correctedAt}</time>
+              <IntakeTime value={correction.correctedAt} />
             </div>
-            <div>原因：{correction.reason}</div>
+            <div>原因：{correction.reason ?? "API 未回傳"}</div>
             <div>
               Before {formatValue(correction.beforeEffectiveValue, "effective")} → After{" "}
               {formatValue(correction.afterEffectiveValue, "effective")}
             </div>
             <div>
-              Correction {correction.correctionId} · v{correction.version} · {correction.status}
+              Lineage record {correction.correctionId} · v{correction.version} · {correction.status}
             </div>
             <div>
               Snapshot {correction.sourceSnapshotId ?? "未提供"} · Parser run{" "}
@@ -441,7 +445,7 @@ function LineageDetails({ field }: { field: FieldLineageField }) {
             {correction.reviewerSubjectId ? (
               <div>
                 Reviewer {correction.reviewerName ?? correction.reviewerSubjectId}
-                {correction.reviewedAt ? ` · ${correction.reviewedAt}` : ""}
+                {correction.reviewedAt ? <IntakeTime value={correction.reviewedAt} /> : null}
               </div>
             ) : correction.status === "PENDING_REVIEW" || correction.status === "PROPOSED" ? (
               <div>等待獨立覆核者</div>
@@ -451,6 +455,21 @@ function LineageDetails({ field }: { field: FieldLineageField }) {
       </ol>
     </details>
   );
+}
+
+function IntakeTime({ value }: { value: string }) {
+  const formatted = formatIntakeDateTime(value);
+  if (!formatted) return <span> · API 未回傳有效時間</span>;
+  return (
+    <time dateTime={value} title={formatted.title}>
+      {" · "}
+      {formatted.text}
+    </time>
+  );
+}
+
+export function fieldLineageDomId(fieldPath: string): string {
+  return `field-lineage-${fieldPath.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function latestCorrection(

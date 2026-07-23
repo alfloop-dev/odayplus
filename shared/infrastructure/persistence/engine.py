@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
@@ -54,6 +56,7 @@ class SqliteEngine:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=30000")
         self._bootstrap()
 
     @property
@@ -108,6 +111,20 @@ class SqliteEngine:
     def query_one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         with self._lock:
             return self._conn.execute(sql, params).fetchone()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Hold a cross-connection write lock for one read-modify-write unit."""
+
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except BaseException:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
 
     def next_ordinal(self, name: str) -> int:
         """Return the next monotonic ordinal for ``name`` (stable list order)."""

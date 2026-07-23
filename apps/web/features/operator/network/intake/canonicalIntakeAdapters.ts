@@ -37,7 +37,14 @@ import type {
   IdentityGraphSnapshot,
   IdentityReviewWorkflow,
 } from "./identityTypes";
-import type { StructuredAuditEvent } from "./evidenceContracts";
+import type {
+  AuthoritativeHumanDecisionEvidence,
+  AuthoritativeSensitiveEvidenceAccess,
+  AuthoritativeSourceEvidence,
+  StructuredAuditEvent,
+} from "./evidenceContracts";
+import type { FieldCorrectionLineage } from "./FieldLineageRow";
+import type { IntakeDetailPresentationFacts } from "./types";
 import type {
   IntakeLifecycleAction,
   IntakeLifecycleSnapshot,
@@ -189,6 +196,23 @@ export function canonicalDetailToRecord(
   const assignment = detail.lifecycle.assignment;
   const sla = detail.lifecycle.sla;
   const job = detail.lifecycle.job;
+  const latestActionableTransition = [...detail.processing_history]
+    .reverse()
+    .find((transition) =>
+      Boolean(
+        transition.reason_code
+        && (
+          transition.to_state === "FAILED"
+          || transition.to_state === "AWAITING_ASSISTED_ENTRY"
+          || transition.to_state === "NEEDS_REVIEW"
+          || transition.to_state === "QUARANTINED"
+        )
+      )
+    );
+  const issueCode =
+    detail.issue
+    ?? latestActionableTransition?.reason_code
+    ?? null;
   return {
     id: detail.intake_id,
     originalUrl: detail.original_url ?? "",
@@ -216,6 +240,31 @@ export function canonicalDetailToRecord(
     parsedFields: canonicalFields(detail),
     matchResult: canonicalMatch(detail),
     auditEvents: canonicalAudit(detail),
+    failure: issueCode
+      ? {
+          code: issueCode,
+          summary: issueCode,
+          nextAction: detail.next_action ?? (
+            issueCode === "PARSER_PARTIAL"
+              ? "ENTER_DATA"
+              : issueCode === "STALE_SOURCE_SNAPSHOT"
+                ? "REFRESH_SOURCE_OR_REVIEW"
+                : "REVIEW_FAILURE"
+          ),
+          retryable: detail.retryable ?? false,
+        }
+      : null,
+    submissionReceipt: detail.lifecycle.submission_receipt
+      ? {
+          receiptId: detail.lifecycle.submission_receipt.receipt_id,
+          receiptType: detail.lifecycle.submission_receipt.receipt_type,
+          existingListingId:
+            detail.lifecycle.submission_receipt.existing_listing_id,
+          navigationTarget:
+            detail.lifecycle.submission_receipt.navigation_target,
+          issuedAt: detail.lifecycle.submission_receipt.issued_at,
+        }
+      : null,
     version: detail.version,
     assignmentId: assignment?.assignment_id ?? null,
     assignmentStatus: assignment?.status ?? null,
@@ -225,6 +274,186 @@ export function canonicalDetailToRecord(
     slaVersion: sla?.version ?? null,
     dueAt: detail.due_at ?? sla?.due_at ?? assignment?.due_at ?? null,
   };
+}
+
+export function canonicalDetailPresentationFacts(
+  detail: CanonicalIntakeRuntimeDetail,
+): IntakeDetailPresentationFacts {
+  return {
+    sourceId: detail.source_id,
+    originalUrl: detail.original_url,
+    canonicalUrl: detail.canonical_url,
+    submitter: detail.submitted_by,
+    owner:
+      detail.lifecycle.assignment?.owner_subject_id ??
+      detail.assigned_to,
+    submittedAt: detail.submitted_at,
+    updatedAt: detail.updated_at,
+    scope: detail.scope,
+    policyState: detail.policy_state,
+    policyReason: detail.evidence.policy_reason,
+    policyVersion: detail.evidence.policy_version,
+    policyExpiresAt: detail.evidence.policy_expires_at,
+    etag: detail.lifecycle.etag,
+    version: detail.version,
+  };
+}
+
+export function canonicalSourceEvidence(
+  detail: CanonicalIntakeRuntimeDetail,
+): AuthoritativeSourceEvidence {
+  return {
+    original_url: detail.evidence.original_url,
+    canonical_url: detail.evidence.canonical_url,
+    source_snapshot_id: detail.evidence.source_snapshot_id,
+    parser_run_id: detail.evidence.parser_run_id,
+    parser_version: detail.evidence.parser_version,
+    observed_at: null,
+    captured_at: detail.evidence.captured_at,
+    policy_state: detail.evidence.policy_state,
+    policy_version: detail.evidence.policy_version,
+    policy_expires_at: detail.evidence.policy_expires_at,
+    correlation_id: detail.evidence.correlation_id,
+  };
+}
+
+export function canonicalSensitiveEvidenceAccess(
+  detail: CanonicalIntakeRuntimeDetail,
+): AuthoritativeSensitiveEvidenceAccess {
+  const rank: Record<string, number> = {
+    PUBLIC: 0,
+    INTERNAL: 1,
+    CONFIDENTIAL: 2,
+    RESTRICTED: 3,
+  };
+  const classification = detail.fields
+    .map((field) => field.classification)
+    .sort((left, right) => rank[right] - rank[left])[0] ?? null;
+  const masking = detail.lifecycle.actor_facts.masking;
+  const purpose = detail.lifecycle.actor_facts.purpose;
+  return {
+    purpose: purpose.value,
+    purpose_binding_id: null,
+    classification,
+    expires_at: null,
+    masked: masking.has_masked_fields,
+    mask_reason_code: masking.reason_codes[0] ?? null,
+    audit_notice: purpose.reason_code,
+    legal_hold_state: null,
+    legal_hold_id: null,
+    legal_hold_expires_at: null,
+  };
+}
+
+export function canonicalHumanDecisionEvidence(
+  detail: CanonicalIntakeRuntimeDetail,
+): AuthoritativeHumanDecisionEvidence | null {
+  const latest = [...detail.lifecycle.decisions]
+    .filter((decision) => decision.decision_id || decision.receipt_id)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.updated_at ?? left.created_at ?? "");
+      const rightTime = Date.parse(right.updated_at ?? right.created_at ?? "");
+      return (Number.isNaN(leftTime) ? 0 : leftTime) -
+        (Number.isNaN(rightTime) ? 0 : rightTime);
+    })
+    .at(-1);
+  if (!latest) return null;
+  const decisionId = latest.decision_id ?? latest.receipt_id;
+  if (!decisionId) return null;
+  const receipt = detail.lifecycle.mutation_receipts.find(
+    (candidate) => candidate.receipt.decision_id === decisionId,
+  );
+  return {
+    decision_id: decisionId,
+    decision_type: latest.action ?? "",
+    status: latest.status,
+    actor_name: latest.proposer,
+    actor_role_id: null,
+    reviewer_subject_id: latest.reviewer,
+    reason: receipt?.receipt.reason ?? null,
+    occurred_at: latest.updated_at ?? latest.created_at,
+    audit_event_id: receipt?.receipt.audit_event_id ?? null,
+    correlation_id:
+      latest.correlation_id ??
+      receipt?.correlation_id ??
+      receipt?.receipt.correlation_id ??
+      null,
+  };
+}
+
+export function canonicalCorrectionsByField(
+  detail: CanonicalIntakeRuntimeDetail,
+): Readonly<Record<string, readonly FieldCorrectionLineage[]>> {
+  const grouped: Record<string, FieldCorrectionLineage[]> = {};
+
+  for (const event of detail.audit) {
+    if (event.action !== "intake.correct") continue;
+    const before = asObject(event.before);
+    const after = asObject(event.after);
+    const changes = correctionChanges(after.fields ?? before.fields);
+    for (const change of changes) {
+      const fieldPath =
+        typeof change.field === "string" ? change.field : null;
+      if (!fieldPath) continue;
+      const related = event.related_ids;
+      const explicitCorrectionId =
+        stringValue(related.correction_id) ??
+        stringValue(related.correctionId);
+      const correctionId = explicitCorrectionId ?? event.audit_event_id;
+      const record: FieldCorrectionLineage = {
+        correctionId,
+        status: "APPLIED",
+        correctedValue: change.after,
+        beforeEffectiveValue: change.before,
+        afterEffectiveValue: change.after,
+        actorSubjectId: event.actor,
+        actorName: event.actor,
+        actorRole: event.actor_role,
+        correctedAt: event.occurred_at,
+        reason: event.reason_code,
+        reviewerSubjectId: null,
+        reviewerName: null,
+        reviewedAt: null,
+        sourceSnapshotId: event.source_snapshot_id,
+        parserRunId: null,
+        supersedesCorrectionId:
+          stringValue(related.supersedes_correction_id) ??
+          stringValue(related.supersedesCorrectionId),
+        reversalOfCorrectionId:
+          stringValue(related.reversal_of_correction_id) ??
+          stringValue(related.reversalOfCorrectionId),
+        version: event.resource_version ?? 0,
+      };
+      (grouped[fieldPath] ??= []).push(record);
+    }
+  }
+
+  for (const corrections of Object.values(grouped)) {
+    corrections.sort((left, right) => {
+      const timeDelta =
+        Date.parse(left.correctedAt) - Date.parse(right.correctedAt);
+      return timeDelta || left.version - right.version;
+    });
+  }
+  return grouped;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function correctionChanges(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is Record<string, unknown> =>
+      Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
+  );
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
 }
 
 export function canonicalSummaryToRecord(
@@ -270,6 +499,26 @@ export function canonicalSummaryToRecord(
     restrictedData: summary.masking.restricted_data,
     retryable: summary.retryable,
     issue: summary.issue ?? summary.next_action,
+    failure:
+      summary.state === "FAILED"
+        ? {
+            code: summary.issue ?? "INTAKE_FAILED",
+            summary: summary.issue ?? "Intake processing failed.",
+            nextAction: summary.next_action ?? "Review the durable processing history.",
+            retryable: summary.retryable,
+          }
+        : null,
+    location:
+      summary.location.latitude !== null &&
+      summary.location.longitude !== null &&
+      summary.location.source !== null
+        ? {
+            latitude: summary.location.latitude,
+            longitude: summary.location.longitude,
+            confidence: summary.location.confidence,
+            source: summary.location.source,
+          }
+        : null,
   };
 }
 
@@ -455,7 +704,7 @@ function lifecycleTransition(
     stream,
     attempt: entry.receipt.attempt,
     checkpoint: entry.receipt.checkpoint,
-    owner_subject_id: entry.receipt.actor,
+    owner_subject_id: null,
     correlation_id: entry.correlation_id ?? entry.receipt.correlation_id,
   };
 }
@@ -530,6 +779,17 @@ export function canonicalDetailToLifecycle(
         (entry) => entry.receipt.job_id === lifecycle.job?.job_id,
       )
     : null;
+  const assignedAt = firstTransitionTime(assignmentHistory, [
+    "ASSIGNED",
+    "CLAIMED",
+    "TRANSFERRED",
+    "ESCALATED",
+    "COMPLETED",
+  ]);
+  const claimedAt = firstTransitionTime(assignmentHistory, ["CLAIMED"]);
+  const transferredAt = latestTransitionTime(assignmentHistory, ["TRANSFERRED"]);
+  const escalatedAt = latestTransitionTime(assignmentHistory, ["ESCALATED"]);
+  const completedAt = latestTransitionTime(assignmentHistory, ["COMPLETED"]);
   return {
     record: canonicalDetailToRecord(detail),
     intake_history: detail.processing_history.map((entry) => ({
@@ -544,6 +804,11 @@ export function canonicalDetailToLifecycle(
           >["status"],
           owner_subject_id: lifecycle.assignment.owner_subject_id,
           queue_name: lifecycle.assignment.queue_id,
+          assigned_at: assignedAt,
+          claimed_at: claimedAt,
+          transferred_at: transferredAt,
+          escalated_at: escalatedAt,
+          completed_at: completedAt,
           due_at: lifecycle.assignment.due_at,
           version: lifecycle.assignment.version,
           audit_event_id:
@@ -619,6 +884,30 @@ export function canonicalDetailToLifecycle(
     sequence: detail.version,
     version: detail.version,
   };
+}
+
+function firstTransitionTime(
+  history: readonly PersistedLifecycleTransition[],
+  states: readonly string[],
+): string | null {
+  return [...history]
+    .sort(
+      (left, right) =>
+        Date.parse(left.occurred_at) - Date.parse(right.occurred_at),
+    )
+    .find((entry) => states.includes(entry.to_state))?.occurred_at ?? null;
+}
+
+function latestTransitionTime(
+  history: readonly PersistedLifecycleTransition[],
+  states: readonly string[],
+): string | null {
+  return [...history]
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurred_at) - Date.parse(left.occurred_at),
+    )
+    .find((entry) => states.includes(entry.to_state))?.occurred_at ?? null;
 }
 
 const COMPARISON_KEYS: Array<[RegExp, IdentityComparisonFieldKey]> = [
@@ -803,7 +1092,8 @@ export function canonicalIdentityWorkflow(
   detail: CanonicalIntakeRuntimeDetail,
   currentActor: IdentityActor,
 ): IdentityReviewWorkflow {
-  const latest = detail.lifecycle.latest_decision_receipt;
+  const latest = latestIdentityDecision(detail);
+  const latestExtra = (latest ?? {}) as Record<string, unknown>;
   const proposer = identityActor(
     latest?.proposer ?? detail.submitted_by,
     latest?.proposer ? "proposer" : "submitter",
@@ -829,11 +1119,15 @@ export function canonicalIdentityWorkflow(
       null,
     proposal: latest
       ? {
-          outcomeAction: null,
-          graphOperation: null,
+          outcomeAction: identityOutcomeAction(latest.action),
+          graphOperation: identityGraphOperation(latest.graph_plan?.plan_type),
           graphPlanId: latest.graph_plan?.plan_id ?? null,
-          reason: "",
-          riskAcknowledged: true,
+          reason:
+            typeof latestExtra.reason === "string" ? latestExtra.reason : "",
+          riskAcknowledged:
+            typeof latestExtra.risk_acknowledged === "boolean"
+              ? latestExtra.risk_acknowledged
+              : true,
         }
       : null,
   };
@@ -842,29 +1136,29 @@ export function canonicalIdentityWorkflow(
 export function canonicalIdentityReceipt(
   detail: CanonicalIntakeRuntimeDetail,
 ): IdentityDecisionReceipt | null {
-  const latest = detail.lifecycle.latest_decision_receipt;
+  const latest = latestIdentityDecision(detail);
   if (!latest?.decision_id) return null;
+  const latestExtra = latest as unknown as Record<string, unknown>;
   const effect = detail.lifecycle.mutation_receipts.find(
     (entry) => entry.receipt.decision_id === latest.decision_id,
   );
   return {
     decisionId: latest.decision_id,
     status: latest.status as IdentityDecisionReceipt["status"],
-    outcomeAction: null,
-    graphOperation:
-      latest.graph_plan &&
-      ["MERGE", "SPLIT", "UNMERGE", "REVERSAL"].includes(
-        latest.graph_plan.plan_type.toUpperCase(),
-      )
-        ? (latest.graph_plan.plan_type.toUpperCase() as IdentityDecisionReceipt["graphOperation"])
-        : null,
+    outcomeAction: identityOutcomeAction(latest.action),
+    graphOperation: identityGraphOperation(latest.graph_plan?.plan_type),
     graphPlanId: latest.graph_plan?.plan_id ?? null,
     originalDecisionId: latest.graph_plan?.original_decision?.decision_id ?? null,
     matchCaseId: detail.match_case_id ?? "",
     proposer: identityActor(latest.proposer ?? detail.submitted_by, "proposer"),
     reviewer: latest.reviewer ? identityActor(latest.reviewer, "reviewer") : null,
-    reason: effect?.receipt.reason ?? "",
-    riskAcknowledged: true,
+    reason:
+      effect?.receipt.reason ??
+      (typeof latestExtra.reason === "string" ? latestExtra.reason : ""),
+    riskAcknowledged:
+      typeof latestExtra.risk_acknowledged === "boolean"
+        ? latestExtra.risk_acknowledged
+        : true,
     occurredAt: latest.updated_at ?? latest.created_at ?? detail.updated_at,
     resourceVersions: { intake: detail.version },
     listingId: effect?.receipt.listing_id ?? null,
@@ -875,12 +1169,72 @@ export function canonicalIdentityReceipt(
     supersededEdgeIds:
       latest.graph_plan?.lineage_impact.superseded_edge_ids ?? [],
     redirectIds: [],
-    auditEventId: effect?.receipt.audit_event_id ?? "",
+    auditEventId:
+      effect?.receipt.audit_event_id ??
+      (typeof latestExtra.audit_event_id === "string"
+        ? latestExtra.audit_event_id
+        : ""),
     correlationId: latest.correlation_id ?? "",
     lineageImpact: latest.graph_plan
       ? [latest.graph_plan.lineage_impact.summary]
       : [],
   };
+}
+
+function latestIdentityDecision(detail: CanonicalIntakeRuntimeDetail) {
+  const candidates = [...detail.lifecycle.decisions];
+  const projected = detail.lifecycle.latest_decision_receipt;
+  if (
+    projected?.decision_id &&
+    !candidates.some(
+      (candidate) => candidate.decision_id === projected.decision_id,
+    )
+  ) {
+    candidates.push(projected);
+  }
+  return candidates
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.updated_at ?? left.created_at ?? "");
+      const rightTime = Date.parse(right.updated_at ?? right.created_at ?? "");
+      const timestampDelta =
+        (Number.isNaN(leftTime) ? 0 : leftTime) -
+        (Number.isNaN(rightTime) ? 0 : rightTime);
+      return timestampDelta || left.version - right.version;
+    })
+    .at(-1) ?? null;
+}
+
+function identityOutcomeAction(
+  action: string | null | undefined,
+): IdentityDecisionReceipt["outcomeAction"] {
+  switch (action) {
+    case "CREATE":
+      return "CREATE";
+    case "REVISE":
+    case "APPEND_REVISION":
+      return "APPEND_REVISION";
+    case "DUPLICATE":
+    case "MARK_DUPLICATE":
+      return "MARK_DUPLICATE";
+    case "SEND_TO_STEWARD":
+      return "SEND_TO_STEWARD";
+    case "REJECT":
+      return "REJECT";
+    case "QUARANTINE":
+      return "QUARANTINE";
+    default:
+      return null;
+  }
+}
+
+function identityGraphOperation(
+  planType: string | null | undefined,
+): IdentityDecisionReceipt["graphOperation"] {
+  const normalized = planType?.toUpperCase();
+  return normalized &&
+    ["MERGE", "SPLIT", "UNMERGE", "REVERSAL"].includes(normalized)
+    ? (normalized as IdentityDecisionReceipt["graphOperation"])
+    : null;
 }
 
 export function canonicalCommandReceiptToIdentity(

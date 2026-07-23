@@ -5,11 +5,14 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes.operator_modules.network_listings import is_record_owner
 from apps.api.oday_api.main import create_app
+from apps.worker.oday_worker.main import ODayWorker
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingService,
 )
 from shared.auth import Principal
+from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.jobs.queue import InMemoryJobQueue, JobStatus
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -25,6 +28,44 @@ def _write_headers(key: str) -> dict[str, str]:
         "X-Correlation-Id": f"corr-{key}",
         "Idempotency-Key": f"idem-{key}",
     }
+
+
+def _advance_submitted_intake(
+    client: TestClient,
+    submitted: dict,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict:
+    """Run one queued intake through the deterministic, injected test adapter."""
+
+    assert submitted["stage"] == "SUBMITTED"
+    queue = client.app.state.job_queue
+    job = queue.claim_next(worker_id="contract-intake-worker")
+    assert job is not None
+    assert job.job_type == "assisted-listing-intake"
+    assert job.payload["intake_id"] == submitted["id"]
+    assert job.status == JobStatus.RUNNING
+
+    from modules.external_data.application.assisted_intake import retrieve
+
+    service = NetworkListingService(
+        listing_repository=client.app.state.listing_repository,
+        intake_repository=client.app.state.operator_intake_repository,
+    )
+    service.process_queued_intake(
+        intake_id=submitted["id"],
+        retrieval_provider=retrieve,
+        correlation_id=job.correlation_id,
+        attempt=job.attempts,
+    )
+    assert queue.complete(job.job_id)
+
+    readback = client.get(
+        f"/api/v1/operator/network-listings/intake/{submitted['id']}",
+        headers=headers or HEADERS,
+    )
+    assert readback.status_code == 200, readback.text
+    return readback.json()
 
 
 def test_first_submission_contract_test() -> None:
@@ -47,9 +88,11 @@ def test_first_submission_contract_test() -> None:
     assert data["id"].startswith("IN-")
     assert data["originalUrl"] == url
     assert data["canonicalUrl"] == url
-    assert data["stage"] == "READY"
+    assert data["stage"] == "SUBMITTED"
     assert data["policy"] == "APPROVED_RETRIEVAL"
-    assert data["matchResult"]["outcome"] == "NEW"
+    processed = _advance_submitted_intake(client, data)
+    assert processed["stage"] == "READY"
+    assert processed["matchResult"]["outcome"] == "NEW"
 
     # Replay with idempotency key
     replay = client.post(
@@ -126,7 +169,11 @@ def test_exact_duplicate_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    id1 = resp.json()["id"]
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    processed = _advance_submitted_intake(client, submitted)
+    assert processed["stage"] == "READY"
+    id1 = processed["id"]
 
     # 2. Second submission -> exact duplicate returned (terminal state idempotency)
     resp2 = client.post(
@@ -139,6 +186,7 @@ def test_exact_duplicate_contract_test() -> None:
 
     # 3. Test URL concurrency check (raising conflict if stage is not terminal)
     service = NetworkListingService()
+    queue = InMemoryJobQueue()
     service.submit_intake(
         url=url,
         heat_zone_id="HZ-01",
@@ -146,12 +194,11 @@ def test_exact_duplicate_contract_test() -> None:
         actor_name="林曉青",
         idempotency_key="idem-1",
         correlation_id="corr-1",
+        job_queue=queue,
+        async_intake=True,
     )
-    # Manually overwrite stage to RETRIEVING (non-terminal)
-    intake = service._state["assistedIntakes"][0]
-    intake["stage"] = "RETRIEVING"
 
-    # Submitting same URL again should raise NetworkListingConflict
+    # A second submission cannot race the still-SUBMITTED queued command.
     with pytest.raises(NetworkListingConflict):
         service.submit_intake(
             url=url,
@@ -160,6 +207,8 @@ def test_exact_duplicate_contract_test() -> None:
             actor_name="林曉青",
             idempotency_key="idem-2",
             correlation_id="corr-2",
+            job_queue=queue,
+            async_intake=True,
         )
 
 
@@ -175,7 +224,9 @@ def test_changed_price_revision_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["matchResult"]["outcome"] == "REVISION"
     assert data["matchResult"]["targetListingId"] == "L-2024"
 
@@ -213,7 +264,9 @@ def test_ambiguous_entity_match_review_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "NEEDS_REVIEW"
     assert data["matchResult"]["outcome"] == "POSSIBLE_MATCH"
     assert data["matchResult"]["targetListingId"] == "L-2025"
@@ -263,7 +316,9 @@ def test_created_listing_keeps_address_and_heat_zone_for_v1_promotion_gate() -> 
     )
     assert submitted.status_code == 200
 
-    intake = submitted.json()
+    queued = submitted.json()
+    assert queued["stage"] == "SUBMITTED"
+    intake = _advance_submitted_intake(client, queued)
     decided = client.post(
         f"/api/v1/operator/network-listings/intake/{intake['id']}/decide",
         json={
@@ -317,7 +372,9 @@ def test_malformed_payload_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "AWAITING_ASSISTED_ENTRY"
 
 
@@ -333,7 +390,9 @@ def test_unapproved_source_fail_closed_test() -> None:
         headers=HEADERS,
     )
     assert resp_591.status_code == 200
-    data_591 = resp_591.json()
+    queued_591 = resp_591.json()
+    assert queued_591["stage"] == "SUBMITTED"
+    data_591 = _advance_submitted_intake(client, queued_591)
     assert data_591["stage"] == "AWAITING_ASSISTED_ENTRY"
     assert data_591["policy"] == "ASSISTED_ENTRY_ONLY"
 
@@ -345,7 +404,9 @@ def test_unapproved_source_fail_closed_test() -> None:
         headers=HEADERS,
     )
     assert resp_unknown.status_code == 200
-    data_unknown = resp_unknown.json()
+    queued_unknown = resp_unknown.json()
+    assert queued_unknown["stage"] == "SUBMITTED"
+    data_unknown = _advance_submitted_intake(client, queued_unknown)
     assert data_unknown["stage"] == "QUARANTINED"
     assert data_unknown["policy"] == "POLICY_UNKNOWN"
 
@@ -362,7 +423,9 @@ def test_timeout_contract_test() -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 200
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(client, submitted)
     assert data["stage"] == "FAILED"
     assert data["failure"]["code"] == "ODP-INTAKE-RETRIEVAL-TIMEOUT"
 
@@ -388,7 +451,11 @@ def test_timeout_contract_test() -> None:
     )
     assert retry_resp.status_code == 200
     retried_data = retry_resp.json()
+    assert retried_data["stage"] == "SUBMITTED"
     assert retried_data["parsedFields"]["rent"]["correctedValue"] == 48000
+    failed_again = _advance_submitted_intake(client, retried_data)
+    assert failed_again["stage"] == "FAILED"
+    assert failed_again["parsedFields"]["rent"]["correctedValue"] == 48000
 
 
 def test_fixture_compatible_replay() -> None:
@@ -402,7 +469,11 @@ def test_fixture_compatible_replay() -> None:
             assert result.failure is None
         else:
             assert result.failure is not None
-            assert result.failure.code.startswith("ODP-INTAKE-")
+            assert (
+                result.failure.code.startswith("ODP-INTAKE-")
+                or result.failure.code
+                in {"AUTH_WALL_ENCOUNTERED", "BOT_CHALLENGE_ENCOUNTERED"}
+            )
 
 
 def test_role_based_server_checks() -> None:
@@ -415,7 +486,8 @@ def test_role_based_server_checks() -> None:
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
-    intake_id = resp.json()["id"]
+    submitted = resp.json()
+    intake_id = submitted["id"]
 
     # Try correct with an unauthorized role (e.g. platform_admin or franchisee)
     bad_correct = client.post(
@@ -430,8 +502,9 @@ def test_role_based_server_checks() -> None:
     assert bad_correct.status_code == 422
 
 
-def test_promote_intake_contract_test() -> None:
-    app = create_app()
+def test_promote_intake_contract_test(tmp_path) -> None:
+    bundle = _durable_bundle(str(tmp_path / "operator-promotion.sqlite3"))
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
     # 1. Submit a revision URL to resolve it to L-2024
@@ -446,8 +519,31 @@ def test_promote_intake_contract_test() -> None:
             "x-operator-role": "expansion-staff",
         },
     )
-    data = resp.json()
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    data = _advance_submitted_intake(
+        client,
+        submitted,
+        headers={
+            **HEADERS,
+            "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
+            "x-operator-role": "expansion-staff",
+        },
+    )
     intake_id = data["id"]
+    decided = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
+        json={
+            "action": "revise",
+            "reason": "先將核准的來源版本加入既有物件",
+            "riskSummary": "將送件資料加入 L-2024 的版本沿革。",
+            "riskAcknowledged": True,
+            "actorRoleId": "expansionManager",
+        },
+        headers=_write_headers("promote-prerequisite-revision"),
+    )
+    assert decided.status_code == 200, decided.text
 
     # Try promote without reason -> expect 422
     bad_promote = client.post(
@@ -487,8 +583,17 @@ def test_promote_intake_contract_test() -> None:
         },
     )
     assert review_resp.status_code == 200, review_resp.text
-    assert review_resp.json()["status"] == "COMPLETED"
-    assert review_resp.json()["candidate_site_id"]
+    reviewed = review_resp.json()
+    assert reviewed["status"] == "SCORE_QUEUED"
+    assert reviewed["candidate_site_id"]
+    assert ODayWorker(persistence=bundle).run_once() is True
+    completed = client.get(
+        f"/api/v1/promotion-decisions/{res_data['promotion_decision_id']}",
+        headers=HEADERS,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "COMPLETED"
+    bundle.engine.close()
 
 
 # --- Risk disclosure contract (ODP-OC-R5-011 review finding P0-2) ---
@@ -510,7 +615,18 @@ def _ready_intake_id(client) -> str:
         },
     )
     assert resp.status_code == 200
-    return resp.json()["id"]
+    submitted = resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    return _advance_submitted_intake(
+        client,
+        submitted,
+        headers={
+            **HEADERS,
+            "x-subject-id": "operator-expansion-staff",
+            "x-roles": "expansion_user",
+            "x-operator-role": "expansion-staff",
+        },
+    )["id"]
 
 
 CORRECT_FIELDS = {"fields": {"address": "新北市板橋區府中路 99 號 1F"}, "reason": "勘誤地址"}

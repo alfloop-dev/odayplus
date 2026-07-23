@@ -3,114 +3,2140 @@ info:
   title: ODay Plus Assisted Listing Intake v1.1.3 Redocly conformance overlay
   version: 1.1.3
 extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
-
 actions:
-  - target: $.info
-    update:
-      version: 1.1.3
-      license:
-        name: Proprietary
-        identifier: LicenseRef-Proprietary
-
-  - target: $.tags
-    update:
-      - name: Intake
-        description: Submit, inspect, cancel, quarantine, and reopen assisted listing intakes.
-      - name: ListingInbox
-        description: Query the tenant-scoped assisted listing intake inbox.
-      - name: Corrections
-        description: Propose and apply attributable field corrections.
-      - name: Identity
-        description: Review and execute reversible property identity decisions.
-      - name: Assignment
-        description: Assign, claim, transfer, complete, pause, and resume workflow ownership and SLA.
-      - name: Jobs
-        description: Inspect and retry durable asynchronous jobs from valid checkpoints.
-      - name: Promotion
-        description: Request, independently review, and execute candidate-site promotion.
-      - name: SavedViews
-        description: Store and retrieve actor- or tenant-scoped inbox views.
-
-  - target: $.paths['/v1/intakes'].get
-    update: {summary: List assisted listing intakes}
-  - target: $.paths['/v1/intakes/url'].post
-    update: {summary: Submit a URL intake}
-  - target: $.paths['/v1/intake-batches'].post
-    update: {summary: Submit a manual CSV or approved-feed batch}
-  - target: $.paths['/v1/intakes/{intake_id}'].get
-    update: {summary: Get intake detail}
-  - target: $.paths['/v1/intakes/{intake_id}/corrections'].post
-    update: {summary: Propose an intake correction}
-  - target: $.paths['/v1/match-cases/{match_case_id}/decisions'].post
-    update: {summary: Create a match decision proposal}
-  - target: $.paths['/v1/identity/merge'].post
-    update: {summary: Propose or execute a property merge}
-  - target: $.paths['/v1/identity/split'].post
-    update: {summary: Propose or execute a property split}
-  - target: $.paths['/v1/identity/unmerge'].post
-    update: {summary: Propose or execute an identity unmerge}
-  - target: $.paths['/v1/intakes/{intake_id}/assignment'].put
-    update:
-      summary: Assign an intake
-      responses:
-        '422': {$ref: '#/components/responses/ValidationError'}
-  - target: $.paths['/v1/jobs/{job_id}/retry'].post
-    update: {summary: Retry a job from a durable checkpoint}
-  - target: $.paths['/v1/saved-views'].get
-    update:
-      summary: List saved intake views
-      responses:
-        '403': {$ref: '#/components/responses/Forbidden'}
-  - target: $.paths['/v1/saved-views'].post
-    update:
-      summary: Create a saved intake view
-      responses:
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '422': {$ref: '#/components/responses/ValidationError'}
-  - target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
-    update: {summary: Request candidate-site promotion}
-  - target: $.paths['/v1/intakes/{intake_id}/promotion-decision'].get
-    update: {summary: Get the latest intake promotion decision}
-  - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get
-    update: {summary: Get a promotion decision}
-  - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post
-    update: {summary: Review a promotion decision}
-  - target: $.paths['/v1/intakes/{intake_id}/actions/cancel'].post
-    update: {summary: Cancel an intake}
-  - target: $.paths['/v1/intakes/{intake_id}/actions/quarantine'].post
-    update: {summary: Quarantine an intake}
-  - target: $.paths['/v1/intakes/{intake_id}/actions/reopen'].post
-    update: {summary: Reopen a quarantined intake}
-  - target: $.paths['/v1/assignments/{assignment_id}/actions/claim'].post
-    update: {summary: Claim an assignment}
-  - target: $.paths['/v1/assignments/{assignment_id}/actions/transfer'].post
-    update: {summary: Transfer an assignment}
-  - target: $.paths['/v1/assignments/{assignment_id}/actions/complete'].post
-    update: {summary: Complete an assignment}
-  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/pause'].post
-    update: {summary: Pause an SLA instance}
-  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/resume'].post
-    update: {summary: Resume an SLA instance}
-  - target: $.paths['/v1/identity-decisions/{decision_id}'].get
-    update: {summary: Get an identity decision}
-  - target: $.paths['/v1/identity-decisions/{decision_id}/actions/review'].post
-    update: {summary: Review an identity decision}
-  - target: $.paths['/v1/identity-decisions/{decision_id}/actions/reverse'].post
-    update: {summary: Request identity decision reversal}
-
-  - target: $.components.responses.InvalidCursor.content['application/json'].example
-    update:
-      occurred_at: '2026-07-17T00:00:00Z'
-      next_action: CORRECT_INPUT
-  - target: $.components.responses.IdempotencyConflict.content['application/json'].example
-    update:
-      occurred_at: '2026-07-17T00:00:00Z'
-      next_action: CORRECT_INPUT
-  - target: $.components.responses.PreconditionRequired.content['application/json'].example
-    update:
-      occurred_at: '2026-07-17T00:00:00Z'
-      next_action: REFRESH
-
-  - target: $.components.schemas.PromotionReceipt
-    description: Remove the superseded pre-review final receipt schema.
-    remove: true
+- target: $.info
+  update:
+    version: 1.1.3
+    license:
+      name: Proprietary
+      identifier: LicenseRef-Proprietary
+- target: $.tags
+  update:
+  - name: Intake
+    description: Submit, inspect, cancel, quarantine, and reopen assisted listing
+      intakes.
+  - name: ListingInbox
+    description: Query the tenant-scoped assisted listing intake inbox.
+  - name: Corrections
+    description: Propose and apply attributable field corrections.
+  - name: Identity
+    description: Review and execute reversible property identity decisions.
+  - name: Assignment
+    description: Assign, claim, transfer, complete, pause, and resume workflow ownership
+      and SLA.
+  - name: Jobs
+    description: Inspect and retry durable asynchronous jobs from valid checkpoints.
+  - name: Promotion
+    description: Request, independently review, and execute candidate-site promotion.
+  - name: SavedViews
+    description: Store and retrieve actor- or tenant-scoped inbox views.
+- target: $.paths['/v1/intakes'].get
+  update:
+    summary: List assisted listing intakes
+- target: $.paths['/v1/intakes/url'].post
+  update:
+    summary: Submit a URL intake
+- target: $.paths['/v1/intake-batches'].post
+  update:
+    summary: Submit a manual CSV or approved-feed batch
+- target: $.paths['/v1/intakes/{intake_id}'].get
+  update:
+    summary: Get intake detail
+- target: $.paths['/v1/intakes/{intake_id}/corrections'].post
+  update:
+    summary: Propose an intake correction
+- target: $.paths['/v1/match-cases/{match_case_id}/decisions'].post
+  update:
+    summary: Create a match decision proposal
+- target: $.paths['/v1/identity/merge'].post
+  update:
+    summary: Propose or execute a property merge
+- target: $.paths['/v1/identity/split'].post
+  update:
+    summary: Propose or execute a property split
+- target: $.paths['/v1/identity/unmerge'].post
+  update:
+    summary: Propose or execute an identity unmerge
+- target: $.paths['/v1/intakes/{intake_id}/assignment'].put
+  update:
+    summary: Assign an intake
+    responses:
+      '422':
+        $ref: '#/components/responses/ValidationError'
+- target: $.paths['/v1/jobs/{job_id}/retry'].post
+  update:
+    summary: Retry a job from a durable checkpoint
+- target: $.paths['/v1/saved-views'].get
+  update:
+    summary: List saved intake views
+    responses:
+      '403':
+        $ref: '#/components/responses/Forbidden'
+- target: $.paths['/v1/saved-views'].post
+  update:
+    summary: Create a saved intake view
+    responses:
+      '403':
+        $ref: '#/components/responses/Forbidden'
+      '422':
+        $ref: '#/components/responses/ValidationError'
+- target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
+  update:
+    summary: Request candidate-site promotion
+- target: $.paths['/v1/intakes/{intake_id}/promotion-decision'].get
+  update:
+    summary: Get the latest intake promotion decision
+- target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get
+  update:
+    summary: Get a promotion decision
+- target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post
+  update:
+    summary: Review a promotion decision
+- target: $.paths['/v1/intakes/{intake_id}/actions/cancel'].post
+  update:
+    summary: Cancel an intake
+- target: $.paths['/v1/intakes/{intake_id}/actions/quarantine'].post
+  update:
+    summary: Quarantine an intake
+- target: $.paths['/v1/intakes/{intake_id}/actions/reopen'].post
+  update:
+    summary: Reopen a quarantined intake
+- target: $.paths['/v1/assignments/{assignment_id}/actions/claim'].post
+  update:
+    summary: Claim an assignment
+- target: $.paths['/v1/assignments/{assignment_id}/actions/transfer'].post
+  update:
+    summary: Transfer an assignment
+- target: $.paths['/v1/assignments/{assignment_id}/actions/complete'].post
+  update:
+    summary: Complete an assignment
+- target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/pause'].post
+  update:
+    summary: Pause an SLA instance
+- target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/resume'].post
+  update:
+    summary: Resume an SLA instance
+- target: $.paths['/v1/identity-decisions/{decision_id}'].get
+  update:
+    summary: Get an identity decision
+- target: $.paths['/v1/identity-decisions/{decision_id}/actions/review'].post
+  update:
+    summary: Review an identity decision
+- target: $.paths['/v1/identity-decisions/{decision_id}/actions/reverse'].post
+  update:
+    summary: Request identity decision reversal
+- target: $.components.responses.InvalidCursor.content['application/json'].example
+  update:
+    occurred_at: '2026-07-17T00:00:00Z'
+    next_action: CORRECT_INPUT
+- target: $.components.responses.IdempotencyConflict.content['application/json'].example
+  update:
+    occurred_at: '2026-07-17T00:00:00Z'
+    next_action: CORRECT_INPUT
+- target: $.components.responses.PreconditionRequired.content['application/json'].example
+  update:
+    occurred_at: '2026-07-17T00:00:00Z'
+    next_action: REFRESH
+- target: $.components.schemas
+  update:
+    InboxLocationSummary:
+      type: object
+      properties:
+        address:
+          type:
+          - string
+          - 'null'
+        district:
+          type:
+          - string
+          - 'null'
+        assigned_area_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        heat_zone_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        latitude:
+          type:
+          - number
+          - 'null'
+          minimum: -90.0
+          maximum: 90.0
+        longitude:
+          type:
+          - number
+          - 'null'
+          minimum: -180.0
+          maximum: 180.0
+        confidence:
+          type:
+          - number
+          - 'null'
+          minimum: 0.0
+          maximum: 1.0
+        source:
+          type:
+          - string
+          - 'null'
+    InboxMaskingSummary:
+      type: object
+      required:
+      - restricted_data
+      - has_masked_fields
+      properties:
+        restricted_data:
+          type: boolean
+        has_masked_fields:
+          type: boolean
+        masked_fields:
+          type: array
+          items:
+            type: string
+        reason_codes:
+          type: array
+          items:
+            type: string
+- target: $.components.schemas.IntakeSummary
+  update:
+    required:
+    - intake_id
+    - state
+    - intake_method
+    - submitted_at
+    - updated_at
+    - version
+    - scope
+    - location
+    - masking
+    properties:
+      original_url:
+        type:
+        - string
+        - 'null'
+      canonical_url:
+        type:
+        - string
+        - 'null'
+      policy_state:
+        anyOf:
+        - $ref: '#/components/schemas/SourcePolicyState'
+        - type: 'null'
+      assignment_id:
+        type:
+        - string
+        - 'null'
+        format: uuid
+      assignment_status:
+        type:
+        - string
+        - 'null'
+        enum:
+        - ASSIGNED
+        - CLAIMED
+        - TRANSFERRED
+        - ESCALATED
+        - COMPLETED
+        - null
+      assignment_version:
+        type:
+        - integer
+        - 'null'
+        minimum: 1.0
+      owner_subject_id:
+        type:
+        - string
+        - 'null'
+        format: uuid
+      queue_id:
+        type:
+        - string
+        - 'null'
+      sla_instance_id:
+        type:
+        - string
+        - 'null'
+        format: uuid
+      sla_state:
+        type:
+        - string
+        - 'null'
+        enum:
+        - ON_TRACK
+        - DUE_SOON
+        - OVERDUE
+        - BREACHED
+        - PAUSED
+        - COMPLETED
+        - null
+      sla_version:
+        type:
+        - integer
+        - 'null'
+        minimum: 1.0
+      last_observed_at:
+        type:
+        - string
+        - 'null'
+        format: date-time
+      issue:
+        type:
+        - string
+        - 'null'
+      next_action:
+        type:
+        - string
+        - 'null'
+      retryable:
+        type: boolean
+      quarantined:
+        type: boolean
+      failed:
+        type: boolean
+      location:
+        $ref: '#/components/schemas/InboxLocationSummary'
+      masking:
+        $ref: '#/components/schemas/InboxMaskingSummary'
+- target: $.components.schemas.IntakePage.properties.total_count
+  update:
+    minimum: 0.0
+- target: $.components.schemas.PromotionReceipt
+  description: Remove the superseded pre-review final receipt schema.
+  remove: true
+- target: $.components.schemas.AuditReference
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas.DecisionReceipt
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas.FieldValue
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas.IntakeDetail
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas.IntakeSubmissionReceipt
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas.PromotionDecisionReceipt
+  remove: true
+  x-reconciliation: runtime-exact-schema-v1
+- target: $.components.schemas
+  update:
+    ActorDecisionFacts:
+      properties:
+        role_mode:
+          type: string
+          enum:
+          - expansion-staff
+          - expansion-manager
+          - data-steward
+          - governance-reviewer
+          - privacy-officer
+          - permission-limited
+          title: Role Mode
+        allowed_actions:
+          items:
+            type: string
+          type: array
+          title: Allowed Actions
+        denied_action_reasons:
+          additionalProperties:
+            type: string
+          type: object
+          title: Denied Action Reasons
+        scope:
+          additionalProperties: true
+          type: object
+          title: Scope
+        masking:
+          additionalProperties: true
+          type: object
+          title: Masking
+        purpose:
+          additionalProperties: true
+          type: object
+          title: Purpose
+        second_actor:
+          additionalProperties: true
+          type: object
+          title: Second Actor
+      type: object
+      required:
+      - role_mode
+      - allowed_actions
+      - denied_action_reasons
+      - scope
+      - masking
+      - purpose
+      - second_actor
+      title: ActorDecisionFacts
+    AssignmentLifecycleSnapshot:
+      properties:
+        assignment_id:
+          type: string
+          title: Assignment Id
+        intake_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Intake Id
+        status:
+          type: string
+          title: Status
+        owner_subject_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Subject Id
+        queue_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Queue Id
+        due_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Due At
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+      additionalProperties: true
+      type: object
+      required:
+      - assignment_id
+      - status
+      - version
+      title: AssignmentLifecycleSnapshot
+    AuditReference:
+      properties:
+        audit_event_id:
+          type: string
+          format: uuid
+          title: Audit Event Id
+        action:
+          type: string
+          title: Action
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+        result:
+          $ref: '#/components/schemas/AuditResult'
+        reason_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason Code
+        actor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor
+        actor_role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor Role
+        before:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Before
+        after:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: After
+        source_snapshot_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Snapshot Id
+        parser_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Version
+        related_ids:
+          additionalProperties: true
+          type: object
+          title: Related Ids
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        resource_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Resource Version
+        evidence_state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Evidence State
+      type: object
+      required:
+      - audit_event_id
+      - action
+      - occurred_at
+      - result
+      title: AuditReference
+    AuditResult:
+      type: string
+      enum:
+      - ALLOWED
+      - DENIED
+      - SUCCEEDED
+      - FAILED
+      - MASKED
+      title: AuditResult
+    CandidateImpact:
+      properties:
+        candidate_site_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Candidate Site Id
+        disposition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disposition
+        source_property_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Property Id
+        target_property_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Property Id
+      additionalProperties: true
+      type: object
+      title: CandidateImpact
+    DecisionActorReference:
+      properties:
+        subject_id:
+          type: string
+          title: Subject Id
+        role_id:
+          type: string
+          title: Role Id
+      type: object
+      required:
+      - subject_id
+      - role_id
+      title: DecisionActorReference
+    DecisionEffectReceipt:
+      properties:
+        receipt_id:
+          type: string
+          title: Receipt Id
+        decision_id:
+          type: string
+          title: Decision Id
+        status:
+          type: string
+          title: Status
+        identity_edge_ids:
+          items:
+            type: string
+          type: array
+          title: Identity Edge Ids
+        runtime_receipt:
+          anyOf:
+          - $ref: '#/components/schemas/MutationReceiptRecord'
+          - type: 'null'
+        audit_event_id:
+          type: string
+          title: Audit Event Id
+        correlation_id:
+          type: string
+          title: Correlation Id
+        version:
+          type: integer
+          title: Version
+        issued_at:
+          type: string
+          format: date-time
+          title: Issued At
+        evidence_state:
+          type: string
+          title: Evidence State
+      type: object
+      required:
+      - receipt_id
+      - decision_id
+      - status
+      - identity_edge_ids
+      - audit_event_id
+      - correlation_id
+      - version
+      - issued_at
+      - evidence_state
+      title: DecisionEffectReceipt
+    DecisionLifecycleSnapshot:
+      properties:
+        decision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decision Id
+        receipt_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Receipt Id
+        status:
+          type: string
+          title: Status
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        proposer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proposer
+        reviewer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewer
+        graph_plan:
+          anyOf:
+          - $ref: '#/components/schemas/MatchGraphPlan'
+          - type: 'null'
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+      additionalProperties: true
+      type: object
+      required:
+      - status
+      - version
+      title: DecisionLifecycleSnapshot
+    DecisionReceipt:
+      properties:
+        decision_id:
+          type: string
+          format: uuid
+          title: Decision Id
+        status:
+          $ref: '#/components/schemas/DecisionStatus'
+        resource_versions:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Resource Versions
+        job_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Job Id
+        audit_event_id:
+          type: string
+          format: uuid
+          title: Audit Event Id
+        correlation_id:
+          type: string
+          format: uuid
+          title: Correlation Id
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        proposer:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Proposer
+        reviewer:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Reviewer
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        graph_plan:
+          anyOf:
+          - $ref: '#/components/schemas/MatchGraphPlan'
+          - type: 'null'
+        effect_receipt:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionEffectReceipt'
+          - type: 'null'
+        reverses_decision_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Reverses Decision Id
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+        status_history:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Status History
+        lifecycle_contract:
+          additionalProperties: true
+          type: object
+          title: Lifecycle Contract
+      type: object
+      required:
+      - decision_id
+      - status
+      - resource_versions
+      - audit_event_id
+      - correlation_id
+      - version
+      title: DecisionReceipt
+    DecisionStatus:
+      type: string
+      enum:
+      - DRAFT
+      - PENDING_REVIEW
+      - APPROVED
+      - REJECTED
+      - EXECUTING
+      - EXECUTED
+      - FAILED
+      - REVERSAL_PENDING
+      - REVERSED
+      - SUPERSEDED
+      title: DecisionStatus
+    FieldValue:
+      properties:
+        field_path:
+          type: string
+          title: Field Path
+        classification:
+          $ref: '#/components/schemas/FieldClassification'
+        masked:
+          type: boolean
+          title: Masked
+        parsed:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Parsed
+        normalized:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Normalized
+        corrected:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Corrected
+        effective:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Effective
+        confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence
+        mask_reason_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mask Reason Code
+        correction_actor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correction Actor
+        correction_actor_role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correction Actor Role
+        correction_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correction Reason
+        corrected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Corrected At
+        source_snapshot_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Snapshot Id
+        parser_run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Run Id
+        parser_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Version
+      type: object
+      required:
+      - field_path
+      - classification
+      - masked
+      title: FieldValue
+    IdentityGraphEdge:
+      properties:
+        edge_id:
+          type: string
+          title: Edge Id
+        relation:
+          type: string
+          title: Relation
+        status:
+          type: string
+          title: Status
+        source_property_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Property Id
+        target_property_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Property Id
+        property_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Property Id
+        listing_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Listing Id
+        intake_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Intake Id
+        decision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decision Id
+        supersedes_edge_ids:
+          items:
+            type: string
+          type: array
+          title: Supersedes Edge Ids
+      additionalProperties: true
+      type: object
+      required:
+      - edge_id
+      - relation
+      - status
+      title: IdentityGraphEdge
+    IdentityGraphNode:
+      properties:
+        node_id:
+          type: string
+          title: Node Id
+        node_type:
+          type: string
+          title: Node Type
+        status:
+          type: string
+          title: Status
+      additionalProperties: true
+      type: object
+      required:
+      - node_id
+      - node_type
+      - status
+      title: IdentityGraphNode
+    IdentityGraphSnapshot:
+      properties:
+        version:
+          type: integer
+          minimum: 0.0
+          title: Version
+        nodes:
+          items:
+            $ref: '#/components/schemas/IdentityGraphNode'
+          type: array
+          title: Nodes
+        edges:
+          items:
+            $ref: '#/components/schemas/IdentityGraphEdge'
+          type: array
+          title: Edges
+      type: object
+      required:
+      - version
+      - nodes
+      - edges
+      title: IdentityGraphSnapshot
+    IdentityRedirect:
+      properties:
+        from_property_id:
+          type: string
+          title: From Property Id
+        to_property_id:
+          type: string
+          title: To Property Id
+        reason:
+          type: string
+          title: Reason
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - from_property_id
+      - to_property_id
+      - reason
+      - status
+      title: IdentityRedirect
+    IntakeDetail:
+      properties:
+        intake_id:
+          type: string
+          format: uuid
+          title: Intake Id
+        state:
+          $ref: '#/components/schemas/IntakeState'
+        intake_method:
+          $ref: '#/components/schemas/IntakeMethod'
+        source_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Id
+        original_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Original Url
+        canonical_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Canonical Url
+        policy_state:
+          anyOf:
+          - $ref: '#/components/schemas/SourcePolicyState'
+          - type: 'null'
+        match_outcome:
+          anyOf:
+          - $ref: '#/components/schemas/MatchOutcome'
+          - type: 'null'
+        submitted_by:
+          type: string
+          format: uuid
+          title: Submitted By
+        assigned_to:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Assigned To
+        assignment_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Assignment Id
+        assignment_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assignment Status
+        assignment_version:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Assignment Version
+        owner_subject_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Owner Subject Id
+        queue_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Queue Id
+        sla_instance_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Sla Instance Id
+        sla_state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sla State
+        sla_version:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Sla Version
+        due_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Due At
+        last_observed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Observed At
+        submitted_at:
+          type: string
+          format: date-time
+          title: Submitted At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        version:
+          type: integer
+          title: Version
+        scope:
+          $ref: '#/components/schemas/ScopeContext'
+        issue:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Issue
+        next_action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Action
+        retryable:
+          type: boolean
+          title: Retryable
+          default: false
+        quarantined:
+          type: boolean
+          title: Quarantined
+          default: false
+        failed:
+          type: boolean
+          title: Failed
+          default: false
+        location:
+          $ref: '#/components/schemas/InboxLocationSummary'
+        masking:
+          $ref: '#/components/schemas/InboxMaskingSummary'
+        masked_fields:
+          items:
+            type: string
+          type: array
+          title: Masked Fields
+        correlation_id:
+          type: string
+          format: uuid
+          title: Correlation Id
+        source_snapshot_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Source Snapshot Id
+        parser_run_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Parser Run Id
+        match_case_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Match Case Id
+        match_case_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Match Case Version
+        match_case:
+          anyOf:
+          - $ref: '#/components/schemas/MatchCaseDetail'
+          - type: 'null'
+        processing_history:
+          items:
+            $ref: '#/components/schemas/TransitionReceipt'
+          type: array
+          title: Processing History
+        fields:
+          items:
+            $ref: '#/components/schemas/FieldValue'
+          type: array
+          title: Fields
+        audit:
+          items:
+            $ref: '#/components/schemas/AuditReference'
+          type: array
+          title: Audit
+        evidence:
+          $ref: '#/components/schemas/SourceEvidenceDetail'
+        sla_receipt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sla Receipt
+        lifecycle:
+          $ref: '#/components/schemas/LifecycleAggregate'
+      type: object
+      required:
+      - intake_id
+      - state
+      - intake_method
+      - original_url
+      - canonical_url
+      - policy_state
+      - submitted_at
+      - updated_at
+      - version
+      - scope
+      - location
+      - masking
+      - correlation_id
+      - processing_history
+      - fields
+      - audit
+      - evidence
+      - lifecycle
+      title: IntakeDetail
+    IntakeMethod:
+      type: string
+      enum:
+      - URL
+      - MANUAL
+      - CSV
+      - APPROVED_FEED
+      - OPERATOR_SNAPSHOT
+      title: IntakeMethod
+    IntakeSubmissionReceipt:
+      properties:
+        intake_id:
+          type: string
+          format: uuid
+          title: Intake Id
+        state:
+          $ref: '#/components/schemas/IntakeState'
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        job_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Job Id
+        correlation_id:
+          type: string
+          format: uuid
+          title: Correlation Id
+        submitted_at:
+          type: string
+          format: date-time
+          title: Submitted At
+        duplicate_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Duplicate Hint
+        identity_outcome:
+          anyOf:
+          - type: string
+            const: EXACT_DUPLICATE
+          - type: 'null'
+          title: Identity Outcome
+        existing_listing_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Existing Listing Id
+        navigation_target:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Navigation Target
+        submission_receipt_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Submission Receipt Id
+      type: object
+      required:
+      - intake_id
+      - state
+      - version
+      - correlation_id
+      - submitted_at
+      title: IntakeSubmissionReceipt
+    JobLifecycleSnapshot:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        status:
+          type: string
+          title: Status
+        attempt:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Attempt
+        checkpoint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Checkpoint
+        next_retry_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Next Retry At
+        fence_token:
+          anyOf:
+          - type: integer
+          - type: string
+          - type: 'null'
+          title: Fence Token
+        version:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Version
+      additionalProperties: true
+      type: object
+      required:
+      - job_id
+      - status
+      title: JobLifecycleSnapshot
+    LifecycleAggregate:
+      properties:
+        intake_id:
+          type: string
+          format: uuid
+          title: Intake Id
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        etag:
+          type: string
+          title: Etag
+        actor_facts:
+          $ref: '#/components/schemas/ActorDecisionFacts'
+        assignment:
+          anyOf:
+          - $ref: '#/components/schemas/AssignmentLifecycleSnapshot'
+          - type: 'null'
+        sla:
+          anyOf:
+          - $ref: '#/components/schemas/SlaLifecycleSnapshot'
+          - type: 'null'
+        decisions:
+          items:
+            $ref: '#/components/schemas/DecisionLifecycleSnapshot'
+          type: array
+          title: Decisions
+        promotion:
+          anyOf:
+          - $ref: '#/components/schemas/PromotionLifecycleSnapshot'
+          - type: 'null'
+        job:
+          anyOf:
+          - $ref: '#/components/schemas/JobLifecycleSnapshot'
+          - type: 'null'
+        assignment_history:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Assignment History
+        sla_history:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Sla History
+        decision_history:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Decision History
+        promotion_history:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Promotion History
+        job_history:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Job History
+        mutation_receipts:
+          items:
+            $ref: '#/components/schemas/LifecycleReceiptRecord'
+          type: array
+          title: Mutation Receipts
+        latest_decision_receipt:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionLifecycleSnapshot'
+          - type: 'null'
+        submission_receipt:
+          anyOf:
+          - $ref: '#/components/schemas/SubmissionLifecycleReceipt'
+          - type: 'null'
+      type: object
+      required:
+      - intake_id
+      - version
+      - etag
+      - actor_facts
+      - decisions
+      - assignment_history
+      - sla_history
+      - decision_history
+      - promotion_history
+      - job_history
+      - mutation_receipts
+      title: LifecycleAggregate
+    LifecycleReceiptRecord:
+      properties:
+        receipt_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Receipt Id
+        category:
+          type: string
+          enum:
+          - assignment
+          - sla
+          - decision
+          - promotion
+          - job
+          - intake
+          title: Category
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        resource_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Resource Id
+        resource_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Resource Version
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        actor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        occurred_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Occurred At
+        receipt:
+          $ref: '#/components/schemas/MutationReceiptRecord'
+      additionalProperties: true
+      type: object
+      required:
+      - category
+      - receipt
+      title: LifecycleReceiptRecord
+    LineageImpact:
+      properties:
+        append_only:
+          type: boolean
+          title: Append Only
+        source_evidence_preserved:
+          type: boolean
+          title: Source Evidence Preserved
+        superseded_edge_ids:
+          items:
+            type: string
+          type: array
+          title: Superseded Edge Ids
+        affected_decision_ids:
+          items:
+            type: string
+          type: array
+          title: Affected Decision Ids
+        summary:
+          type: string
+          title: Summary
+      type: object
+      required:
+      - append_only
+      - source_evidence_preserved
+      - superseded_edge_ids
+      - affected_decision_ids
+      - summary
+      title: LineageImpact
+    MatchCaseDetail:
+      properties:
+        match_case_id:
+          type: string
+          format: uuid
+          title: Match Case Id
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        intake_id:
+          type: string
+          format: uuid
+          title: Intake Id
+        outcome:
+          $ref: '#/components/schemas/MatchOutcome'
+        confidence:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+        target_listing_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Listing Id
+        summary:
+          type: string
+          title: Summary
+        comparison_fields:
+          items:
+            $ref: '#/components/schemas/MatchComparisonField'
+          type: array
+          title: Comparison Fields
+        signals:
+          items:
+            $ref: '#/components/schemas/MatchSignal'
+          type: array
+          title: Signals
+        graph_plan:
+          $ref: '#/components/schemas/MatchGraphPlan'
+        source_snapshot_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Source Snapshot Id
+        parser_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Version
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - match_case_id
+      - version
+      - intake_id
+      - outcome
+      - confidence
+      - summary
+      - comparison_fields
+      - signals
+      - graph_plan
+      - created_at
+      - updated_at
+      title: MatchCaseDetail
+    MatchComparisonField:
+      properties:
+        field_path:
+          type: string
+          title: Field Path
+        label:
+          type: string
+          title: Label
+        submitted_value:
+          title: Submitted Value
+        existing_value:
+          title: Existing Value
+        agrees:
+          type: boolean
+          title: Agrees
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+      type: object
+      required:
+      - field_path
+      - label
+      - agrees
+      title: MatchComparisonField
+    MatchGraphPlan:
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+          title: Plan Id
+        plan_type:
+          type: string
+          title: Plan Type
+        status:
+          type: string
+          title: Status
+        operations:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Operations
+        permitted_decision_types:
+          items:
+            type: string
+          type: array
+          title: Permitted Decision Types
+        requires_human_decision:
+          type: boolean
+          title: Requires Human Decision
+          default: true
+        before_graph:
+          $ref: '#/components/schemas/IdentityGraphSnapshot'
+        after_graph:
+          $ref: '#/components/schemas/IdentityGraphSnapshot'
+        redirects:
+          items:
+            $ref: '#/components/schemas/IdentityRedirect'
+          type: array
+          title: Redirects
+        candidate_impacts:
+          items:
+            $ref: '#/components/schemas/CandidateImpact'
+          type: array
+          title: Candidate Impacts
+        lineage_impact:
+          $ref: '#/components/schemas/LineageImpact'
+        proposer:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionActorReference'
+          - type: 'null'
+        reviewer:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionActorReference'
+          - type: 'null'
+        expected_graph_version:
+          type: integer
+          minimum: 0.0
+          title: Expected Graph Version
+        original_decision:
+          anyOf:
+          - $ref: '#/components/schemas/OriginalDecisionReference'
+          - type: 'null'
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: true
+      type: object
+      required:
+      - plan_id
+      - plan_type
+      - status
+      - operations
+      - before_graph
+      - after_graph
+      - redirects
+      - candidate_impacts
+      - lineage_impact
+      - expected_graph_version
+      - generated_at
+      title: MatchGraphPlan
+    MatchSignal:
+      properties:
+        key:
+          type: string
+          title: Key
+        label:
+          type: string
+          title: Label
+        agrees:
+          type: boolean
+          title: Agrees
+        detail:
+          type: string
+          title: Detail
+      type: object
+      required:
+      - key
+      - label
+      - agrees
+      - detail
+      title: MatchSignal
+    MutationReceiptRecord:
+      properties:
+        receipt_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Receipt Id
+        transition_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Transition Id
+        assignment_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assignment Id
+        sla_instance_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sla Instance Id
+        job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Job Id
+        promotion_decision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promotion Decision Id
+        decision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decision Id
+        intake_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Intake Id
+        listing_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Listing Id
+        listing_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Listing Revision Id
+        identity_edge_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Identity Edge Id
+        candidate_site_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Candidate Site Id
+        site_score_job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Site Score Job Id
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: State
+        from_state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: From State
+        to_state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To State
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Version
+        version_after:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Version After
+        audit_event_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Audit Event Id
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        actor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        checkpoint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Checkpoint
+        attempt:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Attempt
+        retryable:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Retryable
+        occurred_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Occurred At
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+        issued_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Issued At
+      additionalProperties: true
+      type: object
+      title: MutationReceiptRecord
+    OriginalDecisionReference:
+      properties:
+        decision_id:
+          type: string
+          title: Decision Id
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Version
+      type: object
+      required:
+      - decision_id
+      title: OriginalDecisionReference
+    PromotionDecisionReceipt:
+      properties:
+        promotion_decision_id:
+          type: string
+          format: uuid
+          title: Promotion Decision Id
+        intake_id:
+          type: string
+          format: uuid
+          title: Intake Id
+        listing_id:
+          type: string
+          format: uuid
+          title: Listing Id
+        status:
+          $ref: '#/components/schemas/PromotionStatus'
+        decision_type:
+          $ref: '#/components/schemas/PromotionDecisionType'
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+        audit_event_id:
+          type: string
+          format: uuid
+          title: Audit Event Id
+        correlation_id:
+          type: string
+          format: uuid
+          title: Correlation Id
+        candidate_site_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Candidate Site Id
+        proposer_subject_id:
+          type: string
+          format: uuid
+          title: Proposer Subject Id
+        reviewer_subject_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Reviewer Subject Id
+        site_score_job_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Site Score Job Id
+        status_history:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Status History
+      type: object
+      required:
+      - promotion_decision_id
+      - intake_id
+      - listing_id
+      - status
+      - decision_type
+      - version
+      - audit_event_id
+      - correlation_id
+      - proposer_subject_id
+      title: PromotionDecisionReceipt
+    PromotionDecisionType:
+      type: string
+      enum:
+      - STANDARD
+      - LEGACY_RECONCILED
+      title: PromotionDecisionType
+    PromotionLifecycleSnapshot:
+      properties:
+        promotion_decision_id:
+          type: string
+          title: Promotion Decision Id
+        intake_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Intake Id
+        status:
+          type: string
+          title: Status
+        candidate_site_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Candidate Site Id
+        site_score_job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Site Score Job Id
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+      additionalProperties: true
+      type: object
+      required:
+      - promotion_decision_id
+      - status
+      - version
+      title: PromotionLifecycleSnapshot
+    PromotionStatus:
+      type: string
+      enum:
+      - REQUESTED
+      - VALIDATING
+      - PENDING_REVIEW
+      - REJECTED
+      - APPROVED
+      - CANDIDATE_CREATING
+      - CANDIDATE_CREATED
+      - SCORE_QUEUED
+      - COMPLETED
+      - FAILED
+      - SCORE_FAILED
+      title: PromotionStatus
+    SlaLifecycleSnapshot:
+      properties:
+        sla_instance_id:
+          type: string
+          title: Sla Instance Id
+        state:
+          type: string
+          title: State
+        due_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Due At
+        paused_duration_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Paused Duration Seconds
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+      additionalProperties: true
+      type: object
+      required:
+      - sla_instance_id
+      - state
+      - version
+      title: SlaLifecycleSnapshot
+    SourceEvidenceDetail:
+      properties:
+        original_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Original Url
+        canonical_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Canonical Url
+        source_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Id
+        policy_state:
+          anyOf:
+          - $ref: '#/components/schemas/SourcePolicyState'
+          - type: 'null'
+        policy_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Policy Reason
+        policy_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Policy Version
+        policy_evaluated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Policy Evaluated At
+        policy_expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Policy Expires At
+        source_snapshot_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Snapshot Id
+        captured_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Captured At
+        parser_run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Run Id
+        parser_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parser Version
+        correlation_id:
+          type: string
+          title: Correlation Id
+        freshness_state:
+          type: string
+          enum:
+          - CURRENT
+          - STALE
+          - NOT_CAPTURED
+          title: Freshness State
+        resource_version:
+          type: integer
+          minimum: 1.0
+          title: Resource Version
+        etag:
+          type: string
+          title: Etag
+      type: object
+      required:
+      - correlation_id
+      - freshness_state
+      - resource_version
+      - etag
+      title: SourceEvidenceDetail
+    SubmissionLifecycleReceipt:
+      properties:
+        receipt_id:
+          type: string
+          title: Receipt Id
+        receipt_type:
+          type: string
+          title: Receipt Type
+        intake_id:
+          type: string
+          title: Intake Id
+        state:
+          type: string
+          title: State
+        existing_listing_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Existing Listing Id
+        navigation_target:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Navigation Target
+        correlation_id:
+          type: string
+          title: Correlation Id
+        issued_at:
+          type: string
+          format: date-time
+          title: Issued At
+      additionalProperties: true
+      type: object
+      required:
+      - receipt_id
+      - receipt_type
+      - intake_id
+      - state
+      - correlation_id
+      - issued_at
+      title: SubmissionLifecycleReceipt
+  x-reconciliation: runtime-exact-schema-v1

@@ -156,6 +156,7 @@ class RetrievalSecurityResult:
     body: bytes = b""
     content_type: str | None = None
     redirects: tuple[str, ...] = ()
+    source_observed_at: str | None = None
     failure: RetrievalSecurityFailure | None = None
 
     @property
@@ -425,6 +426,10 @@ class RetrievalSecurityGate:
                 body=response.body,
                 content_type=content_type,
                 redirects=tuple(redirects),
+                source_observed_at=_header(
+                    response.headers,
+                    "x-source-observed-at",
+                ),
             )
 
         return RetrievalSecurityResult(

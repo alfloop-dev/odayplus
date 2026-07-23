@@ -452,7 +452,13 @@ describe("EvidencePanel authoritative metadata", () => {
     expect(container.textContent).not.toContain("PUBLIC");
     expect(container.textContent).not.toContain("95%");
     expect(container.textContent).not.toContain("PR-RUN-88412");
-    expect(screen.queryByTestId("evidence-parser-run-id")).not.toBeInTheDocument();
+    expect(screen.getByTestId("evidence-parser-run-id")).toHaveTextContent(
+      "API 未回傳",
+    );
+    expect(screen.getByTestId("evidence-parser-run-id")).toHaveAttribute(
+      "data-authoritative",
+      "missing",
+    );
     const row = screen.getByText("owner_contact").closest("tr");
     expect(row).toHaveTextContent("server-field-value");
     expect(row).toHaveTextContent("server-normalized-value");
@@ -637,8 +643,11 @@ describe("IntakeErrorRecovery complete contract", () => {
     expect(screen.getByTestId("error-correlation-id")).toHaveTextContent(
       `correlation-${code}`,
     );
-    expect(screen.getByTestId("error-occurred-at")).toHaveTextContent(
-      "2026-07-23T11:00:00Z",
+    expect(
+      screen.getByTestId("error-occurred-at").querySelector("time"),
+    ).toHaveAttribute(
+      "title",
+      expect.stringContaining("2026-07-23T11:00:00.000Z"),
     );
     expect(screen.getByTestId("error-current-state")).toHaveTextContent(
       "NEEDS_REVIEW",

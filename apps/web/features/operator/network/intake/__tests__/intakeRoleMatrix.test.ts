@@ -180,6 +180,18 @@ describe("Assisted Listing Intake role matrix", () => {
       masked: true,
     });
     expect(
+      evaluateIntakePermission("view", "permission-limited", {
+        fieldMasked: true,
+        maskingReasonCode: "FIELD_MASKED",
+        resourceInScope: true,
+        serverAllowed: true,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      readOnly: true,
+      masked: true,
+    });
+    expect(
       evaluateIntakePermission("correct", "expansion-manager", {
         ...mutationContext,
         fieldMasked: true,

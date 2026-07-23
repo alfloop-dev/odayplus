@@ -942,6 +942,20 @@ export type LineageImpact = {
   superseded_edge_ids: string[];
 };
 
+/** ListingDetail */
+export type ListingDetail = {
+  current_revision_id?: string | null;
+  current_values: Record<string, unknown>;
+  identity_edges: Record<string, unknown>[];
+  listing_id: string;
+  masked_fields?: string[];
+  revision_sequence?: number | null;
+  revisions: Record<string, unknown>[];
+  source_id?: string | null;
+  source_url?: string | null;
+  status?: string | null;
+};
+
 /** ListingImportPayload */
 export type ListingImportPayload = {
   records?: Record<string, unknown>[];
@@ -1871,6 +1885,7 @@ export const API_PATHS = {
   "/api/v1/listings/candidates": ["GET"],
   "/api/v1/listings/import": ["POST"],
   "/api/v1/listings/import-jobs": ["POST"],
+  "/api/v1/listings/{listing_id}": ["GET"],
   "/api/v1/listings/{listing_id}/revisions": ["GET"],
   "/api/v1/match-cases/{match_case_id}": ["GET"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],

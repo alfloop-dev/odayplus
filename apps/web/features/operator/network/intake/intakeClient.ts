@@ -24,6 +24,7 @@ import {
   type CanonicalMergeCommand,
   type CanonicalRiskReasonCommand,
   type CanonicalSavedView,
+  type CanonicalSavedViewRequest,
   type CanonicalSplitCommand,
   type CanonicalUnmergeCommand,
   type ConvertListingResponse,
@@ -206,6 +207,20 @@ export const intakeApi = {
     return guard(() => client.listSavedViews());
   },
 
+  createSavedView(
+    client: OdpApiClient,
+    payload: CanonicalSavedViewRequest,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<IntakeResult<CanonicalSavedView>> {
+    return guard(() =>
+      client.createSavedView(payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey:
+          options.idempotencyKey ?? `saved-view-${randomToken()}`,
+      }),
+    );
+  },
+
   proposeIdentityDecision(
     client: OdpApiClient,
     matchCaseId: string,
@@ -353,6 +368,21 @@ export const intakeApi = {
   ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() =>
       client.retryIntake(intakeId, { actorRoleId }, { correlationId: newCorrelationId() }),
+    );
+  },
+
+  reopen(
+    client: OdpApiClient,
+    intakeId: string,
+    payload: CanonicalRiskReasonCommand,
+    options: IntakeWriteOptions,
+  ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
+    return guard(() =>
+      client.reopenIntake(intakeId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch ?? "",
+      }),
     );
   },
 
@@ -557,6 +587,22 @@ export const intakeApi = {
   ): Promise<IntakeResult<ScoreJobWriteResult>> {
     return guardPromotion(() =>
       client.retryJob(jobId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  /** POST /api/v1/jobs/{id}/actions/cancel — cancel an active durable job. */
+  cancelJob(
+    client: OdpApiClient,
+    jobId: string,
+    payload: ReasonCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<ScoreJobWriteResult>> {
+    return guardPromotion(() =>
+      client.cancelJob(jobId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
         idempotencyKey: options.idempotencyKey,
         ifMatch: options.ifMatch,

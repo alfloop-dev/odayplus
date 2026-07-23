@@ -15,6 +15,7 @@ in-memory lookup/versioning semantics with real SQL queries.
 from __future__ import annotations
 
 import pickle
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -79,6 +80,54 @@ class SqliteDocumentStore:
                 _now(),
             ),
         )
+
+    def update(
+        self,
+        collection: str,
+        doc_id: str,
+        updater: Callable[[Any | None], Any],
+    ) -> Any:
+        """Read, transform, and persist one document as an atomic transaction."""
+
+        with self._engine.transaction() as connection:
+            existing = connection.execute(
+                "SELECT ordinal, data FROM durable_documents "
+                "WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            ).fetchone()
+            current = None if existing is None else pickle.loads(existing["data"])
+            updated = updater(current)
+
+            if existing is None:
+                sequence_name = f"documents:{collection}"
+                connection.execute(
+                    "INSERT INTO durable_sequences(name, counter) VALUES (?, 1) "
+                    "ON CONFLICT(name) DO UPDATE SET counter = counter + 1",
+                    (sequence_name,),
+                )
+                sequence = connection.execute(
+                    "SELECT counter FROM durable_sequences WHERE name = ?",
+                    (sequence_name,),
+                ).fetchone()
+                ordinal = int(sequence["counter"])
+            else:
+                ordinal = int(existing["ordinal"])
+
+            connection.execute(
+                "INSERT INTO durable_documents("
+                "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
+                ") VALUES (?, ?, NULL, NULL, ?, NULL, ?, ?) "
+                "ON CONFLICT(collection, doc_id) DO UPDATE SET "
+                "  data = excluded.data",
+                (
+                    collection,
+                    doc_id,
+                    ordinal,
+                    pickle.dumps(updated, protocol=pickle.HIGHEST_PROTOCOL),
+                    _now(),
+                ),
+            )
+            return updated
 
     def append_version(
         self,

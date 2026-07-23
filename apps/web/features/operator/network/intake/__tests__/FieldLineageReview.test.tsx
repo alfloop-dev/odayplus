@@ -126,7 +126,10 @@ describe("ParsedDataReview", () => {
 
     expect(addressRow).toHaveTextContent("王小明");
     expect(addressRow).toHaveTextContent("Expansion staff");
-    expect(addressRow).toHaveTextContent("2026-07-23T04:10:00Z");
+    expect(within(addressRow).getByRole("time")).toHaveAttribute(
+      "title",
+      expect.stringContaining("2026-07-23T04:10:00.000Z"),
+    );
     expect(addressRow).toHaveTextContent("依房東提供的謄本校正門牌");
     expect(addressRow).toHaveTextContent("snapshot-100");
     expect(addressRow).toHaveTextContent("parser-run-200");

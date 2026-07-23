@@ -5,6 +5,7 @@ import type {
   PersistedLifecycleTransition,
   SlaLifecycleReceipt,
 } from "./useIntakeLifecycle";
+import { formatIntakeDateTime } from "./types";
 
 export type SlaStatusState =
   | "ON_TRACK"
@@ -43,11 +44,6 @@ export const SLA_STATE_MAP: Record<
   COMPLETED: { label: "已完成 (Completed)", icon: "✓", pattern: "[✓ COMPLETED]", toneClass: "good" },
 };
 
-function formatTime(value?: string | null): string {
-  if (!value) return "伺服器未提供";
-  return new Date(value).toLocaleString("zh-TW", { timeZoneName: "short" });
-}
-
 function actionAllowed(
   action: IntakeLifecycleAction,
   allowedActions: readonly IntakeLifecycleAction[] | undefined,
@@ -78,8 +74,8 @@ export function AssignmentSlaSummary({
   const currentOwner =
     assignment?.owner_display_name ??
     assignment?.owner_subject_id ??
-    "伺服器未提供";
-  const queue = assignment?.queue_name ?? "伺服器未提供";
+    "API 未回傳";
+  const queue = assignment?.queue_name ?? "API 未回傳";
   const dueAt = sla?.due_at ?? assignment?.due_at ?? null;
   const persistedHistory = [...history].sort(
     (left, right) =>
@@ -112,7 +108,7 @@ export function AssignmentSlaSummary({
         <div>
           <span className={styles.metaCaption}>Assignment status</span>
           <div className={styles.metaValue} data-testid="asg-status">
-            {assignment?.status ?? "伺服器未提供"}
+            {assignment?.status ?? "UNASSIGNED"}
           </div>
         </div>
         <div>
@@ -130,19 +126,19 @@ export function AssignmentSlaSummary({
         <div>
           <span className={styles.metaCaption}>Assigned at</span>
           <div className={styles.metaValue} data-testid="asg-assigned-at">
-            {formatTime(assignment?.assigned_at)}
+            <AssignmentTime value={assignment?.assigned_at} />
           </div>
         </div>
         <div>
           <span className={styles.metaCaption}>Claimed at</span>
           <div className={styles.metaValue} data-testid="asg-claimed-at">
-            {formatTime(assignment?.claimed_at)}
+            <AssignmentTime value={assignment?.claimed_at} />
           </div>
         </div>
         <div>
           <span className={styles.metaCaption}>Due at</span>
           <div className={styles.metaValue} data-testid="asg-due-at">
-            {formatTime(dueAt)}
+            <AssignmentTime value={dueAt} />
           </div>
         </div>
         <div>
@@ -153,14 +149,14 @@ export function AssignmentSlaSummary({
                 <span aria-hidden="true">{slaInfo.icon}</span> {slaState} · {slaInfo.label}
               </>
             ) : (
-              "伺服器未提供"
+              "API 未回傳"
             )}
           </div>
         </div>
         <div>
           <span className={styles.metaCaption}>Expected resume</span>
           <div className={styles.metaValue} data-testid="asg-expected-resume">
-            {formatTime(sla?.expected_resume_at)}
+            <AssignmentTime value={sla?.expected_resume_at} />
           </div>
         </div>
         <div>
@@ -183,11 +179,11 @@ export function AssignmentSlaSummary({
                   {entry.stream ?? "ASSIGNMENT"} · {entry.from_state ?? "—"} → {entry.to_state}
                 </div>
                 <div className={styles.timelineMeta}>
-                  {formatTime(entry.occurred_at)} · {entry.actor}
+                  <AssignmentTime value={entry.occurred_at} /> · {entry.actor || "API 未回傳 actor"}
                   {entry.actor_role ? ` (${entry.actor_role})` : ""} · v{entry.version_after}
                 </div>
                 <div className={styles.timelineMeta}>
-                  {entry.reason ?? entry.reason_code ?? "伺服器未提供原因"}
+                  {entry.reason ?? entry.reason_code ?? "API 未回傳原因"}
                   {entry.owner_subject_id ? ` · Owner ${entry.owner_subject_id}` : ""}
                   {entry.queue_name ? ` · Queue ${entry.queue_name}` : ""}
                 </div>
@@ -270,5 +266,16 @@ export function AssignmentSlaSummary({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function AssignmentTime({ value }: { value?: string | null }) {
+  const formatted = formatIntakeDateTime(value);
+  return formatted && value ? (
+    <time dateTime={value} title={formatted.title}>
+      {formatted.text}
+    </time>
+  ) : (
+    <>API 未回傳</>
   );
 }

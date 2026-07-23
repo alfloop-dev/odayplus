@@ -167,7 +167,8 @@ describe("OdpApiClient canonical error metadata", () => {
       baseUrl: "https://api.example.test",
       fetchImpl: async (input, init) => {
         const url = String(input);
-        requests.push({ url, method: init?.method ?? "GET" });
+        const method = init?.method ?? "GET";
+        requests.push({ url, method });
         const body = url.endsWith("/intakes/bootstrap")
           ? {
               tenant_id: "tenant-1",
@@ -190,6 +191,18 @@ describe("OdpApiClient canonical error metadata", () => {
               saved_views: [],
               commands: {},
             }
+          : url.endsWith("/saved-views") && method === "POST"
+            ? {
+                saved_view_id: "saved-view-created",
+                name: "北區待覆核",
+                query: { status: ["NEEDS_REVIEW"] },
+                resource: "intake",
+                shared_role: null,
+                visibility: "PRIVATE",
+                owner_subject_id: "subject-1",
+                created_at: "2026-07-23T00:00:00Z",
+                version: 1,
+              }
           : url.endsWith("/saved-views")
             ? []
             : {
@@ -209,6 +222,15 @@ describe("OdpApiClient canonical error metadata", () => {
 
     await client.getIntakeInboxBootstrap();
     await client.listSavedViews();
+    const created = await client.createSavedView(
+      {
+        name: "北區待覆核",
+        query: { status: ["NEEDS_REVIEW"] },
+        resource: "intake",
+        visibility: "PRIVATE",
+      },
+      { idempotencyKey: "typed-saved-view-command-0001" },
+    );
     await client.claimAssignment(
       "assignment-1",
       { reason: "Claim canonical Inbox work." },
@@ -228,10 +250,15 @@ describe("OdpApiClient canonical error metadata", () => {
         method: "GET",
       },
       {
+        url: "https://api.example.test/api/v1/saved-views",
+        method: "POST",
+      },
+      {
         url: "https://api.example.test/api/v1/assignments/assignment-1/actions/claim",
         method: "POST",
       },
     ]);
+    expect(created.saved_view_id).toBe("saved-view-created");
   });
 
   it("submits structured intake through the canonical typed batch contract", async () => {

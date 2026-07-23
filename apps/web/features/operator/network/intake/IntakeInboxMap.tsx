@@ -16,8 +16,7 @@ export function intakeDetailHref(intakeId: string, query = ""): string {
 }
 
 export function existingListingHref(listingId: string): string {
-  const query = new URLSearchParams({ selected: listingId, drawer: "listing" });
-  return `/w/expansion/listings?${query.toString()}`;
+  return `/w/expansion/listings/${encodeURIComponent(listingId)}`;
 }
 
 export function IntakeInboxMap({ records }: { records: InboxIntakeRecord[] }) {

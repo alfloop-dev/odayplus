@@ -6,6 +6,7 @@ import { AssignmentSlaSummary } from "../AssignmentSlaSummary";
 import { IntakeStageTimeline } from "../IntakeStageTimeline";
 import { PauseSlaDialog } from "../PauseSlaDialog";
 import { PromotionReviewPanel } from "../PromotionReviewPanel";
+import { ReopenIntakeDialog } from "../ReopenIntakeDialog";
 import { SiteScoreJobStatus } from "../SiteScoreJobStatus";
 import { TransferIntakeDialog } from "../TransferIntakeDialog";
 import type {
@@ -106,13 +107,12 @@ afterEach(() => {
 });
 
 describe("lifecycle controls", () => {
-  it("renders persisted intake/job history, retry, controlled reopen, and DLQ replay", () => {
+  it("renders persisted intake/job history, FAILED retry, and DLQ replay", () => {
     const retry = vi.fn();
     const reopen = vi.fn();
     const replay = vi.fn();
     render(
       <IntakeStageTimeline
-        canReopen
         canReplay
         canRetry
         history={[
@@ -123,7 +123,6 @@ describe("lifecycle controls", () => {
           }),
         ]}
         jobs={[failedJob]}
-        onReopen={reopen}
         onReplayJob={replay}
         onRetry={retry}
         record={record}
@@ -135,11 +134,67 @@ describe("lifecycle controls", () => {
     expect(get("timeline-job-JOB-1").textContent).toContain("DEAD_LETTER");
 
     act(() => get("timeline-retry-button").click());
-    act(() => get("timeline-reopen-button").click());
     act(() => get("timeline-replay-job-JOB-1").click());
     expect(retry).toHaveBeenCalledWith("PARSING");
-    expect(reopen).toHaveBeenCalledTimes(1);
+    expect(reopen).not.toHaveBeenCalled();
     expect(replay).toHaveBeenCalledWith("JOB-1");
+  });
+
+  it("renders QUARANTINED as a controlled reopen and exposes backend denial", () => {
+    const reopen = vi.fn();
+    render(
+      <IntakeStageTimeline
+        canReopen
+        onReopen={reopen}
+        record={{ ...record, stage: "QUARANTINED" }}
+      />,
+    );
+    act(() => get("timeline-reopen-button").click());
+    expect(reopen).toHaveBeenCalledTimes(1);
+
+    render(
+      <IntakeStageTimeline
+        canReopen={false}
+        onReopen={reopen}
+        record={{ ...record, stage: "QUARANTINED" }}
+        reopenDeniedReason="SELF_REVIEW_DENIED"
+      />,
+    );
+    expect(get("timeline-reopen-denied").textContent).toContain("SELF_REVIEW_DENIED");
+    expect(query("timeline-reopen-button")).toBeNull();
+  });
+
+  it("requires a reason and risk acknowledgement before proposing or reviewing reopen", () => {
+    const submit = vi.fn();
+    render(
+      <ReopenIntakeDialog
+        busy={false}
+        error={null}
+        independentReviewRequired={false}
+        onClose={vi.fn()}
+        onSubmit={submit}
+        record={{ ...record, stage: "QUARANTINED" }}
+      />,
+    );
+    const reason = get("reopen-intake-reason") as HTMLTextAreaElement;
+    const risk = get("reopen-intake-risk") as HTMLInputElement;
+    const button = get("reopen-intake-submit") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(reason, "來源政策證據已補齊");
+      reason.dispatchEvent(new Event("input", { bubbles: true }));
+      risk.click();
+    });
+    const enabledButton = get("reopen-intake-submit") as HTMLButtonElement;
+    expect(enabledButton.disabled).toBe(false);
+    act(() => enabledButton.click());
+    expect(submit).toHaveBeenCalledWith({
+      reason: "來源政策證據已補齊",
+      riskAcknowledged: true,
+    });
   });
 
   it("never fabricates intermediate stages when persisted history is absent", () => {

@@ -1,0 +1,120 @@
+INFO:     127.0.0.1:46344 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:28.146669+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9ce7ab6d-7507-44ee-88cd-70f8a957d05d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:50944 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:45:28.244870+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "93659eff-e250-4094-8681-e93972a0297b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020 ok"}
+INFO:     127.0.0.1:50962 - "GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:28.256258+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "403630aa-505d-4880-86c6-b0be2be6aca1", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020 ok"}
+INFO:     127.0.0.1:50952 - "GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:28.945521+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f7d1bd80-4242-48d1-a9cc-278d586d6e01", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020/promotion-decision ok"}
+INFO:     127.0.0.1:50964 - "GET /api/v1/intakes/f1367be6-0e5d-4e21-9c90-2d5741314020/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:45:29.477056+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "46957a1d-a858-4253-9fc6-45887ba882c9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:50968 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:45:29.592594+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "38110f9b-da20-40d1-87ef-686099af320c", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 ok"}
+INFO:     127.0.0.1:50968 - "GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:30.797230+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c3aaedce-4b2b-4080-8bd1-2e04ffd61551", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:50974 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:36.859239+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cddf843a-2e05-41aa-94a6-a45735ccb312", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:49752 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:45:37.051897+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0e32e3be-5f90-41e0-a773-be470e84f040", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 ok"}
+INFO:     127.0.0.1:49766 - "GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:37.060139+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4fd33180-acad-446e-9830-1bdb0607afc6", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 ok"}
+INFO:     127.0.0.1:49782 - "GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:37.625569+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d8fc4eb2-3bb0-4bc8-a3b2-aee9efaa329e", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99/promotion-decision ok"}
+INFO:     127.0.0.1:49786 - "GET /api/v1/intakes/50f03adc-e186-438e-942c-baf6132a2e99/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:45:38.028657+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c5cd7aa0-914f-42f9-a56f-f39da6d0c92d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:49790 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:45:38.169761+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "551298bd-ad71-4def-949d-7d6bfa5662f3", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a ok"}
+INFO:     127.0.0.1:49790 - "GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:39.177310+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cbf73b31-29e3-487b-8383-02718528563b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a ok"}
+INFO:     127.0.0.1:49790 - "GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:39.782089+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e9103d5f-57f2-4334-abf6-800eb825db2d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:49806 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:48.780982+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7a2cb80b-2c0e-4f4c-9a20-cbf569bc5365", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:54002 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:45:48.868834+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "081a7107-831f-479f-a0cc-d64b79c83247", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a ok"}
+INFO:     127.0.0.1:53986 - "GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:48.894729+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ca0f4171-f103-42ef-bc05-f381fa0105ba", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a ok"}
+INFO:     127.0.0.1:53994 - "GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:49.241490+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a763352e-c129-4f67-a992-e19949c78906", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a/promotion-decision ok"}
+INFO:     127.0.0.1:54004 - "GET /api/v1/intakes/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:45:49.743773+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "40e23e91-6298-40bb-9c03-d1762499cead", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:54020 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:45:49.856705+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8d239974-32ef-44e6-afc8-f29727c91898", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc ok"}
+INFO:     127.0.0.1:54020 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:50.473861+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4616010d-f471-4380-984a-90fd38b5ee47", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc ok"}
+INFO:     127.0.0.1:54020 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:51.368060+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e9d0d450-9da9-47f5-bc32-f6f4a2aa966d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:34604 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:56.555889+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4c0b3f0b-7033-455d-aa65-2ebe4c4ff67f", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:34618 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:45:56.632188+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dc564a98-8e3c-40ef-a07e-e9bf95eb45e3", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc ok"}
+INFO:     127.0.0.1:34626 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:56.645159+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "25b2eece-f5f1-4e78-bb07-5b42d53bf681", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc ok"}
+INFO:     127.0.0.1:34632 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:45:59.322485+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cec14fc2-e39c-43cf-b71c-ddf129b36948", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc/promotion-decision ok"}
+INFO:     127.0.0.1:34634 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:45:59.539440+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fac2700f-5fb8-4f28-a038-f839fe9bd2e7", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc ok"}
+INFO:     127.0.0.1:34648 - "GET /api/v1/intakes/c012aae5-90cc-4361-b6a5-e1c05b1511cc HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:00.749012+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fff3cf7e-b2d0-4437-9a43-ba2b0a1eb26f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:34654 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:46:00.789509+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d4129af1-5395-413f-ae6f-d540eb92e020", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a ok"}
+INFO:     127.0.0.1:34654 - "GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:01.448005+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a563c967-a7c1-40af-bdcf-233e6208bbd5", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a ok"}
+INFO:     127.0.0.1:34654 - "GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:02.361362+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2a749893-6f67-4bf1-b983-c5bfe4dae447", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:36964 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:07.704269+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5b4abd32-e4b7-4474-9cb0-38304d029bf0", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:36972 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:46:07.874845+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "94f472ff-8cab-4071-b057-e066e139d407", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a ok"}
+INFO:     127.0.0.1:36978 - "GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:07.877376+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "98f0cd5c-649f-498f-a7a2-c11ac2eaf404", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a ok"}
+INFO:     127.0.0.1:36982 - "GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:08.525516+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0489d0a4-40f6-4c07-8ed7-d1b7d2f19911", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a/promotion-decision ok"}
+INFO:     127.0.0.1:36994 - "GET /api/v1/intakes/8f43cdb4-12a1-41f6-911c-ac28264c6a8a/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:46:08.984321+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ced8b222-08e1-4eab-a356-5128616c30da", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:37010 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:46:09.065021+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7607a3f2-c6af-49e5-9a2d-2326cab02620", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 ok"}
+INFO:     127.0.0.1:37010 - "GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:09.689233+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "35602269-b9f2-4421-b7b6-49755775924a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 ok"}
+INFO:     127.0.0.1:37010 - "GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:10.457302+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c5b83b95-3de8-4cc6-976e-22c27540ccaf", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:37014 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:14.463214+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1e03cd36-e080-41d8-972c-de2934dc90d5", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:37288 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:46:14.804354+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "afae557e-defe-4e7d-888c-1233851c769f", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 ok"}
+INFO:     127.0.0.1:37306 - "GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:14.807684+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dc29bed7-8cf0-4665-a614-f2fb1744fcbd", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 ok"}
+INFO:     127.0.0.1:37290 - "GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:16.216847+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5d2ae437-6248-4676-8a73-2741af644c84", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352/promotion-decision ok"}
+INFO:     127.0.0.1:37312 - "GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:46:17.445755+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dd76e10b-57b3-46ed-a1cf-a42c09f18df6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:37318 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:46:17.522141+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "43f3c672-8102-4d52-95f4-45eb86a7b565", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 ok"}
+INFO:     127.0.0.1:37318 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:18.100945+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1ce75a80-137b-46ca-aa8d-7e34d29e78a4", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 ok"}
+INFO:     127.0.0.1:37318 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:18.729442+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "043932dc-9270-4b4a-b928-673dec0b1bbd", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/bootstrap ok"}
+INFO:     127.0.0.1:37328 - "GET /api/v1/intakes/bootstrap HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:18.854451+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2316c693-6cdc-41f3-b3b8-6ac38be41908", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/b3d29f64-170a-4904-9bad-4bd67cbde352 ok"}
+{"timestamp": "2026-07-23T21:46:23.844021+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f7f72fdc-9a8d-4a75-9fcf-5baf187c89cc", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/shell/home ok"}
+INFO:     127.0.0.1:34562 - "GET /api/v1/operator/shell/home HTTP/1.1" 403 Forbidden
+{"timestamp": "2026-07-23T21:46:23.930367+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0b7040b0-1627-42ba-be04-2efd35503255", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 ok"}
+INFO:     127.0.0.1:34564 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:23.932268+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "282f822f-939d-4de6-b7e8-f1658043f871", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 ok"}
+INFO:     127.0.0.1:34570 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:24.600923+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2f0cc1d3-1c26-45a3-b6e5-cf6ee7f71c69", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67/promotion-decision ok"}
+INFO:     127.0.0.1:34586 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67/promotion-decision HTTP/1.1" 404 Not Found
+{"timestamp": "2026-07-23T21:46:24.961419+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "03db4e4d-8c56-4b28-a563-b8e4c25897da", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+INFO:     127.0.0.1:34588 - "POST /api/v1/intakes/url HTTP/1.1" 202 Accepted
+{"timestamp": "2026-07-23T21:46:25.023727+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e509d95d-43d0-4ce9-8e92-bc21f0af775f", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e ok"}
+INFO:     127.0.0.1:34588 - "GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:25.692725+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a0308923-1aa8-4281-a829-ee986e2606f5", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e ok"}
+INFO:     127.0.0.1:34588 - "GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:26.307997+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6eec6799-6004-4902-8358-bb172d6de7ab", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e ok"}
+INFO:     127.0.0.1:34588 - "GET /api/v1/intakes/86c1f66d-c11d-4360-8918-226e08a8b09e HTTP/1.1" 200 OK
+{"timestamp": "2026-07-23T21:46:27.132426+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cbc790e9-d9b4-436f-b5c5-3f9f9125042d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 ok"}
+INFO:     127.0.0.1:34592 - "GET /api/v1/intakes/338d3201-d9ff-492b-9e40-b67fdd4d6e67 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [465456]

@@ -13,6 +13,7 @@ collection naming and blob layout stay an infrastructure detail.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from modules.opsboard.application.network_listings import IntakeIdempotencyRecord
@@ -39,7 +40,44 @@ class DurableAssistedIntakeRepository:
         return self._store.list_all(self._INTAKES)
 
     def save_intake(self, intake: dict[str, Any]) -> None:
-        self._store.put(self._INTAKES, intake["id"], intake)
+        def merge(current: Any | None) -> dict[str, Any]:
+            if current is None:
+                return copy.deepcopy(intake)
+
+            current_order = (
+                int(current.get("version") or 0),
+                str(current.get("updatedAt") or ""),
+            )
+            incoming_order = (
+                int(intake.get("version") or 0),
+                str(intake.get("updatedAt") or ""),
+            )
+            merged = copy.deepcopy(
+                current if current_order > incoming_order else intake
+            )
+            for field, identity_fields in (
+                ("processingHistory", ("transitionId", "transition_id")),
+                ("lifecycleReceipts", ("dedupeKey", "receiptId", "receipt_id")),
+                ("auditEvents", ("id", "audit_event_id")),
+                ("decisionReceipts", ("receiptId", "receipt_id", "decisionId")),
+            ):
+                merged[field] = _merge_append_only_stream(
+                    current.get(field),
+                    intake.get(field),
+                    identity_fields=identity_fields,
+                )
+
+            merged["version"] = max(
+                int(current.get("version") or 0),
+                int(intake.get("version") or 0),
+            )
+            merged["updatedAt"] = max(
+                str(current.get("updatedAt") or ""),
+                str(intake.get("updatedAt") or ""),
+            ) or None
+            return merged
+
+        self._store.update(self._INTAKES, intake["id"], merge)
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
         return self._store.list_all(self._IDEMPOTENCY)
@@ -119,3 +157,39 @@ class DurableAssistedIntakeRepository:
             self._API_REPLAYS,
         ):
             self._store.delete_collection(collection)
+
+
+def _merge_append_only_stream(
+    current: Any,
+    incoming: Any,
+    *,
+    identity_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Union immutable receipt/history streams during concurrent projections."""
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*(current or []), *(incoming or [])]:
+        if not isinstance(item, dict):
+            continue
+        identity = next(
+            (
+                str(item[field])
+                for field in identity_fields
+                if item.get(field) not in (None, "")
+            ),
+            repr(sorted(item.items())),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(copy.deepcopy(item))
+    merged.sort(
+        key=lambda item: str(
+            item.get("occurredAt")
+            or item.get("occurred_at")
+            or item.get("issuedAt")
+            or ""
+        )
+    )
+    return merged

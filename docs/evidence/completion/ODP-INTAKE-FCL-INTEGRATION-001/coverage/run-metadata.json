@@ -1,0 +1,12 @@
+{
+  "api_port": 18389,
+  "git_head": "47daa5918400e9823a3a2dd3bf758c46a13cab42",
+  "started_at": "2026-07-23T21:40:52.664065+00:00",
+  "web_port": 13389,
+  "exit_code": 0,
+  "finished_at": "2026-07-23T21:46:28.966195+00:00",
+  "real_api": true,
+  "real_next": true,
+  "route_interception_policy": "No command interception. GET abort/delay is used only to exercise loading/error presentation.",
+  "synthetic_retrieval_adapter": "Deterministic corpus injected at the approved worker retrieval fetcher boundary."
+}

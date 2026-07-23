@@ -57,6 +57,7 @@ import type {
   SlaPauseRequest,
   SlaReceipt,
   JobReceipt,
+  ListingDetail,
   PromotionDecisionReceipt,
   PromotionRequest,
   RetryRequest,
@@ -837,12 +838,18 @@ export type CanonicalSourceEvidence = {
   canonical_url: string | null;
   source_id: string | null;
   policy_state: string | null;
+  policy_reason: string | null;
+  policy_version: string | null;
+  policy_evaluated_at: string | null;
+  policy_expires_at: string | null;
   source_snapshot_id: string | null;
   captured_at: string | null;
   parser_run_id: string | null;
   parser_version: string | null;
   correlation_id: string;
   freshness_state: "CURRENT" | "STALE" | "NOT_CAPTURED";
+  resource_version: number;
+  etag: string;
 };
 
 export type CanonicalDecisionEffectReceipt = {
@@ -952,6 +959,13 @@ export type CanonicalIntakeRuntimeDetail = {
   submitted_at: string;
   updated_at: string;
   version: number;
+  issue?: string | null;
+  next_action?: string | null;
+  retryable?: boolean;
+  failed?: boolean;
+  quarantined?: boolean;
+  correlation_id?: string | null;
+  last_observed_at?: string | null;
   scope: Record<string, unknown>;
   masked_fields: string[];
   original_url: string | null;
@@ -1903,6 +1917,12 @@ export class OdpApiClient {
     return this.getIntake(intakeId);
   }
 
+  getListing(listingId: string): Promise<ListingDetail> {
+    return this.request<ListingDetail>(
+      `/api/v1/listings/${encodeURIComponent(listingId)}`,
+    );
+  }
+
   getIntakeInboxBootstrap(): Promise<CanonicalIntakeInboxBootstrap> {
     return this.request<CanonicalIntakeInboxBootstrap>("/api/v1/intakes/bootstrap");
   }
@@ -2103,6 +2123,15 @@ export class OdpApiClient {
         ifMatch: `W/"${intake.version}"`,
       },
     );
+    return this.getIntake(intakeId);
+  }
+
+  async reopenIntake(
+    intakeId: string,
+    payload: CanonicalRiskReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIntakeRuntimeDetail> {
+    await this.reopenIntakeRuntime(intakeId, payload, options);
     return this.getIntake(intakeId);
   }
 
@@ -2590,6 +2619,14 @@ export type IntakeFailure = {
   retryable: boolean;
 };
 
+export type IntakeSubmissionNavigationReceipt = {
+  receiptId: string;
+  receiptType: string;
+  existingListingId: string | null;
+  navigationTarget: string | null;
+  issuedAt: string;
+};
+
 export type AssistedIntake = {
   id: string;
   originalUrl: string;
@@ -2615,6 +2652,7 @@ export type AssistedIntake = {
   auditEvents: IntakeAuditEvent[];
   idempotencyKey?: string | null;
   failure?: IntakeFailure | null;
+  submissionReceipt?: IntakeSubmissionNavigationReceipt | null;
   version: number;
   assignmentId?: string | null;
   assignmentStatus?: string | null;

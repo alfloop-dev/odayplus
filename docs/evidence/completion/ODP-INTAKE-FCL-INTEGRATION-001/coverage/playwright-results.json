@@ -1,0 +1,350 @@
+{
+  "config": {
+    "argv": [
+      "/usr/bin/node",
+      "/tmp/oday-plus-intake-functional-integration-20260723/node_modules/.bin/playwright",
+      "test",
+      "--config=playwright.intake-functional-coverage.config.ts"
+    ],
+    "configFile": "/tmp/oday-plus-intake-functional-integration-20260723/playwright.intake-functional-coverage.config.ts",
+    "rootDir": "/tmp/oday-plus-intake-functional-integration-20260723/tests/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": true,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/oday-plus-intake-functional-integration-20260723/docs/evidence/completion/ODP-INTAKE-FCL-INTEGRATION-001/coverage/playwright-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/tmp/oday-plus-intake-functional-integration-20260723/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "operator-assisted-listing-intake-functional-coverage.spec.ts"
+        ],
+        "timeout": 150000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "docs/evidence/completion/ODP-INTAKE-FCL-INTEGRATION-001/coverage/playwright-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+      "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "Inbox list/map, every server filter family, cursor history, saved view, selection and direct workflow links use authoritative data",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-045..FTR-051"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 35902,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:42:26.140Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-045..FTR-051"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-f1230aec3bdb51614a2c",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 350,
+          "column": 5
+        },
+        {
+          "title": "Inbox loading, transport error, read-only and no-results states are durable UI states",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-052 FTR-053"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 37294,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:43:02.714Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-052 FTR-053"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-61ebad45619da69aefc4",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 754,
+          "column": 5
+        },
+        {
+          "title": "Add URL covers validation, canonical difference, unsupported source, request lock and durable receipt",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-054..FTR-060"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 61755,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:43:40.101Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-054..FTR-060"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-e2f2bc1e9f483056fe78",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 810,
+          "column": 5
+        },
+        {
+          "title": "Identity merge, split, unmerge and reversal persist two-actor graph plans, redirects and superseded lineage",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-084 FTR-085 FTR-117"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 12377,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:44:42.008Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-084 FTR-085 FTR-117"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-94864630ffa387e3ec61",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 943,
+          "column": 5
+        },
+        {
+          "title": "Promotion SCORE_FAILED retains Candidate and same-key replay recovers a lost response without duplication",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-044 FTR-101..FTR-106"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 23690,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:44:54.470Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-044 FTR-101..FTR-106"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-eea9e0e030eea66b688b",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 1119,
+          "column": 5
+        },
+        {
+          "title": "Retrieval and parser failure matrix exposes supported page-removed, timeout, partial and permanent/stale/auth-wall/bot-challenge variants",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 150000,
+              "annotations": [
+                {
+                  "type": "FTR",
+                  "description": "FTR-127..FTR-130"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 69675,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-23T21:45:18.267Z",
+                  "annotations": [
+                    {
+                      "type": "FTR",
+                      "description": "FTR-127..FTR-130"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ec2e2bf7862b18e46004-5c70ebf220549bf42098",
+          "file": "operator-assisted-listing-intake-functional-coverage.spec.ts",
+          "line": 1296,
+          "column": 5
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-23T21:42:23.888Z",
+    "duration": 244389.308,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

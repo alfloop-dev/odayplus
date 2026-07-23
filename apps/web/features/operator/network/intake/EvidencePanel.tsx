@@ -15,6 +15,7 @@ import type {
   AuthoritativeSourceEvidence,
 } from "./evidenceContracts";
 import { matchLabel, matchTone, policyLabel, policyTone } from "./intakeTypes";
+import { formatIntakeDateTime } from "./types";
 
 type EvidenceField = {
   field_path: string;
@@ -48,16 +49,35 @@ function SourceValue({
   label,
   value,
   testId,
+  temporal = false,
 }: {
   label: string;
   value: unknown;
   testId?: string;
+  temporal?: boolean;
 }) {
-  if (value === null || value === undefined || value === "") return null;
+  const unavailable = value === null || value === undefined || value === "";
+  const formatted =
+    temporal && typeof value === "string"
+      ? formatIntakeDateTime(value)
+      : null;
   return (
     <div className={styles.receiptValue}>
       <dt>{label}</dt>
-      <dd data-testid={testId}>{String(value)}</dd>
+      <dd
+        data-authoritative={unavailable ? "missing" : "present"}
+        data-testid={testId}
+      >
+        {formatted ? (
+          <time dateTime={String(value)} title={formatted.title}>
+            {formatted.text}
+          </time>
+        ) : unavailable ? (
+          "API 未回傳"
+        ) : (
+          String(value)
+        )}
+      </dd>
     </div>
   );
 }
@@ -157,10 +177,14 @@ export function EvidencePanel({
             value={source.parser_run_id}
           />
           <SourceValue label="Parser version" value={source.parser_version} />
-          <SourceValue label="Observed at" value={source.observed_at} />
-          <SourceValue label="Captured at" value={source.captured_at} />
+          <SourceValue label="Observed at" temporal value={source.observed_at} />
+          <SourceValue label="Captured at" temporal value={source.captured_at} />
           <SourceValue label="Policy version" value={source.policy_version} />
-          <SourceValue label="Policy expires at" value={source.policy_expires_at} />
+          <SourceValue
+            label="Policy expires at"
+            temporal
+            value={source.policy_expires_at}
+          />
           <SourceValue label="Correlation ID" value={source.correlation_id} />
         </dl>
         {source.policy_state ? (
@@ -183,28 +207,32 @@ export function EvidencePanel({
         ) : null}
       </section>
 
-      {access ? (
-        <section className={styles.evidenceSection} data-testid="evidence-access-section">
-          <div className={styles.sectionLabel}>敏感證據存取 PURPOSE BINDING</div>
-          <dl className={styles.receiptList}>
-            <SourceValue label="Purpose" value={access.purpose} />
-            <SourceValue label="Purpose binding ID" value={access.purpose_binding_id} />
-            <SourceValue label="Classification" value={access.classification} />
-            <SourceValue label="Access expires at" value={access.expires_at} />
-            <SourceValue
-              label="Masked"
-              value={access.masked === null || access.masked === undefined
+      <section className={styles.evidenceSection} data-testid="evidence-access-section">
+        <div className={styles.sectionLabel}>敏感證據存取 PURPOSE BINDING</div>
+        <dl className={styles.receiptList}>
+          <SourceValue label="Purpose" value={access?.purpose} />
+          <SourceValue label="Purpose binding ID" value={access?.purpose_binding_id} />
+          <SourceValue label="Classification" value={access?.classification} />
+          <SourceValue label="Access expires at" temporal value={access?.expires_at} />
+          <SourceValue
+            label="Masked"
+            value={
+              access?.masked === null || access?.masked === undefined
                 ? undefined
-                : String(access.masked)}
-            />
-            <SourceValue label="Mask reason code" value={access.mask_reason_code} />
-            <SourceValue label="Audit notice" value={access.audit_notice} />
-            <SourceValue label="Legal hold state" value={access.legal_hold_state} />
-            <SourceValue label="Legal hold ID" value={access.legal_hold_id} />
-            <SourceValue label="Legal hold expires at" value={access.legal_hold_expires_at} />
-          </dl>
-        </section>
-      ) : null}
+                : String(access.masked)
+            }
+          />
+          <SourceValue label="Mask reason code" value={access?.mask_reason_code} />
+          <SourceValue label="Audit notice" value={access?.audit_notice} />
+          <SourceValue label="Legal hold state" value={access?.legal_hold_state} />
+          <SourceValue label="Legal hold ID" value={access?.legal_hold_id} />
+          <SourceValue
+            label="Legal hold expires at"
+            temporal
+            value={access?.legal_hold_expires_at}
+          />
+        </dl>
+      </section>
 
       {(matchResult || humanDecision) ? (
         <div className={styles.grid2} data-testid="evidence-match-comparison">
@@ -238,7 +266,7 @@ export function EvidencePanel({
                 <SourceValue label="Actor role" value={humanDecision.actor_role_id} />
                 <SourceValue label="Reviewer" value={humanDecision.reviewer_subject_id} />
                 <SourceValue label="Reason" value={humanDecision.reason} />
-                <SourceValue label="Occurred at" value={humanDecision.occurred_at} />
+                <SourceValue label="Occurred at" temporal value={humanDecision.occurred_at} />
                 <SourceValue label="Audit event" value={humanDecision.audit_event_id} />
                 <SourceValue label="Correlation ID" value={humanDecision.correlation_id} />
               </dl>
@@ -327,7 +355,7 @@ export function EvidencePanel({
               testId="evidence-verification-status"
               value={verification.status}
             />
-            <SourceValue label="Verified at" value={verification.verified_at} />
+            <SourceValue label="Verified at" temporal value={verification.verified_at} />
             <SourceValue label="Checksum algorithm" value={verification.checksum_algorithm} />
             <SourceValue
               label="Content checksum"
@@ -343,7 +371,12 @@ export function EvidencePanel({
             <SourceValue label="Correlation ID" value={verification.correlation_id} />
           </dl>
         </section>
-      ) : null}
+      ) : (
+        <UnavailableEvidenceSection
+          label="證據驗證 VERIFICATION"
+          testId="evidence-verification-unavailable"
+        />
+      )}
 
       {exportReceipt ? (
         <section className={styles.evidenceSection} data-testid="evidence-export-result">
@@ -358,15 +391,20 @@ export function EvidencePanel({
             <SourceValue label="Object URI" value={exportReceipt.object_uri} />
             <SourceValue label="Content SHA-256" value={exportReceipt.content_sha256} />
             <SourceValue label="Watermark" value={exportReceipt.watermark} />
-            <SourceValue label="Created at" value={exportReceipt.created_at} />
-            <SourceValue label="Expires at" value={exportReceipt.expires_at} />
+            <SourceValue label="Created at" temporal value={exportReceipt.created_at} />
+            <SourceValue label="Expires at" temporal value={exportReceipt.expires_at} />
             <SourceValue label="Download evidence ID" value={exportReceipt.download_evidence_id} />
             <SourceValue label="Signer key version" value={exportReceipt.signer_key_version} />
             <SourceValue label="WORM sink receipt" value={exportReceipt.worm_sink_id} />
             <SourceValue label="WORM checksum" value={exportReceipt.worm_checksum} />
           </dl>
         </section>
-      ) : null}
+      ) : (
+        <UnavailableEvidenceSection
+          label="匯出結果 EXPORT RESULT"
+          testId="evidence-export-unavailable"
+        />
+      )}
 
       {auditReferences.length > 0 ? (
         <section
@@ -380,7 +418,7 @@ export function EvidencePanel({
                 <code>{audit.audit_event_id}</code>
                 <span>{audit.action}</span>
                 <span>{audit.result}</span>
-                <time dateTime={audit.occurred_at}>{audit.occurred_at}</time>
+                <EvidenceTime value={audit.occurred_at} />
                 {audit.reason_code ? <code>{audit.reason_code}</code> : null}
               </li>
             ))}
@@ -388,5 +426,33 @@ export function EvidencePanel({
         </section>
       ) : null}
     </section>
+  );
+}
+
+function UnavailableEvidenceSection({
+  label,
+  testId,
+}: {
+  label: string;
+  testId: string;
+}) {
+  return (
+    <section className={styles.evidenceSection} data-testid={testId}>
+      <div className={styles.sectionLabel}>{label}</div>
+      <p className={styles.emptyState}>
+        API 未回傳 authoritative receipt；本頁不推算狀態或識別碼。
+      </p>
+    </section>
+  );
+}
+
+function EvidenceTime({ value }: { value: string }) {
+  const formatted = formatIntakeDateTime(value);
+  return formatted ? (
+    <time dateTime={value} title={formatted.title}>
+      {formatted.text}
+    </time>
+  ) : (
+    <span>API 未回傳有效時間</span>
   );
 }

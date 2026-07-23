@@ -43,6 +43,13 @@ export type OperatorApiError = {
   currentVersion?: number | null;
   reasonCode?: string | null;
   retryAfterSeconds?: number | null;
+  currentOwnerSubjectId?: string | null;
+  retryWithEtag?: string | null;
+  fieldErrors?: Array<{
+    field?: string;
+    code?: string;
+    message?: string;
+  }>;
 };
 
 export type OperatorApiResult<T> =
@@ -121,6 +128,9 @@ export function toOperatorApiError(
       currentVersion: error.currentVersion,
       reasonCode: error.reasonCode,
       retryAfterSeconds: error.retryAfterSeconds,
+      currentOwnerSubjectId: error.body?.current_owner_subject_id,
+      retryWithEtag: error.body?.retry_with_etag,
+      fieldErrors: error.body?.field_errors,
     };
   }
 

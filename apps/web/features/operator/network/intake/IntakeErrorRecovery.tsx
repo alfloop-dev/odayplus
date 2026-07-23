@@ -5,6 +5,8 @@ import type { ApiError, ConflictError } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import type { AuthoritativeRecoveryContext } from "./evidenceContracts";
 import type { IntakeApiError } from "./intakeClient";
+import { fieldLineageDomId } from "./FieldLineageRow";
+import { formatIntakeDateTime } from "./types";
 
 type RecoveryError = IntakeApiError | ApiError | ConflictError;
 
@@ -76,17 +78,27 @@ function MetadataValue({
   label,
   value,
   testId,
+  temporal = false,
 }: {
   label: string;
   value: unknown;
   testId?: string;
+  temporal?: boolean;
 }) {
   const absent = value === null || value === undefined || value === "";
+  const formatted =
+    temporal && typeof value === "string"
+      ? formatIntakeDateTime(value)
+      : null;
   return (
     <div className={styles.receiptValue}>
       <dt>{label}</dt>
       <dd data-testid={testId} data-authoritative={absent ? "missing" : "present"}>
-        {absent
+        {formatted ? (
+          <time dateTime={String(value)} title={formatted.title}>
+            {formatted.text}
+          </time>
+        ) : absent
           ? "API 未回傳"
           : typeof value === "object"
             ? JSON.stringify(value)
@@ -146,8 +158,9 @@ export function IntakeErrorRecovery({
     ? source.retryable
     : undefined;
   const httpStatus = typeof source.status === "number" ? source.status : undefined;
-  const fieldErrors = Array.isArray(source.field_errors)
-    ? source.field_errors as Array<{ field?: string; code?: string; message?: string }>
+  const fieldErrorValue = source.field_errors ?? source.fieldErrors;
+  const fieldErrors = Array.isArray(fieldErrorValue)
+    ? fieldErrorValue as Array<{ field?: string; code?: string; message?: string }>
     : [];
   const authoritativeInput = recovery?.preserved_input ?? preservedInput;
   const safeInput = useMemo(
@@ -216,6 +229,7 @@ export function IntakeErrorRecovery({
           label="Occurred at"
           value={occurredAt}
           testId="error-occurred-at"
+          temporal
         />
         <MetadataValue label="Retryable" value={isRetryable} />
         <MetadataValue
@@ -254,7 +268,18 @@ export function IntakeErrorRecovery({
           <ul>
             {fieldErrors.map((fieldError, index) => (
               <li key={`${fieldError.field ?? "unknown"}-${index}`}>
-                {fieldError.field ? <code>{fieldError.field}</code> : null}
+                {fieldError.field ? (
+                  <a
+                    data-testid={`field-error-link-${fieldError.field}`}
+                    href={`#${fieldLineageDomId(fieldError.field)}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onCorrectInput?.(fieldError.field);
+                    }}
+                  >
+                    <code>{fieldError.field}</code>
+                  </a>
+                ) : null}
                 {fieldError.code ? <code>{fieldError.code}</code> : null}
                 {fieldError.message ? <span>{fieldError.message}</span> : null}
               </li>

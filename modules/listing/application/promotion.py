@@ -49,6 +49,40 @@ class PromotionService:
         self.job_queue = job_queue
         self.score_queue_hook = score_queue_hook
 
+    @staticmethod
+    def _append_status_transition(
+        promo: dict[str, Any],
+        *,
+        from_state: str | None,
+        to_state: str,
+        actor: str,
+        actor_role: str,
+        correlation_id: str | None,
+        version_after: int,
+        reason: str | None = None,
+        occurred_at: str | None = None,
+    ) -> dict[str, Any]:
+        history = promo.setdefault("status_history", [])
+        if (
+            history
+            and history[-1].get("to_state") == to_state
+            and int(history[-1].get("version_after") or 0) == int(version_after)
+        ):
+            return history[-1]
+        transition = {
+            "transition_id": str(uuid.uuid4()),
+            "from_state": from_state,
+            "to_state": to_state,
+            "occurred_at": occurred_at or datetime.now(UTC).isoformat(),
+            "actor": actor,
+            "actor_role": actor_role,
+            "reason": reason,
+            "correlation_id": correlation_id,
+            "version_after": int(version_after),
+        }
+        history.append(transition)
+        return transition
+
     def request_promotion(
         self,
         intake_id: str,
@@ -147,6 +181,7 @@ class PromotionService:
         )
         PromotionStateMachine.transition(promo_agg, PromotionState.VALIDATING, system_context)
 
+        created_at = datetime.now(UTC).isoformat()
         promo_record = {
             "promotion_decision_id": promo_id,
             "intake_id": intake_id,
@@ -162,8 +197,31 @@ class PromotionService:
             "gate_snapshot_sha256": gate_snapshot_sha256,
             "target_format_code": target_format_code,
             "reason": reason,
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": created_at,
+            "status_history": [],
         }
+        self._append_status_transition(
+            promo_record,
+            from_state=None,
+            to_state=PromotionState.REQUESTED.value,
+            actor=context.actor.actor_id,
+            actor_role=context.actor.role.value,
+            correlation_id=promo_record["correlation_id"],
+            version_after=1,
+            reason=reason,
+            occurred_at=created_at,
+        )
+        self._append_status_transition(
+            promo_record,
+            from_state=PromotionState.REQUESTED.value,
+            to_state=PromotionState.VALIDATING.value,
+            actor=system_actor.actor_id,
+            actor_role=system_actor.role.value,
+            correlation_id=promo_record["correlation_id"],
+            version_after=promo_agg.version,
+            reason="Candidate gate validated; independent review required.",
+            occurred_at=created_at,
+        )
         self.promotion_repository.save_promotion(promo_record)
 
         # Emit candidate.promotion_requested event
@@ -221,6 +279,17 @@ class PromotionService:
         promo["reviewed_at"] = datetime.now(UTC).isoformat()
         promo["review_reason"] = reason
         promo["risk_acknowledged"] = risk_acknowledged
+        self._append_status_transition(
+            promo,
+            from_state=current_state.value,
+            to_state=target_state.value,
+            actor=context.actor.actor_id,
+            actor_role=context.actor.role.value,
+            correlation_id=promo.get("correlation_id") or context.correlation_id,
+            version_after=promo_agg.version,
+            reason=reason,
+            occurred_at=promo["reviewed_at"],
+        )
 
         if target_state == PromotionState.REJECTED:
             self.promotion_repository.save_promotion(promo)
@@ -257,6 +326,16 @@ class PromotionService:
             PromotionStateMachine.transition(promo_agg, PromotionState.CANDIDATE_CREATING, system_context)
             promo["status"] = to_status_str(PromotionState.CANDIDATE_CREATING)
             promo["version"] = promo_agg.version
+            self._append_status_transition(
+                promo,
+                from_state=PromotionState.APPROVED.value,
+                to_state=PromotionState.CANDIDATE_CREATING.value,
+                actor=system_actor.actor_id,
+                actor_role=system_actor.role.value,
+                correlation_id=promo.get("correlation_id"),
+                version_after=promo_agg.version,
+                reason="Candidate creation transaction started.",
+            )
             self.promotion_repository.save_promotion(promo)
 
             # Check duplicate candidate again
@@ -430,6 +509,16 @@ class PromotionService:
             promo["status"] = to_status_str(PromotionState.CANDIDATE_CREATED)
             promo["version"] = promo_agg.version
             promo["candidate_site_id"] = candidate_id
+            self._append_status_transition(
+                promo,
+                from_state=PromotionState.CANDIDATE_CREATING.value,
+                to_state=PromotionState.CANDIDATE_CREATED.value,
+                actor=system_actor.actor_id,
+                actor_role=system_actor.role.value,
+                correlation_id=promo.get("correlation_id"),
+                version_after=promo_agg.version,
+                reason="Candidate Site committed.",
+            )
             self.promotion_repository.save_promotion(promo)
 
             # Emit candidate.created event
@@ -503,9 +592,20 @@ class PromotionService:
                         if c.get("id") != candidate_id
                     ]
 
+            failed_from_state = promo.get("status")
             PromotionStateMachine.transition(promo_agg, PromotionState.FAILED, system_context)
             promo["status"] = to_status_str(PromotionState.FAILED)
             promo["version"] = promo_agg.version
+            self._append_status_transition(
+                promo,
+                from_state=failed_from_state,
+                to_state=PromotionState.FAILED.value,
+                actor=system_actor.actor_id,
+                actor_role=system_actor.role.value,
+                correlation_id=promo.get("correlation_id"),
+                version_after=promo_agg.version,
+                reason=str(exc),
+            )
             self.promotion_repository.save_promotion(promo)
             raise exc
 
@@ -515,6 +615,16 @@ class PromotionService:
             PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_QUEUED, system_context)
             promo["status"] = to_status_str(PromotionState.SCORE_QUEUED)
             promo["version"] = promo_agg.version
+            self._append_status_transition(
+                promo,
+                from_state=PromotionState.CANDIDATE_CREATED.value,
+                to_state=PromotionState.SCORE_QUEUED.value,
+                actor=system_actor.actor_id,
+                actor_role=system_actor.role.value,
+                correlation_id=promo.get("correlation_id"),
+                version_after=promo_agg.version,
+                reason="Durable SiteScore job enqueue requested.",
+            )
 
             if self.job_queue is None:
                 raise RuntimeError("durable SiteScore job queue is required")
@@ -589,6 +699,16 @@ class PromotionService:
             PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_FAILED, system_context)
             promo["status"] = to_status_str(PromotionState.SCORE_FAILED)
             promo["version"] = promo_agg.version
+            self._append_status_transition(
+                promo,
+                from_state=PromotionState.SCORE_QUEUED.value,
+                to_state=PromotionState.SCORE_FAILED.value,
+                actor=system_actor.actor_id,
+                actor_role=system_actor.role.value,
+                correlation_id=promo.get("correlation_id"),
+                version_after=promo_agg.version,
+                reason=str(exc),
+            )
             self.promotion_repository.save_promotion(promo)
             score_job_id = promo.get("site_score_job_id")
             if score_job_id and self.job_queue is not None:

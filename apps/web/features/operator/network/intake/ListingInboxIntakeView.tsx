@@ -35,6 +35,7 @@ import {
 import type {
   AuthoritativeInboxError,
   ClaimIntakeCommand,
+  CreateIntakeSavedViewCommand,
   InboxIntakeRecord,
   IntakeInboxBootstrapContext,
   IntakeInboxPageContract,
@@ -66,6 +67,7 @@ type ListingInboxIntakeViewProps = {
   onRetryIntake?: (intakeId: string) => void | Promise<void>;
   onClaimIntake?: ClaimIntakeCommand;
   onClaimCompleted?: (intakeId: string, receipt: AssignmentReceipt) => void;
+  onCreateSavedView?: CreateIntakeSavedViewCommand;
   pageData?: IntakeInboxPageContract;
   onQueryChange?: (query: IntakeInboxQueryContract) => void;
   permissionContext: IntakePermissionContext;
@@ -107,6 +109,7 @@ export function ListingInboxIntakeView({
   onRetryIntake,
   onClaimIntake,
   onClaimCompleted,
+  onCreateSavedView,
   pageData,
   onQueryChange,
   permissionContext,
@@ -121,6 +124,12 @@ export function ListingInboxIntakeView({
   const [claimReceipt, setClaimReceipt] = useState<AssignmentReceipt | null>(null);
   const [submissionReceipt, setSubmissionReceipt] =
     useState<AssistedIntake | null>(null);
+  const [savedViewName, setSavedViewName] = useState("");
+  const [savedViewCreating, setSavedViewCreating] = useState(false);
+  const [savedViewCreateError, setSavedViewCreateError] =
+    useState<AuthoritativeInboxError | null>(null);
+  const [savedViewReceipt, setSavedViewReceipt] =
+    useState<IntakeInboxSavedView | null>(null);
   const recordsRef = useRef(records);
   const pendingSubmissionRef = useRef<{
     resolve: (record: AssistedIntake | void) => void;
@@ -256,6 +265,32 @@ export function ListingInboxIntakeView({
       }, 5_000);
       pendingSubmissionRef.current = { resolve, timeout, url: input.url };
     });
+  }
+
+  async function createSavedView(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = savedViewName.trim();
+    if (!onCreateSavedView || !name || savedViewCreating) return;
+
+    setSavedViewCreating(true);
+    setSavedViewCreateError(null);
+    setSavedViewReceipt(null);
+    const query = buildIntakeInboxServerQuery(
+      filters,
+      selectedHeatZoneId,
+      savedViews === undefined ? undefined : savedViewIds,
+    );
+    delete query.savedView;
+    const result = await onCreateSavedView(name, query);
+    setSavedViewCreating(false);
+
+    if (!result.ok) {
+      setSavedViewCreateError(result.error);
+      return;
+    }
+    setSavedViewReceipt(result.value);
+    setSavedViewName("");
+    updateFilters({ savedView: result.value.id });
   }
 
   if (!permitted) {
@@ -404,6 +439,67 @@ export function ListingInboxIntakeView({
           ))}
         </nav>
       )}
+
+      {savedViews !== undefined && !readOnly ? (
+        <form
+          className={styles.intakeTableActions}
+          data-testid="intake-create-saved-view"
+          onSubmit={createSavedView}
+        >
+          <label htmlFor="intake-saved-view-name">儲存目前檢視</label>
+          <input
+            autoComplete="off"
+            id="intake-saved-view-name"
+            maxLength={120}
+            onChange={(event) => setSavedViewName(event.target.value)}
+            placeholder="例如：北區待覆核"
+            required
+            type="text"
+            value={savedViewName}
+          />
+          <button
+            className={styles.secondaryButton}
+            data-testid="intake-create-saved-view-submit"
+            disabled={
+              savedViewCreating ||
+              !savedViewName.trim() ||
+              !onCreateSavedView
+            }
+            type="submit"
+          >
+            {savedViewCreating ? "儲存中…" : "儲存檢視"}
+          </button>
+        </form>
+      ) : null}
+
+      {savedViewCreateError ? (
+        <div
+          className={styles.errorPanel}
+          data-testid="intake-create-saved-view-error"
+          role="alert"
+        >
+          <strong>{savedViewCreateError.summary}</strong>
+          <br />
+          <code>{savedViewCreateError.code}</code>
+          {savedViewCreateError.correlationId
+            ? ` · ${savedViewCreateError.correlationId}`
+            : ""}
+          <br />
+          下一步：{savedViewCreateError.nextAction}
+        </div>
+      ) : null}
+
+      {savedViewReceipt ? (
+        <div
+          className={styles.noteBox}
+          data-testid="intake-create-saved-view-receipt"
+          role="status"
+        >
+          已儲存檢視 <strong>{savedViewReceipt.label}</strong>
+          <br />
+          <code>{savedViewReceipt.id}</code>
+        </div>
+      ) : null}
 
       {savedViewSelectionUnavailable ? (
         <div
@@ -632,9 +728,10 @@ export function ListingInboxIntakeView({
 
 function SubmissionReceipt({ record }: { record: AssistedIntake }) {
   const duplicateListingId =
-    record.matchResult?.outcome === "EXACT_DUPLICATE"
+    record.submissionReceipt?.existingListingId ??
+    (record.matchResult?.outcome === "EXACT_DUPLICATE"
       ? record.matchResult.targetListingId
-      : null;
+      : null);
   return (
     <section
       aria-label="最近 URL 送件收據"
@@ -787,10 +884,17 @@ function IntakeTable({
             const outcome = record.matchOutcome ?? record.matchResult?.outcome;
             const owner = claimedOwners[record.id] ?? record.owner;
             const retryable = record.stage === "FAILED" && record.failure?.retryable;
+            const replayable =
+              record.stage === "FAILED" &&
+              !record.failure?.retryable &&
+              record.failure?.nextAction === "REPLAY_FROM_CHECKPOINT";
             const relatedListingId = authoritativeRelatedListingId(record);
+            const claimable =
+              !record.assignmentId || record.assignmentStatus === "UNASSIGNED";
             const claimDecision = permissionFor(record, "assign");
             const reviewDecision = permissionFor(record, "decide");
             const retryDecision = permissionFor(record, "retry");
+            const replayDecision = permissionFor(record, "replayScore");
             const correctionDecision = permissionFor(record, "correct");
             return (
               <tr
@@ -850,7 +954,7 @@ function IntakeTable({
                 <td>
                   <div className={styles.intakeTableActions}>
                     <a className={styles.secondaryButton} data-testid={`intake-open-${record.id}`} href={intakeDetailHref(record.id)}>開啟</a>
-                    {claimDecision.allowed && !readOnly && !owner ? (
+                    {claimDecision.allowed && !readOnly && claimable ? (
                       <button className={styles.secondaryButton} data-testid={`intake-claim-${record.id}`} disabled={Boolean(claimingId)} onClick={() => onClaim(record)} type="button">
                         {claimingId === record.id ? "認領中…" : "認領"}
                       </button>
@@ -861,10 +965,19 @@ function IntakeTable({
                     {retryable && retryDecision.allowed ? (
                       <button className={styles.secondaryButton} data-testid={`intake-retry-${record.id}`} onClick={() => onRetry(record)} type="button">重試</button>
                     ) : null}
+                    {replayable && replayDecision.allowed ? (
+                      <a
+                        className={styles.secondaryButton}
+                        data-testid={`intake-replay-${record.id}`}
+                        href={intakeDetailHref(record.id, "section=timeline&action=replay")}
+                      >
+                        重播
+                      </a>
+                    ) : null}
                     {correctionDecision.allowed && !readOnly && (record.stage === "AWAITING_ASSISTED_ENTRY" || record.stage === "NEEDS_REVIEW") ? (
                       <a className={styles.secondaryButton} data-testid={`intake-correction-${record.id}`} href={intakeDetailHref(record.id, "section=fields&action=correction")}>要求補正</a>
                     ) : null}
-                    {!claimDecision.allowed && !owner && claimDecision.reasonCode ? (
+                    {!claimDecision.allowed && claimable && claimDecision.reasonCode ? (
                       <span className={styles.rowMeta}>
                         <code>{claimDecision.reasonCode}</code>
                       </span>
@@ -872,6 +985,11 @@ function IntakeTable({
                     {retryable && !retryDecision.allowed && retryDecision.reasonCode ? (
                       <span className={styles.rowMeta}>
                         <code>{retryDecision.reasonCode}</code>
+                      </span>
+                    ) : null}
+                    {replayable && !replayDecision.allowed && replayDecision.reasonCode ? (
+                      <span className={styles.rowMeta}>
+                        <code>{replayDecision.reasonCode}</code>
                       </span>
                     ) : null}
                   </div>

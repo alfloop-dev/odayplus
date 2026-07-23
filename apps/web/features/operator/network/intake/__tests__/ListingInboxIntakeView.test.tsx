@@ -153,7 +153,7 @@ const records: InboxIntakeRecord[] = [
     id: "IN-102",
     sourceId: "source-manual",
     intakeMethod: "MANUAL",
-    owner: "",
+    owner: "actor-submitter",
     assignmentId: null,
     assignmentStatus: null,
     stage: "AWAITING_ASSISTED_ENTRY",
@@ -333,6 +333,38 @@ describe("ListingInboxIntakeView", () => {
     );
     expect(screen.getByTestId("intake-submitter")).toHaveTextContent(
       "初始 owner queue-expansion-north",
+    );
+  });
+
+  it("creates an authoritative saved view from current filters and selects its returned id", async () => {
+    const onCreateSavedView = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { id: "saved-authoritative-1", label: "北區本週待覆核" },
+    });
+    renderView({ onCreateSavedView });
+
+    fireEvent.change(screen.getByTestId("intake-filter-stage"), {
+      target: { value: "NEEDS_REVIEW" },
+    });
+    fireEvent.change(screen.getByLabelText("儲存目前檢視"), {
+      target: { value: "北區本週待覆核" },
+    });
+    fireEvent.click(screen.getByTestId("intake-create-saved-view-submit"));
+
+    await waitFor(() => expect(onCreateSavedView).toHaveBeenCalledTimes(1));
+    expect(onCreateSavedView).toHaveBeenCalledWith(
+      "北區本週待覆核",
+      expect.objectContaining({
+        intakeStage: "NEEDS_REVIEW",
+        page: 1,
+        pageSize: 10,
+      }),
+    );
+    expect(
+      await screen.findByTestId("intake-create-saved-view-receipt"),
+    ).toHaveTextContent("saved-authoritative-1");
+    expect(new URLSearchParams(window.location.search).get("savedView")).toBe(
+      "saved-authoritative-1",
     );
   });
 
@@ -595,6 +627,32 @@ describe("ListingInboxIntakeView", () => {
     fireEvent.click(screen.getByTestId("intake-retry-IN-FAIL"));
     expect(onRetryIntake).toHaveBeenCalledWith("IN-FAIL");
     expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("routes retry-exhausted failures to durable checkpoint replay", () => {
+    const exhausted = intake({
+      id: "IN-EXHAUSTED",
+      stage: "FAILED",
+      failure: {
+        code: "MAX_RETRIES_EXHAUSTED",
+        summary: "Retrieval timed out until the retry budget was exhausted.",
+        nextAction: "REPLAY_FROM_CHECKPOINT",
+        retryable: false,
+      },
+      needsReview: false,
+      retryable: false,
+    });
+
+    renderView({
+      pageData: { ...pageData, items: [exhausted], total: 1 },
+      records: [exhausted],
+    });
+
+    expect(screen.queryByTestId("intake-retry-IN-EXHAUSTED")).not.toBeInTheDocument();
+    expect(screen.getByTestId("intake-replay-IN-EXHAUSTED")).toHaveAttribute(
+      "href",
+      "/w/expansion/listings/intake/IN-EXHAUSTED?section=timeline&action=replay",
+    );
   });
 
   it("shows permission, loading, error and degraded evidence states", () => {

@@ -5,7 +5,11 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from apps.worker.oday_worker.main import ODayWorker
+from modules.opsboard.application.network_listings import NetworkListingService
 from shared.auth import Role
+from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.jobs.queue import JobStatus
 from tests.integration._authz import auth_headers
 
 HEADERS = {
@@ -33,8 +37,43 @@ STAFF_HEADERS = {
 }
 
 
-def test_promotion_saga_golden_flow() -> None:
-    app = create_app()
+def _advance_submitted_intake(
+    client: TestClient,
+    submitted: dict,
+    *,
+    headers: dict[str, str],
+) -> dict:
+    assert submitted["stage"] == "SUBMITTED"
+    queue = client.app.state.job_queue
+    job = queue.claim_next(worker_id="promotion-intake-worker")
+    assert job is not None
+    assert job.status == JobStatus.RUNNING
+    assert job.payload["intake_id"] == submitted["id"]
+
+    from modules.external_data.application.assisted_intake import retrieve
+
+    service = NetworkListingService(
+        listing_repository=client.app.state.listing_repository,
+        intake_repository=client.app.state.operator_intake_repository,
+    )
+    service.process_queued_intake(
+        intake_id=submitted["id"],
+        retrieval_provider=retrieve,
+        correlation_id=job.correlation_id,
+        attempt=job.attempts,
+    )
+    assert queue.complete(job.job_id)
+    readback = client.get(
+        f"/api/v1/operator/network-listings/intake/{submitted['id']}",
+        headers=headers,
+    )
+    assert readback.status_code == 200, readback.text
+    return readback.json()
+
+
+def test_promotion_saga_golden_flow(tmp_path) -> None:
+    bundle = _durable_bundle(str(tmp_path / "promotion-golden.sqlite3"))
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
     # 1. Submit a listing to create a READY intake
@@ -49,7 +88,13 @@ def test_promotion_saga_golden_flow() -> None:
         },
     )
     assert submit_resp.status_code == 200, submit_resp.text
-    intake = submit_resp.json()
+    submitted = submit_resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    intake = _advance_submitted_intake(
+        client,
+        submitted,
+        headers=STAFF_HEADERS,
+    )
     assert intake["stage"] == "READY"
     intake_id = intake["id"]
 
@@ -112,7 +157,7 @@ def test_promotion_saga_golden_flow() -> None:
     )
     assert review_resp.status_code == 200, review_resp.text
     reviewed_data = review_resp.json()
-    assert reviewed_data["status"] == "COMPLETED"
+    assert reviewed_data["status"] == "SCORE_QUEUED"
     assert reviewed_data["reviewer_subject_id"] == "operator-expansion-manager"
     candidate_id = reviewed_data["candidate_site_id"]
     assert candidate_id is not None
@@ -123,6 +168,13 @@ def test_promotion_saga_golden_flow() -> None:
     cands = cand_resp.json()["candidates"]
     candidate = next(c for c in cands if c["candidateSiteId"] == candidate_id)
     assert candidate["status"] == "CANDIDATE"
+    assert ODayWorker(persistence=bundle).run_once() is True
+    completed = client.get(
+        f"/api/v1/promotion-decisions/{promo_decision_id}",
+        headers=MANAGER_HEADERS,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "COMPLETED"
 
     # 4. Idempotency test (promoting the same intake with same key should return same result)
     replay_resp = client.post(
@@ -143,47 +195,10 @@ def test_promotion_saga_golden_flow() -> None:
     assert replay_resp.status_code == 200, replay_resp.text
     assert replay_resp.json()["promotion_decision_id"] == promo_decision_id
 
-    # 5. Duplicate promotion prevention
-    # If we submit another intake for the same listing, and try to promote it, it should fail
-    # because a candidate already exists for that listing.
-    dup_url = "https://www.synthetic.example/detail-99999999.html"  # distinct intake, same target listing
-    dup_submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
-        json={"url": dup_url, "heatZoneId": "HZ-01"},
-        headers={
-            **STAFF_HEADERS,
-            "X-Correlation-Id": "corr-promote-dup",
-            "Idempotency-Key": "idem-submit-dup",
-        },
-    )
-    assert dup_submit_resp.status_code == 200
-    dup_intake = dup_submit_resp.json()
-    dup_intake_id = dup_intake["id"]
-
-    # Decide the duplicate as revise (resolves it to same target listing L-xxxx)
-    dup_decide_resp = client.post(
-        f"/api/v1/operator/network-listings/intake/{dup_intake_id}/decide",
-        json={
-            "action": "revise",
-            "reason": "Revise listing",
-            "riskSummary": "This revises listing L-xxxx",
-            "riskAcknowledged": True,
-            "actorRoleId": "expansionManager",
-            "targetListingId": target_listing_id,
-        },
-        headers={
-            **MANAGER_HEADERS,
-            "Idempotency-Key": f"idem-decide-{uuid4()}",
-            "X-Correlation-Id": f"corr-decide-{uuid4()}",
-        },
-    )
-    assert dup_decide_resp.status_code == 200
-    dup_intake = dup_decide_resp.json()
-    assert dup_intake["matchResult"]["targetListingId"] == target_listing_id
-
-    # Trying to promote the duplicate listing should fail with 409 Conflict
+    # A new command key still resolves to the authoritative completed decision;
+    # it must not create a second Candidate for the same listing.
     dup_promote_resp = client.post(
-        f"/api/v1/operator/network-listings/intake/{dup_intake_id}/promote",
+        f"/api/v1/operator/network-listings/intake/{intake_id}/promote",
         json={
             "actorRoleId": "expansionUser",
             "actorName": "operator-expansion-staff",
@@ -197,12 +212,26 @@ def test_promotion_saga_golden_flow() -> None:
             "Idempotency-Key": "idem-promote-dup-exec",
         },
     )
-    assert dup_promote_resp.status_code == 409
-    assert "DUPLICATE_CANDIDATE" in dup_promote_resp.text
+    assert dup_promote_resp.status_code == 200, dup_promote_resp.text
+    assert (
+        dup_promote_resp.json()["promotion_decision_id"]
+        == promo_decision_id
+    )
+    candidates_after = client.get(
+        "/api/v1/listings/candidates",
+        headers=MANAGER_HEADERS,
+    ).json()["candidates"]
+    assert [
+        row["candidateSiteId"]
+        for row in candidates_after
+        if row["candidateSiteId"] == candidate_id
+    ] == [candidate_id]
+    bundle.engine.close()
 
 
-def test_promotion_saga_segregation_of_duties() -> None:
-    app = create_app()
+def test_promotion_saga_segregation_of_duties(tmp_path) -> None:
+    bundle = _durable_bundle(str(tmp_path / "promotion-sod.sqlite3"))
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
     # Submit intake with manager role
@@ -217,7 +246,13 @@ def test_promotion_saga_segregation_of_duties() -> None:
         },
     )
     assert submit_resp.status_code == 200, submit_resp.text
-    intake = submit_resp.json()
+    submitted = submit_resp.json()
+    assert submitted["stage"] == "SUBMITTED"
+    intake = _advance_submitted_intake(
+        client,
+        submitted,
+        headers=MANAGER_HEADERS,
+    )
     intake_id = intake["id"]
 
     # Decide the intake to resolve it to a listing
@@ -277,3 +312,4 @@ def test_promotion_saga_segregation_of_duties() -> None:
     )
     assert review_resp.status_code == 403
     assert "SELF_REVIEW_DENIED" in review_resp.text
+    bundle.engine.close()

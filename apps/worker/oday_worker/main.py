@@ -127,6 +127,16 @@ class ODayWorker:
                         )
                     else:
                         self.job_queue.update_status(job.job_id, JobStatus.FAILED, error_message=str(exc))
+                        if job.job_type == "assisted-listing-intake":
+                            from apps.worker.assisted_listing_intake.worker import (
+                                finalize_assisted_listing_intake_failure,
+                            )
+
+                            finalize_assisted_listing_intake_failure(
+                                job,
+                                self.persistence,
+                                exc,
+                            )
                         self.telemetry.logger.info(
                             f"Job {job.job_id} marked failed (max retries reached or non-retryable)",
                             correlation_id=job.correlation_id,

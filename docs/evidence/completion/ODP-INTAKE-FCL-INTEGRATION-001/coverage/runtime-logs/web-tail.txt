@@ -1,0 +1,49 @@
+   ▲ Next.js 15.5.21
+   - Local:        http://localhost:13389
+   - Network:      http://10.140.0.2:13389
+
+ ✓ Starting...
+ ✓ Ready in 2.2s
+ ○ Compiling / ...
+ ✓ Compiled / in 10.6s (788 modules)
+ GET / 200 in 627ms
+ ⨯ [TypeError: controller[kState].transformAlgorithm is not a function] {
+  digest: '293783820'
+}
+ ○ Compiling /w/expansion/listings ...
+ ✓ Compiled /w/expansion/listings in 59.8s (2653 modules)
+ GET /w/expansion/listings 200 in 697ms
+ GET /w/expansion/listings 200 in 1352ms
+ ⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ GET /w/expansion/listings?selected=8302fdeb-289d-4817-a035-b47548ab59dd 200 in 365ms
+ GET /w/expansion/listings?selected=50f03adc-e186-438e-942c-baf6132a2e99&savedView=37bb2482-3372-41e3-8e35-72f21222becf 200 in 1004ms
+ GET /w/expansion/listings 200 in 1249ms
+ GET /w/expansion/listings 200 in 1385ms
+ GET /w/expansion/listings?search=no-result-1784843003903-0fgiu0s 200 in 966ms
+ GET /w/expansion/listings 200 in 861ms
+ GET /w/expansion/listings 200 in 570ms
+ ○ Compiling /w/expansion/listings/intake/[intakeId] ...
+ GET /w/expansion/listings?selected=1cc4f70e-f947-4945-909c-984a4298ca8b 200 in 1827ms
+ ✓ Compiled /w/expansion/listings/intake/[intakeId] in 5.5s (2623 modules)
+ GET /w/expansion/listings/intake/1cc4f70e-f947-4945-909c-984a4298ca8b 200 in 9320ms
+ GET /w/expansion/listings/intake/1cc4f70e-f947-4945-909c-984a4298ca8b 200 in 8748ms
+ GET /w/expansion/listings/intake/1cc4f70e-f947-4945-909c-984a4298ca8b 200 in 1069ms
+ GET /w/expansion/listings 200 in 2161ms
+ GET /w/expansion/listings?selected=c614ce67-2ba9-4937-8ecc-4268cefa64d6 200 in 517ms
+ GET /w/expansion/listings/intake/c614ce67-2ba9-4937-8ecc-4268cefa64d6 200 in 545ms
+ GET /w/expansion/listings 200 in 959ms
+ ○ Compiling /w/expansion/listings/[listingId] ...
+ GET /w/expansion/listings?selected=4f29e4f6-326c-44f2-a59c-2bde5220725a 200 in 1092ms
+ ✓ Compiled /w/expansion/listings/[listingId] in 4.1s (2641 modules)
+ GET /w/expansion/listings?selected=35da0080-79ef-4c49-991b-7f5f3c68c306 200 in 3134ms
+ GET /w/expansion/listings/intake/545a531f-1d80-4843-9fda-4234ac483ea7?section=promotion 200 in 963ms
+ GET /w/expansion/listings/intake/545a531f-1d80-4843-9fda-4234ac483ea7?section=promotion 200 in 696ms
+ GET /w/expansion/listings/intake/f1367be6-0e5d-4e21-9c90-2d5741314020?section=error 200 in 489ms
+ GET /w/expansion/listings/intake/50f03adc-e186-438e-942c-baf6132a2e99?section=error 200 in 1969ms
+ GET /w/expansion/listings/intake/3d5e036a-b4f0-4069-aa32-1c6c4eb44a7a?section=error 200 in 865ms
+ GET /w/expansion/listings/intake/c012aae5-90cc-4361-b6a5-e1c05b1511cc?section=error 200 in 1340ms
+ GET /w/expansion/listings/intake/8f43cdb4-12a1-41f6-911c-ac28264c6a8a?section=error 200 in 1040ms
+ GET /w/expansion/listings/intake/b3d29f64-170a-4904-9bad-4bd67cbde352?section=error 200 in 1104ms
+ GET /w/expansion/listings/intake/338d3201-d9ff-492b-9e40-b67fdd4d6e67?section=error 200 in 886ms
+[?25h
