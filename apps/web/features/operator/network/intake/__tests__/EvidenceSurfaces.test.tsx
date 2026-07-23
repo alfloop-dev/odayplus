@@ -22,6 +22,7 @@ import type {
   AuthoritativeEvidenceReceipt,
   AuthoritativeEvidenceVerification,
   AuthoritativeExportReceipt,
+  AuthoritativeGovernedExportAccess,
   AuthoritativeIdentityReceipt,
 } from "../evidenceContracts";
 
@@ -277,6 +278,107 @@ describe("DurableReceiptPanel authoritative-only rendering", () => {
       "server-signature-001",
     );
   });
+
+  it("never creates a local export or copy action from receipt data", () => {
+    render(<DurableReceiptPanel exportReceipts={[exportReceipt]} />);
+
+    expect(
+      screen.getByTestId("receipt-export-export-manifest-server-001"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("receipt-copy-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("receipt-export-button")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers only a server-issued governed export with matching permission and purpose", () => {
+    const governedExportAccess: AuthoritativeGovernedExportAccess = {
+      export_manifest_id: exportReceipt.export_manifest_id,
+      allowed: true,
+      permission: "evidence.export.download",
+      purpose: exportReceipt.purpose,
+      download_url: "/api/v1/governed-exports/export-manifest-server-001/content",
+    };
+    const { rerender } = render(
+      <DurableReceiptPanel
+        exportReceipts={[exportReceipt]}
+        governedExportAccess={governedExportAccess}
+      />,
+    );
+
+    expect(screen.getByTestId("receipt-governed-export-link")).toHaveAttribute(
+      "href",
+      governedExportAccess.download_url,
+    );
+    expect(screen.queryByTestId("receipt-copy-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("receipt-export-button")).not.toBeInTheDocument();
+
+    rerender(
+      <DurableReceiptPanel
+        exportReceipts={[exportReceipt]}
+        governedExportAccess={{
+          ...governedExportAccess,
+          purpose: "Different purpose",
+        }}
+      />,
+    );
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <DurableReceiptPanel
+        exportReceipts={[exportReceipt]}
+        governedExportAccess={{
+          ...governedExportAccess,
+          permission: "evidence.export.request",
+        }}
+      />,
+    );
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <DurableReceiptPanel
+        exportReceipts={[exportReceipt]}
+        governedExportAccess={{
+          ...governedExportAccess,
+          export_manifest_id: "different-export-manifest",
+        }}
+      />,
+    );
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <DurableReceiptPanel
+        exportReceipts={[{
+          ...exportReceipt,
+          download_evidence_id: null,
+        }]}
+        governedExportAccess={governedExportAccess}
+      />,
+    );
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <DurableReceiptPanel
+        exportReceipts={[exportReceipt]}
+        governedExportAccess={{
+          ...governedExportAccess,
+          allowed: false,
+        }}
+      />,
+    );
+    expect(
+      screen.queryByTestId("receipt-governed-export-link"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("EvidencePanel authoritative metadata", () => {
@@ -377,6 +479,50 @@ describe("EvidencePanel authoritative metadata", () => {
     expect(screen.getByTestId("field-mask-broker_contact")).toHaveTextContent(
       "FIELD_MASKED",
     );
+  });
+
+  it("forces every evidence field masked when access is globally masked", () => {
+    const fields: FieldValue[] = [
+      {
+        field_path: "broker_contact",
+        parsed: "global-private-parsed-one",
+        normalized: "global-private-normalized-one",
+        corrected: "global-private-corrected-one",
+        effective: "global-private-effective-one",
+        classification: "RESTRICTED",
+        masked: false,
+      },
+      {
+        field_path: "owner_contact",
+        parsed: "global-private-parsed-two",
+        normalized: "global-private-normalized-two",
+        corrected: "global-private-corrected-two",
+        effective: "global-private-effective-two",
+        classification: "RESTRICTED",
+        masked: false,
+      },
+    ];
+
+    const { container } = render(
+      <EvidencePanel
+        record={record}
+        fields={fields}
+        access={{
+          masked: true,
+          mask_reason_code: "ACCESS_MASKED",
+        }}
+      />,
+    );
+
+    for (const field of fields) {
+      expect(container.textContent).not.toContain(String(field.parsed));
+      expect(container.textContent).not.toContain(String(field.normalized));
+      expect(container.textContent).not.toContain(String(field.corrected));
+      expect(container.textContent).not.toContain(String(field.effective));
+      expect(
+        screen.getByTestId(`field-mask-${field.field_path}`),
+      ).toHaveTextContent("ACCESS_MASKED");
+    }
   });
 });
 
