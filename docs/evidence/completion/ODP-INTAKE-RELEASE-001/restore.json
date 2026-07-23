@@ -1,7 +1,7 @@
 {
   "drill": "restore",
   "environment": "staging-surrogate",
-  "finished_at": "2026-07-23T13:15:48.621727+00:00",
+  "finished_at": "2026-07-23T13:22:24.344879+00:00",
   "not_executed_targets": [
     {
       "reason": "Quarterly Cloud SQL PITR restore and semiannual regional failover need the live production project; the drill executes the full \u00a74 order against the staging surrogate.",
@@ -15,7 +15,7 @@
   },
   "passed": true,
   "restore_order_source": "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md \u00a74",
-  "started_at": "2026-07-23T13:15:48.589815+00:00",
+  "started_at": "2026-07-23T13:22:24.311902+00:00",
   "steps": [
     {
       "action": "IAM/KMS/Secret Manager and approved residency configuration",
@@ -31,9 +31,9 @@
     {
       "action": "Cloud SQL isolated PITR restore; validate schema/checksums/tenant counts",
       "passed": true,
-      "restored_file_sha256": "d8356238380be81c052447512f2ae327f721d7b4bc3010eb63fcb020c0f7e841",
-      "restored_from": "/tmp/intake-release-drill-jwengzm6/migration/migration-staging.sqlite3",
-      "restored_to": "/tmp/intake-release-drill-jwengzm6/restore/restored-migration-staging.sqlite3",
+      "restored_file_sha256": "a48b90efbb57d6436e82efbaa3274a8899c4fac4d014c7ba98c2799860b46edf",
+      "restored_from": "/tmp/intake-release-drill-mj6csst3/migration/migration-staging.sqlite3",
+      "restored_to": "/tmp/intake-release-drill-mj6csst3/restore/restored-migration-staging.sqlite3",
       "step": 2,
       "table_checksums_match": true,
       "table_counts_match": true,

@@ -26,5 +26,6 @@ unrecorded live runtime evidence blocks the cutover phase and exits nonzero
 on drift. Cutover reaches `cutover_authorized: true` only when every §12
 row is approved, `live_runtime_evidence.yaml` is validly recorded,
 production canary units 3–7 all have current passing evidence, and every
-drill is green.
+drill is green in the same `--phase all` process. Standalone cutover checks
+are diagnostic and cannot authorize from cached reports.
 See `docs/runbooks/assisted-listing-intake-release.md` for the operator flow.

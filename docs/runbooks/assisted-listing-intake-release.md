@@ -100,7 +100,9 @@ Phases run in this fixed order; each emits `<phase>.json` evidence:
      live staging runtime evidence recorded, production canary units 3–7
      each backed by a current passing live result, and every drill green.
      The cutover gate compares the canary evidence digest with the current
-     register, so a stale `canary.json` cannot authorize release.
+     register and requires all prior phases from the same `--phase all`
+     process. A stale or fabricated cached JSON report cannot authorize
+     release. `--phase cutover` alone is diagnostic and remains blocked.
    Any prematurely enabled flag, drifted approval/evidence row, or failed
    drill fails this phase in either state.
 
@@ -135,9 +137,10 @@ as production-ready; the readiness phase proves each rejection at runtime.
    `evidence_ref` (link to the exact evidence file/commit).
 3. Commit via a task PR. Automation must never flip a row; the harness
    treats an approved row without those fields as drift and blocks.
-4. Re-run `--phase canary`, then `--phase cutover`. Cutover unblocks only
-   when **all** rows are approved, live staging runtime evidence is recorded,
-   and the current register proves passing results through canary unit 7.
+4. Re-run `--phase all`. Cutover unblocks only when **all** rows are approved,
+   live staging runtime evidence is recorded, the current register proves
+   passing results through canary unit 7, and every prior phase completed in
+   that same process. A standalone `--phase cutover` never authorizes release.
 
 ### Recording live staging runtime evidence (human release authority only)
 
@@ -157,8 +160,9 @@ CLI override. To record it:
    The harness accepts a production unit as passed **only** from this
    record — never from a surrogate execution.
 4. Commit via a task PR and re-run `--phase canary` after each unit result.
-   Re-run `--phase cutover` only after units 3–7 all pass. Cutover rejects
-   incomplete ladders and canary evidence generated from an older register.
+   After units 3–7 all pass, run `--phase all` for governed cutover.
+   Cutover rejects incomplete ladders, older-register evidence, and cached
+   phase summaries not produced in the current process.
 
 The register is schema-validated fail-closed at load: `recorded: true`
 missing any attestation field or required target, a completed target or

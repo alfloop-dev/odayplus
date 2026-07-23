@@ -16,7 +16,8 @@ evidence per phase plus a summary report:
     cutover     governed cutover gate — BLOCKED while any §12 row is
                 pending, live runtime evidence is unrecorded, or production
                 canary units 3-7 lack current passing evidence; AUTHORIZED
-                only after every approval and the complete live ladder pass
+                only during a fresh --phase all run after every approval and
+                the complete live ladder pass
 
 The harness fails closed: any pending approval, enabled production flag,
 governance-config drift, missing live runtime evidence, or an incomplete
@@ -103,7 +104,13 @@ def run_readiness(config, output_dir: Path) -> dict[str, Any]:
     return result
 
 
-def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def run_cutover_gate(
+    config,
+    output_dir: Path,
+    phase_results: dict[str, dict[str, Any]],
+    *,
+    fresh_phase_names: set[str] | None = None,
+) -> dict[str, Any]:
     from scripts.release.assisted_listing_intake.gates import (
         check_feature_flags,
         check_live_runtime_evidence,
@@ -120,6 +127,17 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
         if name not in ("cutover",)
     }
     failed_drills = [name for name, ok in drill_gates.items() if not ok]
+    required_fresh_phases = {
+        "readiness",
+        "migration",
+        "shadow",
+        "killswitch",
+        "restore",
+        "canary",
+        "uat",
+    }
+    fresh_phases = fresh_phase_names or set()
+    missing_fresh_phases = sorted(required_fresh_phases - fresh_phases)
     canary = phase_results.get("canary") or {}
     canary_drill_complete = canary.get("production_ladder_complete") is True
     live_register_complete = live["production_canary_complete"] is True
@@ -157,6 +175,11 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
             "production canary evidence is stale: rerun --phase canary against "
             "the current live_runtime_evidence.yaml register"
         )
+    if missing_fresh_phases:
+        blocked_reasons.append(
+            "cutover authorization requires fresh in-process drill results; "
+            f"rerun --phase all (missing fresh phases: {missing_fresh_phases})"
+        )
     # Flags may only be enabled (via dual approval) once every §12 row is
     # approved and live evidence exists; earlier than that is drift.
     release_prerequisites_incomplete = (
@@ -164,6 +187,7 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
         or not live["recorded"]
         or not production_ladder_complete
         or not canary_evidence_current
+        or bool(missing_fresh_phases)
     )
     premature_flags = (
         flags["enabled_production_flags"] if release_prerequisites_incomplete else []
@@ -189,6 +213,11 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
         "blocked_reasons": blocked_reasons,
         "drill_gates": drill_gates,
         "failed_drills": failed_drills,
+        "fresh_phase_evidence": {
+            "required": sorted(required_fresh_phases),
+            "present": sorted(fresh_phases),
+            "missing": missing_fresh_phases,
+        },
         "release_authority": {
             "pending_owners": authority["pending_owners"],
             "all_approved": authority["all_approved"],
@@ -323,7 +352,12 @@ def main(argv: list[str] | None = None) -> int:
                     for name in PHASE_ORDER
                     if name != "cutover"
                 }
-                results["cutover"] = run_cutover_gate(config, output_dir, prior)
+                results["cutover"] = run_cutover_gate(
+                    config,
+                    output_dir,
+                    prior,
+                    fresh_phase_names=set(results),
+                )
     finally:
         if scratch_ctx is not None:
             scratch_ctx.cleanup()

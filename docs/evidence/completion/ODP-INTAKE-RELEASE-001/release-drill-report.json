@@ -3,7 +3,7 @@
   "cutover_blocked": true,
   "design_ref": "ODP-SD-INTAKE-001 v0.2.1",
   "failed_phases": [],
-  "generated_at": "2026-07-23T13:15:48.626858+00:00",
+  "generated_at": "2026-07-23T13:22:24.350057+00:00",
   "live_runtime_evidence_recorded": false,
   "not_executed_targets": [
     {

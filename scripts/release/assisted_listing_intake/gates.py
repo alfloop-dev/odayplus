@@ -31,6 +31,12 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _json_evidence_value(value: Any) -> str:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Unsupported live evidence value: {type(value).__name__}")
+
+
 def build_intake_flag_registry(config: ReleaseConfig) -> FeatureFlagRegistry:
     """Load the manifest flags through the production governance engine.
 
@@ -119,6 +125,7 @@ def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
             },
             sort_keys=True,
             separators=(",", ":"),
+            default=_json_evidence_value,
         ).encode()
     ).hexdigest()
     missing_canary_units = [

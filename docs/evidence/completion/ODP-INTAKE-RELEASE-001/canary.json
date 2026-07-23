@@ -1,6 +1,6 @@
 {
   "drill": "write_canary_ladder",
-  "finished_at": "2026-07-23T13:15:48.623914+00:00",
+  "finished_at": "2026-07-23T13:22:24.347271+00:00",
   "gate_facts": {
     "all_p0_contract_group_approvals": false,
     "error_budget_intact": true,
@@ -22,7 +22,7 @@
     "flag": "assisted_intake_v1_promotion",
     "status": "disabled \u2014 separately gated after identity/review UAT (\u00a74 Phase 5/6)"
   },
-  "started_at": "2026-07-23T13:15:48.622964+00:00",
+  "started_at": "2026-07-23T13:22:24.346092+00:00",
   "units": [
     {
       "completed": 6,

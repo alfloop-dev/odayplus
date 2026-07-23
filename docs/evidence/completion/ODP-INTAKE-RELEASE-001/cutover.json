@@ -3,7 +3,7 @@
     "\u00a712 approvals pending: ['Product / Expansion Ops', 'Security', 'Privacy', 'Legal / Commercial', 'Data owner', 'Platform / SRE', 'Expansion Engineering', 'QA', 'Release authority']",
     "no live staging runtime evidence recorded in infra/assisted-listing-intake/live_runtime_evidence.yaml (missing targets: ['production_shadow_window_7d_or_10k_rows', 'live_staging_e2e_gcs_cloud_tasks_pubsub', 'cloud_sql_pitr_and_regional_failover'])"
   ],
-  "checked_at": "2026-07-23T13:15:48.625024+00:00",
+  "checked_at": "2026-07-23T13:22:24.348386+00:00",
   "cutover_authorized": false,
   "cutover_blocked": true,
   "drill_gates": {
@@ -16,6 +16,27 @@
     "uat": true
   },
   "failed_drills": [],
+  "fresh_phase_evidence": {
+    "missing": [],
+    "present": [
+      "canary",
+      "killswitch",
+      "migration",
+      "readiness",
+      "restore",
+      "shadow",
+      "uat"
+    ],
+    "required": [
+      "canary",
+      "killswitch",
+      "migration",
+      "readiness",
+      "restore",
+      "shadow",
+      "uat"
+    ]
+  },
   "live_runtime_evidence": {
     "evidence_ref": null,
     "missing_targets": [
