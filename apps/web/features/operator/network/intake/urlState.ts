@@ -1,5 +1,67 @@
 import type { IntakeUrlState } from "./types";
 
+export const INTAKE_DETAIL_SECTIONS = [
+  "timeline",
+  "evidence",
+  "identity",
+  "assignment",
+  "receipts",
+  "promotion",
+  "error",
+] as const;
+
+export type IntakeDetailSection = (typeof INTAKE_DETAIL_SECTIONS)[number];
+
+export function normalizeIntakeDetailSection(
+  value: string | null | undefined,
+  fallback: IntakeDetailSection = "timeline",
+): IntakeDetailSection {
+  return INTAKE_DETAIL_SECTIONS.includes(value as IntakeDetailSection)
+    ? (value as IntakeDetailSection)
+    : fallback;
+}
+
+export function intakeDetailHref(
+  intakeId: string,
+  searchParams?: URLSearchParams | string,
+): string {
+  const params =
+    searchParams instanceof URLSearchParams
+      ? new URLSearchParams(searchParams.toString())
+      : new URLSearchParams(searchParams);
+
+  params.delete("selected");
+  params.delete("view");
+  if (params.get("dialog") === "detail" || params.get("dialog") === "add") {
+    params.delete("dialog");
+  }
+
+  const query = params.toString();
+  return `/w/expansion/listings/intake/${encodeURIComponent(intakeId)}${query ? `?${query}` : ""}`;
+}
+
+export function intakeInboxHref(searchParams?: URLSearchParams | string): string {
+  const params =
+    searchParams instanceof URLSearchParams
+      ? new URLSearchParams(searchParams.toString())
+      : new URLSearchParams(searchParams);
+
+  for (const key of [
+    "dialog",
+    "section",
+    "field",
+    "decision",
+    "receipt",
+    "compare",
+    "compareTarget",
+    "task",
+  ]) {
+    params.delete(key);
+  }
+  const query = params.toString();
+  return `/w/expansion/listings${query ? `?${query}` : ""}`;
+}
+
 export function parseUrlState(
   searchParams: URLSearchParams | Record<string, string | string[] | undefined> | string,
 ): IntakeUrlState {

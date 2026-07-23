@@ -14,8 +14,14 @@ import type {
   SlaReceipt,
   TransitionReceipt,
 } from "@oday-plus/openapi-client";
+import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
+import {
+  IdentityDecisionPanel,
+  type IdentityDecisionResultReceipt,
+  type IdentityGraphMode,
+} from "./IdentityDecisionPanel";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
@@ -39,7 +45,14 @@ import {
   type IntakeDecisionKind,
 } from "./intakeTypes";
 
-export type IntakeDetailTab = "timeline" | "evidence" | "receipts" | "promotion" | "error";
+export type IntakeDetailTab =
+  | "timeline"
+  | "evidence"
+  | "identity"
+  | "assignment"
+  | "receipts"
+  | "promotion"
+  | "error";
 
 export type IntakeProcessingDetailProps = {
   record: AssistedIntake;
@@ -60,7 +73,21 @@ export type IntakeProcessingDetailProps = {
   slaReceipt?: SlaReceipt;
   correctionReceipts?: CorrectionReceipt[];
   onClose: () => void;
+  presentation?: "dialog" | "page";
+  activeTab?: IntakeDetailTab;
+  onActiveTabChange?: (tab: IntakeDetailTab) => void;
+  compareTargetId?: string | null;
   onDecide?: (kind: IntakeDecisionKind) => void;
+  onIdentityDecision?: (input: {
+    kind: IntakeDecisionKind;
+    graphMode: IdentityGraphMode;
+    reason: string;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+    proposerId: string;
+    reviewerId: string;
+    ifMatchVersion?: string;
+  }) => Promise<IdentityDecisionResultReceipt | void> | void;
   onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
   onReplayDlq?: (jobId?: string) => void;
@@ -81,6 +108,7 @@ export type IntakeProcessingDetailProps = {
   gateSnapshotSha256?: string;
   promotionBusy?: boolean;
   promotionError?: IntakeApiError | null;
+  promotionHydrated?: boolean;
   promotionIdempotencyReplayed?: boolean;
   canRequestPromotion?: boolean;
   canReviewPromotion?: boolean;
@@ -110,7 +138,12 @@ export function IntakeProcessingDetail({
   slaReceipt,
   correctionReceipts = [],
   onClose,
+  presentation = "dialog",
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
+  compareTargetId,
   onDecide,
+  onIdentityDecision,
   onOpenFix,
   onRetry,
   onReplayDlq,
@@ -128,6 +161,7 @@ export function IntakeProcessingDetail({
   gateSnapshotSha256,
   promotionBusy = false,
   promotionError = null,
+  promotionHydrated = true,
   promotionIdempotencyReplayed = false,
   canRequestPromotion = false,
   canReviewPromotion = false,
@@ -138,8 +172,15 @@ export function IntakeProcessingDetail({
   onLookupPromotionDecision,
 }: IntakeProcessingDetailProps) {
   const isFailedOrQuarantined = record.stage === "FAILED" || record.stage === "QUARANTINED" || Boolean(error);
-  const [activeTab, setActiveTab] = useState<IntakeDetailTab>(isFailedOrQuarantined ? "error" : "timeline");
+  const [internalActiveTab, setInternalActiveTab] = useState<IntakeDetailTab>(
+    isFailedOrQuarantined ? "error" : "timeline",
+  );
   const [maskedView, setMaskedView] = useState(false);
+  const activeTab = controlledActiveTab ?? internalActiveTab;
+  const setActiveTab = (tab: IntakeDetailTab) => {
+    setInternalActiveTab(tab);
+    onActiveTabChange?.(tab);
+  };
 
   const options = decisionOptions(record);
   const outcome = record.matchResult?.outcome;
@@ -147,15 +188,19 @@ export function IntakeProcessingDetail({
   // The promotion tab exists only when the container wired the saga slice —
   // and only once the intake is READY (or a decision receipt already exists),
   // mirroring the server's WORKFLOW_STATE_DENIED gate.
-  const promotionMounted = Boolean(currentOperator && gateSnapshotSha256 !== undefined);
+  const promotionMounted = Boolean(
+    promotionHydrated && currentOperator && gateSnapshotSha256 !== undefined,
+  );
   const promotionAvailable = promotionMounted && (record.stage === "READY" || Boolean(promotion));
 
   return (
     <IntakeDialogShell
       ariaLabel={`收件處理詳情 ${record.id}`}
       className={styles.panelWide}
+      dismissible={!busy && !promotionBusy}
       onClose={onClose}
-      screenLabel="Dialog 收件處理詳情"
+      presentation={presentation}
+      screenLabel={presentation === "page" ? "Page 收件處理詳情" : "Dialog 收件處理詳情"}
       testId={testId}
     >
       {/* Header */}
@@ -180,8 +225,18 @@ export function IntakeProcessingDetail({
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginLeft: "auto" }}>
           <span className={styles.deepLink} data-testid="intake-detail-deeplink">
-            #intake/{record.id}
+            /w/expansion/listings/intake/{record.id}
           </span>
+          <a
+            className={styles.secondaryButton}
+            data-testid="intake-open-source-link"
+            href={record.originalUrl}
+            rel="noopener noreferrer"
+            target="_blank"
+            title="在新視窗開啟來源；目前收件頁面與操作狀態會保留"
+          >
+            開啟來源
+          </a>
           {onRefresh && (
             <button
               type="button"
@@ -193,8 +248,14 @@ export function IntakeProcessingDetail({
               🔄 重新整理
             </button>
           )}
-          <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
-            ×
+          <button
+            aria-label={presentation === "page" ? "返回 Listing 收件匣" : "關閉"}
+            className={styles.dialogClose}
+            disabled={busy || promotionBusy}
+            onClick={onClose}
+            type="button"
+          >
+            {presentation === "page" ? "返回收件匣" : "×"}
           </button>
         </div>
       </div>
@@ -245,6 +306,42 @@ export function IntakeProcessingDetail({
           data-testid="tab-evidence"
         >
           📋 證據與比對 (Evidence)
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("identity")}
+          style={{
+            padding: "6px 12px",
+            borderRadius: "6px",
+            fontSize: "11.5px",
+            fontWeight: activeTab === "identity" ? 700 : 500,
+            background: activeTab === "identity" ? "#ffffff" : "transparent",
+            color: activeTab === "identity" ? "#2e3a97" : "#64748b",
+            border: activeTab === "identity" ? "1px solid #cbd5e1" : "none",
+            cursor: "pointer",
+          }}
+          data-testid="tab-identity"
+        >
+          身分比對與決策 (Identity)
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("assignment")}
+          style={{
+            padding: "6px 12px",
+            borderRadius: "6px",
+            fontSize: "11.5px",
+            fontWeight: activeTab === "assignment" ? 700 : 500,
+            background: activeTab === "assignment" ? "#ffffff" : "transparent",
+            color: activeTab === "assignment" ? "#2e3a97" : "#64748b",
+            border: activeTab === "assignment" ? "1px solid #cbd5e1" : "none",
+            cursor: "pointer",
+          }}
+          data-testid="tab-assignment"
+        >
+          指派與 SLA (Assignment)
         </button>
 
         <button
@@ -378,7 +475,41 @@ export function IntakeProcessingDetail({
           />
         )}
 
-        {/* Tab 3: Receipts */}
+        {/* Full desktop compare and reversible identity decision. */}
+        {activeTab === "identity" && (
+          <IdentityDecisionPanel
+            busy={busy}
+            currentOperator={currentOperator}
+            error={error}
+            onRefresh={onRefresh}
+            onSubmitDecision={
+              onIdentityDecision ??
+              (async () => {
+                throw new Error("目前無可用的身分決策命令；請重新整理或聯絡資料管理員。");
+              })
+            }
+            record={record}
+            targetListing={{
+              id: compareTargetId ?? record.matchResult?.targetListingId ?? undefined,
+            }}
+          />
+        )}
+
+        {/* Assignment/SLA is part of the durable production composition. */}
+        {activeTab === "assignment" && (
+          <AssignmentSlaSummary
+            busy={busy}
+            currentUserId={currentOperator?.id}
+            onClaim={onClaimAssignment}
+            onOpenPause={onOpenPause}
+            onOpenTransfer={onOpenTransfer}
+            onResume={onResumeSla}
+            record={record}
+            userRole={currentOperator?.role}
+          />
+        )}
+
+        {/* Tab: Receipts */}
         {activeTab === "receipts" && (
           <DurableReceiptPanel
             record={record}
@@ -391,6 +522,23 @@ export function IntakeProcessingDetail({
         )}
 
         {/* Tab: Candidate promotion saga (UX-SCR-EXP-003F) */}
+        {activeTab === "promotion" && !promotionHydrated && (
+          <div
+            aria-live="polite"
+            className={styles.noteBox}
+            data-testid="promotion-hydration-status"
+            role="status"
+          >
+            正在載入既有晉升決策與工作收據…
+          </div>
+        )}
+
+        {activeTab === "promotion" && promotionHydrated && !promotionAvailable && (
+          <div className={styles.noteBox} data-testid="promotion-unavailable-state" role="status">
+            此收件目前尚未符合晉升審查的工作流程條件。請先完成必要的人工作業。
+          </div>
+        )}
+
         {activeTab === "promotion" && promotionAvailable && currentOperator && (
           <PromotionReviewPanel
             busy={promotionBusy}

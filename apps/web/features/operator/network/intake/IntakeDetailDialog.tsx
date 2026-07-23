@@ -20,8 +20,9 @@ import {
   type IntakeDecisionKind,
 } from "./intakeTypes";
 
-// "Dialog 收件處理詳情" (UX-SCR-EXP-003B) — the durable deep-link target
-// (#intake/<id>) and the parsed-data review surface (UX-SCR-EXP-003C).
+// Inbox quick-preview dialog. The production caller sets `previewOnly`; full
+// correction, comparison, decision, and promotion work belongs to the durable
+// `/w/expansion/listings/intake/:intakeId` page.
 //
 // Owned layer  : submission summary, real-stage progress, source evidence,
 //                parsed-field review, match evidence, decision actions, audit.
@@ -46,6 +47,8 @@ export function IntakeDetailDialog({
   onOpenPause,
   onResumeSla,
   promotionSection,
+  previewOnly = false,
+  onOpenFullPage,
 }: {
   busy: boolean;
   canCorrect: boolean;
@@ -75,6 +78,8 @@ export function IntakeDetailDialog({
    * human decision, before the durable receipts).
    */
   promotionSection?: ReactNode;
+  previewOnly?: boolean;
+  onOpenFullPage?: () => void;
 }) {
   const steps = stageSteps(record);
   const fields = useMemo(() => Object.values(record.parsedFields ?? {}), [record.parsedFields]);
@@ -87,10 +92,79 @@ export function IntakeDetailDialog({
   const showClaim = canDecide && (!record.assignmentStatus || record.assignmentStatus === "ASSIGNED") && record.stage !== "READY";
   const showMg = canDecide && record.assignmentStatus !== "COMPLETED" && record.stage !== "READY";
 
+  if (previewOnly) {
+    return (
+      <IntakeDialogShell
+        ariaLabel={`收件快速預覽 ${record.id}`}
+        className={styles.panelWide}
+        dismissible={!busy}
+        onClose={onClose}
+        screenLabel="Drawer 收件快速預覽"
+        testId="intake-detail-preview"
+      >
+        <div className={styles.dialogHead}>
+          <span className={styles.dialogTitle}>收件快速預覽</span>
+          <span className={styles.screenBadge}>PREVIEW ONLY</span>
+          <span className={styles.rowId} data-testid="intake-preview-id">
+            {record.id}
+          </span>
+          <span className={styles.chip} data-tone={stageTone(record.stage)}>
+            {record.stage} · {stageLabel(record.stage)}
+          </span>
+          <button
+            aria-label="關閉預覽"
+            className={styles.dialogClose}
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+        <div className={styles.dialogBody}>
+          <div className={styles.metaGrid}>
+            <Meta caption="來源" sub={record.policyLabel} value={record.sourceId} />
+            <Meta caption="送件人" value={record.submitter} />
+            <Meta caption="Owner" value={record.owner} />
+            <Meta caption="SLA" value={translateSlaState(record.slaState)} />
+            <Meta caption="更新版本" value={`v${record.version}`} />
+          </div>
+          <div className={styles.sectionBox}>
+            <div className={styles.sectionHead}>下一步 NEXT ACTION</div>
+            <div className={styles.evidenceRow}>
+              此 Drawer 僅供掃描狀態與來源摘要。欄位修正、完整比對、身分決策、隔離釋放與
+              Candidate Site 晉升都必須在可重載的收件頁面執行。
+            </div>
+          </div>
+        </div>
+        <div className={styles.dialogFooter}>
+          <button
+            className={styles.secondaryButton}
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+          >
+            關閉預覽
+          </button>
+          <button
+            className={styles.primaryButton}
+            data-testid="intake-preview-open-full-page"
+            disabled={busy}
+            onClick={onOpenFullPage}
+            type="button"
+          >
+            開啟完整收件頁面
+          </button>
+        </div>
+      </IntakeDialogShell>
+    );
+  }
+
   return (
     <IntakeDialogShell
       ariaLabel={`收件處理詳情 ${record.id}`}
       className={styles.panelWide}
+      dismissible={!busy}
       onClose={onClose}
       screenLabel="Dialog 收件處理詳情"
       testId="intake-detail-dialog"

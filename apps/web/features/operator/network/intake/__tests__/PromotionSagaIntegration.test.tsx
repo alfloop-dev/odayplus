@@ -2,14 +2,15 @@ import React, { useSyncExternalStore } from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
-import { AssistedIntakeSection } from "../AssistedIntakeSection";
+import type { AssistedIntake } from "@oday-plus/openapi-client";
+import { AssistedIntakeDetailPage } from "../AssistedIntakeSection";
 
 // Integration coverage for the Candidate promotion saga
 // (ODP-INTAKE-UX-PROMOTION-001, review round 2).
 //
-// These tests mount the REAL operator container (AssistedIntakeSection → the
-// live detail dialog → PromotionReviewPanel → SiteScoreJobStatus) and drive it
+// These tests mount the REAL durable detail composition
+// (AssistedIntakeDetailPage → IntakeProcessingDetail → PromotionReviewPanel →
+// SiteScoreJobStatus) and drive it
 // against a stubbed `fetch`, so every assertion below is about what actually
 // leaves the generated @oday-plus/openapi-client on the wire:
 //
@@ -23,8 +24,8 @@ import { AssistedIntakeSection } from "../AssistedIntakeSection";
 // is the network boundary.
 
 // ---------------------------------------------------------------------------
-// Stateful next/navigation mock: AssistedIntakeSection routes its dialogs
-// through URL state, so router.replace must actually re-render the tree.
+// Stateful next/navigation mock: the durable page routes its active section
+// through URL state, so router.push/replace must actually re-render the tree.
 // ---------------------------------------------------------------------------
 const nav = vi.hoisted(() => {
   const state = { search: "", listeners: new Set<() => void>() };
@@ -44,7 +45,7 @@ const nav = vi.hoisted(() => {
 vi.mock("next/navigation", async () => {
   return {
     useRouter: () => ({ replace: nav.replace, push: nav.replace }),
-    usePathname: () => "/operator/network",
+    usePathname: () => `/w/expansion/listings/intake/${INTAKE_ID}`,
     useSearchParams: () => {
       const search = useSyncExternalStore(
         (cb) => {
@@ -93,17 +94,6 @@ function readyIntake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
     auditEvents: [],
     version: 3,
     ...overrides,
-  };
-}
-
-function inboxPage(record: AssistedIntake): IntakeInboxPage {
-  return {
-    items: [record],
-    total: 1,
-    page: 1,
-    pageSize: 10,
-    counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 1 },
-    evidenceState: "complete",
   };
 }
 
@@ -160,9 +150,8 @@ function buildFetchStub(record: AssistedIntake) {
     });
   }
 
-  routes[`GET /api/v1/operator/network-listings/intake`] = () => json(inboxPage(record));
   routes[`GET /api/v1/operator/network-listings/intake/${INTAKE_ID}`] = () =>
-    json({ ...record, version: record.version + 1 });
+    json(record);
   routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () =>
     json({ code: "NOT_FOUND", detail: "promotion decision not found" }, 404);
   routes[`POST /api/v1/intakes/${INTAKE_ID}/promotion-requests`] = (req) => {
@@ -237,15 +226,15 @@ function requestsTo(captured: CapturedRequest[], method: string, path: string): 
   return captured.filter((req) => req.method === method && req.path === path);
 }
 
-async function openPromotionPanel() {
-  // Queue loads from the stubbed list endpoint, then the row opens the REAL
-  // detail dialog through URL state.
-  const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
-  fireEvent.click(row);
-  await screen.findByTestId("intake-detail-dialog");
-  // The promotion section renders once the gate snapshot hash is computed.
+async function openPromotionPanel(expectRequestForm = true) {
+  await screen.findByTestId("intake-processing-page");
+  // The promotion tab renders once the gate snapshot and durable decision
+  // lookup have both completed.
+  fireEvent.click(await screen.findByTestId("tab-promotion"));
   await screen.findByTestId("promotion-review-panel");
-  await screen.findByTestId("promotion-request-form");
+  if (expectRequestForm) {
+    await screen.findByTestId("promotion-request-form");
+  }
 }
 
 function fillAndSubmitRequestForm() {
@@ -278,10 +267,13 @@ describe("promotion saga — live operator route integration", () => {
     vi.stubGlobal("fetch", fetchStub);
 
     render(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={REVIEWER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
-    const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
-    fireEvent.click(row);
+    await openPromotionPanel(false);
 
     await waitFor(() => {
       expect(screen.getByTestId("promotion-status-badge").textContent).toContain("SCORE_FAILED");
@@ -304,7 +296,11 @@ describe("promotion saga — live operator route integration", () => {
     vi.stubGlobal("fetch", fetchStub);
 
     const view = render(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={PROPOSER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
     await openPromotionPanel();
 
@@ -333,7 +329,11 @@ describe("promotion saga — live operator route integration", () => {
     // The authenticated proposer cannot review its own request.
     expect(screen.getByTestId("promotion-self-review-denied")).toBeInTheDocument();
     view.rerender(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={REVIEWER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("promotion-second-actor-ok")).toBeInTheDocument());
     fireEvent.change(screen.getByTestId("promotion-review-reason"), {
@@ -415,7 +415,11 @@ describe("promotion saga — live operator route integration", () => {
     vi.stubGlobal("fetch", fetchStub);
 
     render(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={PROPOSER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
     await openPromotionPanel();
 
@@ -454,7 +458,11 @@ describe("promotion saga — live operator route integration", () => {
     };
     vi.stubGlobal("fetch", fetchStub);
     const view = render(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={PROPOSER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={PROPOSER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
     await openPromotionPanel();
 
@@ -464,7 +472,11 @@ describe("promotion saga — live operator route integration", () => {
     });
 
     view.rerender(
-      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId={REVIEWER_ID}
+        intakeId={INTAKE_ID}
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("promotion-second-actor-ok")).toBeInTheDocument());
 

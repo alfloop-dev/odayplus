@@ -20,8 +20,6 @@ export default async function IntakeRoutePage({ params, searchParams }: PageProp
     }
   }
 
-  query.set("selected", intakeId);
-  query.set("dialog", "detail");
-
-  redirect(`/w/expansion/listings?${query.toString()}`);
+  const suffix = query.size ? `?${query.toString()}` : "";
+  redirect(`/w/expansion/listings/intake/${encodeURIComponent(intakeId)}${suffix}`);
 }
