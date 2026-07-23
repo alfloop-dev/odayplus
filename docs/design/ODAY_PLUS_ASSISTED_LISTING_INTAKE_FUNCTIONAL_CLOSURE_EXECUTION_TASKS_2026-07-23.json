@@ -1,0 +1,194 @@
+{
+  "schema": "oday-plus.assisted-listing-intake.functional-closure-tasks.v1",
+  "doc_id": "ODP-INTAKE-FUNCTIONAL-CLOSURE-EXEC-001",
+  "status": "approved_for_dispatch",
+  "audited_commit": "eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585",
+  "target_branch": "task/ODP-INTAKE-FUNCTIONAL-CLOSURE-001",
+  "audit": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_COMPLETENESS_AUDIT_2026-07-23.md",
+  "completion_disallows": [
+    "unmounted_component",
+    "unit_test_only",
+    "fixture_replay",
+    "client_generated_receipt",
+    "screenshot_without_persisted_readback",
+    "inbox_dialog_as_durable_page",
+    "direct_listing_overwrite_as_revision",
+    "partial_role_matrix"
+  ],
+  "tasks": [
+    {
+      "id": "ODP-INTAKE-FCL-RUNTIME-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "title": "Canonical intake runtime and persisted domain effects",
+      "acceptance": [
+        "Use canonical intake commands and persisted asynchronous stage history.",
+        "Append ListingRevision for REVISION and prove readback.",
+        "Persist identity edges and reversible identity decisions.",
+        "Return authoritative receipts and complete audit records.",
+        "Remove fixture_replay from production command paths."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-SHELL-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "title": "Durable routes and complete production detail composition",
+      "acceptance": [
+        "Create /w/expansion/listings/intake/:intakeId as a real page.",
+        "Make full review actions run on the durable page.",
+        "Mount the complete production component composition.",
+        "Lock high-risk dialogs while submitting.",
+        "Prove direct open, reload, back, and forward."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-ROLES-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "depends_on": [],
+      "title": "Six role and permission modes",
+      "acceptance": [
+        "Implement all six required role modes.",
+        "Expose reason-coded denial and masking.",
+        "Enforce separate proposer and reviewer subjects.",
+        "Preserve the durable deep link through role changes."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-INBOX-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "title": "Complete Listing Inbox and URL intake",
+      "acceptance": [
+        "Implement every required server filter, column, sort, cursor, and saved view.",
+        "Use a semantic table and real geographic map.",
+        "Implement direct row actions.",
+        "Show full URL submission context and authoritative receipt.",
+        "Open existing Listing for exact duplicates."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-REVIEW-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Antigravity4",
+      "reviewer": "Claude2",
+      "depends_on": [],
+      "title": "Complete parsed field lineage and durable assisted entry",
+      "acceptance": [
+        "Render all five field groups and four value layers.",
+        "Render full correction and parser lineage.",
+        "Require material correction review.",
+        "Preserve drafts through close, reload, conflict, and retry.",
+        "Never retrieve assisted-entry-only sources."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-IDENTITY-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "title": "Full compare and reversible identity decisions",
+      "acceptance": [
+        "Render true current-versus-submitted comparison.",
+        "Keep all five outcomes behaviorally distinct.",
+        "Mount create, revision, duplicate, steward, reject, and quarantine actions.",
+        "Implement merge, split, unmerge, and reversal plans and receipts.",
+        "Require independent review and deny self-review."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-EVIDENCE-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Antigravity6",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "title": "Authoritative receipts, audit, evidence, and errors",
+      "acceptance": [
+        "Remove every fabricated receipt and verification value.",
+        "Render server-issued receipts only.",
+        "Render complete structured audit and evidence.",
+        "Render purpose, classification, expiry, masking, and verification.",
+        "Implement the complete error and recovery contract."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-LIFECYCLE-001",
+      "wave": 1,
+      "priority": "P0",
+      "owner": "Antigravity7",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "title": "Live lifecycle, assignment, SLA, and job controls",
+      "acceptance": [
+        "Render persisted lifecycle histories.",
+        "Automatically refresh server-driven transitions.",
+        "Expose attempt, timeout, checkpoint, next retry, cancel, DLQ, and replay.",
+        "Complete assignment, SLA, pause, transfer, and escalation.",
+        "Keep Candidate after SCORE_FAILED."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-INTEGRATION-001",
+      "wave": 2,
+      "priority": "P0",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-INTAKE-FCL-RUNTIME-001",
+        "ODP-INTAKE-FCL-SHELL-001",
+        "ODP-INTAKE-FCL-ROLES-001",
+        "ODP-INTAKE-FCL-INBOX-001",
+        "ODP-INTAKE-FCL-REVIEW-001",
+        "ODP-INTAKE-FCL-IDENTITY-001",
+        "ODP-INTAKE-FCL-EVIDENCE-001",
+        "ODP-INTAKE-FCL-LIFECYCLE-001"
+      ],
+      "title": "Integrate production composition and prove complete E2E",
+      "acceptance": [
+        "Mount and integrate every Wave 1 slice.",
+        "Remove dead alternate production paths.",
+        "Pass all six canonical flows and six role modes.",
+        "Pass every required error and recovery family.",
+        "Pass responsive and accessibility gates at 390, 1024, and 1440.",
+        "Produce requirement-to-test-to-evidence traceability."
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-FCL-ACCEPTANCE-001",
+      "wave": 3,
+      "priority": "P0",
+      "owner": "Codex2",
+      "reviewer": "Product Platform Engineering",
+      "depends_on": ["ODP-INTAKE-FCL-INTEGRATION-001"],
+      "title": "Independent functional closure audit",
+      "acceptance": [
+        "Re-run all verification from the integrated commit.",
+        "Inspect production routes and import graph.",
+        "Inspect persisted revisions, identity edges, histories, receipts, and audit.",
+        "Mark every complete audit row PASS.",
+        "Reject indirect, missing, fixture-only, or component-only evidence."
+      ]
+    }
+  ],
+  "umbrella_completion": {
+    "required_disposition": "FUNCTIONALLY_COMPLETE",
+    "requires_all_tasks_integrated": true,
+    "requires_independent_acceptance": true
+  }
+}

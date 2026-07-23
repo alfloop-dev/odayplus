@@ -1,0 +1,92 @@
+{
+  "schema": "oday-plus.assisted-listing-intake.functional-completeness-audit.v1",
+  "doc_id": "ODP-INTAKE-FUNCTIONAL-AUDIT-001",
+  "status": "changes_required",
+  "requirement": {
+    "doc_id": "ODP-UXD-003-ADD-002",
+    "version": "1.0.1"
+  },
+  "audited_commit": "eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585",
+  "completion_policy": {
+    "requires_reachable_production_route": true,
+    "requires_authoritative_server_state": true,
+    "requires_persisted_domain_effect": true,
+    "requires_e2e_proof": true,
+    "disallowed_completion_substitutes": [
+      "unmounted_component",
+      "component_unit_test_only",
+      "fixture_replay",
+      "client_generated_receipt",
+      "direct_listing_overwrite_for_revision",
+      "inbox_dialog_redirect_for_durable_page"
+    ]
+  },
+  "blockers": [
+    {
+      "id": "FCF-001",
+      "priority": "P0",
+      "requirement_sections": ["6", "8.3"],
+      "status": "not_implemented",
+      "summary": "Required durable intake detail route is absent."
+    },
+    {
+      "id": "FCF-002",
+      "priority": "P0",
+      "requirement_sections": ["7", "8.5"],
+      "status": "contract_violation",
+      "summary": "REVISION overwrites Listing instead of appending ListingRevision."
+    },
+    {
+      "id": "FCF-003",
+      "priority": "P0",
+      "requirement_sections": ["7", "8.5"],
+      "status": "not_implemented",
+      "summary": "Full identity comparison and reversible decision UI is not mounted."
+    },
+    {
+      "id": "FCF-004",
+      "priority": "P0",
+      "requirement_sections": ["8.7", "8.9"],
+      "status": "user_misrepresentation",
+      "summary": "DurableReceiptPanel fabricates verification, hashes, audit IDs, and entity references."
+    },
+    {
+      "id": "FCF-005",
+      "priority": "P0",
+      "requirement_sections": ["7", "8.3", "9"],
+      "status": "fixture_only",
+      "summary": "Processing lifecycle is synchronous fixture replay without persisted stage history."
+    },
+    {
+      "id": "FCF-006",
+      "priority": "P0",
+      "requirement_sections": ["5"],
+      "status": "not_implemented",
+      "summary": "Only manager and read-only audit role modes are reachable."
+    },
+    {
+      "id": "FCF-007",
+      "priority": "P0",
+      "requirement_sections": ["8.4"],
+      "status": "partial",
+      "summary": "Effective field values, complete lineage, and durable drafts are absent."
+    },
+    {
+      "id": "FCF-008",
+      "priority": "P0",
+      "requirement_sections": ["8.9"],
+      "status": "partial",
+      "summary": "Mounted audit history lacks structured decision-grade evidence."
+    }
+  ],
+  "core_flows": [
+    {"id": "NEW", "status": "partial", "reason": "Synthetic fixture only."},
+    {"id": "EXACT_DUPLICATE", "status": "partial", "reason": "Opens Intake instead of existing Listing."},
+    {"id": "REVISION", "status": "failed", "reason": "No true compare and no ListingRevision append."},
+    {"id": "POSSIBLE_MATCH", "status": "failed", "reason": "No mounted full identity review or second actor."},
+    {"id": "ASSISTED_ENTRY_ONLY", "status": "partial", "reason": "Draft is not durable."},
+    {"id": "PROMOTION_SITE_SCORE", "status": "pass_with_gap", "reason": "No automatic status refresh."}
+  ],
+  "final_disposition": "FUNCTIONALLY_INCOMPLETE",
+  "execution_authority": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_CLOSURE_EXECUTION_TASKS_2026-07-23.json"
+}
