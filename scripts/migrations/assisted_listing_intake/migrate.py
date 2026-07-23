@@ -177,9 +177,20 @@ class IntakeMigrator:
             stmt = stmt.strip()
             if not stmt:
                 continue
-            if any(k in stmt for k in ["ROW LEVEL SECURITY", "POLICY", "CREATE SCHEMA", "COMMENT ON", "DO $$", "DO $tenant_rls$", "tenant_tables regclass", "END LOOP", "END\n$tenant_rls$"]):
+            # NOTE: match policy DDL statements only ("CREATE POLICY"/"DROP POLICY"),
+            # not the bare word "POLICY" — enum values like 'POLICY_UNKNOWN' in CHECK
+            # constraints must not knock out the CREATE TABLE statements on SQLite.
+            if any(k in stmt for k in ["ROW LEVEL SECURITY", "CREATE POLICY", "DROP POLICY", "CREATE SCHEMA", "COMMENT ON", "DO $$", "DO $tenant_rls$", "tenant_tables regclass", "END LOOP", "END\n$tenant_rls$"]):
                 continue
-            if stmt.startswith("CREATE EXTENSION") or (stmt.startswith("ALTER TABLE") and ("ADD CONSTRAINT" in stmt or "DROP CONSTRAINT" in stmt or "ADD COLUMN IF NOT EXISTS" in stmt)):
+            if stmt.startswith("CREATE EXTENSION") or (stmt.startswith("ALTER TABLE") and ("ADD CONSTRAINT" in stmt or "DROP CONSTRAINT" in stmt)):
+                continue
+            if stmt.startswith("ALTER TABLE") and "ADD COLUMN IF NOT EXISTS" in stmt:
+                # SQLite cannot parse IF NOT EXISTS / multi-action ALTERs, but the
+                # patch columns (decision_type, migration_ref, outbox/job lease
+                # fields, ...) are contract columns the backfill INSERTs rely on.
+                # Translate to single-action ADD COLUMN statements instead of
+                # dropping the whole patch.
+                self._sqlite_add_columns(stmt)
                 continue
             stmt = stmt.replace("timestamptz", "timestamp")
             stmt = stmt.replace("jsonb", "text")
@@ -192,6 +203,46 @@ class IntakeMigrator:
                 self._execute(stmt)
             except Exception as e:
                 logger.debug("SQLite schema adjustment ignored statement: %s (Error: %s)", stmt, e)
+
+    def _sqlite_add_columns(self, stmt: str) -> None:
+        """Apply a (possibly multi-action) ``ADD COLUMN IF NOT EXISTS`` ALTER on SQLite.
+
+        Splits the ALTER into single-action ``ADD COLUMN`` statements, strips
+        CHECK clauses, and degrades NOT NULL / non-constant DEFAULT clauses
+        that SQLite's ALTER cannot express. Duplicate-column errors are
+        ignored so the migration stays idempotent.
+        """
+        import re
+
+        header = re.match(r"ALTER TABLE\s+(\S+)", stmt)
+        if not header:
+            return
+        table = header.group(1)
+        for part in stmt.split("ADD COLUMN IF NOT EXISTS")[1:]:
+            # Trim to the current action: cut at the first comma outside parens.
+            depth = 0
+            column_def = part
+            for idx, char in enumerate(part):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                elif char == "," and depth == 0:
+                    column_def = part[:idx]
+                    break
+            column_def = re.sub(r"CHECK\s*\([^()]*(?:\([^()]*\)[^()]*)*\)", "", column_def).strip().rstrip(",;").strip()
+            attempts = [
+                column_def,
+                re.sub(r"\bNOT NULL\b", "", column_def).strip(),
+                re.sub(r"\bDEFAULT\b.*$", "", re.sub(r"\bNOT NULL\b", "", column_def)).strip(),
+            ]
+            for candidate in attempts:
+                try:
+                    self._execute(f"ALTER TABLE {table} ADD COLUMN {candidate}")
+                    break
+                except Exception as exc:  # noqa: BLE001 - degrade until SQLite accepts
+                    if "duplicate column" in str(exc).lower():
+                        break
 
     def rollback_schema(self) -> None:
         """Drop the upgrade schemas (only for clean test sandbox tear-down)."""

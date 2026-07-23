@@ -1,0 +1,531 @@
+{
+ "config": {
+  "argv": [
+   "/usr/bin/node",
+   "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/node_modules/.bin/playwright",
+   "test",
+   "tests/e2e/operator-assisted-listing-intake.spec.ts",
+   "--reporter=json"
+  ],
+  "configFile": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/playwright.config.ts",
+  "rootDir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/tests/e2e",
+  "failOnFlakyTests": false,
+  "forbidOnly": true,
+  "fullyParallel": false,
+  "globalSetup": null,
+  "globalTeardown": null,
+  "globalTimeout": 0,
+  "grep": {},
+  "grepInvert": null,
+  "maxFailures": 0,
+  "metadata": {
+   "actualWorkers": 1
+  },
+  "preserveOutput": "always",
+  "projects": [
+   {
+    "outputDir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results",
+    "repeatEach": 1,
+    "retries": 2,
+    "metadata": {
+     "actualWorkers": 1
+    },
+    "id": "chromium",
+    "name": "chromium",
+    "testDir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/tests/e2e",
+    "testIgnore": [],
+    "testMatch": [
+     "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+    ],
+    "timeout": 30000
+   }
+  ],
+  "quiet": false,
+  "reporter": [
+   [
+    "json"
+   ]
+  ],
+  "reportSlowTests": {
+   "max": 5,
+   "threshold": 300000
+  },
+  "shard": null,
+  "tags": [],
+  "updateSnapshots": "missing",
+  "updateSourceMethod": "patch",
+  "version": "1.61.1",
+  "workers": 1,
+  "webServer": null
+ },
+ "suites": [
+  {
+   "title": "operator-assisted-listing-intake.spec.ts",
+   "file": "operator-assisted-listing-intake.spec.ts",
+   "column": 0,
+   "line": 0,
+   "specs": [
+    {
+     "title": "canonical 1: exact URL duplicate is intercepted before retrieval",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": 0,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 36474,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:44:02.973Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 22299,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:47:06.714Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--00125-ntercepted-before-retrieval-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-df3b12813225ccf0dcb1",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 164,
+     "column": 5
+    },
+    {
+     "title": "canonical 2: assisted-entry-only keeps URL and validates durable manual input",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": 0,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 12517,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:44:40.506Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 20791,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:47:29.915Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--8f7d6-idates-durable-manual-input-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-8a54b77cac642a2a59ca",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 175,
+     "column": 5
+    },
+    {
+     "title": "canonical 3: possible match requires explicit reason and risk acknowledgement",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": 0,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 11879,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:44:53.048Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 19505,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:47:51.144Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--93854-on-and-risk-acknowledgement-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-db3cf5e6397584b4c5ee",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 198,
+     "column": 5
+    },
+    {
+     "title": "canonical 4: independent reviewer completes promotion with durable Candidate and SiteScore receipts",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": 0,
+         "parallelIndex": 0,
+         "status": "timedOut",
+         "duration": 120383,
+         "error": {
+          "message": "\u001b[31mTest timeout of 120000ms exceeded.\u001b[39m",
+          "stack": "\u001b[31mTest timeout of 120000ms exceeded.\u001b[39m"
+         },
+         "errors": [
+          {
+           "message": "\u001b[31mTest timeout of 120000ms exceeded.\u001b[39m"
+          },
+          {
+           "location": {
+            "file": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/tests/e2e/operator-assisted-listing-intake.spec.ts",
+            "column": 60,
+            "line": 148
+           },
+           "message": "Error: locator.click: Test timeout of 120000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('intake-inbox-row-IN-3001')\u001b[22m\n\u001b[2m    - locator resolved to <div tabindex=\"0\" role=\"button\" class=\"intake_row__7YuPG\" data-testid=\"intake-inbox-row-IN-3001\">\u2026</div>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div class=\"intake_evidenceRow__986Qo\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <span class=\"intake_normalizedValue___iNIx\">22</span> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div class=\"intake_evidenceRow__986Qo\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  2 \u00d7 retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m      - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"intake_dialogHead__b6dPC\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  47 \u00d7 retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m       - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <span class=\"intake_normalizedValue___iNIx\">22</span> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m       - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"intake_evidenceRow__986Qo\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m       - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"intake_dialogHead__b6dPC\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m       - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"intake_dialogHead__b6dPC\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <span class=\"intake_normalizedValue___iNIx\">22</span> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div class=\"intake_evidenceRow__986Qo\">\u2026</div> from <div class=\"intake_overlay__l2aaB \" data-screen-label=\"Dialog \u6536\u4ef6\u8655\u7406\u8a73\u60c5\" data-testid=\"intake-detail-dialog\">\u2026</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\n\n  146 |   await expect(page.getByTestId(\"intake-inbox-view\")).toBeVisible({ timeout: 15_000 });\n  147 |   if (!(await page.getByTestId(\"intake-detail-dialog\").isVisible())) {\n> 148 |     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();\n      |                                                            ^\n  149 |   }\n  150 |   await expect(page.getByTestId(\"intake-detail-dialog\")).toBeVisible({ timeout: 15_000 });\n  151 |   await expect(page.getByTestId(\"intake-detail-id\")).toHaveText(intakeId);\n    at reopenIntakeAs (/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/tests/e2e/operator-assisted-listing-intake.spec.ts:148:60)\n    at /tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/tests/e2e/operator-assisted-listing-intake.spec.ts:239:3"
+          }
+         ],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:45:04.944Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "error-context",
+           "contentType": "text/markdown",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--65871-date-and-SiteScore-receipts-chromium/error-context.md"
+          },
+          {
+           "name": "error-context",
+           "contentType": "text/markdown",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--65871-date-and-SiteScore-receipts-chromium/error-context.md"
+          }
+         ]
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 29270,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:48:11.200Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--65871-date-and-SiteScore-receipts-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "flaky"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-d16f91559dccca8adc8a",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 223,
+     "column": 5
+    },
+    {
+     "title": "canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queues only once",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": -1,
+         "parallelIndex": -1,
+         "status": "skipped",
+         "duration": 0,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:47:05.572Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 45130,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:48:41.267Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--30e63-key-replay-queues-only-once-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-08daf348f47c077723bd",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 258,
+     "column": 5
+    },
+    {
+     "title": "source policy fails closed for blocked and unknown sources",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": -1,
+         "parallelIndex": -1,
+         "status": "skipped",
+         "duration": 0,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:47:05.577Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 22235,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:49:27.344Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--485c5-blocked-and-unknown-sources-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-57901a83b954cbf6f266",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 352,
+     "column": 5
+    },
+    {
+     "title": "retryable retrieval failure exposes code, correlation, recovery and preserved durable state",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": -1,
+         "parallelIndex": -1,
+         "status": "skipped",
+         "duration": 0,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:47:05.577Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 21873,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:49:50.160Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--15646-and-preserved-durable-state-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-9c21c47a55d75c0b1a57",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 366,
+     "column": 5
+    },
+    {
+     "title": "governance reviewer gets masked read-only intake while unrelated roles fail closed",
+     "ok": true,
+     "tags": [],
+     "tests": [
+      {
+       "timeout": 120000,
+       "annotations": [],
+       "expectedStatus": "passed",
+       "projectId": "chromium",
+       "projectName": "chromium",
+       "results": [
+        {
+         "workerIndex": -1,
+         "parallelIndex": -1,
+         "status": "skipped",
+         "duration": 0,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 0,
+         "startTime": "2026-07-23T11:47:05.577Z",
+         "annotations": [],
+         "attachments": []
+        },
+        {
+         "workerIndex": 1,
+         "parallelIndex": 0,
+         "status": "passed",
+         "duration": 49594,
+         "errors": [],
+         "stdout": [],
+         "stderr": [],
+         "retry": 1,
+         "startTime": "2026-07-23T11:50:12.452Z",
+         "annotations": [],
+         "attachments": [
+          {
+           "name": "trace",
+           "contentType": "application/zip",
+           "path": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/test-results/operator-assisted-listing--1354c-unrelated-roles-fail-closed-chromium-retry1/trace.zip"
+          }
+         ]
+        }
+       ],
+       "status": "expected"
+      }
+     ],
+     "id": "495706101663e8a4dd1c-2bd92f0c1acaca54d813",
+     "file": "operator-assisted-listing-intake.spec.ts",
+     "line": 380,
+     "column": 5
+    }
+   ]
+  }
+ ],
+ "errors": [],
+ "stats": {
+  "startTime": "2026-07-23T11:43:41.017Z",
+  "duration": 442304.481,
+  "expected": 7,
+  "skipped": 0,
+  "unexpected": 0,
+  "flaky": 1
+ }
+}
