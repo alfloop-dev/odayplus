@@ -388,10 +388,12 @@ else:
         assigned_to: UuidString | None = None
         assignment_id: UuidString | None = None
         assignment_status: AssignmentStatus | None = None
+        assignment_version: int | None = Field(None, ge=1)
         owner_subject_id: UuidString | None = None
         queue_id: str | None = None
         sla_instance_id: UuidString | None = None
         sla_state: SlaState | None = None
+        sla_version: int | None = Field(None, ge=1)
         due_at: DateTimeString | None = None
         last_observed_at: DateTimeString | None = None
         submitted_at: DateTimeString
@@ -2884,6 +2886,7 @@ else:
                 "assignment_id", assignment.get("assignmentId")
             )
             projected["assignment_status"] = assignment.get("status")
+            projected["assignment_version"] = assignment.get("version")
             projected["owner_subject_id"] = assignment.get(
                 "owner_subject_id", assignment.get("ownerSubjectId")
             ) or projected.get("assigned_to")
@@ -2895,6 +2898,7 @@ else:
                 "sla_instance_id", sla.get("slaInstanceId")
             )
             projected["sla_state"] = sla.get("state")
+            projected["sla_version"] = sla.get("version")
             projected["due_at"] = (
                 sla.get("due_at")
                 or sla.get("dueAt")
@@ -3393,10 +3397,12 @@ else:
                     assigned_to=masked_val.get("assigned_to"),
                     assignment_id=masked_val.get("assignment_id"),
                     assignment_status=masked_val.get("assignment_status"),
+                    assignment_version=masked_val.get("assignment_version"),
                     owner_subject_id=masked_val.get("owner_subject_id"),
                     queue_id=masked_val.get("queue_id"),
                     sla_instance_id=masked_val.get("sla_instance_id"),
                     sla_state=masked_val.get("sla_state"),
+                    sla_version=masked_val.get("sla_version"),
                     due_at=masked_val.get("due_at"),
                     last_observed_at=masked_val.get("last_observed_at"),
                     submitted_at=masked_val.get("submitted_at"),
@@ -3760,10 +3766,12 @@ else:
                 assigned_to=masked_val.get("assigned_to"),
                 assignment_id=masked_val.get("assignment_id"),
                 assignment_status=masked_val.get("assignment_status"),
+                assignment_version=masked_val.get("assignment_version"),
                 owner_subject_id=masked_val.get("owner_subject_id"),
                 queue_id=masked_val.get("queue_id"),
                 sla_instance_id=masked_val.get("sla_instance_id"),
                 sla_state=masked_val.get("sla_state"),
+                sla_version=masked_val.get("sla_version"),
                 due_at=masked_val.get("due_at"),
                 last_observed_at=masked_val.get("last_observed_at"),
                 submitted_at=masked_val.get("submitted_at"),

@@ -165,6 +165,7 @@ describe("DurableReceiptPanel authoritative-only rendering", () => {
     const decision: DecisionReceipt = {
       decision_id: "decision-server-001",
       status: "EXECUTED",
+      version: 1,
       resource_versions: { listing: 9 },
       job_id: "job-decision-server-001",
       audit_event_id: "audit-decision-server-001",

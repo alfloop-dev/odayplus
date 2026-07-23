@@ -22,6 +22,7 @@ import {
   getIntakeRoleProfile,
 } from "../intakePermissions";
 import {
+  parseCanonicalIntakeOperatorSession,
   parseIntakeOperatorSession,
   unavailableIntakeOperatorSession,
 } from "../intakeOperatorSession";
@@ -493,6 +494,88 @@ describe("Assisted Listing Intake role matrix", () => {
         roleId,
         subjectId: `subject-${roleId}`,
       });
+    }
+  });
+
+  it("builds every durable role session from the canonical intake bootstrap", () => {
+    for (const roleId of REQUIRED_INTAKE_ROLE_IDS) {
+      const session = parseCanonicalIntakeOperatorSession({
+        tenant_id: "tenant-a",
+        subject_id: `subject-${roleId}`,
+        role_mode: roleId,
+        scope: {
+          tenant_id: "tenant-a",
+          brand_ids: [],
+          region_ids: [],
+          assigned_area_ids: [],
+          heat_zone_ids: [],
+        },
+        heat_zones: [],
+        selected_heat_zone_id: null,
+        intake_methods: ["URL", "MANUAL", "CSV", "APPROVED_FEED"],
+        intake_states: ["SUBMITTED", "READY"],
+        match_outcomes: [
+          "NEW",
+          "EXACT_DUPLICATE",
+          "REVISION",
+          "POSSIBLE_MATCH",
+          "QUARANTINED",
+        ],
+        assignment_states: [
+          "ASSIGNED",
+          "CLAIMED",
+          "TRANSFERRED",
+          "ESCALATED",
+          "COMPLETED",
+        ],
+        sla_states: [
+          "ON_TRACK",
+          "DUE_SOON",
+          "OVERDUE",
+          "BREACHED",
+          "PAUSED",
+          "COMPLETED",
+        ],
+        saved_views: [],
+        commands: {
+          assign: {
+            method: "PUT",
+            path_template: "/api/v1/intakes/{intake_id}/assignment",
+            requires_if_match: true,
+            requires_idempotency_key: true,
+          },
+          claim: {
+            method: "POST",
+            path_template:
+              "/api/v1/assignments/{assignment_id}/actions/claim",
+            requires_if_match: true,
+            requires_idempotency_key: true,
+          },
+          transfer: {
+            method: "POST",
+            path_template:
+              "/api/v1/assignments/{assignment_id}/actions/transfer",
+            requires_if_match: true,
+            requires_idempotency_key: true,
+          },
+          complete: {
+            method: "POST",
+            path_template:
+              "/api/v1/assignments/{assignment_id}/actions/complete",
+            requires_if_match: true,
+            requires_idempotency_key: true,
+          },
+        },
+      });
+      expect(session).toMatchObject({
+        status: "ready",
+        roleId,
+        subjectId: `subject-${roleId}`,
+        tenantId: "tenant-a",
+        source: "intake-bootstrap",
+      });
+      expect(session.allowedActions).toContain("view");
+      expect(session.systemRoles).toEqual([roleId]);
     }
   });
 });

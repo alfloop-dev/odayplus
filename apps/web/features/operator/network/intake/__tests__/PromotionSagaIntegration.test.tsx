@@ -2,7 +2,10 @@ import React, { useSyncExternalStore } from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
+import type {
+  AssistedIntake,
+  CanonicalIntakeRuntimeDetail,
+} from "@oday-plus/openapi-client";
 import { AssistedIntakeDetailPage } from "../AssistedIntakeSection";
 
 // Integration coverage for the Candidate promotion saga
@@ -97,6 +100,109 @@ function readyIntake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
   };
 }
 
+function canonicalDetail(record: AssistedIntake): CanonicalIntakeRuntimeDetail {
+  const occurredAt = record.capturedAt ?? "2026-07-22T10:00:00Z";
+  return {
+    intake_id: record.id,
+    state: record.stage,
+    intake_method: "URL",
+    source_id: record.sourceId,
+    match_outcome: record.matchResult?.outcome ?? null,
+    submitted_by: record.submitter,
+    assigned_to: record.owner,
+    due_at: null,
+    submitted_at: occurredAt,
+    updated_at: occurredAt,
+    version: record.version,
+    scope: {},
+    masked_fields: [],
+    original_url: record.originalUrl,
+    canonical_url: record.canonicalUrl,
+    policy_state: record.policy,
+    source_snapshot_id: record.snapshotId,
+    parser_run_id: null,
+    match_case_id: null,
+    match_case_version: null,
+    match_case: null,
+    processing_history: [
+      {
+        transition_id: "TR-READY-1",
+        from_state: "MATCHING",
+        to_state: record.stage,
+        occurred_at: occurredAt,
+        actor: "intake-worker",
+        reason_code: "PROCESSING_COMPLETED",
+        version_after: record.version,
+      },
+    ],
+    fields: [],
+    audit: [],
+    evidence: {
+      original_url: record.originalUrl,
+      canonical_url: record.canonicalUrl,
+      source_id: record.sourceId,
+      policy_state: record.policy,
+      source_snapshot_id: record.snapshotId,
+      captured_at: record.capturedAt,
+      parser_run_id: null,
+      parser_version: record.parserVersion,
+      correlation_id: record.correlationId ?? "corr-fixture",
+      freshness_state: "CURRENT",
+    },
+    lifecycle: {
+      intake_id: record.id,
+      version: record.version,
+      etag: `W/"${record.version}"`,
+      actor_facts: {
+        role_mode: "expansion-manager",
+        allowed_actions: [
+          "REQUEST_PROMOTION",
+          "REVIEW_PROMOTION",
+          "REPLAY_JOB",
+        ],
+        denied_action_reasons: {},
+        scope: {
+          principal_tenant_id: "tenant-test",
+          resource: { tenant_id: "tenant-test" },
+          in_scope: true,
+        },
+        masking: {
+          masked_fields: [],
+          reason_codes: [],
+          has_masked_fields: false,
+          clearance: "INTERNAL",
+        },
+        purpose: {
+          value: "EXPANSION_REVIEW",
+          required: false,
+          bound: true,
+          reason_code: null,
+        },
+        second_actor: {
+          required: true,
+          pending_decision_ids: [],
+          proposer_subject_ids: [PROPOSER_ID],
+          self_review_denied: false,
+          reason_code: null,
+        },
+      },
+      assignment: null,
+      sla: null,
+      decisions: [],
+      promotion: null,
+      job: null,
+      assignment_history: [],
+      sla_history: [],
+      decision_history: [],
+      promotion_history: [],
+      job_history: [],
+      mutation_receipts: [],
+      latest_decision_receipt: null,
+      submission_receipt: null,
+    },
+  };
+}
+
 function pendingReviewReceipt(proposerSubjectId = PROPOSER_ID) {
   return {
     promotion_decision_id: DECISION_ID,
@@ -152,6 +258,8 @@ function buildFetchStub(record: AssistedIntake) {
 
   routes[`GET /api/v1/operator/network-listings/intake/${INTAKE_ID}`] = () =>
     json(record);
+  routes[`GET /api/v1/intakes/${INTAKE_ID}`] = () =>
+    json(canonicalDetail(record), 200, { ETag: `W/"${record.version}"` });
   routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () =>
     json({ code: "NOT_FOUND", detail: "promotion decision not found" }, 404);
   routes[`POST /api/v1/intakes/${INTAKE_ID}/promotion-requests`] = (req) => {

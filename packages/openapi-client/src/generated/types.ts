@@ -699,6 +699,7 @@ export type IntakeDetail = {
   assigned_to?: string | null;
   assignment_id?: string | null;
   assignment_status?: string | null;
+  assignment_version?: number | null;
   audit: AuditReference[];
   canonical_url: string | null;
   due_at?: string | null;
@@ -730,6 +731,7 @@ export type IntakeDetail = {
   sla_instance_id?: string | null;
   sla_receipt?: string | null;
   sla_state?: string | null;
+  sla_version?: number | null;
   source_id?: string | null;
   source_snapshot_id?: string | null;
   state: IntakeState;
@@ -813,6 +815,7 @@ export type IntakeSummary = {
   assigned_to?: string | null;
   assignment_id?: string | null;
   assignment_status?: AssignmentStatus | null;
+  assignment_version?: number | null;
   canonical_url?: string | null;
   due_at?: string | null;
   failed?: boolean;
@@ -834,6 +837,7 @@ export type IntakeSummary = {
   scope: ScopeContext;
   sla_instance_id?: string | null;
   sla_state?: SlaState | null;
+  sla_version?: number | null;
   source_id?: string | null;
   state: IntakeState;
   submitted_at: string;

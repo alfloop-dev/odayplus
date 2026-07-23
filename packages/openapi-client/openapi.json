@@ -3576,6 +3576,18 @@
             ],
             "title": "Assignment Status"
           },
+          "assignment_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Version"
+          },
           "audit": {
             "items": {
               "$ref": "#/components/schemas/AuditReference"
@@ -3831,6 +3843,18 @@
               }
             ],
             "title": "Sla State"
+          },
+          "sla_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Version"
           },
           "source_id": {
             "anyOf": [
@@ -4346,6 +4370,18 @@
               }
             ]
           },
+          "assignment_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Version"
+          },
           "canonical_url": {
             "anyOf": [
               {
@@ -4517,6 +4553,18 @@
                 "type": "null"
               }
             ]
+          },
+          "sla_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Version"
           },
           "source_id": {
             "anyOf": [

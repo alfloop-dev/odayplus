@@ -134,7 +134,7 @@ export type PromotionReviewPanelProps = {
   /** Authoritative decision receipt from the server; null before any request. */
   promotion?: PromotionDecisionReceipt | null;
   /** Authoritative score-job receipt, once one exists. */
-  scoreJob?: JobReceipt | null;
+  scoreJob?: JobReceipt | JobLifecycleReceipt | null;
   /** Persisted histories returned by the lifecycle read boundary. */
   promotionHistory?: PersistedLifecycleTransition[];
   decisionHistory?: PersistedLifecycleTransition[];

@@ -1,6 +1,7 @@
 import type {
   AssistedIntake,
   AssignmentReceipt,
+  MatchOutcome,
 } from "@oday-plus/openapi-client";
 
 export type IntakeInboxLocation = {
@@ -20,6 +21,7 @@ export type InboxIntakeRecord = AssistedIntake & {
   restrictedData?: boolean;
   retryable?: boolean;
   issue?: string | null;
+  matchOutcome?: MatchOutcome | null;
 };
 
 export type IntakeInboxSavedView = {

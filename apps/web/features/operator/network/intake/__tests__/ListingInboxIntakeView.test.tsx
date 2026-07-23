@@ -436,6 +436,49 @@ describe("ListingInboxIntakeView", () => {
     );
   });
 
+  it("preserves opaque cursor history in the URL and can return to the previous server page", async () => {
+    const onQueryChange = vi.fn();
+    const { rerender, props } = renderView({ onQueryChange });
+
+    fireEvent.click(screen.getByTestId("intake-next-page"));
+
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 2,
+          cursor: "cursor-next",
+        }),
+      ),
+    );
+    expect(
+      new URLSearchParams(window.location.search).getAll("cursorTrail"),
+    ).toEqual([""]);
+
+    rerender(
+      <ListingInboxIntakeView
+        {...props}
+        onQueryChange={onQueryChange}
+        pageData={{
+          ...pageData,
+          page: 2,
+          nextCursor: "opaque-cursor-page-3",
+        }}
+      />,
+    );
+    expect(screen.getByTestId("intake-prev-page")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("intake-prev-page"));
+
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1 }),
+      ),
+    );
+    expect(onQueryChange.mock.calls.at(-1)?.[0]).not.toHaveProperty("cursor");
+    expect(
+      new URLSearchParams(window.location.search).getAll("cursorTrail"),
+    ).toEqual([]);
+  });
+
   it("restores filters, map mode and selection from the URL and browser history", async () => {
     window.history.replaceState(
       null,

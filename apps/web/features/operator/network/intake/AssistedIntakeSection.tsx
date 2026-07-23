@@ -12,11 +12,12 @@ import {
 import type {
   AssistedIntake,
   AssignmentReceipt,
+  CanonicalIntakeRuntimeDetail,
   IntakeCorrectableField,
   IntakeFieldValue,
-  IntakeInboxPage,
-  IntakeInboxQuery,
   JobReceipt,
+  MatchOutcome,
+  OdpApiClient,
   PromotionDecisionReceipt,
   SlaReceipt,
 } from "@oday-plus/openapi-client";
@@ -24,10 +25,18 @@ import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
+import { existingListingHref } from "./IntakeInboxMap";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
 import { IntakeDialogDismissBoundary } from "./IntakeDialogShell";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
+import {
+  AssistedEntryForm,
+  type AssistedEntrySubmission,
+} from "./AssistedEntryForm";
+import { IdentityDecisionPanel } from "./IdentityDecisionPanel";
+import { ParsedDataReview, buildCanonicalFieldReview } from "./ParsedDataReview";
+import { StructuredAuditTimeline } from "./StructuredAuditTimeline";
 import {
   IntakeProcessingDetail,
   type IntakeDetailTab,
@@ -56,6 +65,37 @@ import {
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 import type { IntakeOperatorSession } from "./intakeOperatorSession";
+import type {
+  InboxIntakeRecord,
+  IntakeInboxBootstrapContext,
+  IntakeInboxPageContract,
+  IntakeInboxQueryContract,
+  IntakeInboxSavedView,
+} from "./inboxContracts";
+import {
+  canonicalAuditToStructured,
+  canonicalBootstrapToInbox,
+  canonicalCommandReceiptToIdentity,
+  canonicalDetailToLifecycle,
+  canonicalDetailToRecord,
+  canonicalGraphPlan,
+  canonicalIdentityReceipt,
+  canonicalIdentityWorkflow,
+  canonicalMatchToComparison,
+  canonicalPageToInbox,
+  canonicalSavedViewsToInbox,
+  inboxContractToCanonicalQuery,
+} from "./canonicalIntakeAdapters";
+import {
+  useIntakeLifecycle,
+  type IntakeLifecycleSnapshot,
+  type JobLifecycleReceipt,
+} from "./useIntakeLifecycle";
+import type {
+  IdentityActor,
+  IdentityDecisionCommand,
+  IdentityDecisionReceipt,
+} from "./identityTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
 //
@@ -69,6 +109,26 @@ import type { IntakeOperatorSession } from "./intakeOperatorSession";
 // submissions and real governance decisions. Showing synthetic rows in its
 // place would present fabricated evidence, so an unreachable backend renders
 // an explicit error state instead.
+
+const CANONICAL_PERMISSION_ACTION: Record<IntakePermissionAction, string> = {
+  view: "VIEW",
+  submit: "SUBMIT_URL",
+  correct: "CORRECT",
+  decide: "DECIDE_MATCH",
+  retry: "RETRY",
+  promote: "REQUEST_PROMOTION",
+  assign: "ASSIGN",
+  viewEvidence: "VIEW",
+  viewRestrictedEvidence: "VIEW",
+  proposeIdentity: "DECIDE_MATCH",
+  reviewIdentity: "DECIDE_MATCH",
+  requestPromotion: "REQUEST_PROMOTION",
+  reviewPromotion: "REVIEW_PROMOTION",
+  executePromotion: "REVIEW_PROMOTION",
+  replayScore: "REPLAY_JOB",
+  reopenQuarantine: "REOPEN",
+  exportEvidence: "EXPORT_EVIDENCE",
+};
 
 export function AssistedIntakeDetailPage({
   operatorSession,
@@ -184,9 +244,20 @@ function AuthorizedAssistedIntakeSection({
   const decisionKind = urlState.decisionKind as any;
   const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
 
-  const [records, setRecords] = useState<AssistedIntake[]>([]);
-  const [pageData, setPageData] = useState<IntakeInboxPage | undefined>();
-  const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
+  const [records, setRecords] = useState<InboxIntakeRecord[]>([]);
+  const [pageData, setPageData] = useState<IntakeInboxPageContract | undefined>();
+  const [inboxQuery, setInboxQuery] = useState<IntakeInboxQueryContract>({
+    page: 1,
+    pageSize: 10,
+    sortBy: "updatedAt",
+    sortOrder: "desc",
+  });
+  const [bootstrapContext, setBootstrapContext] =
+    useState<IntakeInboxBootstrapContext>();
+  const [savedViews, setSavedViews] = useState<IntakeInboxSavedView[]>();
+  const [canonicalDetails, setCanonicalDetails] = useState<
+    Record<string, CanonicalIntakeRuntimeDetail>
+  >({});
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -276,6 +347,17 @@ function AuthorizedAssistedIntakeSection({
       overrides: Partial<IntakePermissionContext> = {},
     ): IntakePermissionContext => {
       const authoritative = Boolean(operatorSession);
+      const detail = record ? canonicalDetails[record.id] : null;
+      const actorFacts = detail?.lifecycle.actor_facts;
+      const canonicalAction = CANONICAL_PERMISSION_ACTION[action];
+      const detailAllowed =
+        actorFacts && canonicalAction
+          ? actorFacts.allowed_actions.includes(canonicalAction)
+          : undefined;
+      const detailDenial =
+        actorFacts && canonicalAction
+          ? actorFacts.denied_action_reasons[canonicalAction]
+          : undefined;
       const recordMasked = Object.values(record?.parsedFields ?? {}).some(
         (field) => field.masked === true,
       );
@@ -283,14 +365,13 @@ function AuthorizedAssistedIntakeSection({
       const sourceInScope = record
         ? sourceIds.length > 0
           ? sourceIds.includes(record.sourceId)
-          : operatorSession?.scope?.ownershipMode !== "SOURCE_DATA"
-            ? operatorSession?.scope?.resourceInScope
-            : undefined
+          : operatorSession?.scope?.resourceInScope
         : operatorSession?.scope?.resourceInScope;
 
       return {
         resourceInScope: authoritative
-          ? operatorSession?.scope?.resourceInScope
+          ? actorFacts?.scope.in_scope ??
+            operatorSession?.scope?.resourceInScope
           : true,
         isOwner: record
           ? record.owner === subjectId || record.submitter === subjectId
@@ -298,41 +379,54 @@ function AuthorizedAssistedIntakeSection({
             ? undefined
             : true,
         isAssigned: record
-          ? assignmentReceipts[record.id]?.owner_subject_id === subjectId
+          ? detail?.lifecycle.assignment?.owner_subject_id === subjectId ||
+            record.owner === subjectId ||
+            assignmentReceipts[record.id]?.owner_subject_id === subjectId
           : authoritative
             ? undefined
             : true,
         sourceInScope: authoritative ? sourceInScope : true,
         purposeDeclared: authoritative
-          ? operatorSession?.purposeDeclared
+          ? actorFacts?.purpose.bound ?? operatorSession?.purposeDeclared
           : true,
-        fieldMasked: recordMasked || Boolean(operatorSession?.maskingReasonCode),
+        fieldMasked:
+          recordMasked ||
+          Boolean(actorFacts?.masking.has_masked_fields) ||
+          Boolean(operatorSession?.maskingReasonCode),
         fieldClassification: record ? "INTERNAL" : undefined,
         workflowState: record?.stage ?? null,
         proposerSubjectId:
           record && promotionReceipts[record.id]
             ? promotionReceipts[record.id].proposer_subject_id
-            : record?.submitter,
+            : actorFacts?.second_actor.proposer_subject_ids[0] ??
+              record?.submitter,
         reviewerSubjectId: subjectId,
         serverAllowed: authoritative
-          ? operatorSession?.allowedActions.includes(action)
+          ? detailAllowed ??
+            operatorSession?.allowedActions.includes(action)
           : undefined,
         serverReasonCode: authoritative
           ? (
+              detailDenial ??
+              actorFacts?.second_actor.reason_code ??
               operatorSession?.denialReasonByAction[action] ??
               operatorSession?.denialReasonCode ??
-              (operatorSession?.allowedActions.includes(action)
+              ((detailAllowed ??
+                operatorSession?.allowedActions.includes(action))
                 ? null
                 : "ROLE_DENIED")
             ) as IntakePermissionContext["serverReasonCode"]
           : undefined,
-        maskingReasonCode: operatorSession?.maskingReasonCode,
+        maskingReasonCode:
+          actorFacts?.masking.reason_codes[0] ??
+          operatorSession?.maskingReasonCode,
         ...overrides,
       };
     },
     [
       activeRoleId,
       assignmentReceipts,
+      canonicalDetails,
       operatorSession,
       promotionReceipts,
       subjectId,
@@ -362,17 +456,42 @@ function AuthorizedAssistedIntakeSection({
       return;
     }
     setLoadState("loading");
-    const result = detailIntakeId
-      ? await intakeApi.get(client, detailIntakeId)
-      : await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
-    if (result.ok) {
-      if (detailIntakeId) {
-        setRecords([result.value as AssistedIntake]);
+    if (detailIntakeId) {
+      const result = await intakeApi.get(client, detailIntakeId);
+      if (result.ok) {
+        const record = canonicalDetailToRecord(result.value);
+        setCanonicalDetails((current) => ({
+          ...current,
+          [detailIntakeId]: result.value,
+        }));
+        setRecords([record]);
         setPageData(undefined);
+        setLoadState("ready");
+        setLoadError(null);
       } else {
-        const page = result.value as IntakeInboxPage;
-        setRecords(page.items);
-        setPageData(page);
+        setLoadState("error");
+        setLoadError(result.error);
+      }
+      return;
+    }
+
+    const [result, bootstrapResult, savedViewsResult] = await Promise.all([
+      intakeApi.list(client, inboxContractToCanonicalQuery({
+        ...inboxQuery,
+        selectedHeatZoneId,
+      })),
+      intakeApi.bootstrap(client),
+      intakeApi.savedViews(client),
+    ]);
+    if (result.ok) {
+      const page = canonicalPageToInbox(result.value, inboxQuery.page);
+      setRecords(page.items);
+      setPageData(page);
+      if (bootstrapResult.ok) {
+        setBootstrapContext(canonicalBootstrapToInbox(bootstrapResult.value));
+      }
+      if (savedViewsResult.ok) {
+        setSavedViews(canonicalSavedViewsToInbox(savedViewsResult.value));
       }
       setLoadState("ready");
       setLoadError(null);
@@ -423,7 +542,60 @@ function AuthorizedAssistedIntakeSection({
     setPromotionReplayed(false);
   }, [selectedId]);
 
-  const selected = records.find((record) => record.id === selectedId) ?? null;
+  const selectedRecord = records.find((record) => record.id === selectedId) ?? null;
+  const canonicalDetail = selectedId ? canonicalDetails[selectedId] ?? null : null;
+  const lifecycleLoader = useCallback(
+    async (): Promise<IntakeLifecycleSnapshot> => {
+      if (!client || !detailIntakeId) {
+        throw new Error("Canonical intake detail is unavailable.");
+      }
+      const result = await intakeApi.get(client, detailIntakeId);
+      if (!result.ok) throw new Error(result.error.summary);
+      const record = canonicalDetailToRecord(result.value);
+      setCanonicalDetails((current) => ({
+        ...current,
+        [detailIntakeId]: result.value,
+      }));
+      setRecords([record]);
+      if (result.value.lifecycle.promotion) {
+        const promotionResult = await intakeApi.getPromotionForIntake(
+          client,
+          detailIntakeId,
+        );
+        if (promotionResult.ok) {
+          setPromotionReceipts((current) => ({
+            ...current,
+            [detailIntakeId]: promotionResult.value,
+          }));
+          const scoreJobId = promotionResult.value.site_score_job_id;
+          if (scoreJobId) {
+            const jobResult = await intakeApi.getScoreJob(client, scoreJobId);
+            if (jobResult.ok) {
+              setScoreJobs((current) => ({
+                ...current,
+                [detailIntakeId]: jobResult.value,
+              }));
+            }
+          }
+        }
+      }
+      return canonicalDetailToLifecycle(result.value);
+    },
+    [client, detailIntakeId],
+  );
+  const lifecycleState = useIntakeLifecycle({
+    intakeId: detailIntakeId ?? selectedId ?? "intake-not-selected",
+    enabled: Boolean(isDurableDetailPage && client && detailIntakeId),
+    initialSnapshot: canonicalDetail
+      ? canonicalDetailToLifecycle(canonicalDetail)
+      : null,
+    loadSnapshot: lifecycleLoader,
+  });
+  const lifecycleSnapshot = lifecycleState.snapshot;
+  const selected =
+    lifecycleSnapshot && lifecycleSnapshot.record.id === selectedId
+      ? lifecycleSnapshot.record
+      : selectedRecord;
 
   // Restore the durable promotion saga whenever a deep link or reloaded inbox
   // opens an intake. Until this lookup finishes the request form stays closed,
@@ -526,6 +698,18 @@ function AuthorizedAssistedIntakeSection({
     if (!isDurableDetailPage) updateUrlState({ selectedId: record.id });
   }
 
+  function applyCanonicalDetail(
+    detail: CanonicalIntakeRuntimeDetail,
+  ): AssistedIntake {
+    const record = canonicalDetailToRecord(detail);
+    setCanonicalDetails((current) => ({
+      ...current,
+      [detail.intake_id]: detail,
+    }));
+    applyRecord(record);
+    return record;
+  }
+
   async function handleSubmit({ url, heatZoneId }: { url: string; heatZoneId: string }) {
     if (!client || busy) return;
     setBusy(true);
@@ -549,13 +733,22 @@ function AuthorizedAssistedIntakeSection({
       return;
     }
     submitKeyRef.current = null;
-    applyRecord(result.value);
+    const record = applyCanonicalDetail(result.value);
     setToast(
-      result.value.matchResult?.outcome === "EXACT_DUPLICATE"
-        ? `已於識別檢查攔截 — 此 URL 已存在（${result.value.matchResult.targetListingId ?? result.value.id}），未執行擷取`
-        : `收件 ${result.value.id} 已建立 — ${result.value.policyLabel}`,
+      record.matchResult?.outcome === "EXACT_DUPLICATE"
+        ? `已於識別檢查攔截 — 此 URL 已存在（${record.matchResult.targetListingId ?? record.id}），未執行擷取`
+        : `收件 ${record.id} 已建立 — ${record.policyLabel}`,
     );
-    router.push(intakeDetailHref(result.value.id, searchParams));
+    const existingListingId =
+      record.matchResult?.outcome === "EXACT_DUPLICATE"
+        ? record.matchResult.targetListingId
+        : null;
+    router.push(
+      existingListingId
+        ? existingListingHref(existingListingId)
+        : intakeDetailHref(record.id, searchParams),
+    );
+    return record;
   }
 
   async function handleFix({
@@ -595,7 +788,7 @@ function AuthorizedAssistedIntakeSection({
       return;
     }
     correctionKeyRef.current = null;
-    applyRecord(result.value);
+    applyCanonicalDetail(result.value);
     updateUrlState({ dialog: isDurableDetailPage ? null : "detail", fixFieldKey: null });
     setToast("已記錄人工修正（前後值已寫入 Audit）");
   }
@@ -635,9 +828,141 @@ function AuthorizedAssistedIntakeSection({
       return;
     }
     assistedEntryKeyRef.current = null;
-    applyRecord(result.value);
+    applyCanonicalDetail(result.value);
     setToast("補錄完成 — 已進入比對");
     void refresh();
+  }
+
+  async function handleAssistedEntryCommit(
+    submission: AssistedEntrySubmission,
+  ) {
+    if (!client || !selected) {
+      return {
+        status: "FAILED" as const,
+        failure: {
+          code: "INTAKE_UNAVAILABLE",
+          summary: "收件資料尚未載入。",
+          occurredAt: new Date().toISOString(),
+          retryable: true,
+        },
+      };
+    }
+    const result = await intakeApi.correct(
+      client,
+      selected.id,
+      {
+        fields: submission.fields as Partial<
+          Record<IntakeCorrectableField, IntakeFieldValue>
+        >,
+        reason: submission.reason,
+        riskSummary: "人工補錄會建立可覆核的 authoritative correction lineage。",
+        riskAcknowledged: submission.riskAcknowledged,
+        actorRoleId: activeRoleId,
+        actorName: role.label,
+      },
+      {
+        idempotencyKey: submission.operationId,
+        ifMatch:
+          submission.ifMatchVersion === null
+            ? undefined
+            : `W/"${submission.ifMatchVersion}"`,
+      },
+    );
+    if (!result.ok) {
+      return {
+        status:
+          result.error.status === 409 || result.error.status === 428
+            ? ("CONFLICT" as const)
+            : ("FAILED" as const),
+        failure: {
+          code: result.error.code,
+          summary: result.error.summary,
+          occurredAt: result.error.occurredAt,
+          retryable: result.error.retryable,
+          currentVersion: result.error.currentVersion,
+          currentState: result.error.currentState,
+          correlationId: result.error.correlationId,
+        },
+      };
+    }
+    applyCanonicalDetail(result.value);
+    setToast("人工補錄已寫入，欄位 lineage 與覆核狀態已更新。");
+    return {
+      status: "COMMITTED" as const,
+      authoritativeVersion: result.value.version,
+      correctionIds: result.value.lifecycle.mutation_receipts
+        .map((entry) => entry.receipt.receipt_id)
+        .filter((value): value is string => Boolean(value)),
+    };
+  }
+
+  async function handleIdentitySubmit(
+    command: IdentityDecisionCommand,
+  ): Promise<IdentityDecisionReceipt> {
+    if (!client || !canonicalDetail || !canonicalDetail.match_case_id) {
+      throw new Error("Canonical identity contract is unavailable.");
+    }
+    const options = {
+      idempotencyKey: newIntakeActionIdempotencyKey(
+        canonicalDetail.intake_id,
+        `${command.phase}-${command.graphOperation ?? command.outcomeAction ?? "identity"}`,
+      ),
+      ifMatch: `W/"${
+        command.phase === "REVIEW"
+          ? canonicalDetail.lifecycle.latest_decision_receipt?.version ?? 1
+          : command.matchCaseVersion
+      }"`,
+    };
+    const result =
+      command.phase === "REVIEW" && command.decisionId
+        ? await intakeApi.reviewIdentityDecision(
+            client,
+            command.decisionId,
+            {
+              decision: command.reviewDisposition ?? "REJECT",
+              reason: command.reason,
+              risk_acknowledged: command.riskAcknowledged,
+            },
+            options,
+          )
+        : !command.graphOperation
+          ? await intakeApi.proposeIdentityDecision(
+              client,
+              canonicalDetail.match_case_id,
+              {
+                decision_type: identityOutcomeCommand(command.outcomeAction),
+                reason: command.reason,
+                risk_acknowledged: command.riskAcknowledged,
+                target_listing_id:
+                  canonicalDetail.match_case?.target_listing_id ?? undefined,
+              },
+              options,
+            )
+          : await submitIdentityGraphCommand(
+              client,
+              canonicalDetail,
+              command,
+              options,
+            );
+    if (!result.ok) {
+      throw {
+        code: result.error.code,
+        summary: result.error.summary,
+        currentVersion: result.error.currentVersion ?? canonicalDetail.version,
+        currentState: result.error.currentState ?? canonicalDetail.state,
+        currentOwner: canonicalDetail.assigned_to,
+        correlationId: result.error.correlationId ?? "",
+        occurredAt: result.error.occurredAt,
+        nextAction: result.error.nextAction,
+      };
+    }
+    const receipt = canonicalCommandReceiptToIdentity(
+      result.value,
+      canonicalDetail.match_case_id,
+    );
+    const refreshed = await intakeApi.get(client, canonicalDetail.intake_id);
+    if (refreshed.ok) applyCanonicalDetail(refreshed.value);
+    return receipt;
   }
 
   async function handleDecide({
@@ -676,9 +1001,9 @@ function AuthorizedAssistedIntakeSection({
       return;
     }
     decisionKeyRef.current = null;
-    applyRecord(result.value);
+    const updatedRecord = applyCanonicalDetail(result.value);
     updateUrlState({ dialog: isDurableDetailPage ? null : "detail", decisionKind: null });
-    setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
+    setToast(`決策已寫入 — ${updatedRecord.stage} · 已記錄於 Audit Trail`);
     void refresh();
   }
 
@@ -693,7 +1018,7 @@ function AuthorizedAssistedIntakeSection({
       setActionError(result.error);
       return;
     }
-    applyRecord(result.value);
+    applyCanonicalDetail(result.value);
     setToast("已重試擷取 — 先前送件內容與人工修正已保留");
     void refresh();
   }
@@ -708,9 +1033,64 @@ function AuthorizedAssistedIntakeSection({
       setActionError(result.error);
       return;
     }
-    applyRecord(result.value);
+    applyCanonicalDetail(result.value);
     setToast(`收件 ${intakeId} 已直接重試；原始證據與修正紀錄保留`);
     void refresh();
+  }
+
+  async function handleInboxClaim(intakeId: string) {
+    const record = records.find((item) => item.id === intakeId);
+    if (!client || !record || busy) {
+      return {
+        ok: false as const,
+        error: {
+          code: "CLAIM_UNAVAILABLE",
+          summary: "目前無法認領此收件。",
+          occurredAt: new Date().toISOString(),
+          nextAction: "請重新整理 Listing Inbox 後再試。",
+          status: 409,
+          retryable: true,
+          correlationId: null,
+        },
+      };
+    }
+    const idempotencyKey = newIntakeActionIdempotencyKey(intakeId, "claim");
+    const correlationId = newCorrelationId();
+    const result = record.assignmentId
+      ? await intakeApi.claimAssignment(
+          client,
+          record.assignmentId,
+          { reason: "Operator claimed intake from Listing Inbox" },
+          {
+            idempotencyKey,
+            correlationId,
+            ifMatch: `W/"${record.assignmentVersion ?? record.version}"`,
+          },
+        )
+      : await intakeApi.assign(
+          client,
+          intakeId,
+          {
+            owner_subject_id: subjectId,
+            owner_role: activeRoleId,
+            reason: "Operator claimed unassigned intake from Listing Inbox",
+            due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          {
+            idempotencyKey,
+            correlationId,
+            ifMatch: `W/"${record.version}"`,
+          },
+        );
+    if (!result.ok) return result;
+    setAssignmentReceipts((current) => ({
+      ...current,
+      [intakeId]: result.value,
+    }));
+    const detailResult = await intakeApi.get(client, intakeId);
+    if (detailResult.ok) applyCanonicalDetail(detailResult.value);
+    void refresh();
+    return result;
   }
 
   async function handleClaim() {
@@ -721,50 +1101,47 @@ function AuthorizedAssistedIntakeSection({
     const key = newIntakeActionIdempotencyKey(selected.id, "claim-asg");
     const correlationId = newCorrelationId();
 
-    try {
-      let receipt;
-      if (selected.assignmentId) {
-        receipt = await client.claimAssignment(
-          selected.assignmentId,
-          { reason: "Claiming existing assignment" },
-          { idempotencyKey: key, correlationId }
-        );
-      } else {
-        receipt = await client.assignIntake(
+    const result = selected.assignmentId
+      ? await intakeApi.claimAssignment(
+          client,
+            selected.assignmentId,
+            { reason: "Claiming existing assignment" },
+            {
+              idempotencyKey: key,
+              correlationId,
+              ifMatch: `W/"${
+                lifecycleSnapshot?.assignment?.version ??
+                selected.assignmentVersion ??
+                selected.version
+              }"`,
+            },
+          )
+      : await intakeApi.assign(
+          client,
           selected.id,
           {
-            owner_subject_id: activeRoleId,
-            owner_role: "reviewer",
+            owner_subject_id: subjectId,
+            owner_role: activeRoleId,
             reason: "Claiming assignment for manual triage review",
             due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
           },
-          { idempotencyKey: key, correlationId }
+          {
+            idempotencyKey: key,
+            correlationId,
+            ifMatch: `W/"${selected.version}"`,
+          },
         );
-      }
-
-      setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "CLAIM_ERROR",
-        summary: err.message || "認領收件時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    const receipt = result.value;
+    setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
+    setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) applyCanonicalDetail(getResult.value);
+    void refresh();
   }
 
   async function handleTransferSubmit(payload: {
@@ -794,8 +1171,8 @@ function AuthorizedAssistedIntakeSection({
     const key = newIntakeActionIdempotencyKey(selected.id, "transfer-asg");
     const correlationId = newCorrelationId();
 
-    try {
-      const receipt = await client.transferAssignment(
+    const result = await intakeApi.transferAssignment(
+        client,
         asgId,
         {
           target_owner_subject_id: payload.target_owner_subject_id,
@@ -806,34 +1183,25 @@ function AuthorizedAssistedIntakeSection({
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${
+            lifecycleSnapshot?.assignment?.version ??
+            selected.assignmentVersion ??
+            selected.version
+          }"`,
         }
       );
-
-      setToast(`已成功轉交收件！`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "TRANSFER_ERROR",
-        summary: err.message || "轉交收件時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請檢查對象角色或狀態",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    const receipt = result.value;
+    setToast("已成功轉交收件！");
+    setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) applyCanonicalDetail(getResult.value);
+    updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
+    void refresh();
   }
 
   async function handlePauseSubmit(payload: {
@@ -862,8 +1230,8 @@ function AuthorizedAssistedIntakeSection({
     const key = newIntakeActionIdempotencyKey(selected.id, "pause-sla");
     const correlationId = newCorrelationId();
 
-    try {
-      const receipt = await client.pauseSla(
+    const result = await intakeApi.pauseSla(
+        client,
         slaId,
         {
           reason: payload.reason,
@@ -872,34 +1240,25 @@ function AuthorizedAssistedIntakeSection({
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${
+            lifecycleSnapshot?.sla?.version ??
+            selected.slaVersion ??
+            selected.version
+          }"`,
         }
       );
-
-      setToast(`SLA 已暫停！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "PAUSE_ERROR",
-        summary: err.message || "暫停 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    const receipt = result.value;
+    setToast("SLA 已暫停！");
+    setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) applyCanonicalDetail(getResult.value);
+    updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
+    void refresh();
   }
 
   async function handleResumeSla() {
@@ -925,40 +1284,154 @@ function AuthorizedAssistedIntakeSection({
     const key = newIntakeActionIdempotencyKey(selected.id, "resume-sla");
     const correlationId = newCorrelationId();
 
-    try {
-      const receipt = await client.resumeSla(
+    const result = await intakeApi.resumeSla(
+        client,
         slaId,
         { reason: "Manual resume SLA" },
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${
+            lifecycleSnapshot?.sla?.version ??
+            selected.slaVersion ??
+            selected.version
+          }"`,
         }
       );
-
-      setToast(`SLA 已恢復計時！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "RESUME_ERROR",
-        summary: err.message || "恢復 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    const receipt = result.value;
+    setToast("SLA 已恢復計時！");
+    setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
+    const getResult = await intakeApi.get(client, selected.id);
+    if (getResult.ok) applyCanonicalDetail(getResult.value);
+    void refresh();
+  }
+
+  async function handleEscalateAssignment() {
+    if (!client || !selected?.assignmentId || busy) return;
+    setBusy(true);
+    setActionError(null);
+    const result = await intakeApi.escalateAssignment(
+        client,
+        selected.assignmentId,
+        { reason: "Operator escalated overdue intake review" },
+        {
+          idempotencyKey: newIntakeActionIdempotencyKey(selected.id, "escalate"),
+          correlationId: newCorrelationId(),
+          ifMatch: `W/"${
+            lifecycleSnapshot?.assignment?.version ??
+            selected.assignmentVersion ??
+            selected.version
+          }"`,
+        },
+      );
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    const receipt = result.value;
+    setAssignmentReceipts((current) => ({
+      ...current,
+      [selected.id]: receipt,
+    }));
+    await handleConflictRefresh();
+    setToast(`收件已升級處理，Assignment ${receipt.assignment_id}`);
+  }
+
+  async function handleCompleteAssignment() {
+    if (!client || !selected?.assignmentId || busy) return;
+    setBusy(true);
+    setActionError(null);
+    const result = await intakeApi.completeAssignment(
+      client,
+      selected.assignmentId,
+      { reason: "Operator completed intake assignment" },
+      {
+        idempotencyKey: newIntakeActionIdempotencyKey(selected.id, "complete"),
+        correlationId: newCorrelationId(),
+        ifMatch: `W/"${
+          lifecycleSnapshot?.assignment?.version ??
+          selected.assignmentVersion ??
+          selected.version
+        }"`,
+      },
+    );
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    setAssignmentReceipts((current) => ({
+      ...current,
+      [selected.id]: result.value,
+    }));
+    await handleConflictRefresh();
+    setToast(`Assignment ${result.value.assignment_id} 已完成。`);
+  }
+
+  async function handleCancelIntake() {
+    if (!client || !selected || busy) return;
+    setBusy(true);
+    setActionError(null);
+    const result = await intakeApi.cancel(
+        client,
+        selected.id,
+        { reason: "Operator cancelled intake processing" },
+        {
+          idempotencyKey: newIntakeActionIdempotencyKey(selected.id, "cancel"),
+          correlationId: newCorrelationId(),
+          ifMatch: `W/"${selected.version}"`,
+        },
+      );
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    await handleConflictRefresh();
+    setToast("收件已取消，CANCELLED 為 terminal state。");
+  }
+
+  async function handleReplayDlq(jobId?: string) {
+    if (!client || !selected || !jobId || busy) return;
+    const job = canonicalDetail?.lifecycle.job;
+    if (
+      !job ||
+      job.job_id !== jobId ||
+      job.version === null ||
+      !isRetryCheckpoint(job.checkpoint)
+    ) {
+      return;
+    }
+    setBusy(true);
+    const result = await intakeApi.retryScoreJob(
+      client,
+      jobId,
+      {
+        checkpoint: job.checkpoint,
+        reason: "Authorized operator replay from durable checkpoint",
+        risk_acknowledged: true,
+      },
+      {
+        idempotencyKey: newIntakeActionIdempotencyKey(selected.id, "replay-job", jobId),
+        ifMatch: `W/"${job.version}"`,
+      },
+    );
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    setScoreJobs((current) => ({
+      ...current,
+      [selected.id]: result.value.receipt,
+    }));
+    await handleConflictRefresh();
   }
 
   // ---- Promotion saga handlers (all four v1 calls go through intakeApi) ---
@@ -993,7 +1466,7 @@ function AuthorizedAssistedIntakeSection({
     );
     // The request consumed the intake's If-Match; refetch for the new version.
     const getResult = await intakeApi.get(client, selected.id);
-    if (getResult.ok) applyRecord(getResult.value);
+    if (getResult.ok) applyCanonicalDetail(getResult.value);
   }
 
   async function handleReviewPromotion(input: PromotionReviewInput) {
@@ -1086,7 +1559,7 @@ function AuthorizedAssistedIntakeSection({
     setActionError(null);
     const getResult = await intakeApi.get(client, selected.id);
     if (getResult.ok) {
-      applyRecord(getResult.value);
+      applyCanonicalDetail(getResult.value);
     }
   }
 
@@ -1095,8 +1568,13 @@ function AuthorizedAssistedIntakeSection({
   const selectedPromotion = selected ? promotionReceipts[selected.id] ?? null : null;
   // Only an authoritative JobReceipt may enable replay. A promotion receipt
   // supplies the job ID, but never attempt/version/checkpoint values.
-  const selectedScoreJob: JobReceipt | null = selected
-    ? scoreJobs[selected.id] ?? null
+  const lifecycleScoreJob = selectedPromotion?.site_score_job_id
+    ? lifecycleState.snapshot?.jobs.find(
+        (job) => job.job_id === selectedPromotion.site_score_job_id,
+      ) ?? null
+    : null;
+  const selectedScoreJob: JobReceipt | JobLifecycleReceipt | null = selected
+    ? scoreJobs[selected.id] ?? lifecycleScoreJob
     : null;
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
@@ -1183,6 +1661,78 @@ function AuthorizedAssistedIntakeSection({
     name: role.label,
     role: activeRoleId,
   };
+  const identityActor: IdentityActor = {
+    subjectId: currentOperator.id,
+    displayName: currentOperator.name,
+    role: currentOperator.role,
+  };
+  const canonicalComparison = canonicalDetail
+    ? canonicalMatchToComparison(canonicalDetail)
+    : null;
+  const canonicalGraph = canonicalDetail?.match_case
+    ? canonicalGraphPlan(canonicalDetail.match_case.graph_plan, identityActor)
+    : null;
+  const canonicalReviewSection =
+    selected && canonicalDetail ? (
+      selected.stage === "AWAITING_ASSISTED_ENTRY" ? (
+        <AssistedEntryForm
+          baseVersion={canonicalDetail.version}
+          disabled={!correctionDecision.allowed || busy}
+          draftIdentity={{
+            tenantId:
+              operatorSession?.tenantId ??
+              String(canonicalDetail.scope.tenant_id ?? ""),
+            intakeId: canonicalDetail.intake_id,
+            actorSubjectId: currentOperator.id,
+          }}
+          initialValues={assistedInitialValues(canonicalDetail)}
+          onCommit={handleAssistedEntryCommit}
+          originalUrl={canonicalDetail.original_url ?? ""}
+          policy={selected.policy}
+          sourceId={canonicalDetail.source_id ?? ""}
+        />
+      ) : (
+        <ParsedDataReview
+          canCorrect={correctionDecision.allowed}
+          fields={buildCanonicalFieldReview(canonicalDetail.fields, {
+            sourceSnapshotId: canonicalDetail.source_snapshot_id,
+            parserRunId: canonicalDetail.parser_run_id,
+          })}
+          onCorrect={(field) => openFix(field.fieldPath)}
+        />
+      )
+    ) : undefined;
+  const canonicalIdentitySection =
+    selected && canonicalDetail && canonicalComparison ? (
+      <IdentityDecisionPanel
+        busy={busy}
+        comparison={canonicalComparison}
+        draftIdentity={{
+          tenantId:
+            operatorSession?.tenantId ??
+            String(canonicalDetail.scope.tenant_id ?? ""),
+          intakeId: canonicalDetail.intake_id,
+          matchCaseId: canonicalComparison.matchCaseId,
+          actorId: currentOperator.id,
+        }}
+        durableDesktopHref={intakeDetailHref(
+          canonicalDetail.intake_id,
+          "section=identity&compare=true",
+        )}
+        errorMessage={actionError?.summary ?? null}
+        graphPlans={canonicalGraph ? [canonicalGraph] : []}
+        onRefreshConflict={handleConflictRefresh}
+        onSubmit={handleIdentitySubmit}
+        receipt={canonicalIdentityReceipt(canonicalDetail)}
+        record={selected}
+        workflow={canonicalIdentityWorkflow(canonicalDetail, identityActor)}
+      />
+    ) : undefined;
+  const canonicalAuditSection = canonicalDetail ? (
+    <StructuredAuditTimeline
+      events={canonicalAuditToStructured(canonicalDetail)}
+    />
+  ) : undefined;
 
   function openDecision(kind: IntakeDecisionKind) {
     decisionKeyRef.current = selected
@@ -1328,6 +1878,8 @@ function AuthorizedAssistedIntakeSection({
         <IntakeProcessingDetail
           activeTab={detailSection as IntakeDetailTab}
           assignmentReceipt={assignmentReceipts[selected.id]}
+          auditReferences={canonicalDetail?.audit}
+          auditSection={canonicalAuditSection}
           busy={busy}
           canCorrect={correctionDecision.allowed}
           canDecide={intakeDecision.allowed}
@@ -1340,8 +1892,15 @@ function AuthorizedAssistedIntakeSection({
           compareTargetId={compareTargetId}
           currentOperator={currentOperator}
           error={actionError}
+          fields={canonicalDetail?.fields}
           gateSnapshotSha256={promotionGateHash}
-          jobs={selectedScoreJob ? [selectedScoreJob] : []}
+          history={canonicalDetail?.processing_history}
+          identitySection={canonicalIdentitySection}
+          jobs={
+            lifecycleState.snapshot?.jobs ??
+            (selectedScoreJob ? [selectedScoreJob] : [])
+          }
+          lifecycle={lifecycleState.snapshot}
           onActiveTabChange={(tab) => {
             updateUrlState(
               {
@@ -1352,8 +1911,11 @@ function AuthorizedAssistedIntakeSection({
             );
           }}
           onClaimAssignment={handleClaim}
+          onCancel={handleCancelIntake}
           onClose={() => router.push(intakeInboxHref(searchParams))}
+          onCompleteAssignment={handleCompleteAssignment}
           onDecide={openDecision}
+          onEscalateAssignment={handleEscalateAssignment}
           onLookupPromotionDecision={
             selectedPromotion ? handleLookupPromotionDecision : undefined
           }
@@ -1362,6 +1924,7 @@ function AuthorizedAssistedIntakeSection({
           onOpenTransfer={() => openAssignment("transfer")}
           onRefresh={handleConflictRefresh}
           onReplayScore={handleReplayScore}
+          onReplayDlq={handleReplayDlq}
           onRequestPromotion={handleRequestPromotion}
           onResumeSla={handleResumeSla}
           onRetry={handleRetry}
@@ -1377,7 +1940,9 @@ function AuthorizedAssistedIntakeSection({
           promotionRequestDeniedReason={requestPromotionDecision.reasonCode}
           promotionReviewDeniedReason={reviewPromotionDecision.reasonCode}
           record={selected}
+          reviewSection={canonicalReviewSection}
           scoreJob={selectedScoreJob}
+          sla={lifecycleState.snapshot?.sla ?? undefined}
           slaReceipt={slaReceipts[selected.id]}
           testId="intake-processing-page"
         />
@@ -1396,11 +1961,13 @@ function AuthorizedAssistedIntakeSection({
       <ListingInboxIntakeView
         activeRoleId={activeRoleId}
         actionError={actionError}
+        bootstrapContext={bootstrapContext}
         busy={busy}
         loadError={loadError}
         loadState={loadState}
         onAddSubmit={handleSubmit}
         onOpenDetail={openDetail}
+        onClaimIntake={handleInboxClaim}
         onRetryLoad={() => void refresh()}
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
         onQueryChange={setInboxQuery}
@@ -1425,6 +1992,7 @@ function AuthorizedAssistedIntakeSection({
           })
         }
         records={records}
+        savedViews={savedViews}
         selectedHeatZoneId={selectedHeatZoneId}
       />
 
@@ -1465,6 +2033,212 @@ function AuthorizedAssistedIntakeSection({
 
       {actionDialogs}
     </IntakeDialogDismissBoundary>
+  );
+}
+
+function assistedInitialValues(
+  detail: CanonicalIntakeRuntimeDetail,
+): Record<string, string | number | boolean | null> {
+  return Object.fromEntries(
+    detail.fields.flatMap((field) => {
+      const value = field.effective;
+      return value === null ||
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+        ? [[field.field_path, value]]
+        : [];
+    }),
+  );
+}
+
+function identityOutcomeCommand(
+  action: IdentityDecisionCommand["outcomeAction"],
+): "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT" {
+  switch (action) {
+    case "APPEND_REVISION":
+      return "REVISE";
+    case "MARK_DUPLICATE":
+      return "DUPLICATE";
+    case "QUARANTINE":
+    case "SEND_TO_STEWARD":
+      return "QUARANTINE";
+    case "REJECT":
+      return "REJECT";
+    case "CREATE":
+    default:
+      return "CREATE";
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function isRetryCheckpoint(
+  value: string | null,
+): value is
+  | "RETRIEVING"
+  | "PARSING"
+  | "MATCHING"
+  | "CANDIDATE_CREATING"
+  | "SCORE_QUEUED" {
+  return (
+    value === "RETRIEVING" ||
+    value === "PARSING" ||
+    value === "MATCHING" ||
+    value === "CANDIDATE_CREATING" ||
+    value === "SCORE_QUEUED"
+  );
+}
+
+function operationValue(
+  operation: Record<string, unknown> | null,
+  snake: string,
+  camel: string,
+): unknown {
+  return operation?.[snake] ?? operation?.[camel];
+}
+
+async function submitIdentityGraphCommand(
+  client: OdpApiClient,
+  detail: CanonicalIntakeRuntimeDetail,
+  command: IdentityDecisionCommand,
+  options: {
+    idempotencyKey: string;
+    ifMatch: string;
+    correlationId?: string;
+  },
+) {
+  const plan = detail.match_case?.graph_plan;
+  const operation = objectValue(plan?.operations[0]);
+  if (!plan || !command.graphOperation) {
+    throw new Error("Authoritative identity graph plan is unavailable.");
+  }
+
+  if (command.graphOperation === "REVERSAL") {
+    const decisionId =
+      command.decisionId ?? plan.original_decision?.decision_id ?? null;
+    if (!decisionId) {
+      throw new Error("Reversal requires an authoritative original decision ID.");
+    }
+    return intakeApi.reverseIdentityDecision(
+      client,
+      decisionId,
+      {
+        reason: command.reason,
+        risk_acknowledged: command.riskAcknowledged,
+      },
+      options,
+    );
+  }
+
+  if (command.graphOperation === "MERGE") {
+    const propertyIds = plan.before_graph.nodes
+      .filter((node) => node.node_type === "PROPERTY")
+      .map((node) => node.node_id);
+    const targetPropertyId =
+      operationValue(operation, "target_property_id", "targetPropertyId");
+    const sourcePropertyIds =
+      operationValue(operation, "source_property_ids", "sourcePropertyIds");
+    const target =
+      typeof targetPropertyId === "string" ? targetPropertyId : propertyIds[0];
+    const sources = stringArray(sourcePropertyIds).length
+      ? stringArray(sourcePropertyIds)
+      : propertyIds.filter((propertyId) => propertyId !== target);
+    if (!target || sources.length === 0) {
+      throw new Error("Merge plan does not contain source and target properties.");
+    }
+    return intakeApi.proposeIdentityMerge(
+      client,
+      {
+        source_property_ids: sources,
+        target_property_id: target,
+        reason: command.reason,
+        risk_acknowledged: true,
+      },
+      options,
+    );
+  }
+
+  if (command.graphOperation === "SPLIT") {
+    const sourcePropertyId = operationValue(
+      operation,
+      "source_property_id",
+      "sourcePropertyId",
+    );
+    const partitions = operationValue(operation, "partitions", "partitions");
+    if (typeof sourcePropertyId !== "string" || !Array.isArray(partitions)) {
+      throw new Error("Split plan does not contain an authoritative partition.");
+    }
+    return intakeApi.proposeIdentitySplit(
+      client,
+      {
+        source_property_id: sourcePropertyId,
+        partitions: partitions.map((value) => {
+          const partition = objectValue(value);
+          return {
+            target_property_id:
+              typeof partition?.target_property_id === "string"
+                ? partition.target_property_id
+                : typeof partition?.targetPropertyId === "string"
+                  ? partition.targetPropertyId
+                  : null,
+            source_identity_edge_ids: stringArray(
+              partition?.source_identity_edge_ids ??
+                partition?.sourceIdentityEdgeIds,
+            ),
+          };
+        }),
+        reason: command.reason,
+        risk_acknowledged: true,
+      },
+      options,
+    );
+  }
+
+  const originalDecisionId =
+    operationValue(operation, "original_decision_id", "originalDecisionId") ??
+    plan.original_decision?.decision_id;
+  const replacementEdges = operationValue(
+    operation,
+    "replacement_edges",
+    "replacementEdges",
+  );
+  if (typeof originalDecisionId !== "string" || !Array.isArray(replacementEdges)) {
+    throw new Error("Unmerge plan does not contain authoritative replacement edges.");
+  }
+  return intakeApi.proposeIdentityUnmerge(
+    client,
+    {
+      original_decision_id: originalDecisionId,
+      replacement_edges: replacementEdges.map((value) => {
+        const partition = objectValue(value);
+        return {
+          target_property_id:
+            typeof partition?.target_property_id === "string"
+              ? partition.target_property_id
+              : typeof partition?.targetPropertyId === "string"
+                ? partition.targetPropertyId
+                : null,
+          source_identity_edge_ids: stringArray(
+            partition?.source_identity_edge_ids ??
+              partition?.sourceIdentityEdgeIds,
+          ),
+        };
+      }),
+      reason: command.reason,
+      risk_acknowledged: true,
+    },
+    options,
   );
 }
 

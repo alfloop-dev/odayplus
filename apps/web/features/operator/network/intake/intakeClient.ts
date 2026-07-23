@@ -15,7 +15,17 @@
 // Composes with: AssistedIntakeQueuePanel + the four intake dialogs.
 
 import {
-  type AssistedIntake,
+  type CanonicalIntakeInboxBootstrap,
+  type CanonicalIntakeRuntimeDetail,
+  type CanonicalTransitionReceipt,
+  type CanonicalIdentityDecisionReceipt,
+  type CanonicalIdentityReviewCommand,
+  type CanonicalMatchDecisionCommand,
+  type CanonicalMergeCommand,
+  type CanonicalRiskReasonCommand,
+  type CanonicalSavedView,
+  type CanonicalSplitCommand,
+  type CanonicalUnmergeCommand,
   type ConvertListingResponse,
   type IntakeCorrectPayload,
   type IntakeDecidePayload,
@@ -184,8 +194,97 @@ export const intakeApi = {
     return guard(() => client.listIntakes(query));
   },
 
-  get(client: OdpApiClient, intakeId: string): Promise<IntakeResult<AssistedIntake>> {
+  get(client: OdpApiClient, intakeId: string): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() => client.getIntake(intakeId));
+  },
+
+  bootstrap(client: OdpApiClient): Promise<IntakeResult<CanonicalIntakeInboxBootstrap>> {
+    return guard(() => client.getIntakeInboxBootstrap());
+  },
+
+  savedViews(client: OdpApiClient): Promise<IntakeResult<CanonicalSavedView[]>> {
+    return guard(() => client.listSavedViews());
+  },
+
+  proposeIdentityDecision(
+    client: OdpApiClient,
+    matchCaseId: string,
+    payload: CanonicalMatchDecisionCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.proposeMatchDecision(matchCaseId, payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
+  },
+
+  reviewIdentityDecision(
+    client: OdpApiClient,
+    decisionId: string,
+    payload: CanonicalIdentityReviewCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.reviewIdentityDecision(decisionId, payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
+  },
+
+  proposeIdentityMerge(
+    client: OdpApiClient,
+    payload: CanonicalMergeCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.proposeIdentityMerge(payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
+  },
+
+  proposeIdentitySplit(
+    client: OdpApiClient,
+    payload: CanonicalSplitCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.proposeIdentitySplit(payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
+  },
+
+  proposeIdentityUnmerge(
+    client: OdpApiClient,
+    payload: CanonicalUnmergeCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.proposeIdentityUnmerge(payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
+  },
+
+  reverseIdentityDecision(
+    client: OdpApiClient,
+    decisionId: string,
+    payload: CanonicalRiskReasonCommand,
+    options: { idempotencyKey: string; ifMatch: string; correlationId?: string },
+  ): Promise<IntakeResult<CanonicalIdentityDecisionReceipt>> {
+    return guard(() =>
+      client.requestIdentityDecisionReversal(decisionId, payload, {
+        ...options,
+        correlationId: options.correlationId ?? newCorrelationId(),
+      }),
+    );
   },
 
   getScoreJob(client: OdpApiClient, jobId: string): Promise<IntakeResult<JobReceipt>> {
@@ -208,7 +307,7 @@ export const intakeApi = {
     client: OdpApiClient,
     payload: IntakeSubmitPayload,
     options: { idempotencyKey: string; correlationId?: string },
-  ): Promise<IntakeResult<AssistedIntake>> {
+  ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() =>
       client.submitIntake(payload, {
         idempotencyKey: options.idempotencyKey,
@@ -222,7 +321,7 @@ export const intakeApi = {
     intakeId: string,
     payload: IntakeCorrectPayload,
     options: IntakeWriteOptions,
-  ): Promise<IntakeResult<AssistedIntake>> {
+  ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() =>
       client.correctIntake(intakeId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
@@ -237,7 +336,7 @@ export const intakeApi = {
     intakeId: string,
     payload: IntakeDecidePayload,
     options: IntakeWriteOptions,
-  ): Promise<IntakeResult<AssistedIntake>> {
+  ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() =>
       client.decideIntake(intakeId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
@@ -251,7 +350,7 @@ export const intakeApi = {
     client: OdpApiClient,
     intakeId: string,
     actorRoleId: string,
-  ): Promise<IntakeResult<AssistedIntake>> {
+  ): Promise<IntakeResult<CanonicalIntakeRuntimeDetail>> {
     return guard(() =>
       client.retryIntake(intakeId, { actorRoleId }, { correlationId: newCorrelationId() }),
     );
@@ -286,7 +385,7 @@ export const intakeApi = {
     client: OdpApiClient,
     assignmentId: string,
     payload: ReasonCommand,
-    options: IntakeWriteOptions,
+    options: IntakeWriteOptions & { ifMatch: string },
   ): Promise<IntakeResult<AssignmentReceipt>> {
     return guard(() =>
       client.claimAssignment(assignmentId, payload, {
@@ -327,6 +426,21 @@ export const intakeApi = {
     );
   },
 
+  escalateAssignment(
+    client: OdpApiClient,
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: IntakeWriteOptions & { ifMatch: string },
+  ): Promise<IntakeResult<AssignmentReceipt>> {
+    return guard(() =>
+      client.escalateAssignment(assignmentId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
   pauseSla(
     client: OdpApiClient,
     slaInstanceId: string,
@@ -350,6 +464,21 @@ export const intakeApi = {
   ): Promise<IntakeResult<SlaReceipt>> {
     return guard(() =>
       client.resumeSla(slaInstanceId, payload, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      }),
+    );
+  },
+
+  cancel(
+    client: OdpApiClient,
+    intakeId: string,
+    payload: ReasonCommand,
+    options: IntakeWriteOptions & { ifMatch: string },
+  ): Promise<IntakeResult<CanonicalTransitionReceipt>> {
+    return guard(() =>
+      client.cancelIntakeRuntime(intakeId, payload, {
         correlationId: options.correlationId ?? newCorrelationId(),
         idempotencyKey: options.idempotencyKey,
         ifMatch: options.ifMatch,

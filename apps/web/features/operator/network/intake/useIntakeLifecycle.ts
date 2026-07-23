@@ -52,17 +52,26 @@ export type AssignmentLifecycleReceipt = {
   completed_at?: string | null;
   due_at: string | null;
   version: number;
-  audit_event_id: string;
+  audit_event_id?: string | null;
 };
 
-export type SlaLifecycleReceipt = SlaReceipt & {
+export type SlaLifecycleReceipt = Omit<
+  SlaReceipt,
+  "audit_event_id" | "correlation_id" | "due_at" | "paused_duration_seconds"
+> & {
+  due_at: string | null;
+  paused_duration_seconds: number | null;
+  audit_event_id?: string | null;
+  correlation_id?: string | null;
   expected_resume_at?: string | null;
   paused_at?: string | null;
   resumed_at?: string | null;
   escalation_level?: number | null;
 };
 
-export type JobLifecycleReceipt = JobReceipt & {
+export type JobLifecycleReceipt = Omit<JobReceipt, "checkpoint" | "correlation_id"> & {
+  checkpoint: string | null;
+  correlation_id?: string | null;
   queue_name?: string | null;
   queued_at?: string | null;
   started_at?: string | null;
@@ -93,8 +102,8 @@ export type DecisionLifecycleReceipt = {
   reviewer_subject_id?: string | null;
   version: number;
   occurred_at: string;
-  audit_event_id: string;
-  correlation_id: string;
+  audit_event_id?: string | null;
+  correlation_id?: string | null;
 };
 
 export type IntakeLifecycleAction =

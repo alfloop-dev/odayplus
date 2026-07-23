@@ -39,6 +39,10 @@ export type OperatorApiError = {
   correlationId: string | null;
   occurredAt: string;
   retryable: boolean;
+  currentState?: string | null;
+  currentVersion?: number | null;
+  reasonCode?: string | null;
+  retryAfterSeconds?: number | null;
 };
 
 export type OperatorApiResult<T> =
@@ -100,20 +104,23 @@ export function toOperatorApiError(
     transportNextAction: string;
   },
 ): OperatorApiError {
-  const occurredAt = new Date().toISOString();
-
   if (error instanceof OdpApiError) {
     const mapped = options.byStatus[error.status];
     return {
       status: error.status,
-      code: mapped?.code ?? `${options.fallbackPrefix}-HTTP-${error.status}`,
+      code: error.code ?? mapped?.code ?? `${options.fallbackPrefix}-HTTP-${error.status}`,
       summary: error.detail ?? (error.status === 403 ? options.roleDenied : error.message),
       nextAction:
-        mapped?.next ?? "請稍後重試；若持續發生，請附上 correlation ID 通報平台維運。",
+        error.nextAction ??
+        mapped?.next ??
+        "請稍後重試；若持續發生，請附上 correlation ID 通報平台維運。",
       correlationId: error.correlationId ?? null,
-      occurredAt,
-      // 5xx is transient from the operator's point of view; 4xx is not.
-      retryable: mapped ? mapped.retryable : error.status >= 500,
+      occurredAt: error.occurredAt ?? new Date().toISOString(),
+      retryable: error.retryable ?? (mapped ? mapped.retryable : error.status >= 500),
+      currentState: error.currentState,
+      currentVersion: error.currentVersion,
+      reasonCode: error.reasonCode,
+      retryAfterSeconds: error.retryAfterSeconds,
     };
   }
 
@@ -125,7 +132,7 @@ export function toOperatorApiError(
     summary: isAbort ? options.timeoutSummary : options.networkSummary,
     nextAction: options.transportNextAction,
     correlationId: null,
-    occurredAt,
+    occurredAt: new Date().toISOString(),
     retryable: true,
   };
 }

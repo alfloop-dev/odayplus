@@ -721,6 +721,15 @@ def test_canonical_inbox_filters_saved_views_bootstrap_and_claim_contract() -> N
     )
     assert assignment.status_code == 200, assignment.text
     assignment_body = assignment.json()
+    assigned_page = client.get("/api/v1/intakes", headers=headers)
+    assert assigned_page.status_code == 200, assigned_page.text
+    assigned_row = next(
+        row
+        for row in assigned_page.json()["items"]
+        if row["intake_id"] == submitted["intake_id"]
+    )
+    assert assigned_row["assignment_version"] == assignment_body["version"]
+    assert assigned_row["sla_version"] == 1
     claim = client.post(
         f"/api/v1/assignments/{assignment_body['assignment_id']}/actions/claim",
         json={"reason": "Claim from canonical Inbox."},

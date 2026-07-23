@@ -31,6 +31,7 @@ export type IntakeInboxFilterState = {
   page: number;
   pageSize: number;
   cursor: string;
+  cursorTrail: string[];
   sortBy: string;
   sortOrder: "asc" | "desc";
   selectedIntakeId: string | null;
@@ -62,6 +63,7 @@ const DEFAULT_FILTERS: IntakeInboxFilterState = {
   page: 1,
   pageSize: 10,
   cursor: "",
+  cursorTrail: [],
   sortBy: "updatedAt",
   sortOrder: "desc",
   selectedIntakeId: null,
@@ -102,6 +104,7 @@ function parseUrlQueryParams(): Partial<IntakeInboxFilterState> {
   if (!isNaN(pageSize) && pageSize > 0) result.pageSize = pageSize;
 
   if (params.has("cursor")) result.cursor = params.get("cursor") ?? "";
+  result.cursorTrail = params.getAll("cursorTrail");
   if (params.has("sortBy")) result.sortBy = params.get("sortBy") ?? "updatedAt";
   if (params.has("sortOrder")) {
     const order = params.get("sortOrder");
@@ -154,6 +157,8 @@ function updateUrlQueryParams(state: IntakeInboxFilterState, mode: "push" | "rep
   setOrDelete("page", state.page);
   setOrDelete("pageSize", state.pageSize);
   setOrDelete("cursor", state.cursor);
+  params.delete("cursorTrail");
+  state.cursorTrail.forEach((cursor) => params.append("cursorTrail", cursor));
   setOrDelete("sortBy", state.sortBy);
   setOrDelete("sortOrder", state.sortOrder);
   setOrDelete("selected", state.selectedIntakeId);
@@ -240,6 +245,9 @@ export function useIntakeInboxQuery() {
         if (!("cursor" in updates)) {
           next.cursor = "";
         }
+        if (!("cursorTrail" in updates)) {
+          next.cursorTrail = [];
+        }
       }
       return next;
     });
@@ -258,11 +266,19 @@ export function useIntakeInboxQuery() {
         return {
           ...prev,
           cursor: "",
+          cursorTrail: [],
           page: 1,
           sortOrder: prev.sortOrder === "asc" ? "desc" : "asc",
         };
       }
-      return { ...prev, cursor: "", page: 1, sortBy: column, sortOrder: "asc" };
+      return {
+        ...prev,
+        cursor: "",
+        cursorTrail: [],
+        page: 1,
+        sortBy: column,
+        sortOrder: "asc",
+      };
     });
   }, []);
 

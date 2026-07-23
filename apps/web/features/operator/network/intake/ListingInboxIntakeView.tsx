@@ -580,8 +580,15 @@ export function ListingInboxIntakeView({
             <button
               className={styles.secondaryButton}
               data-testid="intake-prev-page"
-              disabled={pageData?.previousCursor === null || (!pageData?.previousCursor && currentPage <= 1)}
-              onClick={() => updateFilters({ cursor: pageData?.previousCursor ?? "", page: Math.max(1, currentPage - 1) })}
+              disabled={filters.cursorTrail.length === 0 || currentPage <= 1}
+              onClick={() =>
+                updateFilters({
+                  cursor:
+                    filters.cursorTrail[filters.cursorTrail.length - 1] ?? "",
+                  cursorTrail: filters.cursorTrail.slice(0, -1),
+                  page: Math.max(1, currentPage - 1),
+                })
+              }
               type="button"
             >
               上一頁
@@ -590,7 +597,13 @@ export function ListingInboxIntakeView({
               className={styles.secondaryButton}
               data-testid="intake-next-page"
               disabled={pageData?.nextCursor === null || (!pageData?.nextCursor && currentPage >= pageCount)}
-              onClick={() => updateFilters({ cursor: pageData?.nextCursor ?? "", page: currentPage + 1 })}
+              onClick={() =>
+                updateFilters({
+                  cursor: pageData?.nextCursor ?? "",
+                  cursorTrail: [...filters.cursorTrail, filters.cursor],
+                  page: currentPage + 1,
+                })
+              }
               type="button"
             >
               下一頁
@@ -771,7 +784,7 @@ function IntakeTable({
         </thead>
         <tbody>
           {records.map((record) => {
-            const outcome = record.matchResult?.outcome;
+            const outcome = record.matchOutcome ?? record.matchResult?.outcome;
             const owner = claimedOwners[record.id] ?? record.owner;
             const retryable = record.stage === "FAILED" && record.failure?.retryable;
             const relatedListingId = authoritativeRelatedListingId(record);

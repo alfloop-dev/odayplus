@@ -33,7 +33,11 @@ import {
   type PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import type { IntakeLifecycleSnapshot } from "./useIntakeLifecycle";
+import type {
+  IntakeLifecycleSnapshot,
+  JobLifecycleReceipt,
+  SlaLifecycleReceipt,
+} from "./useIntakeLifecycle";
 import {
   decisionOptions,
   matchLabel,
@@ -64,8 +68,8 @@ export type IntakeProcessingDetailProps = {
   canReplay?: boolean;
   error?: IntakeApiError | null;
   history?: TransitionReceipt[];
-  jobs?: JobReceipt[];
-  sla?: SlaReceipt;
+  jobs?: Array<JobReceipt | JobLifecycleReceipt>;
+  sla?: SlaReceipt | SlaLifecycleReceipt;
   fields?: FieldValue[];
   auditReferences?: AuditReference[];
   submissionReceipt?: IntakeSubmissionReceipt;
@@ -82,6 +86,7 @@ export type IntakeProcessingDetailProps = {
   onDecide?: (kind: IntakeDecisionKind) => void;
   reviewSection?: ReactNode;
   identitySection?: ReactNode;
+  auditSection?: ReactNode;
   onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
   onReplayDlq?: (jobId?: string) => void;
@@ -91,13 +96,15 @@ export type IntakeProcessingDetailProps = {
   onOpenTransfer?: () => void;
   onOpenPause?: () => void;
   onResumeSla?: () => void;
+  onEscalateAssignment?: () => void;
+  onCompleteAssignment?: () => void;
   onRefresh?: () => void;
   testId?: string;
   // ---- Candidate promotion saga slice (ODP-INTAKE-UX-PROMOTION-001) -------
   // All optional: when `currentOperator` + `gateSnapshotSha256` are provided
   // the detail exposes the promotion tab; existing callers are unchanged.
   promotion?: PromotionDecisionReceipt | null;
-  scoreJob?: JobReceipt | null;
+  scoreJob?: JobReceipt | JobLifecycleReceipt | null;
   currentOperator?: PromotionActor;
   gateSnapshotSha256?: string;
   promotionBusy?: boolean;
@@ -145,6 +152,7 @@ export function IntakeProcessingDetail({
   onDecide,
   reviewSection,
   identitySection,
+  auditSection,
   onOpenFix,
   onRetry,
   onReplayDlq,
@@ -154,6 +162,8 @@ export function IntakeProcessingDetail({
   onOpenTransfer,
   onOpenPause,
   onResumeSla,
+  onEscalateAssignment,
+  onCompleteAssignment,
   onRefresh,
   testId = "intake-processing-detail",
   promotion = null,
@@ -510,13 +520,16 @@ export function IntakeProcessingDetail({
 
         {/* Tab 2: Evidence */}
         {activeTab === "evidence" && (
-          <EvidencePanel
-            record={record}
-            fields={fields}
-            auditReferences={auditReferences}
-            onOpenFix={onOpenFix}
-            maskedView={maskedView}
-          />
+          <>
+            <EvidencePanel
+              record={record}
+              fields={fields}
+              auditReferences={auditReferences}
+              onOpenFix={onOpenFix}
+              maskedView={maskedView}
+            />
+            {auditSection}
+          </>
         )}
 
         {/* Full desktop compare and reversible identity decision. */}
@@ -543,6 +556,8 @@ export function IntakeProcessingDetail({
             onOpenPause={onOpenPause}
             onOpenTransfer={onOpenTransfer}
             onResume={onResumeSla}
+            onEscalate={onEscalateAssignment}
+            onComplete={onCompleteAssignment}
             sla={lifecycle?.sla}
             userRole={currentOperator?.role}
           />

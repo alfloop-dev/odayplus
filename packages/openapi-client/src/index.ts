@@ -797,7 +797,7 @@ export type CanonicalTransitionReceipt = {
 
 export type CanonicalFieldValue = {
   field_path: string;
-  classification: string;
+  classification: "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "RESTRICTED";
   masked: boolean;
   parsed: unknown;
   normalized: unknown;
@@ -2411,7 +2411,8 @@ export type IntakeStage =
   | "NEEDS_REVIEW"
   | "READY"
   | "QUARANTINED"
-  | "FAILED";
+  | "FAILED"
+  | "CANCELLED";
 
 export const INTAKE_STAGES: readonly IntakeStage[] = [
   "SUBMITTED",
@@ -2425,6 +2426,7 @@ export const INTAKE_STAGES: readonly IntakeStage[] = [
   "READY",
   "QUARANTINED",
   "FAILED",
+  "CANCELLED",
 ] as const;
 
 /** assisted_intake.STAGE_LABEL */
@@ -2440,6 +2442,7 @@ export const INTAKE_STAGE_LABEL: Record<IntakeStage, string> = {
   READY: "可決策",
   QUARANTINED: "已隔離",
   FAILED: "處理失敗",
+  CANCELLED: "已取消",
 };
 
 /** assisted_intake.TERMINAL_STAGES */
@@ -2449,6 +2452,7 @@ export const TERMINAL_INTAKE_STAGES: readonly IntakeStage[] = [
   "QUARANTINED",
   "FAILED",
   "AWAITING_ASSISTED_ENTRY",
+  "CANCELLED",
 ] as const;
 
 /** assisted_intake.SOURCE_POLICY_STATES */
@@ -2614,8 +2618,10 @@ export type AssistedIntake = {
   version: number;
   assignmentId?: string | null;
   assignmentStatus?: string | null;
+  assignmentVersion?: number | null;
   slaInstanceId?: string | null;
   slaState?: string | null;
+  slaVersion?: number | null;
   slaReceipt?: string | null;
   dueAt?: string | null;
 };
@@ -2697,6 +2703,7 @@ export type CanonicalIntakeSummary = {
     | "ESCALATED"
     | "COMPLETED"
     | null;
+  assignment_version: number | null;
   owner_subject_id: string | null;
   queue_id: string | null;
   sla_instance_id: string | null;
@@ -2708,6 +2715,7 @@ export type CanonicalIntakeSummary = {
     | "PAUSED"
     | "COMPLETED"
     | null;
+  sla_version: number | null;
   due_at: string | null;
   last_observed_at: string | null;
   submitted_at: string;

@@ -1,5 +1,6 @@
 import type { OdpApiClient } from "@oday-plus/openapi-client";
 import {
+  parseCanonicalIntakeOperatorSession,
   parseIntakeOperatorSession,
   unavailableIntakeOperatorSession,
   type IntakeOperatorSession,
@@ -11,9 +12,14 @@ export async function loadServerIntakeOperatorSession(
   if (!client) return unavailableIntakeOperatorSession("OPERATOR_BOOTSTRAP_UNAVAILABLE");
 
   try {
-    const bootstrap = await client.getOperatorBootstrap();
-    return parseIntakeOperatorSession(bootstrap);
+    const bootstrap = await client.getIntakeInboxBootstrap();
+    return parseCanonicalIntakeOperatorSession(bootstrap);
   } catch {
-    return unavailableIntakeOperatorSession("OPERATOR_BOOTSTRAP_UNAVAILABLE");
+    try {
+      const legacyBootstrap = await client.getOperatorBootstrap();
+      return parseIntakeOperatorSession(legacyBootstrap);
+    } catch {
+      return unavailableIntakeOperatorSession("OPERATOR_BOOTSTRAP_UNAVAILABLE");
+    }
   }
 }
