@@ -83,3 +83,23 @@ No legacy, SQLite-as-prod, memory, fixture, or silent-fallback path is
 presented as production-ready: drills that use scratch stores label them as
 drill scratch state inside their own evidence JSON, and
 `release-drill-report.json` pins `production_ready: false`.
+
+## Owner re-verification (2026-07-23, re-dispatch)
+
+Independently re-run by owner Claude at branch head `eb94d53b` after the
+2026-07-23T13:32Z worker interruption (quarantine backup inspected: its only
+diff — the E2E reopen stabilization — was already committed in `eb94d53b`;
+nothing was lost):
+
+```
+CI=1 npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts → 8 passed (2.2m)
+uv run pytest tests/ops/test_assisted_listing_intake_release.py -q          → 36 passed
+python3 scripts/e2e/check_product_release_gate.py                           → PASS
+python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report   → PASS (37 labels, GO)
+git diff --check origin/dev...HEAD                                          → clean
+```
+
+Reconfirmed: a run **without** `CI=1` fails canonical 5/6 with
+`403 TEST_CONTROL_DENIED` — proof the score-failure fault control stays
+fail-closed outside CI, per `apps/api/app/routes/listings.py`
+(`reviewPromotionDecision`).
