@@ -852,6 +852,241 @@
   display: none;
 }
 
+/* Authoritative evidence, receipt, audit and recovery surfaces. */
+.receiptHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.receiptGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.receiptList {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+}
+
+.receiptValue {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+  font-size: 10.5px;
+}
+
+.receiptValue dt {
+  color: #5a6478;
+}
+
+.receiptValue dd {
+  margin: 0;
+  color: #1c2333;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
+.evidenceSection {
+  border-top: 1px solid #eef1f6;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.tableScroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.evidenceTable,
+.auditChangeTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+
+.evidenceTable th,
+.evidenceTable td,
+.auditChangeTable th,
+.auditChangeTable td {
+  border-bottom: 1px solid #eef1f6;
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.auditChangeTable caption {
+  text-align: left;
+  font-weight: 700;
+  color: #3a4362;
+  padding: 8px 0;
+}
+
+.auditReferenceList,
+.structuredAuditList {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.auditReferenceList li {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 1fr auto minmax(160px, auto) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 8px;
+  border-bottom: 1px solid #eef1f6;
+  font-size: 10.5px;
+}
+
+.structuredAuditList > li {
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.auditEventHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.auditEventHeader > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.auditEventHeader time {
+  color: #5a6478;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}
+
+.errorRecovery {
+  border: 1px solid #f3cbc7;
+  border-radius: 10px;
+  background: #fff8f7;
+  padding: 14px;
+}
+
+.errorSummary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #f3cbc7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.errorSummary:focus-visible {
+  outline: 2px solid #b3261e;
+  outline-offset: 2px;
+}
+
+.errorSummary h4,
+.errorSummary p {
+  margin: 0;
+}
+
+.errorSummary p {
+  margin-top: 5px;
+  color: #3a4362;
+  font-weight: 400;
+}
+
+.errorCodeBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.errorMetadata {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 5px 12px;
+  margin: 12px 0;
+}
+
+.fieldErrors {
+  margin: 12px 0;
+}
+
+.fieldErrors h5 {
+  margin: 0 0 6px;
+}
+
+.fieldErrors ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 10.5px;
+}
+
+.fieldErrors li {
+  display: flex;
+  gap: 8px;
+}
+
+.preservedInput {
+  margin: 12px 0;
+}
+
+.preservedInput pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #1c2333;
+  color: #ffffff;
+  font-size: 10.5px;
+  white-space: pre-wrap;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 25, 48, 0.55);
+}
+
+.modalBackdrop .panel {
+  padding: 16px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.field textarea {
+  min-height: 88px;
+  padding: 8px;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  font: inherit;
+}
+
 /*
  * Tablet: submitting, status tracking and unambiguous confirmation stay
  * available; the 5-up meta grid folds so labels stay legible.
@@ -872,6 +1107,31 @@
  * explicit desktop-required state rather than being silently squashed.
  */
 @media (max-width: 720px) {
+  .receiptHeader,
+  .auditEventHeader,
+  .errorSummary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .receiptGrid,
+  .errorMetadata {
+    grid-template-columns: 1fr;
+  }
+
+  .receiptValue {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .auditReferenceList li {
+    grid-template-columns: 1fr;
+  }
+
+  .errorCodeBlock {
+    align-items: flex-start;
+  }
+
   .metaGrid {
     grid-template-columns: 1fr 1fr;
   }

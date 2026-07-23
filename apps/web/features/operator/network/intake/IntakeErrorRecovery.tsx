@@ -1,16 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ApiError, ConflictError } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
+import type { AuthoritativeRecoveryContext } from "./evidenceContracts";
 import type { IntakeApiError } from "./intakeClient";
 
+type RecoveryError = IntakeApiError | ApiError | ConflictError;
+
 export type IntakeErrorRecoveryProps = {
-  error?: IntakeApiError | ApiError | ConflictError | null;
-  stage?: string;
+  error?: RecoveryError | null;
+  /** Legacy server-state prop retained for callers that have not built context. */
+  stage?: string | null;
+  /** Legacy authoritative correlation value from the containing record. */
   correlationId?: string | null;
+  /** Legacy preserved draft prop. Prefer recovery.preserved_input. */
   preservedInput?: Record<string, unknown> | null;
-  onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
+  recovery?: AuthoritativeRecoveryContext | null;
+  onRetry?: (overrides?: {
+    overrideRetryBudget?: boolean;
+    riskAcknowledged?: boolean;
+  }) => void;
   onReplayDlq?: (jobId?: string) => void;
   onCancel?: () => void;
   onOverride?: (reason: string) => void;
@@ -18,11 +28,80 @@ export type IntakeErrorRecoveryProps = {
   testId?: string;
 };
 
+function readString(
+  object: Record<string, unknown>,
+  snake: string,
+  camel?: string,
+): string | undefined {
+  const value = object[snake] ?? (camel ? object[camel] : undefined);
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function readNumber(
+  object: Record<string, unknown>,
+  snake: string,
+  camel?: string,
+): number | undefined {
+  const value = object[snake] ?? (camel ? object[camel] : undefined);
+  return typeof value === "number" ? value : undefined;
+}
+
+function redactSensitiveInput(value: unknown, key = ""): unknown {
+  const normalizedKey = key.toLowerCase();
+  if (
+    normalizedKey.includes("token")
+    || normalizedKey.includes("password")
+    || normalizedKey.includes("secret")
+    || normalizedKey.includes("credential")
+    || normalizedKey.includes("cookie")
+    || normalizedKey.includes("authorization")
+  ) {
+    return "[REDACTED]";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveInput(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+        childKey,
+        redactSensitiveInput(childValue, childKey),
+      ]),
+    );
+  }
+  return value;
+}
+
+function MetadataValue({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: unknown;
+  testId?: string;
+}) {
+  const absent = value === null || value === undefined || value === "";
+  return (
+    <div className={styles.receiptValue}>
+      <dt>{label}</dt>
+      <dd data-testid={testId} data-authoritative={absent ? "missing" : "present"}>
+        {absent
+          ? "API 未回傳"
+          : typeof value === "object"
+            ? JSON.stringify(value)
+            : String(value)}
+      </dd>
+    </div>
+  );
+}
+
 export function IntakeErrorRecovery({
   error,
-  stage = "FAILED",
+  stage,
   correlationId,
   preservedInput,
+  recovery,
   onRetry,
   onReplayDlq,
   onCancel,
@@ -34,265 +113,279 @@ export function IntakeErrorRecovery({
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const summaryRef = useRef<HTMLDivElement>(null);
 
-  const errorCode = (error as any)?.code ?? "ERR_PARSE_MALFORMED_HTML";
-  const errorMessage = (error as any)?.message ?? "收件解析過程發生未預期的結構異常或連線中斷。";
-  const isRetryable = (error as any)?.retryable ?? true;
-  const corrId = (error as any)?.correlation_id ?? correlationId ?? "CORR-ERR-991204";
-  const occurredAt = (error && "occurred_at" in error) ? (error as ApiError).occurred_at : new Date().toISOString();
-  const nextAction = (error as any)?.next_action ?? "RETRY";
-  const currentVersion = (error && "current_version" in error) ? (error as ConflictError).current_version : 1;
+  const source = (error ?? {}) as Record<string, unknown>;
+  const errorCode = readString(source, "code");
+  const errorMessage = readString(source, "message", "summary");
+  const errorCorrelation = readString(source, "correlation_id", "correlationId")
+    ?? correlationId
+    ?? undefined;
+  const occurredAt = readString(source, "occurred_at", "occurredAt");
+  const nextAction = readString(source, "next_action", "nextAction");
+  const reasonCode = readString(source, "reason_code", "reasonCode");
+  const currentState = readString(source, "current_state", "currentState")
+    ?? recovery?.current_state
+    ?? stage
+    ?? undefined;
+  const currentVersion = readNumber(source, "current_version", "currentVersion")
+    ?? recovery?.current_version
+    ?? undefined;
+  const currentOwner = readString(
+    source,
+    "current_owner_subject_id",
+    "currentOwnerSubjectId",
+  );
+  const retryWithEtag = readString(source, "retry_with_etag", "retryWithEtag");
+  const retryAfterSeconds = readNumber(
+    source,
+    "retry_after_seconds",
+    "retryAfterSeconds",
+  );
+  const isRetryable = typeof source.retryable === "boolean"
+    ? source.retryable
+    : undefined;
+  const httpStatus = typeof source.status === "number" ? source.status : undefined;
+  const fieldErrors = Array.isArray(source.field_errors)
+    ? source.field_errors as Array<{ field?: string; code?: string; message?: string }>
+    : [];
+  const authoritativeInput = recovery?.preserved_input ?? preservedInput;
+  const safeInput = useMemo(
+    () => authoritativeInput
+      ? redactSensitiveInput(authoritativeInput) as Record<string, unknown>
+      : null,
+    [authoritativeInput],
+  );
 
-  // Mask credential/sensitive class data from preserved input (Purpose Binding enforcement)
-  const sanitizePreservedInput = (obj?: Record<string, unknown> | null): Record<string, unknown> => {
-    if (!obj) return { url: "https://example.com/item/10492", rawText: "<html_snapshot_data>" };
-    const clean: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      const lower = k.toLowerCase();
-      if (lower.includes("token") || lower.includes("password") || lower.includes("secret") || lower.includes("cred")) {
-        clean[k] = "•••••••• [REDACTED_PURPOSE_BINDING]";
-      } else {
-        clean[k] = v;
-      }
-    }
-    return clean;
-  };
+  useEffect(() => {
+    if (error) summaryRef.current?.focus();
+  }, [error, errorCode]);
 
-  const safeInput = sanitizePreservedInput(preservedInput);
+  if (!error) return null;
 
   const handleConfirmOverride = () => {
-    if (!overrideReason.trim() || !riskAcknowledged) return;
-    onOverride?.(overrideReason);
+    const reason = overrideReason.trim();
+    if (!reason || !riskAcknowledged) return;
+    onOverride?.(reason);
     setOverrideModalOpen(false);
     setOverrideReason("");
     setRiskAcknowledged(false);
   };
 
   return (
-    <div
-      className={styles.sectionBox}
+    <section
+      className={styles.errorRecovery}
       data-testid={testId}
-      style={{
-        border: "1px solid #fca5a5",
-        borderRadius: "10px",
-        padding: "14px",
-        background: "#fff5f5",
-        marginBottom: "16px",
-      }}
+      aria-labelledby={`${testId}-title`}
     >
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "16px" }}>⚠️</span>
-          <div>
-            <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#991b1b" }}>
-              異常恢復與降級控制 ERROR RECOVERY & DLQ
-            </h4>
-            <span style={{ fontSize: "10.5px", color: "#7f1d1d" }}>
-              階段: <strong data-testid="error-stage">{stage}</strong>
-            </span>
-          </div>
+      <div
+        ref={summaryRef}
+        role="alert"
+        tabIndex={-1}
+        className={styles.errorSummary}
+        data-testid="error-summary"
+      >
+        <div>
+          <h4 id={`${testId}-title`}>異常與恢復 ERROR RECOVERY</h4>
+          <p data-testid="error-message">{errorMessage ?? "API 未回傳錯誤摘要"}</p>
         </div>
-
-        <span
-          style={{
-            fontSize: "10px",
-            fontWeight: 700,
-            padding: "2px 8px",
-            borderRadius: "999px",
-            background: isRetryable ? "#fef3c7" : "#fee2e2",
-            color: isRetryable ? "#92400e" : "#b91c1c",
-          }}
-          data-testid="error-retryable-badge"
-        >
-          {isRetryable ? "↺ 可自動重試 (Retryable)" : "🚫 不可直接重試 (Non-retryable)"}
-        </span>
-      </div>
-
-      {/* Main Error Box */}
-      <div style={{ background: "#ffffff", border: "1px solid #fecaca", borderRadius: "8px", padding: "12px", marginBottom: "12px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-          <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#b91c1c", fontSize: "12px" }} data-testid="error-code">
-            [{errorCode}]
-          </span>
-          <span style={{ fontSize: "10.5px", color: "#64748b" }}>
-            發生時間: {new Date(occurredAt).toLocaleString()}
-          </span>
-        </div>
-
-        <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#334155", lineHeight: "1.5" }} data-testid="error-message">
-          {errorMessage}
-        </p>
-
-        <div style={{ display: "flex", gap: "16px", fontSize: "10.5px", color: "#64748b", borderTop: "1px dashed #fca5a5", paddingTop: "6px" }}>
-          <div>Correlation ID: <code style={{ color: "#1e293b" }} data-testid="error-correlation-id">{corrId}</code></div>
-          <div>目前版本: <code>v{currentVersion}</code></div>
-          <div>建議處置: <strong style={{ color: "#2563eb" }}>{nextAction}</strong></div>
-        </div>
-      </div>
-
-      {/* Preserved Input Drawer */}
-      <div style={{ marginBottom: "12px" }}>
-        <button
-          type="button"
-          onClick={() => setShowPreservedInput(!showPreservedInput)}
-          className={styles.secondaryButton}
-          style={{ padding: "4px 10px", fontSize: "11px" }}
-          data-testid="error-toggle-preserved-input"
-        >
-          {showPreservedInput ? "▼ 隱藏保留輸入參數 (Preserved Input)" : "▶ 展開保留輸入參數 (Preserved Input)"}
-        </button>
-
-        {showPreservedInput && (
-          <div
-            data-testid="error-preserved-input-box"
-            style={{
-              marginTop: "8px",
-              padding: "10px",
-              background: "#1e293b",
-              color: "#f8fafc",
-              borderRadius: "6px",
-              fontFamily: "monospace",
-              fontSize: "10.5px",
-              maxHeight: "150px",
-              overflowY: "auto",
-            }}
+        <div className={styles.errorCodeBlock}>
+          <code
+            data-testid="error-code"
+            data-authoritative={errorCode ? "present" : "missing"}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {errorCode ?? "API 未回傳"}
+          </code>
+          {isRetryable !== undefined ? (
+            <span data-testid="error-retryable-badge">
+              {isRetryable ? "可重試 RETRYABLE" : "不可重試 NON_RETRYABLE"}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <dl className={styles.errorMetadata}>
+        <MetadataValue label="HTTP status" value={httpStatus} />
+        <MetadataValue label="Reason code" value={reasonCode} />
+        <MetadataValue
+          label="Correlation ID"
+          value={errorCorrelation}
+          testId="error-correlation-id"
+        />
+        <MetadataValue
+          label="Occurred at"
+          value={occurredAt}
+          testId="error-occurred-at"
+        />
+        <MetadataValue label="Retryable" value={isRetryable} />
+        <MetadataValue
+          label="Current state"
+          value={currentState}
+          testId="error-current-state"
+        />
+        <MetadataValue
+          label="Current version"
+          value={currentVersion}
+          testId="error-current-version"
+        />
+        <MetadataValue
+          label="Affected operation"
+          value={recovery?.operation}
+          testId="error-operation"
+        />
+        <MetadataValue label="Current owner" value={currentOwner} />
+        <MetadataValue label="Retry with ETag" value={retryWithEtag} />
+        <MetadataValue label="Retry after seconds" value={retryAfterSeconds} />
+        <MetadataValue
+          label="Server current value"
+          value={recovery?.server_value}
+          testId="error-server-value"
+        />
+        <MetadataValue
+          label="Next action"
+          value={nextAction}
+          testId="error-next-action"
+        />
+      </dl>
+
+      {fieldErrors.length > 0 ? (
+        <section className={styles.fieldErrors} aria-label="欄位錯誤">
+          <h5>欄位錯誤 FIELD ERRORS</h5>
+          <ul>
+            {fieldErrors.map((fieldError, index) => (
+              <li key={`${fieldError.field ?? "unknown"}-${index}`}>
+                {fieldError.field ? <code>{fieldError.field}</code> : null}
+                {fieldError.code ? <code>{fieldError.code}</code> : null}
+                {fieldError.message ? <span>{fieldError.message}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {safeInput ? (
+        <section className={styles.preservedInput}>
+          <button
+            type="button"
+            onClick={() => setShowPreservedInput((visible) => !visible)}
+            className={styles.secondaryButton}
+            aria-expanded={showPreservedInput}
+            data-testid="error-toggle-preserved-input"
+          >
+            {showPreservedInput ? "隱藏保留輸入" : "顯示保留輸入"}
+          </button>
+          {showPreservedInput ? (
+            <pre data-testid="error-preserved-input-box">
               {JSON.stringify(safeInput, null, 2)}
             </pre>
-          </div>
-        )}
-      </div>
+          ) : null}
+        </section>
+      ) : null}
 
-      {/* Action Toolbar */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "flex-end" }}>
-        {onRetry && isRetryable && (
+      <div className={styles.actionRow}>
+        {onRetry && isRetryable ? (
           <button
             type="button"
             onClick={() => onRetry()}
             className={styles.primaryButton}
-            style={{ padding: "5px 12px", fontSize: "11.5px" }}
             data-testid="error-action-retry"
           >
-            ↺ 立即重試 (Retry)
+            立即重試
           </button>
-        )}
-
-        {onReplayDlq && (
+        ) : null}
+        {onReplayDlq ? (
           <button
             type="button"
             onClick={() => onReplayDlq()}
             className={styles.secondaryButton}
-            style={{ padding: "5px 12px", fontSize: "11.5px", background: "#fef3c7", borderColor: "#fde68a", color: "#92400e" }}
             data-testid="error-action-replay-dlq"
           >
-            ⚡ 重播 DLQ (Replay DLQ)
+            重播 DLQ
           </button>
-        )}
-
-        {onCorrectInput && (
+        ) : null}
+        {onCorrectInput ? (
           <button
             type="button"
             onClick={() => onCorrectInput()}
             className={styles.secondaryButton}
-            style={{ padding: "5px 12px", fontSize: "11.5px" }}
             data-testid="error-action-correct"
           >
-            ✏️ 修正欄位 (Correct Input)
+            修正欄位
           </button>
-        )}
-
-        {onOverride && (
+        ) : null}
+        {onOverride ? (
           <button
             type="button"
             onClick={() => setOverrideModalOpen(true)}
             className={styles.secondaryButton}
-            style={{ padding: "5px 12px", fontSize: "11.5px", borderColor: "#fca5a5", color: "#b91c1c" }}
             data-testid="error-action-override"
           >
-            ⚠️ 強制通過 (Override & Proceed)
+            提出覆寫
           </button>
-        )}
-
-        {onCancel && (
+        ) : null}
+        {onCancel ? (
           <button
             type="button"
             onClick={onCancel}
             className={styles.secondaryButton}
-            style={{ padding: "5px 12px", fontSize: "11.5px" }}
             data-testid="error-action-cancel"
           >
-            ✕ 取消收件 (Cancel)
+            取消處理
           </button>
-        )}
+        ) : null}
       </div>
 
-      {/* Override Reason Modal */}
-      {overrideModalOpen && (
+      {overrideModalOpen ? (
         <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-          data-testid="error-override-modal"
+          className={styles.modalBackdrop}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`${testId}-override-title`}
+          data-testid="error-override-dialog"
         >
-          <div style={{ background: "#ffffff", padding: "18px", borderRadius: "10px", width: "420px", maxWidth: "90%" }}>
-            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#b91c1c" }}>⚠️ 強制覆核與風控確認 (Override)</h4>
-            <p style={{ fontSize: "11.5px", color: "#475569", margin: "0 0 10px 0" }}>
-              強制繞過解析異常將記入資安稽核日誌。請輸入必要處置理由並勾選風控承諾。
+          <div className={styles.panel}>
+            <h4 id={`${testId}-override-title`}>提出例外覆寫</h4>
+            <p className={styles.help}>
+              覆寫必須由後端重新授權並產生收據；此畫面不會預先顯示成功。
             </p>
-
-            <textarea
-              value={overrideReason}
-              onChange={(e) => setOverrideReason(e.target.value)}
-              placeholder="請輸入強制通過之業務理由..."
-              rows={3}
-              style={{ width: "100%", padding: "8px", fontSize: "11.5px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px" }}
-              data-testid="override-reason-input"
-            />
-
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "#1e293b", marginBottom: "14px" }}>
+            <label className={styles.field}>
+              <span>覆寫理由</span>
+              <textarea
+                value={overrideReason}
+                onChange={(event) => setOverrideReason(event.target.value)}
+                data-testid="error-override-reason"
+              />
+            </label>
+            <label className={styles.checkboxRow}>
               <input
                 type="checkbox"
                 checked={riskAcknowledged}
-                onChange={(e) => setRiskAcknowledged(e.target.checked)}
-                data-testid="override-risk-checkbox"
+                onChange={(event) => setRiskAcknowledged(event.target.checked)}
+                data-testid="error-override-risk"
               />
-              <span>我了解並承擔強制通過此收件之資料安全與一致性風險</span>
+              <span>我理解覆寫會留下獨立稽核紀錄，且後端仍可能拒絕。</span>
             </label>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+            <div className={styles.actionRow}>
               <button
                 type="button"
-                onClick={() => setOverrideModalOpen(false)}
                 className={styles.secondaryButton}
-                style={{ padding: "4px 12px", fontSize: "11.5px" }}
+                onClick={() => setOverrideModalOpen(false)}
               >
-                取消
+                返回
               </button>
               <button
                 type="button"
-                onClick={handleConfirmOverride}
-                disabled={!overrideReason.trim() || !riskAcknowledged}
                 className={styles.primaryButton}
-                style={{ padding: "4px 12px", fontSize: "11.5px", background: "#b91c1c", borderColor: "#b91c1c" }}
-                data-testid="override-submit-button"
+                disabled={!overrideReason.trim() || !riskAcknowledged}
+                onClick={handleConfirmOverride}
+                data-testid="error-override-confirm"
               >
-                確認強制通過 (Submit Override)
+                送出覆寫請求
               </button>
             </div>
           </div>
         </div>
-      )}
-    </div>
+      ) : null}
+    </section>
   );
 }

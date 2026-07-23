@@ -7,6 +7,20 @@ export { IntakeStageTimeline } from "./IntakeStageTimeline";
 export { EvidencePanel } from "./EvidencePanel";
 export { DurableReceiptPanel } from "./DurableReceiptPanel";
 export { IntakeErrorRecovery } from "./IntakeErrorRecovery";
+export { StructuredAuditTimeline } from "./StructuredAuditTimeline";
+export type {
+  AuthoritativeEvidenceReceipt,
+  AuthoritativeEvidenceVerification,
+  AuthoritativeExportReceipt,
+  AuthoritativeHumanDecisionEvidence,
+  AuthoritativeIdentityReceipt,
+  AuthoritativeRecoveryContext,
+  AuthoritativeSensitiveEvidenceAccess,
+  AuthoritativeSourceEvidence,
+  EvidenceVerificationStatus,
+  StructuredAuditBeforeAfter,
+  StructuredAuditEvent,
+} from "./evidenceContracts";
 export {
   intakeApi,
   newCorrelationId,

@@ -1,193 +1,490 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type {
   AssignmentReceipt,
   AssistedIntake,
   CorrectionReceipt,
   DecisionReceipt,
   IntakeSubmissionReceipt,
+  JobReceipt,
   PromotionDecisionReceipt,
   SlaReceipt,
 } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
+import type {
+  AuthoritativeEvidenceReceipt,
+  AuthoritativeEvidenceVerification,
+  AuthoritativeExportReceipt,
+  AuthoritativeIdentityReceipt,
+} from "./evidenceContracts";
 
 export type DurableReceiptPanelProps = {
-  record: AssistedIntake;
-  submissionReceipt?: IntakeSubmissionReceipt;
-  assignmentReceipt?: AssignmentReceipt;
-  decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
-  slaReceipt?: SlaReceipt;
+  /**
+   * Compatibility only. A record is not a receipt and none of its fields are
+   * used to manufacture receipt metadata.
+   */
+  record?: AssistedIntake;
+  submissionReceipt?: IntakeSubmissionReceipt | null;
+  assignmentReceipt?: AssignmentReceipt | null;
+  decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt | null;
+  promotionReceipt?: PromotionDecisionReceipt | null;
+  slaReceipt?: SlaReceipt | null;
   correctionReceipts?: CorrectionReceipt[];
-  verificationStatus?: "Valid" | "Pending" | "Tampered";
+  identityReceipts?: AuthoritativeIdentityReceipt[];
+  jobReceipts?: JobReceipt[];
+  evidenceReceipts?: AuthoritativeEvidenceReceipt[];
+  exportReceipts?: AuthoritativeExportReceipt[];
+  verification?: AuthoritativeEvidenceVerification | null;
   testId?: string;
 };
 
-export function DurableReceiptPanel({
-  record,
-  submissionReceipt,
-  assignmentReceipt,
-  decisionReceipt,
-  slaReceipt,
-  correctionReceipts = [],
-  verificationStatus = "Valid",
-  testId = "intake-durable-receipt-panel",
-}: DurableReceiptPanelProps) {
+type ReceiptCardProps = {
+  title: string;
+  receiptId: string;
+  receiptIdTestId?: string;
+  testId: string;
+  children: ReactNode;
+};
+
+function ReceiptCard({
+  title,
+  receiptId,
+  receiptIdTestId,
+  testId,
+  children,
+}: ReceiptCardProps) {
+  return (
+    <article className={styles.sectionBox} data-testid={testId}>
+      <div className={styles.sectionLabel}>{title}</div>
+      <dl className={styles.receiptList}>
+        <ReceiptValue
+          label="Receipt ID"
+          testId={receiptIdTestId ?? `${testId}-id`}
+          value={receiptId}
+        />
+        {children}
+      </dl>
+    </article>
+  );
+}
+
+function ReceiptValue({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: ReactNode | null | undefined;
+  testId?: string;
+}) {
+  if (value === null || value === undefined || value === "") return null;
+  return (
+    <div className={styles.receiptValue}>
+      <dt>{label}</dt>
+      <dd data-testid={testId}>{value}</dd>
+    </div>
+  );
+}
+
+function isPromotionReceipt(
+  receipt: DecisionReceipt | PromotionDecisionReceipt,
+): receipt is PromotionDecisionReceipt {
+  return "promotion_decision_id" in receipt;
+}
+
+function VerificationDetails({
+  verification,
+}: {
+  verification: AuthoritativeEvidenceVerification;
+}) {
+  return (
+    <article
+      className={styles.sectionBox}
+      data-testid="receipt-verification"
+      aria-label="伺服器簽章驗證結果"
+    >
+      <div className={styles.sectionLabel}>簽章與證據驗證 VERIFICATION</div>
+      <dl className={styles.receiptList}>
+        <ReceiptValue
+          label="Verification status"
+          testId="receipt-verification-status"
+          value={verification.status}
+        />
+        <ReceiptValue label="Verified at" value={verification.verified_at} />
+        <ReceiptValue label="Checksum algorithm" value={verification.checksum_algorithm} />
+        <ReceiptValue
+          label="Content checksum"
+          testId="receipt-checksum"
+          value={verification.content_sha256}
+        />
+        <ReceiptValue label="Signature" value={verification.signature} />
+        <ReceiptValue label="Signer key version" value={verification.signer_key_version} />
+        <ReceiptValue
+          label="WORM sink receipt"
+          testId="receipt-worm-sink-id"
+          value={verification.worm_sink_id}
+        />
+        <ReceiptValue label="WORM checksum" value={verification.worm_checksum} />
+        <ReceiptValue label="Evidence state" value={verification.evidence_state} />
+        <ReceiptValue label="Audit event" value={verification.audit_event_id} />
+        <ReceiptValue label="Correlation ID" value={verification.correlation_id} />
+      </dl>
+    </article>
+  );
+}
+
+export function DurableReceiptPanel(props: DurableReceiptPanelProps) {
+  const {
+    submissionReceipt,
+    assignmentReceipt,
+    decisionReceipt,
+    promotionReceipt,
+    slaReceipt,
+    correctionReceipts = [],
+    identityReceipts = [],
+    jobReceipts = [],
+    evidenceReceipts = [],
+    exportReceipts = [],
+    verification,
+    testId = "intake-durable-receipt-panel",
+  } = props;
   const [copied, setCopied] = useState(false);
 
-  // Construct durable payload snapshot for receipt verification
-  const receiptPayload = {
-    intake_id: record.id,
-    version: record.version,
-    stage: record.stage,
-    policy: record.policy,
-    submitted_at: record.capturedAt,
-    correlation_id: record.correlationId ?? `CORR-${record.id}`,
-    checksum: `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
-    submission: submissionReceipt,
-    assignment: assignmentReceipt,
-    decision: decisionReceipt,
-    sla: slaReceipt,
-    corrections: correctionReceipts,
-  };
+  const decision = decisionReceipt && !isPromotionReceipt(decisionReceipt)
+    ? decisionReceipt
+    : undefined;
+  const promotion = promotionReceipt
+    ?? (decisionReceipt && isPromotionReceipt(decisionReceipt) ? decisionReceipt : undefined);
 
-  const jsonString = JSON.stringify(receiptPayload, null, 2);
+  const authoritativeBundle = useMemo(
+    () => ({
+      submission_receipt: submissionReceipt,
+      assignment_receipt: assignmentReceipt,
+      sla_receipt: slaReceipt,
+      correction_receipts: correctionReceipts,
+      decision_receipt: decision,
+      identity_receipts: identityReceipts,
+      promotion_receipt: promotion,
+      job_receipts: jobReceipts,
+      evidence_receipts: evidenceReceipts,
+      export_receipts: exportReceipts,
+      verification,
+    }),
+    [
+      assignmentReceipt,
+      correctionReceipts,
+      decision,
+      evidenceReceipts,
+      exportReceipts,
+      identityReceipts,
+      jobReceipts,
+      promotion,
+      slaReceipt,
+      submissionReceipt,
+      verification,
+    ],
+  );
 
-  const handleCopy = () => {
-    navigator.clipboard?.writeText(jsonString);
+  const hasAuthoritativeData = Boolean(
+    submissionReceipt
+      || assignmentReceipt
+      || slaReceipt
+      || decision
+      || promotion
+      || verification
+      || correctionReceipts.length
+      || identityReceipts.length
+      || jobReceipts.length
+      || evidenceReceipts.length
+      || exportReceipts.length,
+  );
+
+  if (!hasAuthoritativeData) return null;
+
+  const jsonString = JSON.stringify(authoritativeBundle, null, 2);
+
+  const handleCopy = async () => {
+    await navigator.clipboard?.writeText(jsonString);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   const handleExport = () => {
     const blob = new Blob([jsonString], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `receipt-${record.id}-v${record.version}.json`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = submissionReceipt
+      ? `receipt-${submissionReceipt.intake_id}-v${submissionReceipt.version}.json`
+      : "authoritative-receipts.json";
+    anchor.click();
     URL.revokeObjectURL(url);
   };
 
   return (
-    <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-        <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
-          <span>📜 持久化收據與簽章 DURABLE RECEIPTS</span>
-          <span
-            style={{
-              fontSize: "10.5px",
-              fontWeight: 700,
-              padding: "2px 8px",
-              borderRadius: "999px",
-              background: verificationStatus === "Valid" ? "#dcfce7" : verificationStatus === "Pending" ? "#fef9c3" : "#fee2e2",
-              color: verificationStatus === "Valid" ? "#15803d" : verificationStatus === "Pending" ? "#a16207" : "#b91c1c",
-            }}
-            data-testid="receipt-verification-status"
-          >
-            {verificationStatus === "Valid" ? "✓ 簽章合法 (Verified Valid)" : verificationStatus === "Pending" ? "⌛ 待驗證 (Pending)" : "✕ 簽章異常 (Tampered)"}
-          </span>
-        </h4>
-
-        <div style={{ display: "flex", gap: "8px" }}>
+    <section className={styles.sectionBox} data-testid={testId}>
+      <div className={styles.receiptHeader}>
+        <div>
+          <div className={styles.sectionLabel}>持久化收據 DURABLE RECEIPTS</div>
+          <p className={styles.help}>
+            僅顯示 API 回傳的收據與驗證資料。未回傳的收據不會在此建立。
+          </p>
+        </div>
+        <div className={styles.actionRow}>
           <button
             type="button"
             onClick={handleCopy}
             className={styles.secondaryButton}
-            style={{ padding: "4px 10px", fontSize: "11px" }}
             data-testid="receipt-copy-button"
           >
-            {copied ? "✓ 已複製 JSON" : "複製收據 (Copy JSON)"}
+            {copied ? "已複製 JSON" : "複製收據 JSON"}
           </button>
           <button
             type="button"
             onClick={handleExport}
             className={styles.secondaryButton}
-            style={{ padding: "4px 10px", fontSize: "11px" }}
             data-testid="receipt-export-button"
           >
-            下載收據 (Export JSON)
+            下載收據 JSON
           </button>
         </div>
       </div>
 
-      {/* 1. Receipts Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "10px", marginBottom: "14px" }}>
-        {/* Ingestion Submission Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
-            <span>📥 收件提交收據 Submission Receipt</span>
-            <span style={{ fontFamily: "monospace", color: "#64748b" }}>v{record.version}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Intake ID: <code style={{ color: "#1e293b" }}>{record.id}</code></div>
-            <div>Correlation ID: <code style={{ color: "#1e293b" }}>{record.correlationId ?? `CORR-${record.id}`}</code></div>
-            <div>Submitted At: <span>{record.capturedAt ?? "—"}</span></div>
-          </div>
-        </div>
+      <div className={styles.receiptGrid}>
+        {submissionReceipt ? (
+          <ReceiptCard
+            title="收件提交 SUBMISSION"
+            receiptId={submissionReceipt.intake_id}
+            testId="receipt-submission"
+          >
+            <ReceiptValue label="State" value={submissionReceipt.state} />
+            <ReceiptValue label="Version" value={submissionReceipt.version} />
+            <ReceiptValue label="Job ID" value={submissionReceipt.job_id} />
+            <ReceiptValue label="Correlation ID" value={submissionReceipt.correlation_id} />
+            <ReceiptValue label="Submitted at" value={submissionReceipt.submitted_at} />
+            <ReceiptValue label="Duplicate hint" value={submissionReceipt.duplicate_hint} />
+          </ReceiptCard>
+        ) : null}
 
-        {/* Assignment & SLA Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }} data-testid="durable-receipt-asg-sla">
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-            ⏱️ 指派與 SLA 收據 Assignment & SLA Receipt
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Owner: <strong data-testid="receipt-owner-id">{assignmentReceipt?.owner_subject_id ?? record.owner ?? "Unassigned"}</strong></div>
-            <div>Assignment Status: <strong data-testid="receipt-asg-status">{assignmentReceipt?.status ?? record.assignmentStatus ?? "ASSIGNED"}</strong></div>
-            <div>SLA State: <strong data-testid="receipt-sla-state">{slaReceipt?.state ?? record.slaState ?? "ON_TRACK"}</strong></div>
-            {assignmentReceipt?.assignment_id && (
-              <div>Assignment ID: <code data-testid="receipt-asg-id">{assignmentReceipt.assignment_id}</code></div>
-            )}
-            {assignmentReceipt?.version !== undefined && (
-              <div>Assignment Version: <span data-testid="receipt-asg-version">v{assignmentReceipt.version}</span></div>
-            )}
-            {assignmentReceipt?.due_at && (
-              <div>Assignment Due At: <span data-testid="receipt-asg-due">{assignmentReceipt.due_at}</span></div>
-            )}
-            {slaReceipt?.sla_instance_id && (
-              <div>SLA Instance ID: <code data-testid="receipt-sla-id">{slaReceipt.sla_instance_id}</code></div>
-            )}
-            {slaReceipt?.version !== undefined && (
-              <div>SLA Version: <span data-testid="receipt-sla-version">v{slaReceipt.version}</span></div>
-            )}
-            {slaReceipt?.paused_duration_seconds !== undefined && (
-              <div>Paused Duration: <span data-testid="receipt-sla-paused-sec">{slaReceipt.paused_duration_seconds}s</span></div>
-            )}
-            {slaReceipt?.correlation_id && (
-              <div>SLA Correlation: <code data-testid="receipt-sla-correlation">{slaReceipt.correlation_id}</code></div>
-            )}
-            <div>Audit Event: <code data-testid="receipt-audit-event-id">{assignmentReceipt?.audit_event_id ?? slaReceipt?.audit_event_id ?? `AUD-${record.id}`}</code></div>
-          </div>
-        </div>
+        {assignmentReceipt ? (
+          <ReceiptCard
+            title="指派 ASSIGNMENT"
+            receiptId={assignmentReceipt.assignment_id}
+            receiptIdTestId="receipt-asg-id"
+            testId="receipt-assignment"
+          >
+            <ReceiptValue
+              label="Status"
+              testId="receipt-asg-status"
+              value={assignmentReceipt.status}
+            />
+            <ReceiptValue
+              label="Owner"
+              testId="receipt-owner-id"
+              value={assignmentReceipt.owner_subject_id}
+            />
+            <ReceiptValue
+              label="Due at"
+              testId="receipt-asg-due"
+              value={assignmentReceipt.due_at}
+            />
+            <ReceiptValue
+              label="Version"
+              testId="receipt-asg-version"
+              value={assignmentReceipt.version}
+            />
+            <ReceiptValue
+              label="Audit event"
+              testId="receipt-audit-event-id"
+              value={assignmentReceipt.audit_event_id}
+            />
+          </ReceiptCard>
+        ) : null}
 
-        {/* Decision / Promotion Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-            ⚖️ 決策與晉升收據 Decision Receipt
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Decision State: <strong>{record.matchResult?.outcome ?? "PENDING"}</strong></div>
-            <div>Promoted Site ID: <code>{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "—"}</code></div>
-            <div>Audit Event: <code>{decisionReceipt ? ("audit_event_id" in decisionReceipt ? decisionReceipt.audit_event_id : "AUD-DEC-99") : "—"}</code></div>
-          </div>
-        </div>
+        {slaReceipt ? (
+          <ReceiptCard
+            title="SLA"
+            receiptId={slaReceipt.sla_instance_id}
+            receiptIdTestId="receipt-sla-id"
+            testId="receipt-sla"
+          >
+            <ReceiptValue
+              label="State"
+              testId="receipt-sla-state"
+              value={slaReceipt.state}
+            />
+            <ReceiptValue
+              label="Due at"
+              testId="receipt-sla-due"
+              value={slaReceipt.due_at}
+            />
+            <ReceiptValue label="Due soon at" value={slaReceipt.due_soon_at} />
+            <ReceiptValue
+              label="Paused duration (seconds)"
+              testId="receipt-sla-paused-sec"
+              value={slaReceipt.paused_duration_seconds}
+            />
+            <ReceiptValue
+              label="Version"
+              testId="receipt-sla-version"
+              value={slaReceipt.version}
+            />
+            <ReceiptValue
+              label="Audit event"
+              testId="receipt-audit-event-id"
+              value={slaReceipt.audit_event_id}
+            />
+            <ReceiptValue
+              label="Correlation ID"
+              testId="receipt-sla-correlation"
+              value={slaReceipt.correlation_id}
+            />
+          </ReceiptCard>
+        ) : null}
+
+        {correctionReceipts.map((receipt) => (
+          <ReceiptCard
+            key={receipt.correction_id}
+            title="欄位校正 CORRECTION"
+            receiptId={receipt.correction_id}
+            testId={`receipt-correction-${receipt.correction_id}`}
+          >
+            <ReceiptValue label="Status" value={receipt.status} />
+            <ReceiptValue label="Intake ID" value={receipt.intake_id} />
+            <ReceiptValue label="Listing revision ID" value={receipt.listing_revision_id} />
+            <ReceiptValue label="Version" value={receipt.version} />
+            <ReceiptValue label="Audit event" value={receipt.audit_event_id} />
+            <ReceiptValue label="Correlation ID" value={receipt.correlation_id} />
+          </ReceiptCard>
+        ))}
+
+        {decision ? (
+          <ReceiptCard
+            title="人工決策 DECISION"
+            receiptId={decision.decision_id}
+            testId="receipt-decision"
+          >
+            <ReceiptValue label="Status" value={decision.status} />
+            <ReceiptValue
+              label="Resource versions"
+              value={JSON.stringify(decision.resource_versions)}
+            />
+            <ReceiptValue label="Job ID" value={decision.job_id} />
+            <ReceiptValue label="Audit event" value={decision.audit_event_id} />
+            <ReceiptValue label="Correlation ID" value={decision.correlation_id} />
+          </ReceiptCard>
+        ) : null}
+
+        {identityReceipts.map((receipt) => (
+          <ReceiptCard
+            key={receipt.identity_receipt_id}
+            title="身分圖決策 IDENTITY"
+            receiptId={receipt.identity_receipt_id}
+            testId={`receipt-identity-${receipt.identity_receipt_id}`}
+          >
+            <ReceiptValue label="Operation" value={receipt.operation} />
+            <ReceiptValue label="Status" value={receipt.status} />
+            <ReceiptValue label="Decision ID" value={receipt.decision_id} />
+            <ReceiptValue
+              label="Identity edge IDs"
+              value={receipt.identity_edge_ids?.join(", ")}
+            />
+            <ReceiptValue
+              label="Resource versions"
+              value={receipt.resource_versions
+                ? JSON.stringify(receipt.resource_versions)
+                : undefined}
+            />
+            <ReceiptValue label="Occurred at" value={receipt.occurred_at} />
+            <ReceiptValue label="Audit event" value={receipt.audit_event_id} />
+            <ReceiptValue label="Correlation ID" value={receipt.correlation_id} />
+          </ReceiptCard>
+        ))}
+
+        {promotion ? (
+          <ReceiptCard
+            title="候選點晉升 PROMOTION"
+            receiptId={promotion.promotion_decision_id}
+            testId="receipt-promotion"
+          >
+            <ReceiptValue label="Status" value={promotion.status} />
+            <ReceiptValue label="Decision type" value={promotion.decision_type} />
+            <ReceiptValue label="Intake ID" value={promotion.intake_id} />
+            <ReceiptValue label="Listing ID" value={promotion.listing_id} />
+            <ReceiptValue label="Candidate site ID" value={promotion.candidate_site_id} />
+            <ReceiptValue label="SiteScore job ID" value={promotion.site_score_job_id} />
+            <ReceiptValue label="Proposer" value={promotion.proposer_subject_id} />
+            <ReceiptValue label="Reviewer" value={promotion.reviewer_subject_id} />
+            <ReceiptValue label="Version" value={promotion.version} />
+            <ReceiptValue label="Audit event" value={promotion.audit_event_id} />
+            <ReceiptValue label="Correlation ID" value={promotion.correlation_id} />
+          </ReceiptCard>
+        ) : null}
+
+        {jobReceipts.map((receipt) => (
+          <ReceiptCard
+            key={receipt.job_id}
+            title="非同步工作 JOB"
+            receiptId={receipt.job_id}
+            testId={`receipt-job-${receipt.job_id}`}
+          >
+            <ReceiptValue label="Status" value={receipt.status} />
+            <ReceiptValue label="Checkpoint" value={receipt.checkpoint} />
+            <ReceiptValue label="Attempt" value={receipt.attempt} />
+            <ReceiptValue label="Version" value={receipt.version} />
+            <ReceiptValue label="Correlation ID" value={receipt.correlation_id} />
+          </ReceiptCard>
+        ))}
+
+        {evidenceReceipts.map((receipt) => (
+          <ReceiptCard
+            key={receipt.evidence_receipt_id}
+            title="來源證據 EVIDENCE"
+            receiptId={receipt.evidence_receipt_id}
+            testId={`receipt-evidence-${receipt.evidence_receipt_id}`}
+          >
+            <ReceiptValue label="Status" value={receipt.status} />
+            <ReceiptValue label="Created at" value={receipt.created_at} />
+            <ReceiptValue label="Snapshot ID" value={receipt.source_snapshot_id} />
+            <ReceiptValue label="Parser run ID" value={receipt.parser_run_id} />
+            <ReceiptValue label="Version" value={receipt.version} />
+            <ReceiptValue label="Audit event" value={receipt.audit_event_id} />
+            <ReceiptValue label="Correlation ID" value={receipt.correlation_id} />
+          </ReceiptCard>
+        ))}
+
+        {exportReceipts.map((receipt) => (
+          <ReceiptCard
+            key={receipt.export_manifest_id}
+            title="證據匯出 EXPORT"
+            receiptId={receipt.export_manifest_id}
+            testId={`receipt-export-${receipt.export_manifest_id}`}
+          >
+            <ReceiptValue label="Requested by" value={receipt.requested_by} />
+            <ReceiptValue label="Approved by" value={receipt.approved_by} />
+            <ReceiptValue label="Purpose" value={receipt.purpose} />
+            <ReceiptValue label="Scope" value={JSON.stringify(receipt.scope)} />
+            <ReceiptValue label="Field mask" value={JSON.stringify(receipt.field_mask)} />
+            <ReceiptValue
+              label="Source snapshots"
+              value={receipt.source_snapshot_ids.join(", ")}
+            />
+            <ReceiptValue label="Audit events" value={receipt.audit_event_ids.join(", ")} />
+            <ReceiptValue label="Object URI" value={receipt.object_uri} />
+            <ReceiptValue label="Content SHA-256" value={receipt.content_sha256} />
+            <ReceiptValue label="Watermark" value={receipt.watermark} />
+            <ReceiptValue label="Expires at" value={receipt.expires_at} />
+            <ReceiptValue label="Created at" value={receipt.created_at} />
+            <ReceiptValue label="Download evidence ID" value={receipt.download_evidence_id} />
+            <ReceiptValue label="Signer key version" value={receipt.signer_key_version} />
+            <ReceiptValue label="WORM sink receipt" value={receipt.worm_sink_id} />
+            <ReceiptValue label="WORM checksum" value={receipt.worm_checksum} />
+          </ReceiptCard>
+        ))}
+
+        {verification ? <VerificationDetails verification={verification} /> : null}
       </div>
-
-      {/* 2. Cryptographic Digest & Traceability Links */}
-      <div style={{ background: "#1e293b", color: "#f8fafc", borderRadius: "8px", padding: "12px", fontFamily: "monospace", fontSize: "10.5px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", color: "#94a3b8" }}>
-          <span>CRYPTOGRAPHIC PAYLOAD CHECKSUM (SHA-256)</span>
-          <span style={{ color: "#34d399" }}>SECURE WORM LOGGED</span>
-        </div>
-        <div style={{ color: "#38bdf8", wordBreak: "break-all", marginBottom: "8px" }} data-testid="receipt-checksum">
-          sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-        </div>
-
-        <div style={{ paddingTop: "6px", borderTop: "1px solid #334155", display: "flex", gap: "16px", color: "#cbd5e1" }}>
-          <span>Trace Canonical Listing: <code>LISTING-{record.id}</code></span>
-          <span>Candidate Site: <code>SITE-{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "NONE"}</code></span>
-        </div>
-      </div>
-    </div>
+    </section>
   );
 }
