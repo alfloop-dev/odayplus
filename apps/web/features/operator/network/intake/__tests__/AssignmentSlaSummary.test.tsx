@@ -3,7 +3,11 @@ import { renderToString } from "react-dom/server";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
-import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
+import { AssignmentSlaSummary, SLA_STATE_MAP } from "../AssignmentSlaSummary";
+import type {
+  AssignmentLifecycleReceipt,
+  SlaLifecycleReceipt,
+} from "../useIntakeLifecycle";
 import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
 import { PauseSlaDialog } from "../PauseSlaDialog";
 import { IntakeDetailDialog } from "../IntakeDetailDialog";
@@ -59,20 +63,6 @@ const conflictError: IntakeApiError = {
 
 describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001)", () => {
   describe("AssignmentSlaSummary Component & SLA Logic", () => {
-    it("computes SLA states correctly based on time and flags", () => {
-      expect(computeSlaState({ ...sampleIntakeRecord, slaState: "PAUSED" })).toBe("PAUSED");
-      expect(computeSlaState({ ...sampleIntakeRecord, isBreached: true } as any)).toBe("BREACHED");
-
-      const futureDue = new Date(Date.now() + 120 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: futureDue } as any)).toBe("ON_TRACK");
-
-      const soonDue = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: soonDue } as any)).toBe("DUE_SOON");
-
-      const pastDue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: pastDue } as any)).toBe("OVERDUE");
-    });
-
     it("verifies SLA text plus icon/pattern mapping for WCAG AA compliance", () => {
       expect(SLA_STATE_MAP.ON_TRACK.pattern).toBe("[✓ ON TRACK]");
       expect(SLA_STATE_MAP.DUE_SOON.pattern).toBe("[⚠ DUE SOON]");
@@ -90,14 +80,40 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       const onOpenTransfer = vi.fn();
       const onOpenPause = vi.fn();
       const onResume = vi.fn();
+      const assignment: AssignmentLifecycleReceipt = {
+        assignment_id: "ASG-TEST-001",
+        status: "ASSIGNED",
+        owner_subject_id: "staff-1",
+        owner_display_name: "許庭瑜（展店）",
+        queue_name: "expansion-review",
+        due_at: "2026-07-21T05:00:00Z",
+        version: 3,
+        audit_event_id: "AUD-ASG-001",
+      };
+      const sla: SlaLifecycleReceipt = {
+        sla_instance_id: "SLA-TEST-001",
+        state: "ON_TRACK",
+        due_at: "2026-07-21T05:00:00Z",
+        paused_duration_seconds: 0,
+        version: 3,
+        audit_event_id: "AUD-SLA-001",
+        correlation_id: "CORR-TEST-ASG-001",
+      };
 
       const html = renderToString(
         <AssignmentSlaSummary
-          record={sampleIntakeRecord}
+          allowedActions={[
+            "CLAIM_ASSIGNMENT",
+            "TRANSFER_ASSIGNMENT",
+            "PAUSE_SLA",
+            "RESUME_SLA",
+          ]}
+          assignment={assignment}
           onClaim={onClaim}
           onOpenTransfer={onOpenTransfer}
           onOpenPause={onOpenPause}
           onResume={onResume}
+          sla={sla}
         />
       );
 
@@ -106,6 +122,54 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).toContain("asg-btn-claim");
       expect(html).toContain("asg-btn-transfer");
       expect(html).toContain("asg-btn-pause");
+    });
+
+    it("shows unavailable instead of deriving missing assignment or SLA data", () => {
+      const html = renderToString(
+        <AssignmentSlaSummary
+          allowedActions={[]}
+          onClaim={vi.fn()}
+          onOpenPause={vi.fn()}
+        />,
+      );
+
+      expect(html).toContain("[? UNAVAILABLE]");
+      expect(html).toContain("伺服器未提供");
+      expect(html).not.toContain("UNASSIGNED");
+      expect(html).not.toContain("ON_TRACK");
+    });
+
+    it("fails closed when allowedActions is absent even if callbacks exist", () => {
+      const html = renderToString(
+        <AssignmentSlaSummary
+          assignment={{
+            assignment_id: "ASG-TEST-001",
+            status: "ASSIGNED",
+            owner_subject_id: "staff-1",
+            queue_name: "expansion-review",
+            due_at: "2026-07-21T05:00:00Z",
+            version: 3,
+            audit_event_id: "AUD-ASG-001",
+          }}
+          onClaim={vi.fn()}
+          onComplete={vi.fn()}
+          onEscalate={vi.fn()}
+          onOpenPause={vi.fn()}
+          onOpenTransfer={vi.fn()}
+          onResume={vi.fn()}
+          sla={{
+            sla_instance_id: "SLA-TEST-001",
+            state: "ON_TRACK",
+            due_at: "2026-07-21T05:00:00Z",
+            paused_duration_seconds: 0,
+            version: 3,
+            audit_event_id: "AUD-SLA-001",
+            correlation_id: "CORR-TEST-ASG-001",
+          }}
+        />,
+      );
+
+      expect(html).not.toContain('data-testid="asg-btn-');
     });
   });
 
