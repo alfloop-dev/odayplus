@@ -2669,6 +2669,10 @@ export type CanonicalInboxLocationSummary = {
   district: string | null;
   assigned_area_id: string | null;
   heat_zone_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  confidence: number | null;
+  source: string | null;
 };
 
 export type CanonicalInboxMaskingSummary = {

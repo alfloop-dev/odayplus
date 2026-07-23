@@ -39,12 +39,14 @@ class PromotionService:
         listing_repository: Any,
         intake_repository: Any,
         outbox_repository: Any = None,
+        job_queue: Any = None,
         score_queue_hook: Callable[[], None] | None = None,
     ) -> None:
         self.promotion_repository = promotion_repository
         self.listing_repository = listing_repository
         self.intake_repository = intake_repository
         self.outbox_repository = outbox_repository
+        self.job_queue = job_queue
         self.score_queue_hook = score_queue_hook
 
     def request_promotion(
@@ -507,40 +509,58 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
             raise exc
 
-        # 2. CANDIDATE_CREATED -> SCORE_QUEUED -> COMPLETED
+        # 2. CANDIDATE_CREATED -> SCORE_QUEUED. The durable worker owns
+        # SCORE_QUEUED -> COMPLETED / SCORE_FAILED after executing SiteScore.
         try:
             PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_QUEUED, system_context)
             promo["status"] = to_status_str(PromotionState.SCORE_QUEUED)
             promo["version"] = promo_agg.version
 
-            score_job_id = str(uuid.uuid4())
-            promo["site_score_job_id"] = score_job_id
+            if self.job_queue is None:
+                raise RuntimeError("durable SiteScore job queue is required")
+
+            from shared.jobs.queue import JobRequest
+
+            feature_payload = {
+                "candidate_site_id": candidate_id,
+                "target_format_code": (
+                    promo.get("target_format_code") or "FORMAT-A"
+                ),
+                "feature_snapshot_time": (
+                    feature_input.feature_snapshot_time.isoformat()
+                ),
+                "view_version": feature_input.view_version,
+                "heat_zone_id": feature_input.heat_zone_id,
+                "heat_zone_score": feature_input.heat_zone_score,
+                "monthly_rent": feature_input.monthly_rent,
+                "area_ping": feature_input.area_ping,
+                "frontage_m": feature_input.frontage_m,
+                "average_confidence": feature_input.average_confidence,
+                "source_snapshot_ids": [ds_snapshot_id],
+            }
+            score_job, _created = self.job_queue.enqueue(
+                JobRequest(
+                    job_type="sitescore-candidate",
+                    payload={
+                        "tenant_id": context.actor.tenant_id,
+                        "intake_id": promo["intake_id"],
+                        "listing_id": promo["listing_id"],
+                        "candidate_site_id": candidate_id,
+                        "promotion_decision_id": promotion_decision_id,
+                        "checkpoint": "SCORE_QUEUED",
+                        "features": [feature_payload],
+                    },
+                    idempotency_key=(
+                        f"sitescore-promotion:{promotion_decision_id}"
+                    ),
+                ),
+                correlation_id=context.correlation_id or str(uuid.uuid4()),
+            )
+            promo["site_score_job_id"] = score_job.job_id
             self.promotion_repository.save_promotion(promo)
 
             if self.score_queue_hook:
                 self.score_queue_hook()
-
-            PromotionStateMachine.transition(promo_agg, PromotionState.COMPLETED, system_context)
-            promo["status"] = to_status_str(PromotionState.COMPLETED)
-            promo["version"] = promo_agg.version
-            self.promotion_repository.save_promotion(promo)
-
-            # Emit candidate.promotion_completed event
-            self._emit_event(
-                event_type="candidate.promotion_completed",
-                payload={
-                    "promotion_decision_id": promotion_decision_id,
-                    "intake_id": promo["intake_id"],
-                    "listing_id": promo["listing_id"],
-                    "status": "COMPLETED",
-                    "version": promo["version"],
-                },
-                tenant_id=context.actor.tenant_id,
-                aggregate_type="promotion_decision",
-                aggregate_id=promotion_decision_id,
-                aggregate_version=promo["version"],
-                correlation_id=context.correlation_id,
-            )
 
         except Exception as exc:
             # Scoring failure is recoverable: retain the candidate and listing
@@ -570,6 +590,15 @@ class PromotionService:
             promo["status"] = to_status_str(PromotionState.SCORE_FAILED)
             promo["version"] = promo_agg.version
             self.promotion_repository.save_promotion(promo)
+            score_job_id = promo.get("site_score_job_id")
+            if score_job_id and self.job_queue is not None:
+                from shared.jobs.queue import JobStatus
+
+                self.job_queue.update_status(
+                    score_job_id,
+                    JobStatus.FAILED,
+                    error_message=str(exc),
+                )
             raise exc
 
         return promo

@@ -653,8 +653,12 @@ export type InboxHeatZone = {
 export type InboxLocationSummary = {
   address?: string | null;
   assigned_area_id?: string | null;
+  confidence?: number | null;
   district?: string | null;
   heat_zone_id?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  source?: string | null;
 };
 
 /** InboxMaskingSummary */

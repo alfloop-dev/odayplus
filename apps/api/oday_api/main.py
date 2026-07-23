@@ -439,9 +439,12 @@ else:
             DurableAssistedIntakeRepository,
         )
         operator_intake_repository = (
-            DurableAssistedIntakeRepository(operator_document_store)
-            if operator_document_store is not None
-            else InMemoryAssistedIntakeRepository()
+            getattr(bundle, "operator_intake_repository", None)
+            or (
+                DurableAssistedIntakeRepository(operator_document_store)
+                if operator_document_store is not None
+                else InMemoryAssistedIntakeRepository()
+            )
         )
 
         mount_versioned(

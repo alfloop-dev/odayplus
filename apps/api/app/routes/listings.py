@@ -368,6 +368,10 @@ else:
         district: str | None = None
         assigned_area_id: UuidString | None = None
         heat_zone_id: UuidString | None = None
+        latitude: float | None = Field(None, ge=-90, le=90)
+        longitude: float | None = Field(None, ge=-180, le=180)
+        confidence: float | None = Field(None, ge=0, le=1)
+        source: str | None = None
 
     class InboxMaskingSummary(BaseModel):
         restricted_data: bool
@@ -1064,29 +1068,6 @@ else:
             if self.op_repo:
                 self.op_repo.save_promotion(promo)
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
-            if promo.get("site_score_job_id"):
-                job_id = promo["site_score_job_id"]
-                job_status = {
-                    "COMPLETED": "SUCCEEDED",
-                    "SCORE_FAILED": "FAILED",
-                }.get(promo.get("status"), "QUEUED")
-                job = self.active_store.jobs.get(job_id)
-                if job is None:
-                    job = {
-                        "job_id": job_id,
-                        "status": job_status,
-                        "checkpoint": "SCORE_QUEUED",
-                        "attempt": 0,
-                        "version": 1,
-                        "correlation_id": promo.get("correlation_id") or str(uuid4()),
-                        "intake_id": promo.get("intake_id"),
-                        "tenant_id": promo.get("tenant_id"),
-                        "candidate_site_id": promo.get("candidate_site_id"),
-                    }
-                    self.active_store.jobs[job_id] = job
-                else:
-                    job["status"] = job_status
-                    job["candidate_site_id"] = promo.get("candidate_site_id")
 
         def list_promotions(self) -> list[dict[str, Any]]:
             if self.op_repo:
@@ -2210,29 +2191,22 @@ else:
             promotion_job_id = (
                 promotion.get("site_score_job_id") if promotion else None
             )
-            if promotion_job_id:
-                job = copy.deepcopy(active.jobs.get(promotion_job_id)) or {
-                    "job_id": promotion_job_id,
-                    "status": (
-                        "SUCCEEDED"
-                        if promotion.get("status") == "COMPLETED"
-                        else "FAILED"
-                        if promotion.get("status") == "SCORE_FAILED"
-                        else "QUEUED"
-                    ),
-                    "checkpoint": "SCORE_QUEUED",
-                    "attempt": 0,
-                    "version": 1,
-                }
             job_id = runtime.get("jobId") or value.get("job_id")
             queue = getattr(request.app.state, "job_queue", None)
-            if job is None and queue is not None and job_id:
-                queued_job = queue.get(job_id)
+            authoritative_job_id = promotion_job_id or job_id
+            if queue is not None and authoritative_job_id:
+                queued_job = queue.get(authoritative_job_id)
                 if queued_job is not None:
                     job = queued_job.to_dict()
                     job["status"] = str(job["status"]).upper()
                     job["checkpoint"] = (
-                        (runtime.get("processingHistory") or [{}])[-1].get("checkpoint")
+                        (job.get("payload") or {}).get("checkpoint")
+                        or (job.get("payload") or {}).get("current_stage")
+                        or (
+                            (runtime.get("processingHistory") or [{}])[-1].get(
+                                "checkpoint"
+                            )
+                        )
                     )
             if job is None:
                 job = copy.deepcopy(
@@ -2456,7 +2430,9 @@ else:
             value["tenant_id"] = payload.get("tenant_id")
             value["intake_id"] = payload.get("intake_id")
             value["attempt"] = int(value.pop("attempts", 0))
-            value["checkpoint"] = payload.get("current_stage")
+            value["checkpoint"] = payload.get("checkpoint") or payload.get(
+                "current_stage"
+            )
             intake_id = value.get("intake_id")
             if intake_id:
                 try:
@@ -2666,16 +2642,36 @@ else:
                 raise HTTPException(422, "invalid Idempotency-Key format")
 
         def is_identity_affecting_field(field_path: str) -> bool:
-            normalized = re.sub(r"[^a-z0-9]", "", field_path.lower())
-            return normalized in {
-                "providerlistingid",
+            return canonical_correction_field_path(field_path) in {
+                "providerListingId",
                 "address",
-                "addressraw",
                 "rent",
-                "rentamount",
-                "area",
-                "areaping",
+                "areaPing",
             }
+
+        def canonical_correction_field_path(field_path: str) -> str:
+            normalized = re.sub(r"[^a-z0-9]", "", field_path.lower())
+            aliases = {
+                "providerlistingid": "providerListingId",
+                "identityproviderlistingid": "providerListingId",
+                "address": "address",
+                "addressraw": "address",
+                "normalizedaddress": "address",
+                "locationaddress": "address",
+                "locationaddressraw": "address",
+                "locationnormalizedaddress": "address",
+                "rent": "rent",
+                "rentamount": "rent",
+                "commercialrent": "rent",
+                "commercialrentamount": "rent",
+                "area": "areaPing",
+                "areaping": "areaPing",
+                "commercialarea": "areaPing",
+                "commercialareaping": "areaPing",
+                "propertyarea": "areaPing",
+                "propertyareaping": "areaPing",
+            }
+            return aliases.get(normalized, field_path)
 
         def apply_correction(
             intake: dict[str, Any],
@@ -2968,9 +2964,37 @@ else:
                         "heat_zone_id": (
                             projected.get("scope") or {}
                         ).get("heat_zone_id"),
+                        "latitude": effective_field(
+                            "latitude",
+                            "lat",
+                            "location.latitude",
+                        ),
+                        "longitude": effective_field(
+                            "longitude",
+                            "lng",
+                            "lon",
+                            "location.longitude",
+                        ),
+                        "confidence": effective_field(
+                            "geocodeConfidence",
+                            "geocode_confidence",
+                            "location.confidence",
+                        ),
+                        "source": effective_field(
+                            "geocodeSource",
+                            "geocode_source",
+                            "location.source",
+                        ),
                     },
                 }
             )
+            location = projected["location"]
+            if (
+                location["source"] is None
+                and location["latitude"] is not None
+                and location["longitude"] is not None
+            ):
+                location["source"] = projected.get("source_id")
             return projected
 
         def datetime_value(value: str | None) -> datetime | None:
@@ -3380,6 +3404,21 @@ else:
                     location_value["address"] = None
                 if "district" in masked_field_paths:
                     location_value["district"] = None
+                if masked_field_paths.intersection(
+                    {
+                        "latitude",
+                        "lat",
+                        "location.latitude",
+                        "longitude",
+                        "lng",
+                        "lon",
+                        "location.longitude",
+                    }
+                ):
+                    location_value["latitude"] = None
+                    location_value["longitude"] = None
+                    location_value["confidence"] = None
+                    location_value["source"] = None
                 summaries.append(IntakeSummary(
                     intake_id=masked_val["intake_id"],
                     state=masked_val["state"],
@@ -3876,6 +3915,9 @@ else:
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
             is_identity_affecting = is_identity_affecting_field(body.field_path)
+            canonical_field_path = canonical_correction_field_path(
+                body.field_path
+            )
             resource_for_auth = intake_auth_resource(current)
 
             authorize_intake_action(
@@ -3894,7 +3936,7 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 allowed_states = (
-                    {"NEEDS_REVIEW"}
+                    {"AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW"}
                     if is_identity_affecting
                     else {"AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"}
                 )
@@ -3912,7 +3954,7 @@ else:
                             plan={
                                 "intakeId": intake_id,
                                 "correctionId": correction_id,
-                                "fieldPath": body.field_path,
+                                "fieldPath": canonical_field_path,
                                 "correctedValue": copy.deepcopy(body.corrected_value),
                                 "sourceSnapshotId": runtime_record.get("snapshotId"),
                                 "parserVersion": runtime_record.get("parserVersion"),
@@ -3940,7 +3982,7 @@ else:
                         proposal = {
                             "correctionId": correction_id,
                             "decisionId": decision["decisionId"],
-                            "fieldPath": body.field_path,
+                            "fieldPath": canonical_field_path,
                             "correctedValue": copy.deepcopy(body.corrected_value),
                             "reason": body.reason,
                             "proposer": actor_id,
@@ -3960,7 +4002,11 @@ else:
                         try:
                             updated_runtime = service.correct_intake(
                                 intake_id=intake_id,
-                                fields={body.field_path: copy.deepcopy(body.corrected_value)},
+                                fields={
+                                    canonical_field_path: copy.deepcopy(
+                                        body.corrected_value
+                                    )
+                                },
                                 reason=body.reason,
                                 risk_summary=body.reason or "Field correction requested.",
                                 risk_acknowledged=True,
@@ -3999,7 +4045,7 @@ else:
                         "intake_id": intake_id,
                         "tenant_id": tenant_id,
                         "scope": copy.deepcopy(current.get("scope", {})),
-                        "field_path": body.field_path,
+                        "field_path": canonical_field_path,
                         "corrected_value": copy.deepcopy(body.corrected_value),
                         "proposer": actor_id,
                         "intake_version": current["version"],
@@ -4024,7 +4070,7 @@ else:
                 else:
                     apply_correction(
                         current,
-                        field_path=body.field_path,
+                        field_path=canonical_field_path,
                         corrected_value=body.corrected_value,
                         actor_id=actor_id,
                     )
@@ -5461,6 +5507,9 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
+            response.headers["Idempotency-Replayed"] = str(
+                was_replayed
+            ).lower()
             if not was_replayed:
                 persist_lifecycle_receipt(
                     request=request,
@@ -6428,6 +6477,7 @@ else:
                     listing_repository=V1ListingRepositoryAdapter(repository),
                     intake_repository=V1IntakeRepositoryAdapter(active, request.app.state),
                     outbox_repository=getattr(request.app.state, "outbox_repository", None) or getattr(repository, "outbox_repository", None),
+                    job_queue=getattr(request.app.state, "job_queue", None),
                     score_queue_hook=score_queue_hook,
                 )
 
