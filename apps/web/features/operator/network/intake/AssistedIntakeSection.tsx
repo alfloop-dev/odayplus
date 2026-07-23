@@ -71,16 +71,19 @@ import type { IntakeOperatorSession } from "./intakeOperatorSession";
 // an explicit error state instead.
 
 export function AssistedIntakeDetailPage({
+  operatorSession,
   activeRoleId,
   activeSubjectId,
   intakeId,
 }: {
-  activeRoleId: OperatorRoleId;
+  operatorSession?: IntakeOperatorSession;
+  activeRoleId?: OperatorRoleId;
   activeSubjectId?: string;
   intakeId: string;
 }) {
   return (
     <AssistedIntakeSection
+      operatorSession={operatorSession}
       activeRoleId={activeRoleId}
       activeSubjectId={activeSubjectId}
       detailIntakeId={intakeId}

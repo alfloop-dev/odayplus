@@ -2,7 +2,10 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AssistedIntakeSection } from "../AssistedIntakeSection";
+import {
+  AssistedIntakeDetailPage,
+  AssistedIntakeSection,
+} from "../AssistedIntakeSection";
 import { unavailableIntakeOperatorSession } from "../intakeOperatorSession";
 import { ExpansionWorkspace } from "../../../../expansion/ExpansionWorkspace";
 
@@ -69,5 +72,26 @@ describe("durable intake authoritative session boundary", () => {
       screen.getByTestId("intake-authoritative-session-denied"),
     ).toHaveTextContent("AUTHORIZATION_CONTEXT_UNAVAILABLE");
     expect(screen.queryByTestId("intake-add-button")).not.toBeInTheDocument();
+  });
+
+  it("does not let legacy role props override a denied server session on detail", () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(
+      <AssistedIntakeDetailPage
+        activeRoleId="expansion-manager"
+        activeSubjectId="actor-query-override"
+        intakeId="INTAKE-001"
+        operatorSession={unavailableIntakeOperatorSession(
+          "OPERATOR_BOOTSTRAP_UNAVAILABLE",
+        )}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("intake-authoritative-session-denied"),
+    ).toHaveTextContent("OPERATOR_BOOTSTRAP_UNAVAILABLE");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
