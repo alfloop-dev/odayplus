@@ -1,11 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { IntakeFieldCell } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
-import { isIdentityField } from "./intakeTypes";
+import {
+  fromLegacyIntakeField,
+  materialCorrectionRequirement,
+  type FieldLineageField,
+} from "./FieldLineageRow";
+import {
+  useCorrectionDraft,
+  type CorrectionDraftIdentity,
+  type CorrectionDraftStatus,
+} from "./useCorrectionDraft";
 
 // "Dialog 欄位修正" (part of UX-SCR-EXP-003C).
 //
@@ -20,60 +29,122 @@ import { isIdentityField } from "./intakeTypes";
 
 export function IntakeFieldFixDialog({
   busy,
+  baseVersion = null,
+  draftIdentity = null,
   error,
   field,
   onClose,
   onSubmit,
+  submissionState = "IDLE",
 }: {
   busy: boolean;
+  baseVersion?: number | null;
+  draftIdentity?: Omit<CorrectionDraftIdentity, "purpose" | "fieldPath"> | null;
   error: IntakeApiError | null;
-  field: IntakeFieldCell;
+  field: IntakeFieldCell | FieldLineageField;
   onClose: () => void;
   onSubmit: (input: {
     value: string;
     reason: string;
     riskSummary: string;
     riskAcknowledged: boolean;
+    operationId: string;
+    ifMatchVersion: number | null;
+    requiresIndependentReview: boolean;
   }) => void;
+  submissionState?: "IDLE" | "COMMITTED";
 }) {
-  const identity = isIdentityField(field.key);
-  const [value, setValue] = useState(
-    String(field.correctedValue ?? field.normalizedValue ?? ""),
+  const lineageField = isLineageField(field) ? field : fromLegacyIntakeField(field);
+  const review = materialCorrectionRequirement(lineageField);
+  const initialValue = String(
+    lineageField.correctedValue ?? lineageField.effectiveValue ?? lineageField.normalizedValue ?? "",
   );
-  const [reason, setReason] = useState(field.correctionReason ?? "");
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const initialFields = useMemo(
+    () => ({ value: initialValue }),
+    [initialValue],
+  );
+  const controller = useCorrectionDraft({
+    identity: draftIdentity
+      ? {
+          ...draftIdentity,
+          purpose: "correction",
+          fieldPath: lineageField.fieldPath,
+        }
+      : null,
+    initialFields,
+    baseVersion,
+  });
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const before = formatCell(field.correctedValue ?? field.normalizedValue);
-  const riskSummary = identity
-    ? `修正識別欄位「${field.label}」：${before} → ${value.trim() || "（空白）"}。` +
-      `此欄位影響物件比對，修正後可能指向不同的既有物件或改判為新物件。前後值會寫入 Audit。`
-    : `修正欄位「${field.label}」：${before} → ${value.trim() || "（空白）"}。` +
+  useEffect(() => {
+    if (busy && controller.draft.dirty) controller.markSubmitting();
+    // markSubmitting only belongs to the busy transition; depending on the
+    // controller object would retrigger after its state update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
+
+  useEffect(() => {
+    if (!error) return;
+    controller.markFailure(
+      {
+        code: error.code,
+        summary: error.summary,
+        occurredAt: error.occurredAt,
+        retryable: error.retryable,
+        correlationId: error.correlationId,
+      },
+      error.status === 409,
+    );
+    // The error object is the server response boundary for this update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [error]);
+
+  useEffect(() => {
+    if (submissionState === "COMMITTED") controller.clearAfterCommit();
+    // Clear only after the integrating caller confirms server commit/readback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submissionState]);
+
+  const before = formatCell(lineageField.effectiveValue);
+  const value = String(controller.draft.fields.value ?? "");
+  const riskSummary = review.material
+    ? `修正重要欄位「${lineageField.label}」：${before} → ${value.trim() || "（空白）"}。` +
+      `此變更會先成為修正提案，提案者不得自行核准；前後值、理由、快照、Parser 與 supersession lineage 會寫入 Audit。`
+    : `修正欄位「${lineageField.label}」：${before} → ${value.trim() || "（空白）"}。` +
       `修正值會取代來源正規化值作為後續評估依據。前後值會寫入 Audit。`;
 
   function handleSubmit() {
-    if (busy) return;
+    if (busy || controller.draft.status === "SUBMITTING") return;
     if (!value.trim()) {
       setLocalError("請輸入修正後的值");
       return;
     }
-    if (identity && !reason.trim()) {
-      setLocalError("識別欄位修正必須填寫原因（前後值會寫入 Audit）。");
+    if (review.reasonRequired && !controller.draft.reason.trim()) {
+      setLocalError("重要欄位修正必須填寫原因（前後值會寫入 Audit）。");
       return;
     }
-    if (!riskAcknowledged) {
+    if (review.riskAcknowledgementRequired && !controller.draft.riskAcknowledged) {
       setLocalError("請先確認你已了解此修正的影響。");
       return;
     }
     setLocalError(null);
-    onSubmit({ value: value.trim(), reason: reason.trim(), riskSummary, riskAcknowledged });
+    controller.markSubmitting();
+    onSubmit({
+      value: value.trim(),
+      reason: controller.draft.reason.trim(),
+      riskSummary,
+      riskAcknowledged: controller.draft.riskAcknowledged,
+      operationId: controller.draft.operationId,
+      ifMatchVersion: controller.draft.baseVersion,
+      requiresIndependentReview: review.independentReviewRequired,
+    });
   }
 
-  const shownError = localError ?? error?.summary ?? null;
+  const shownError = localError ?? error?.summary ?? controller.draft.lastFailure?.summary ?? null;
 
   return (
     <IntakeDialogShell
-      ariaLabel={`修正欄位：${field.label}`}
+      ariaLabel={`修正欄位：${lineageField.label}`}
       className={styles.panelNarrow}
       onClose={onClose}
       screenLabel="Dialog 欄位修正"
@@ -82,7 +153,7 @@ export function IntakeFieldFixDialog({
     >
       <div className={styles.dialogHead}>
         <span className={styles.dialogTitle} data-testid="intake-fix-title">
-          修正欄位：{field.label}
+          修正欄位：{lineageField.label}
         </span>
         <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
           ×
@@ -91,8 +162,30 @@ export function IntakeFieldFixDialog({
 
       <div className={styles.dialogBody}>
         <div className={styles.noteBox} data-testid="intake-fix-context">
-          來源值：{formatCell(field.sourceValue)}　·　正規化值：{formatCell(field.normalizedValue)}
+          解析值：{formatCell(lineageField.parsedValue)}　·　正規化值：
+          {formatCell(lineageField.normalizedValue)}　·　人工修正值：
+          {formatCell(lineageField.correctedValue)}　·　有效值：
+          {formatCell(lineageField.effectiveValue)}
+          <br />
+          Snapshot {lineageField.sourceSnapshotId ?? "未提供"} · Parser run{" "}
+          {lineageField.parserRunId ?? "未提供"} · Draft {controller.draft.status} · Operation{" "}
+          {controller.draft.operationId}
         </div>
+
+        {lineageField.corrections.length ? (
+          <div className={styles.noteBox} data-testid="intake-fix-lineage">
+            {lineageField.corrections.map((correction) => (
+              <div key={correction.correctionId}>
+                {correction.correctionId} · {correction.status} ·{" "}
+                {correction.actorName ?? correction.actorSubjectId} · {correction.correctedAt} ·{" "}
+                {correction.reason}
+                {correction.supersedesCorrectionId
+                  ? ` · supersedes ${correction.supersedesCorrectionId}`
+                  : ""}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div>
           <label className={styles.fieldLabel} htmlFor="intake-fix-value">
@@ -103,25 +196,25 @@ export function IntakeFieldFixDialog({
             data-autofocus
             data-testid="intake-fix-value"
             id="intake-fix-value"
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => controller.setField("value", event.target.value)}
             value={value}
           />
         </div>
 
         <div>
           <label className={styles.fieldLabel} htmlFor="intake-fix-reason">
-            {identity
+            {review.material
               ? "修正原因（必填 — 此欄位影響識別／地址／租金／坪數或比對結果）"
-              : "修正原因（選填）"}
+              : "修正原因（必填）"}
           </label>
           <textarea
             className={styles.textarea}
             data-testid="intake-fix-reason"
             id="intake-fix-reason"
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => controller.setReason(event.target.value)}
             placeholder="例：與房東電話確認門牌為 26 號"
             rows={2}
-            value={reason}
+            value={controller.draft.reason}
           />
         </div>
 
@@ -130,16 +223,23 @@ export function IntakeFieldFixDialog({
           <div className={styles.riskSummaryText} data-testid="intake-fix-risk-summary">
             {riskSummary}
           </div>
-          <label className={styles.checkboxRow} htmlFor="intake-fix-risk-ack">
-            <input
-              checked={riskAcknowledged}
-              data-testid="intake-fix-risk-ack"
-              id="intake-fix-risk-ack"
-              onChange={(event) => setRiskAcknowledged(event.target.checked)}
-              type="checkbox"
-            />
-            <span>我已閱讀並了解上述風險，確認儲存此修正（將連同此摘要寫入 Audit）</span>
-          </label>
+          {review.riskAcknowledgementRequired ? (
+            <label className={styles.checkboxRow} htmlFor="intake-fix-risk-ack">
+              <input
+                checked={controller.draft.riskAcknowledged}
+                data-testid="intake-fix-risk-ack"
+                id="intake-fix-risk-ack"
+                onChange={(event) => controller.setRiskAcknowledged(event.target.checked)}
+                type="checkbox"
+              />
+              <span>我已閱讀並了解上述風險，確認送出修正提案（將連同此摘要寫入 Audit）</span>
+            </label>
+          ) : null}
+          {review.independentReviewRequired ? (
+            <div className={styles.warnNote} data-testid="intake-fix-independent-review">
+              需要獨立覆核：提案者不得自行核准；送出不會立即改變 authoritative effective value。
+            </div>
+          ) : null}
         </div>
 
         {shownError ? (
@@ -166,11 +266,11 @@ export function IntakeFieldFixDialog({
         <button
           className={styles.primaryButton}
           data-testid="intake-fix-submit"
-          disabled={busy}
+          disabled={busy || controller.draft.status === "SUBMITTING"}
           onClick={handleSubmit}
           type="button"
         >
-          {busy ? "儲存中…" : "儲存修正"}
+          {busy ? "送出中…" : retryLabel(controller.draft.status)}
         </button>
       </div>
     </IntakeDialogShell>
@@ -179,5 +279,15 @@ export function IntakeFieldFixDialog({
 
 function formatCell(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function isLineageField(field: IntakeFieldCell | FieldLineageField): field is FieldLineageField {
+  return "fieldPath" in field;
+}
+
+function retryLabel(status: CorrectionDraftStatus): string {
+  if (status === "FAILED" || status === "CONFLICT") return "以相同 operation 重試";
+  return "送出修正提案";
 }
