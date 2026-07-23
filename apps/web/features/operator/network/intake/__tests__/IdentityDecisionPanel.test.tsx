@@ -1,454 +1,622 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MatchOutcome } from "@oday-plus/openapi-client";
+import { IdentityDecisionBoundary } from "../IdentityDecisionBoundary";
 import { ListingCompareTable } from "../ListingCompareTable";
-import { MatchEvidencePanel } from "../MatchEvidencePanel";
-import { IdentityDecisionPanel } from "../IdentityDecisionPanel";
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let container: HTMLElement | null = null;
-let root: Root | null = null;
-
-beforeEach(() => {
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-});
+import {
+  IDENTITY_OUTCOME_ACTIONS,
+  type IdentityActor,
+  type IdentityComparableValue,
+  type IdentityComparisonContract,
+  type IdentityDecisionCommand,
+  type IdentityDecisionDraft,
+  type IdentityDecisionReceipt,
+  type IdentityGraphOperation,
+  type IdentityGraphPlan,
+  type IdentityReviewWorkflow,
+} from "../identityTypes";
 
 afterEach(() => {
-  if (root) {
-    act(() => {
-      root!.unmount();
-    });
-    root = null;
-  }
-  if (container) {
-    container.remove();
-    container = null;
-  }
+  cleanup();
+  window.sessionStorage.clear();
 });
 
-function render(ui: React.ReactNode) {
-  act(() => {
-    root!.render(ui);
-  });
+const proposer: IdentityActor = {
+  subjectId: "subject-proposer",
+  displayName: "王提案",
+  role: "expansion_staff",
+};
+
+const reviewer: IdentityActor = {
+  subjectId: "subject-reviewer",
+  displayName: "林覆核",
+  role: "expansion_manager",
+};
+
+const record = {
+  id: "intake-3011",
+  correlationId: "corr-authoritative-3011",
+  snapshotId: "snapshot-authoritative-3011",
+  parserVersion: "parser-2.4.0",
+};
+
+function value(displayValue: string): IdentityComparableValue {
+  return { value: displayValue, displayValue };
+}
+
+function comparison(outcome: MatchOutcome = "POSSIBLE_MATCH"): IdentityComparisonContract {
   return {
-    rerender(newUi: React.ReactNode) {
-      act(() => {
-        root!.render(newUi);
-      });
+    matchCaseId: "match-case-3011",
+    matchCaseVersion: 7,
+    outcome,
+    confidence: outcome === "EXACT_DUPLICATE" ? 1 : 0.78,
+    summary: "地址一致，但租金與樓層存在矛盾。",
+    currentListingId: outcome === "NEW" ? null : "listing-current-1002",
+    currentPropertyId: outcome === "NEW" ? null : "property-current-2002",
+    submittedIntakeId: "intake-3011",
+    submittedSnapshotId: "snapshot-authoritative-3011",
+    submittedParserRunId: "parser-run-authoritative-42",
+    fields: {
+      sourceId: {
+        current: outcome === "NEW" ? null : value("SRC-591-OLD"),
+        submitted: value("SRC-591-NEW"),
+        state: outcome === "NEW" ? "MISSING" : "CHANGED",
+        detail: outcome === "NEW" ? "沒有既有來源 identity。" : "來源刊登 ID 已更新。",
+      },
+      canonicalUrl: {
+        current: outcome === "NEW" ? null : value("https://example.com/listing/old"),
+        submitted: value("https://example.com/listing/new"),
+        state: outcome === "NEW" ? "MISSING" : "CHANGED",
+        detail: "Canonical URL 由 server comparison response 提供。",
+      },
+      address: {
+        current: outcome === "NEW" ? null : value("台北市信義區松高路 12 號"),
+        submitted: value("台北市信義區松高路 12 號"),
+        state: outcome === "NEW" ? "MISSING" : "MATCH",
+        detail: "正規化地址一致。",
+      },
+      area: {
+        current: outcome === "NEW" ? null : value("45 坪"),
+        submitted: value("45 坪"),
+        state: outcome === "NEW" ? "MISSING" : "MATCH",
+        detail: "面積一致。",
+      },
+      floor: {
+        current: outcome === "NEW" ? null : value("8 樓"),
+        submitted: value("9 樓"),
+        state: outcome === "NEW" ? "MISSING" : "CONTRADICTION",
+        detail: "樓層互相矛盾。",
+      },
+      listingType: {
+        current: outcome === "NEW" ? null : value("店面"),
+        submitted: value("店面"),
+        state: outcome === "NEW" ? "MISSING" : "MATCH",
+        detail: "物件類型一致。",
+      },
+      rentOrPrice: {
+        current: outcome === "NEW" ? null : value("NT$35,000"),
+        submitted: value("NT$38,000"),
+        state: outcome === "NEW" ? "MISSING" : "CHANGED",
+        detail: "租金由 35,000 變更為 38,000。",
+      },
+      status: {
+        current: outcome === "NEW" ? null : value("ACTIVE"),
+        submitted: value("AVAILABLE"),
+        state: outcome === "NEW" ? "MISSING" : "CHANGED",
+        detail: "來源狀態變更。",
+      },
     },
+    agreeingSignals: [
+      { key: "address", label: "地址", detail: "正規化地址一致" },
+      { key: "area", label: "面積", detail: "45 坪一致" },
+    ],
+    contradictingSignals: [
+      { key: "floor", label: "樓層", detail: "8 樓與 9 樓矛盾" },
+      { key: "rentOrPrice", label: "租金", detail: "NT$35,000 與 NT$38,000 不同" },
+    ],
   };
 }
 
-const screen = {
-  getByTestId(testId: string): HTMLElement {
-    const el = document.body.querySelector(`[data-testid="${testId}"]`);
-    if (!el) {
-      throw new Error(`Element with data-testid="${testId}" not found`);
-    }
-    return el as HTMLElement;
-  },
-};
-
-const fireEvent = {
-  click(element: HTMLElement) {
-    act(() => {
-      if (element instanceof HTMLInputElement && element.type === "checkbox") {
-        const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
-        if (checkedSetter) {
-          checkedSetter.call(element, !element.checked);
-        } else {
-          element.checked = !element.checked;
-        }
-        element.dispatchEvent(new Event("click", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        element.click();
-      }
-    });
-  },
-  change(element: HTMLElement, { target: { value } }: { target: { value: string } }) {
-    act(() => {
-      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-        const valueSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
-        if (valueSetter) {
-          valueSetter.call(element, value);
-        } else {
-          element.value = value;
-        }
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    });
-  },
-};
-
-async function waitFor(fn: () => void | Promise<void>, timeout = 2000) {
-  const start = Date.now();
-  let lastError: any = null;
-  while (Date.now() - start < timeout) {
-    try {
-      await act(async () => {
-        await fn();
-      });
-      return;
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  throw lastError;
+function graphPlan(operation: IdentityGraphOperation): IdentityGraphPlan {
+  return {
+    planId: `plan-${operation.toLowerCase()}`,
+    operation,
+    state: operation === "UNMERGE" || operation === "REVERSAL" ? "REVERSAL_PENDING" : "DRAFT",
+    expectedGraphVersion: 14,
+    originalDecisionId:
+      operation === "UNMERGE" || operation === "REVERSAL" ? "decision-original-88" : null,
+    proposer,
+    requestedReviewer: reviewer,
+    before: {
+      nodes: [
+        {
+          nodeId: "property-before",
+          nodeType: "PROPERTY",
+          label: "原 Property",
+          effective: true,
+          version: 14,
+        },
+        {
+          nodeId: "edge-source",
+          nodeType: "SOURCE_IDENTITY",
+          label: "來源 identity",
+          effective: true,
+          version: 3,
+        },
+      ],
+      edges: [
+        {
+          edgeId: "edge-before-1",
+          fromNodeId: "edge-source",
+          toNodeId: "property-before",
+          relation: "RESOLVES_TO",
+          effectiveFrom: "2026-07-01T00:00:00Z",
+          effectiveTo: null,
+          supersedesEdgeId: null,
+        },
+      ],
+    },
+    after: {
+      nodes: [
+        {
+          nodeId: "property-after",
+          nodeType: "PROPERTY",
+          label: "目標 Property",
+          effective: true,
+          version: 15,
+        },
+        {
+          nodeId: "edge-source",
+          nodeType: "SOURCE_IDENTITY",
+          label: "來源 identity",
+          effective: true,
+          version: 4,
+        },
+      ],
+      edges: [
+        {
+          edgeId: "edge-after-1",
+          fromNodeId: "edge-source",
+          toNodeId: "property-after",
+          relation: "RESOLVES_TO",
+          effectiveFrom: "2026-07-23T00:00:00Z",
+          effectiveTo: null,
+          supersedesEdgeId: "edge-before-1",
+        },
+      ],
+    },
+    redirects: [
+      {
+        fromPropertyId: "property-before",
+        toPropertyId: "property-after",
+        disposition: operation === "UNMERGE" || operation === "REVERSAL" ? "REVERSE" : "CREATE",
+      },
+    ],
+    candidateImpacts: [
+      {
+        candidateSiteId: "candidate-77",
+        disposition: "REQUIRE_REVIEW",
+        targetPropertyId: "property-after",
+      },
+    ],
+    lineageImpact: [
+      "保留 edge-before-1 作為 immutable historical edge。",
+      "建立 edge-after-1 並以 supersedes_edge_id 指向 edge-before-1。",
+    ],
+    riskSummary: `${operation} 將改變 effective property resolution，但不覆寫歷史 edge。`,
+  };
 }
 
-const expectAny = (val: any): any => {
-  if (typeof val === "function" || (val && typeof val === "object" && "mock" in val)) {
-    return expect(val);
-  }
+const graphPlans = (["MERGE", "SPLIT", "UNMERGE", "REVERSAL"] as const).map(graphPlan);
+
+function workflow(overrides: Partial<IdentityReviewWorkflow> = {}): IdentityReviewWorkflow {
   return {
-    toBeInTheDocument: () => expect(val).not.toBeNull(),
-    toHaveTextContent: (text: string) => expect(val?.textContent).toContain(text),
-    toBeDisabled: () => expect((val as HTMLButtonElement)?.disabled).toBe(true),
-    not: {
-      toBeDisabled: () => expect((val as HTMLButtonElement)?.disabled).toBe(false),
-    },
+    status: "DRAFT",
+    currentActor: proposer,
+    proposer,
+    reviewer,
+    decisionId: null,
+    requiresIndependentReview: true,
+    canPropose: true,
+    canReview: false,
+    denialReasonCode: null,
+    proposal: null,
+    ...overrides,
   };
-};
+}
 
-// Sample AssistedIntake fixtures covering all canonical outcomes
-const sampleRecordPossibleMatch: any = {
-  id: "IN-3011",
-  sourceId: "591_123456",
-  originalUrl: "https://rent.591.com.tw/123456",
-  canonicalUrl: "https://rent.591.com.tw/123456",
-  submitter: "OP-100 (John Proposer)",
-  capturedAt: "2026-07-20T10:00:00Z",
-  owner: "OP-100",
-  heatZoneId: "HZ-TPE-XINYI",
-  policy: "APPROVED_RETRIEVAL",
-  policyLabel: "核准單頁讀取",
-  policyReason: "核准領域白名單",
-  stage: "NEEDS_REVIEW",
-  parserVersion: "v2.1.0",
-  snapshotId: "SNAP-9001",
-  rawSnapshot: null,
-  correlationId: "CORR-778899",
-  matchResult: {
-    targetListingId: "LST-1002",
-    outcome: "POSSIBLE_MATCH",
-    outcomeLabel: "疑似重複",
-    confidence: 0.78,
-    summary: "地址高度比對成功，但租金由 35,000 變更為 38,000，樓層登記有些許差異。",
-    agreeingSignals: [
-      { key: "address", label: "地址", agrees: true, detail: "台北市信義區松高路12號 (100% 吻合)" },
-      { key: "area", label: "面積", agrees: true, detail: "45 坪 (吻合)" },
-    ],
-    contradictingSignals: [
-      { key: "rent", label: "租金", agrees: false, detail: "目標 $35,000 vs 本次 $38,000" },
-      { key: "floor", label: "樓層", agrees: false, detail: "目標 5F vs 本次 5F-2" },
-    ],
-  },
-  parsedFields: {
-    address: { key: "address", label: "地址", sourceValue: "台北市信義區松高路12號", normalizedValue: "台北市信義區松高路12號", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
-    rent: { key: "rent", label: "租金", sourceValue: "38000", normalizedValue: "38000", correctedValue: null, correctionReason: null, identity: false, lowConfidence: true },
-    area: { key: "area", label: "坪數", sourceValue: "45", normalizedValue: "45", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
-    floor: { key: "floor", label: "樓層", sourceValue: "5F-2", normalizedValue: "5F-2", correctedValue: null, correctionReason: null, identity: true, lowConfidence: false },
-  },
-  auditEvents: [
-    { id: "EV-1", occurredAt: "2026-07-20T10:00:00Z", actorName: "System", actorRoleId: "system", action: "INTAKE_CREATED", targetId: "IN-3011", message: "Intake created", correlationId: "CORR-778899" },
-  ],
-};
+function receipt(
+  overrides: Partial<IdentityDecisionReceipt> = {},
+): IdentityDecisionReceipt {
+  return {
+    decisionId: "decision-authoritative-9001",
+    status: "PENDING_REVIEW",
+    outcomeAction: "APPEND_REVISION",
+    graphOperation: null,
+    graphPlanId: null,
+    originalDecisionId: null,
+    matchCaseId: "match-case-3011",
+    proposer,
+    reviewer: null,
+    reason: "地址一致，租金變更應建立 immutable ListingRevision。",
+    riskAcknowledged: true,
+    occurredAt: "2026-07-23T10:30:00Z",
+    resourceVersions: { "match-case-3011": 8 },
+    listingId: "listing-current-1002",
+    listingRevisionId: "listing-revision-authoritative-2",
+    effectiveEdgeIds: ["edge-authoritative-2"],
+    supersededEdgeIds: ["edge-before-1"],
+    redirectIds: [],
+    auditEventId: "audit-authoritative-555",
+    correlationId: "corr-authoritative-3011",
+    lineageImpact: ["Listing revision 2 appended; revision 1 remains immutable."],
+    ...overrides,
+  };
+}
 
-const sampleRecordExactDuplicate: any = {
-  ...sampleRecordPossibleMatch,
-  id: "IN-3012",
-  matchResult: {
-    targetListingId: "LST-1002",
-    outcome: "EXACT_DUPLICATE",
-    outcomeLabel: "完全重複",
-    confidence: 0.99,
-    summary: "全欄位與網址完全相同，判定為完全重複。",
-    agreeingSignals: [
-      { key: "address", label: "地址", agrees: true, detail: "完全相同" },
-      { key: "url", label: "網址", agrees: true, detail: "完全相同" },
-    ],
-    contradictingSignals: [],
-  },
-};
+function renderBoundary({
+  outcome = "POSSIBLE_MATCH",
+  reviewWorkflow = workflow(),
+  onSubmit = vi.fn().mockResolvedValue(receipt()),
+  conflict = null,
+}: {
+  outcome?: MatchOutcome;
+  reviewWorkflow?: IdentityReviewWorkflow;
+  onSubmit?: (command: IdentityDecisionCommand) => Promise<IdentityDecisionReceipt>;
+  conflict?: Parameters<typeof IdentityDecisionBoundary>[0]["conflict"];
+} = {}) {
+  return {
+    onSubmit,
+    ...render(
+      <IdentityDecisionBoundary
+        comparison={comparison(outcome)}
+        conflict={conflict}
+        durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+        graphPlans={graphPlans}
+        onRefreshConflict={vi.fn()}
+        onSubmit={onSubmit}
+        record={record}
+        workflow={reviewWorkflow}
+      />,
+    ),
+  };
+}
 
-const sampleRecordRevision: any = {
-  ...sampleRecordPossibleMatch,
-  id: "IN-3013",
-  matchResult: {
-    targetListingId: "LST-1002",
-    outcome: "REVISION",
-    outcomeLabel: "物件版本更新",
-    confidence: 0.92,
-    summary: "同一物件更新價格與圖片，判定為物件新版本。",
-    agreeingSignals: [
-      { key: "address", label: "地址", agrees: true, detail: "完全相同" },
-      { key: "sourceId", label: "來源 ID", agrees: true, detail: "同物件號" },
-    ],
-    contradictingSignals: [
-      { key: "rent", label: "租金", agrees: false, detail: "價格調降 2,000" },
-    ],
-  },
-};
+describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
+  it("renders a semantic current-versus-submitted table with authoritative values", () => {
+    render(<ListingCompareTable comparison={comparison()} />);
 
-const sampleRecordNew: any = {
-  ...sampleRecordPossibleMatch,
-  id: "IN-3014",
-  stage: "READY",
-  matchResult: {
-    targetListingId: "",
-    outcome: "NEW",
-    outcomeLabel: "新物件",
-    confidence: 0.95,
-    summary: "未於既有網絡庫中比對到相關物件，判定為全新物件。",
-    agreeingSignals: [],
-    contradictingSignals: [],
-  },
-};
-
-const sampleRecordQuarantined: any = {
-  ...sampleRecordPossibleMatch,
-  id: "IN-3015",
-  stage: "QUARANTINED",
-  matchResult: {
-    targetListingId: "",
-    outcome: "QUARANTINED",
-    outcomeLabel: "已隔離",
-    confidence: 0.40,
-    summary: "來源內容存在衝突且遭安全隔離。",
-    agreeingSignals: [],
-    contradictingSignals: [
-      { key: "identity", label: "身份權限", agrees: false, detail: "屬受保護刊登" },
-    ],
-  },
-};
-
-const targetListing = {
-  id: "LST-1002",
-  sourceId: "591_123456",
-  canonicalUrl: "https://rent.591.com.tw/123456",
-  address: "台北市信義區松高路12號",
-  area: "45",
-  floor: "5F",
-  listingType: "—",
-  rent: "35000",
-  status: "NEEDS_REVIEW",
-};
-
-describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-UX-MATCH-001)", () => {
-  describe("ListingCompareTable Component", () => {
-    it("renders canonical match outcome badge and comparison table headers", () => {
-      render(<ListingCompareTable record={sampleRecordPossibleMatch} targetListing={targetListing} />);
-
-      expectAny(screen.getByTestId("listing-compare-table")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-outcome-badge")).toHaveTextContent("POSSIBLE_MATCH");
-      expectAny(screen.getByTestId("intake-change-summary")).toBeInTheDocument();
-      expectAny(screen.getByTestId("intake-change-summary")).toHaveTextContent("比對結果為 疑似重複 (POSSIBLE_MATCH)");
-    });
-
-    it("renders required comparison fields (sourceId, url, address, area, floor, rent, status, confidence, contradictions)", () => {
-      render(<ListingCompareTable record={sampleRecordPossibleMatch} targetListing={targetListing} />);
-
-      expectAny(screen.getByTestId("compare-row-sourceId")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-canonicalUrl")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-address")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-area")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-floor")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-rent")).toBeInTheDocument();
-      expectAny(screen.getByTestId("compare-row-status")).toBeInTheDocument();
-
-      // Check signal markers
-      expectAny(screen.getByTestId("signal-con-rent")).toHaveTextContent("▲ 矛盾");
-      expectAny(screen.getByTestId("signal-con-floor")).toHaveTextContent("▲ 矛盾");
-      expectAny(screen.getByTestId("signal-match-address")).toHaveTextContent("✓ 一致");
-
-      // Check summary metrics
-      expectAny(screen.getByTestId("compare-confidence-val")).toHaveTextContent("78.0%");
-      expectAny(screen.getByTestId("compare-agree-count")).toHaveTextContent("2 項");
-      expectAny(screen.getByTestId("compare-con-count")).toHaveTextContent("2 項");
-    });
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(screen.getByTestId("compare-current-sourceId").textContent).toBe("SRC-591-OLD");
+    expect(screen.getByTestId("compare-submitted-sourceId").textContent).toBe("SRC-591-NEW");
+    expect(screen.getByTestId("compare-current-rentOrPrice").textContent).toBe("NT$35,000");
+    expect(screen.getByTestId("compare-submitted-rentOrPrice").textContent).toBe("NT$38,000");
+    expect(screen.getByTestId("compare-row-floor").getAttribute("data-state")).toBe("CONTRADICTION");
+    expect(screen.getByTestId("intake-change-summary").textContent).toContain("矛盾欄位：樓層");
+    expect(document.body.textContent).not.toContain("SRC-listing");
   });
 
-  describe("MatchEvidencePanel Component", () => {
-    it("renders canonical codes: NEW, EXACT_DUPLICATE, REVISION, POSSIBLE_MATCH, QUARANTINED", () => {
-      const { rerender } = render(<MatchEvidencePanel record={sampleRecordNew} />);
-      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("NEW");
+  it.each<MatchOutcome>([
+    "NEW",
+    "EXACT_DUPLICATE",
+    "REVISION",
+    "POSSIBLE_MATCH",
+    "QUARANTINED",
+  ])("keeps %s visually and behaviorally distinct", (outcome) => {
+    renderBoundary({ outcome });
 
-      rerender(<MatchEvidencePanel record={sampleRecordExactDuplicate} />);
-      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("EXACT_DUPLICATE");
-
-      rerender(<MatchEvidencePanel record={sampleRecordRevision} />);
-      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("REVISION");
-
-      rerender(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("POSSIBLE_MATCH");
-
-      rerender(<MatchEvidencePanel record={sampleRecordQuarantined} />);
-      expectAny(screen.getByTestId("match-outcome-canonical-badge")).toHaveTextContent("QUARANTINED");
-    });
-
-    it("displays strict no-auto-merge warning banner for POSSIBLE_MATCH", () => {
-      render(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expectAny(screen.getByTestId("no-auto-merge-warning")).toBeInTheDocument();
-      expectAny(screen.getByTestId("no-auto-merge-warning")).toHaveTextContent("系統絕不自動合併疑似重複物件 (POSSIBLE_MATCH)");
-    });
-
-    it("renders agreeing and contradicting signals with accessible labels", () => {
-      render(<MatchEvidencePanel record={sampleRecordPossibleMatch} />);
-      expectAny(screen.getByTestId("agreeing-signals-list")).toHaveTextContent("地址");
-      expectAny(screen.getByTestId("contradicting-signals-list")).toHaveTextContent("租金");
-      expectAny(screen.getByTestId("match-evidence-sr-summary")).toBeInTheDocument();
-    });
+    const badge = screen.getByTestId("identity-match-badge");
+    expect(badge.textContent).toBe(outcome);
+    expect(badge.getAttribute("data-outcome")).toBe(outcome);
+    for (const action of IDENTITY_OUTCOME_ACTIONS[outcome]) {
+      expect(screen.getByTestId(`identity-action-${action}`)).toBeTruthy();
+    }
   });
 
-  describe("IdentityDecisionPanel Component", () => {
-    it("renders main identity decision panel with summary, compare, and graph tabs", () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} />);
+  it("offers all six explicit human outcomes for POSSIBLE_MATCH", () => {
+    renderBoundary();
 
-      expectAny(screen.getByTestId("identity-decision-panel")).toBeInTheDocument();
-      expectAny(screen.getByTestId("identity-match-badge")).toHaveTextContent("POSSIBLE_MATCH");
-      expectAny(screen.getByTestId("tab-summary-btn")).toBeInTheDocument();
-      expectAny(screen.getByTestId("tab-compare-btn")).toBeInTheDocument();
-      expectAny(screen.getByTestId("tab-graph-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("identity-action-CREATE")).toBeTruthy();
+    expect(screen.getByTestId("identity-action-APPEND_REVISION")).toBeTruthy();
+    expect(screen.getByTestId("identity-action-MARK_DUPLICATE")).toBeTruthy();
+    expect(screen.getByTestId("identity-action-SEND_TO_STEWARD")).toBeTruthy();
+    expect(screen.getByTestId("identity-action-REJECT")).toBeTruthy();
+    expect(screen.getByTestId("identity-action-QUARANTINE")).toBeTruthy();
+    expect(screen.getByTestId("identity-no-auto-merge-note").textContent).toContain("不會自動合併");
+  });
+
+  it.each<IdentityGraphOperation>(["MERGE", "SPLIT", "UNMERGE", "REVERSAL"])(
+    "renders authoritative %s before/after graph and lineage plan",
+    (operation) => {
+      renderBoundary();
+
+      fireEvent.click(screen.getByTestId(`identity-graph-${operation}`));
+
+      expect(screen.getByTestId("identity-graph-plan").getAttribute("data-operation")).toBe(operation);
+      expect(screen.getByTestId("graph-before-edges").textContent).toContain("edge-before-1");
+      expect(screen.getByTestId("graph-after-edges").textContent).toContain("edge-after-1");
+      expect(screen.getByTestId("graph-lineage-impact").textContent).toContain("immutable historical edge");
+      expect(screen.getByTestId("graph-candidate-impacts").textContent).toContain("REQUIRE_REVIEW");
+      expect(screen.getByTestId("graph-redirects").textContent).toContain("property-before");
+    },
+  );
+
+  it("submits a POSSIBLE_MATCH proposal for independent review and renders only its returned receipt", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(receipt());
+    renderBoundary({ onSubmit });
+
+    fireEvent.click(screen.getByTestId("identity-action-APPEND_REVISION"));
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "地址一致，租金變更應建立 immutable ListingRevision。" },
+    });
+    fireEvent.click(screen.getByTestId("identity-risk-ack"));
+    fireEvent.click(screen.getByTestId("identity-submit-proposal"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "PROPOSE",
+        matchCaseId: "match-case-3011",
+        matchCaseVersion: 7,
+        outcomeAction: "APPEND_REVISION",
+        proposerId: "subject-proposer",
+        reviewerId: "subject-reviewer",
+        requiresIndependentReview: true,
+      }),
+    );
+    expect(await screen.findByTestId("identity-durable-receipt")).toBeTruthy();
+    expect(screen.getByTestId("identity-durable-receipt").textContent).toContain(
+      "listing-revision-authoritative-2",
+    );
+    expect(screen.getByTestId("identity-durable-receipt").textContent).not.toContain("LST-AUTO");
+    expect(screen.getByTestId("identity-durable-receipt").textContent).not.toContain("RCPT-MATCH");
+  });
+
+  it("denies self-review while preserving the pending proposal", () => {
+    renderBoundary({
+      reviewWorkflow: workflow({
+        status: "PENDING_REVIEW",
+        currentActor: proposer,
+        proposer,
+        reviewer: proposer,
+        decisionId: "decision-pending-1",
+        canPropose: false,
+        canReview: true,
+        proposal: {
+          outcomeAction: null,
+          graphOperation: "MERGE",
+          graphPlanId: "plan-merge",
+          reason: "提案者要求合併並保留完整 lineage。",
+          riskAcknowledged: true,
+        },
+      }),
     });
 
-    it("strictly prohibits auto-merge on POSSIBLE_MATCH and requires manual decision options", () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} />);
+    expect(screen.getByTestId("self-review-denied").textContent).toContain("SELF_REVIEW_DENIED");
+    expect((screen.getByTestId("identity-review-approve") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("identity-review-reject") as HTMLButtonElement).disabled).toBe(true);
+  });
 
-      expectAny(screen.getByTestId("identity-no-auto-merge-note")).toBeInTheDocument();
-      expectAny(screen.getByTestId("btn-decision-create")).toBeInTheDocument();
-      expectAny(screen.getByTestId("btn-decision-revise")).toBeInTheDocument();
-      expectAny(screen.getByTestId("btn-decision-dup")).toBeInTheDocument();
-      expectAny(screen.getByTestId("btn-decision-steward")).toBeInTheDocument();
+  it("allows a distinct reviewer to approve the exact pending decision", async () => {
+    const approvedReceipt = receipt({
+      status: "APPROVED",
+      reviewer,
+      graphOperation: "MERGE",
+      outcomeAction: null,
+    });
+    const onSubmit = vi.fn().mockResolvedValue(approvedReceipt);
+    renderBoundary({
+      onSubmit,
+      reviewWorkflow: workflow({
+        status: "PENDING_REVIEW",
+        currentActor: reviewer,
+        proposer,
+        reviewer,
+        decisionId: "decision-pending-1",
+        canPropose: false,
+        canReview: true,
+        proposal: {
+          outcomeAction: null,
+          graphOperation: "MERGE",
+          graphPlanId: "plan-merge",
+          reason: "提案者要求合併並保留完整 lineage。",
+          riskAcknowledged: true,
+        },
+      }),
     });
 
-    it("enforces dual-actor authorization and renders SELF_REVIEW_DENIED when proposer === reviewer", () => {
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "已逐欄確認比對與 lineage impact，同意執行。" },
+    });
+    fireEvent.click(screen.getByTestId("identity-risk-ack"));
+    fireEvent.click(screen.getByTestId("identity-review-approve"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "REVIEW",
+        reviewDisposition: "APPROVE",
+        decisionId: "decision-pending-1",
+        proposerId: "subject-proposer",
+        reviewerId: "subject-reviewer",
+        graphOperation: "MERGE",
+        graphPlanId: "plan-merge",
+      }),
+    );
+  });
+
+  it("lets a distinct reviewer reject without falsely executing the graph", async () => {
+    const rejectedReceipt = receipt({
+      status: "REJECTED",
+      reviewer,
+      graphOperation: "MERGE",
+      graphPlanId: "plan-merge",
+      outcomeAction: null,
+      effectiveEdgeIds: [],
+      supersededEdgeIds: [],
+      redirectIds: [],
+    });
+    const onSubmit = vi.fn().mockResolvedValue(rejectedReceipt);
+    renderBoundary({
+      onSubmit,
+      reviewWorkflow: workflow({
+        status: "PENDING_REVIEW",
+        currentActor: reviewer,
+        proposer,
+        reviewer,
+        decisionId: "decision-pending-1",
+        canPropose: false,
+        canReview: true,
+        proposal: {
+          outcomeAction: null,
+          graphOperation: "MERGE",
+          graphPlanId: "plan-merge",
+          reason: "提案者要求合併並保留完整 lineage。",
+          riskAcknowledged: true,
+        },
+      }),
+    });
+
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "比對證據不足，拒絕此 graph proposal。" },
+    });
+    fireEvent.click(screen.getByTestId("identity-review-reject"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "REVIEW",
+        reviewDisposition: "REJECT",
+        graphOperation: "MERGE",
+        riskAcknowledged: false,
+      }),
+    );
+  });
+
+  it.each<IdentityGraphOperation>(["MERGE", "SPLIT", "UNMERGE", "REVERSAL"])(
+    "renders the authoritative %s execution or reversal receipt without constructing IDs",
+    (operation) => {
+      const operationReceipt = receipt({
+        status: operation === "UNMERGE" || operation === "REVERSAL" ? "REVERSED" : "EXECUTED",
+        outcomeAction: null,
+        graphOperation: operation,
+        graphPlanId: `plan-${operation.toLowerCase()}`,
+        originalDecisionId:
+          operation === "UNMERGE" || operation === "REVERSAL"
+            ? "decision-original-88"
+            : null,
+        effectiveEdgeIds: [`edge-effective-${operation.toLowerCase()}`],
+        supersededEdgeIds: [`edge-superseded-${operation.toLowerCase()}`],
+        redirectIds: [`redirect-${operation.toLowerCase()}`],
+      });
+
       render(
-        <IdentityDecisionPanel
-          record={sampleRecordPossibleMatch}
-          proposerId="OP-100"
-          reviewerId="OP-100"
-          requireSecondActor={true}
-        />
+        <IdentityDecisionBoundary
+          comparison={comparison()}
+          durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+          graphPlans={graphPlans}
+          onSubmit={vi.fn().mockResolvedValue(operationReceipt)}
+          receipt={operationReceipt}
+          record={record}
+          workflow={workflow()}
+        />,
       );
 
-      expectAny(screen.getByTestId("self-review-denied")).toBeInTheDocument();
-      expectAny(screen.getByTestId("self-review-denied")).toHaveTextContent("SELF_REVIEW_DENIED");
-      expectAny(screen.getByTestId("self-review-denied-notice")).toHaveTextContent("案件提案者與最終審查者不能為同一人 (OP-100)");
+      const receiptPanel = screen.getByTestId("identity-durable-receipt");
+      expect(receiptPanel.textContent).toContain(`plan-${operation.toLowerCase()}`);
+      expect(receiptPanel.textContent).toContain(`edge-effective-${operation.toLowerCase()}`);
+      expect(receiptPanel.textContent).toContain(`redirect-${operation.toLowerCase()}`);
+      if (operation === "UNMERGE" || operation === "REVERSAL") {
+        expect(receiptPanel.textContent).toContain("decision-original-88");
+      }
+    },
+  );
 
-      // Submit button should be disabled
-      expectAny(screen.getByTestId("identity-submit-btn")).toBeDisabled();
+  it("shows an authoritative conflict and preserves reason/risk draft", () => {
+    const conflict = {
+      code: "REVIEW_CONFLICT" as const,
+      summary: "Match case was updated by another reviewer.",
+      currentVersion: 9,
+      currentState: "PENDING_REVIEW",
+      currentOwner: "subject-other-reviewer",
+      correlationId: "corr-conflict-44",
+      occurredAt: "2026-07-23T11:00:00Z",
+      nextAction: "Reload match case version 9 and review the changed plan.",
+    };
+    renderBoundary({ conflict });
+
+    const reason = screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement;
+    fireEvent.change(reason, { target: { value: "我的決策草稿不得因 conflict 消失。" } });
+    fireEvent.click(screen.getByTestId("identity-risk-ack"));
+
+    expect(screen.getByTestId("identity-conflict-banner").textContent).toContain("version 9");
+    expect(screen.getByTestId("identity-conflict-banner").textContent).toContain("corr-conflict-44");
+    expect(reason.value).toBe("我的決策草稿不得因 conflict 消失。");
+    expect((screen.getByTestId("identity-risk-ack") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("restores the draft after unmount and exposes the same durable desktop link on mobile", async () => {
+    const first = renderBoundary();
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "跨裝置前先保存這份 identity 決策草稿。" },
     });
+    fireEvent.click(screen.getByTestId("identity-risk-ack"));
 
-    it("allows graph mode switching (merge, split, unmerge, reversal) and displays lineage impact", () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} proposerId="OP-100" reviewerId="OP-200" />);
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("odp:intake:identity-draft:match-case-3011")).toContain(
+        "跨裝置前先保存",
+      ),
+    );
+    first.unmount();
 
-      // Switch to split
-      fireEvent.click(screen.getByTestId("graph-mode-split"));
-      expectAny(screen.getByTestId("identity-risk-summary")).toHaveTextContent("拆分模式");
+    renderBoundary();
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe(
+      "跨裝置前先保存這份 identity 決策草稿。",
+    );
+    expect((screen.getByTestId("identity-risk-ack") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByTestId("identity-desktop-link").getAttribute("href")).toBe(
+      "/w/expansion/listings/intake/intake-3011?section=identity",
+    );
+    expect(screen.getByTestId("identity-desktop-required").textContent).toContain("草稿已保留");
+  });
 
-      // Switch to unmerge
-      fireEvent.click(screen.getByTestId("graph-mode-unmerge"));
-      expectAny(screen.getByTestId("identity-risk-summary")).toHaveTextContent("反轉合併");
+  it("exposes a server-durable draft integration contract for mobile continuation", () => {
+    const persistedDraft: IdentityDecisionDraft = {
+      commandType: "GRAPH",
+      outcomeAction: null,
+      graphOperation: "SPLIT",
+      graphPlanId: "plan-split",
+      reason: "這份草稿已由 server draft API 保存。",
+      riskAcknowledged: true,
+    };
+    const onDraftChange = vi.fn();
 
-      // Switch to reversal
-      fireEvent.click(screen.getByTestId("graph-mode-reversal"));
-      expectAny(screen.getByTestId("identity-risk-summary")).toHaveTextContent("歷程回滾");
+    render(
+      <IdentityDecisionBoundary
+        comparison={comparison()}
+        draftPersistence="SERVER"
+        durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+        graphPlans={graphPlans}
+        onDraftChange={onDraftChange}
+        onSubmit={vi.fn().mockResolvedValue(receipt())}
+        persistedDraft={persistedDraft}
+        record={record}
+        workflow={workflow()}
+      />,
+    );
+
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe(
+      "這份草稿已由 server draft API 保存。",
+    );
+    expect(screen.getByTestId("identity-desktop-required").textContent).toContain(
+      "草稿已保存至 server",
+    );
+
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "更新後的 server draft。" },
     });
-
-    it("requires reason and risk acknowledgement checkbox before submit", async () => {
-      const handleSubmit = vi.fn();
-      render(
-        <IdentityDecisionPanel
-          record={sampleRecordPossibleMatch}
-          proposerId="OP-100"
-          reviewerId="OP-200"
-          onSubmitDecision={handleSubmit}
-        />
-      );
-
-      const submitBtn = screen.getByTestId("identity-submit-btn");
-      expectAny(submitBtn).toBeDisabled();
-
-      // Enter reason
-      const reasonInput = screen.getByTestId("identity-decision-reason");
-      fireEvent.change(reasonInput, { target: { value: "實地核對無誤，確定合併為同物件。" } });
-
-      // Tick risk ack
-      const riskAck = screen.getByTestId("identity-risk-ack");
-      fireEvent.click(riskAck);
-
-      expectAny(submitBtn).not.toBeDisabled();
-      fireEvent.click(submitBtn);
-
-      await waitFor(() => {
-        expectAny(handleSubmit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            kind: "create",
-            reason: "實地核對無誤，確定合併為同物件。",
-            proposerId: "OP-100",
-            reviewerId: "OP-200",
-            riskAcknowledged: true,
-          })
-        );
-      });
-    });
-
-    it("handles concurrency conflict (409 OWNER_CONFLICT), preserves inputs, and allows refresh retry", () => {
-      const apiError = {
-        status: 409,
-        code: "ODP-INTAKE-CONFLICT",
-        summary: "版本衝突 (409 OWNER_CONFLICT)",
-        nextAction: "請重新整理",
-        correlationId: "CORR-999",
-        occurredAt: "2026-07-20T10:05:00Z",
-        retryable: false,
-      };
-
-      const handleRefresh = vi.fn();
-
-      render(
-        <IdentityDecisionPanel
-          record={sampleRecordPossibleMatch}
-          proposerId="OP-100"
-          reviewerId="OP-200"
-          error={apiError}
-          onRefresh={handleRefresh}
-        />
-      );
-
-      expectAny(screen.getByTestId("identity-conflict-banner")).toBeInTheDocument();
-      expectAny(screen.getByTestId("identity-conflict-banner")).toHaveTextContent("409 OWNER_CONFLICT");
-
-      const refreshBtn = screen.getByTestId("identity-conflict-refresh-btn");
-      fireEvent.click(refreshBtn);
-
-      expectAny(handleRefresh).toHaveBeenCalled();
-    });
-
-    it("renders durable receipt when decision succeeds", async () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} proposerId="OP-100" reviewerId="OP-200" />);
-
-      // Fill reason and tick risk
-      fireEvent.change(screen.getByTestId("identity-decision-reason"), { target: { value: "確認修訂" } });
-      fireEvent.click(screen.getByTestId("identity-risk-ack"));
-
-      fireEvent.click(screen.getByTestId("identity-submit-btn"));
-
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      });
-
-      await waitFor(() => {
-        expectAny(screen.getByTestId("identity-durable-receipt")).toBeInTheDocument();
-        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
-        expectAny(screen.getByTestId("receipt-actor-val")).toBeInTheDocument();
-      });
-    });
+    expect(onDraftChange).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "更新後的 server draft。" }),
+    );
   });
 });
