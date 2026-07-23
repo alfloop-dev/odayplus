@@ -409,7 +409,10 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            is_async = (x_async_intake == "true")
+            # URL retrieval is always a queued domain command. The legacy
+            # opt-in header remains accepted for compatibility, but may no
+            # longer downgrade production into synchronous fixture replay.
+            is_async = True
 
             result = service.submit_intake(
                 url=body.url,

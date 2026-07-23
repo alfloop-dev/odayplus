@@ -166,6 +166,36 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("model", Action.VIEW)
         | _grant("decision", Action.VIEW)
     ),
+    Role.INTAKE_EXPANSION_STAFF: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
+    ),
+    Role.INTAKE_EXPANSION_MANAGER: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE, Action.APPROVE)
+        | _grant("decision", Action.VIEW, Action.APPROVE)
+    ),
+    Role.INTAKE_DATA_STEWARD: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
+        | _grant("decision", Action.VIEW, Action.APPROVE)
+        | _grant("audit", Action.VIEW)
+    ),
+    Role.INTAKE_GOVERNANCE_REVIEWER: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW)
+        | _grant("decision", Action.VIEW)
+        | _grant("audit", Action.VIEW, Action.EXPORT)
+    ),
+    Role.INTAKE_PRIVACY_OFFICER: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW)
+        | _grant("audit", Action.VIEW, Action.EXPORT)
+    ),
+    Role.INTAKE_PERMISSION_LIMITED: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW)
+    ),
 }
 
 

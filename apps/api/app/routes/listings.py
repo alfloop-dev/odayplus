@@ -284,10 +284,14 @@ else:
         intake_id: UuidString
         state: IntakeState
         version: int = Field(..., ge=1)
-        job_id: UuidString
+        job_id: UuidString | None = None
         correlation_id: UuidString
         submitted_at: DateTimeString
         duplicate_hint: str | None = None
+        identity_outcome: Literal["EXACT_DUPLICATE"] | None = None
+        existing_listing_id: str | None = None
+        navigation_target: str | None = None
+        submission_receipt_id: UuidString | None = None
 
     class ManualIntakeRow(BaseModel):
         address_raw: str
@@ -359,19 +363,48 @@ else:
         rows: list[BatchRowReceipt]
         correlation_id: UuidString
 
+    class InboxLocationSummary(BaseModel):
+        address: str | None = None
+        district: str | None = None
+        assigned_area_id: UuidString | None = None
+        heat_zone_id: UuidString | None = None
+
+    class InboxMaskingSummary(BaseModel):
+        restricted_data: bool
+        has_masked_fields: bool
+        masked_fields: list[str] = Field(default_factory=list)
+        reason_codes: list[str] = Field(default_factory=list)
+
     class IntakeSummary(BaseModel):
         intake_id: UuidString
         state: IntakeState
         intake_method: IntakeMethod
         source_id: str | None = None
+        original_url: str | None = None
+        canonical_url: str | None = None
+        policy_state: SourcePolicyState | None = None
         match_outcome: MatchOutcome | None = None
         submitted_by: UuidString = None
         assigned_to: UuidString | None = None
+        assignment_id: UuidString | None = None
+        assignment_status: AssignmentStatus | None = None
+        owner_subject_id: UuidString | None = None
+        queue_id: str | None = None
+        sla_instance_id: UuidString | None = None
+        sla_state: SlaState | None = None
         due_at: DateTimeString | None = None
+        last_observed_at: DateTimeString | None = None
         submitted_at: DateTimeString
         updated_at: DateTimeString
         version: int
         scope: ScopeContext
+        issue: str | None = None
+        next_action: str | None = None
+        retryable: bool = False
+        quarantined: bool = False
+        failed: bool = False
+        location: InboxLocationSummary
+        masking: InboxMaskingSummary
         masked_fields: list[str] = Field(default_factory=list)
 
     class FieldValue(BaseModel):
@@ -384,6 +417,13 @@ else:
         effective: Any | None = None
         confidence: float | None = Field(None, ge=0, le=1)
         mask_reason_code: str | None = None
+        correction_actor: str | None = None
+        correction_actor_role: str | None = None
+        correction_reason: str | None = None
+        corrected_at: DateTimeString | None = None
+        source_snapshot_id: str | None = None
+        parser_run_id: str | None = None
+        parser_version: str | None = None
 
     class TransitionReceipt(BaseModel):
         transition_id: UuidString
@@ -400,6 +440,287 @@ else:
         occurred_at: DateTimeString
         result: AuditResult
         reason_code: str | None = None
+        actor: str | None = None
+        actor_role: str | None = None
+        before: Any | None = None
+        after: Any | None = None
+        source_snapshot_id: str | None = None
+        parser_version: str | None = None
+        related_ids: dict[str, Any] = Field(default_factory=dict)
+        correlation_id: str | None = None
+        resource_version: int | None = None
+        evidence_state: str | None = None
+
+    class SourceEvidenceDetail(BaseModel):
+        original_url: str | None = None
+        canonical_url: str | None = None
+        source_id: str | None = None
+        policy_state: SourcePolicyState | None = None
+        source_snapshot_id: str | None = None
+        captured_at: DateTimeString | None = None
+        parser_run_id: str | None = None
+        parser_version: str | None = None
+        correlation_id: str
+        freshness_state: Literal["CURRENT", "STALE", "NOT_CAPTURED"]
+
+    class MatchComparisonField(BaseModel):
+        field_path: str
+        label: str
+        submitted_value: Any = None
+        existing_value: Any = None
+        agrees: bool
+        detail: str | None = None
+
+    class MatchSignal(BaseModel):
+        key: str
+        label: str
+        agrees: bool
+        detail: str
+
+    class IdentityGraphNode(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        node_id: str
+        node_type: str
+        status: str
+
+    class IdentityGraphEdge(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        edge_id: str
+        relation: str
+        status: str
+        source_property_id: str | None = None
+        target_property_id: str | None = None
+        property_id: str | None = None
+        listing_id: str | None = None
+        intake_id: str | None = None
+        decision_id: str | None = None
+        supersedes_edge_ids: list[str] = Field(default_factory=list)
+
+    class IdentityGraphSnapshot(BaseModel):
+        version: int = Field(..., ge=0)
+        nodes: list[IdentityGraphNode]
+        edges: list[IdentityGraphEdge]
+
+    class IdentityRedirect(BaseModel):
+        from_property_id: str
+        to_property_id: str
+        reason: str
+        status: str
+
+    class CandidateImpact(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        candidate_site_id: str | None = None
+        disposition: str | None = None
+        source_property_id: str | None = None
+        target_property_id: str | None = None
+
+    class LineageImpact(BaseModel):
+        append_only: bool
+        source_evidence_preserved: bool
+        superseded_edge_ids: list[str]
+        affected_decision_ids: list[str]
+        summary: str
+
+    class DecisionActorReference(BaseModel):
+        subject_id: str
+        role_id: str
+
+    class OriginalDecisionReference(BaseModel):
+        decision_id: str
+        action: str | None = None
+        status: str | None = None
+        version: int | None = None
+
+    class MatchGraphPlan(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        plan_id: UuidString
+        plan_type: str
+        status: str
+        operations: list[dict[str, Any]]
+        permitted_decision_types: list[str] = Field(default_factory=list)
+        requires_human_decision: bool = True
+        before_graph: IdentityGraphSnapshot
+        after_graph: IdentityGraphSnapshot
+        redirects: list[IdentityRedirect]
+        candidate_impacts: list[CandidateImpact]
+        lineage_impact: LineageImpact
+        proposer: DecisionActorReference | None = None
+        reviewer: DecisionActorReference | None = None
+        expected_graph_version: int = Field(..., ge=0)
+        original_decision: OriginalDecisionReference | None = None
+        generated_at: DateTimeString
+
+    class MatchCaseDetail(BaseModel):
+        match_case_id: UuidString
+        version: int = Field(..., ge=1)
+        intake_id: UuidString
+        outcome: MatchOutcome
+        confidence: float = Field(..., ge=0, le=1)
+        target_listing_id: str | None = None
+        summary: str
+        comparison_fields: list[MatchComparisonField]
+        signals: list[MatchSignal]
+        graph_plan: MatchGraphPlan
+        source_snapshot_id: UuidString | None = None
+        parser_version: str | None = None
+        created_at: DateTimeString
+        updated_at: DateTimeString
+
+    class ActorDecisionFacts(BaseModel):
+        role_mode: Literal[
+            "expansion-staff",
+            "expansion-manager",
+            "data-steward",
+            "governance-reviewer",
+            "privacy-officer",
+            "permission-limited",
+        ]
+        allowed_actions: list[str]
+        denied_action_reasons: dict[str, str]
+        scope: dict[str, Any]
+        masking: dict[str, Any]
+        purpose: dict[str, Any]
+        second_actor: dict[str, Any]
+
+    class MutationReceiptRecord(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        receipt_id: str | None = None
+        transition_id: str | None = None
+        assignment_id: str | None = None
+        sla_instance_id: str | None = None
+        job_id: str | None = None
+        promotion_decision_id: str | None = None
+        decision_id: str | None = None
+        intake_id: str | None = None
+        listing_id: str | None = None
+        listing_revision_id: str | None = None
+        identity_edge_id: str | None = None
+        candidate_site_id: str | None = None
+        site_score_job_id: str | None = None
+        status: str | None = None
+        state: str | None = None
+        from_state: str | None = None
+        to_state: str | None = None
+        action: str | None = None
+        version: int | None = None
+        version_after: int | None = None
+        audit_event_id: str | None = None
+        correlation_id: str | None = None
+        actor: str | None = None
+        reason: str | None = None
+        checkpoint: str | None = None
+        attempt: int | None = None
+        retryable: bool | None = None
+        occurred_at: DateTimeString | None = None
+        created_at: DateTimeString | None = None
+        updated_at: DateTimeString | None = None
+        issued_at: DateTimeString | None = None
+
+    class LifecycleReceiptRecord(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        receipt_id: str | None = None
+        category: Literal["assignment", "sla", "decision", "promotion", "job", "intake"]
+        action: str | None = None
+        resource_id: str | None = None
+        resource_version: int | None = None
+        status: str | None = None
+        actor: str | None = None
+        correlation_id: str | None = None
+        occurred_at: DateTimeString | None = None
+        receipt: MutationReceiptRecord
+
+    class AssignmentLifecycleSnapshot(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        assignment_id: str
+        intake_id: str | None = None
+        status: str
+        owner_subject_id: str | None = None
+        queue_id: str | None = None
+        due_at: DateTimeString | None = None
+        version: int = Field(..., ge=1)
+
+    class SlaLifecycleSnapshot(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        sla_instance_id: str
+        state: str
+        due_at: DateTimeString | None = None
+        paused_duration_seconds: int | None = Field(None, ge=0)
+        version: int = Field(..., ge=1)
+
+    class DecisionLifecycleSnapshot(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        decision_id: str | None = None
+        receipt_id: str | None = None
+        status: str
+        action: str | None = None
+        version: int = Field(..., ge=1)
+        proposer: str | None = None
+        reviewer: str | None = None
+        graph_plan: MatchGraphPlan | None = None
+        correlation_id: str | None = None
+        created_at: DateTimeString | None = None
+        updated_at: DateTimeString | None = None
+
+    class PromotionLifecycleSnapshot(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        promotion_decision_id: str
+        intake_id: str | None = None
+        status: str
+        candidate_site_id: str | None = None
+        site_score_job_id: str | None = None
+        version: int = Field(..., ge=1)
+
+    class JobLifecycleSnapshot(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        job_id: str
+        status: str
+        attempt: int | None = Field(None, ge=0)
+        checkpoint: str | None = None
+        next_retry_at: DateTimeString | None = None
+        fence_token: int | str | None = None
+        version: int | None = Field(None, ge=1)
+
+    class SubmissionLifecycleReceipt(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        receipt_id: str
+        receipt_type: str
+        intake_id: str
+        state: str
+        existing_listing_id: str | None = None
+        navigation_target: str | None = None
+        correlation_id: str
+        issued_at: DateTimeString
+
+    class DecisionEffectReceipt(BaseModel):
+        receipt_id: str
+        decision_id: str
+        status: str
+        identity_edge_ids: list[str]
+        runtime_receipt: MutationReceiptRecord | None = None
+        audit_event_id: str
+        correlation_id: str
+        version: int
+        issued_at: DateTimeString
+        evidence_state: str
+
+    class LifecycleAggregate(BaseModel):
+        intake_id: UuidString
+        version: int = Field(..., ge=1)
+        etag: str
+        actor_facts: ActorDecisionFacts
+        assignment: AssignmentLifecycleSnapshot | None = None
+        sla: SlaLifecycleSnapshot | None = None
+        decisions: list[DecisionLifecycleSnapshot]
+        promotion: PromotionLifecycleSnapshot | None = None
+        job: JobLifecycleSnapshot | None = None
+        assignment_history: list[LifecycleReceiptRecord]
+        sla_history: list[LifecycleReceiptRecord]
+        decision_history: list[LifecycleReceiptRecord]
+        promotion_history: list[LifecycleReceiptRecord]
+        job_history: list[LifecycleReceiptRecord]
+        mutation_receipts: list[LifecycleReceiptRecord]
+        latest_decision_receipt: DecisionLifecycleSnapshot | None = None
+        submission_receipt: SubmissionLifecycleReceipt | None = None
 
     class IntakeDetail(IntakeSummary):
         original_url: str | None
@@ -408,14 +729,18 @@ else:
         source_snapshot_id: UuidString | None = None
         parser_run_id: UuidString | None = None
         match_case_id: UuidString | None = None
+        match_case_version: int | None = None
+        match_case: MatchCaseDetail | None = None
         processing_history: list[TransitionReceipt]
         fields: list[FieldValue]
         audit: list[AuditReference]
+        evidence: SourceEvidenceDetail
         assignment_id: UuidString | None = None
         assignment_status: str | None = None
         sla_instance_id: UuidString | None = None
         sla_state: str | None = None
         sla_receipt: str | None = None
+        lifecycle: LifecycleAggregate
 
     class IntakePage(BaseModel):
         items: list[IntakeSummary]
@@ -496,6 +821,16 @@ else:
         job_id: UuidString | None = None
         audit_event_id: UuidString
         correlation_id: UuidString
+        version: int = Field(..., ge=1)
+        action: str | None = None
+        proposer: UuidString | None = None
+        reviewer: UuidString | None = None
+        reason: str | None = None
+        graph_plan: MatchGraphPlan | None = None
+        effect_receipt: DecisionEffectReceipt | None = None
+        reverses_decision_id: UuidString | None = None
+        created_at: DateTimeString | None = None
+        updated_at: DateTimeString | None = None
 
     class CandidateReassignment(BaseModel):
         candidate_site_id: UuidString
@@ -585,6 +920,34 @@ else:
         owner_subject_id: UuidString
         created_at: DateTimeString
         version: int
+
+    class InboxHeatZone(BaseModel):
+        heat_zone_id: str
+        label: str
+        assigned_area_id: str | None = None
+        region_id: str | None = None
+        rank: int | None = None
+
+    class InboxCommandContract(BaseModel):
+        method: Literal["POST", "PUT"]
+        path_template: str
+        requires_if_match: bool
+        requires_idempotency_key: bool
+
+    class IntakeInboxBootstrap(BaseModel):
+        tenant_id: UuidString
+        subject_id: UuidString
+        role_mode: str
+        scope: dict[str, list[str] | str | None]
+        heat_zones: list[InboxHeatZone]
+        selected_heat_zone_id: str | None = None
+        intake_methods: list[IntakeMethod]
+        intake_states: list[IntakeState]
+        match_outcomes: list[MatchOutcome]
+        assignment_states: list[AssignmentStatus]
+        sla_states: list[SlaState]
+        saved_views: list[SavedView]
+        commands: dict[str, InboxCommandContract]
 
     class RetryRequest(BaseModel):
         checkpoint: RetryCheckpoint
@@ -856,6 +1219,13 @@ else:
                     if addr.address_id == listing.address_id:
                         address = addr
                         break
+            elif hasattr(self.repo, "get_address"):
+                address = self.repo.get_address(listing.address_id)
+            elif hasattr(self.repo, "_store") and hasattr(self.repo, "_ADDRESSES"):
+                address = self.repo._store.get(
+                    self.repo._ADDRESSES,
+                    listing.address_id,
+                )
 
             d = {
                 "id": listing.listing_id,
@@ -932,10 +1302,38 @@ else:
                     snapshot_id=existing_listing.snapshot_id,
                     confidence=existing_listing.confidence,
                 )
-                for i, lst in enumerate(self.repo.listings):
-                    if lst.listing_id == listing_id:
-                        self.repo.listings[i] = updated_listing
-                        break
+                if hasattr(self.repo, "listings"):
+                    for i, lst in enumerate(self.repo.listings):
+                        if lst.listing_id == listing_id:
+                            self.repo.listings[i] = updated_listing
+                            break
+                else:
+                    address = None
+                    if hasattr(self.repo, "get_address"):
+                        address = self.repo.get_address(existing_listing.address_id)
+                    elif hasattr(self.repo, "_store") and hasattr(
+                        self.repo, "_ADDRESSES"
+                    ):
+                        address = self.repo._store.get(
+                            self.repo._ADDRESSES,
+                            existing_listing.address_id,
+                        )
+                    if address is None:
+                        raise ValueError(
+                            f"Address {existing_listing.address_id} not found"
+                        )
+                    from modules.listing.domain.models import ListingDedupKey
+
+                    key = ListingDedupKey(
+                        source_id=updated_listing.source_id,
+                        source_listing_id=updated_listing.source_listing_id,
+                        normalized_address=(
+                            address.normalized_address or address.raw_address or ""
+                        ),
+                        rent_amount=updated_listing.rent_amount,
+                        area_ping=updated_listing.area_ping,
+                    )
+                    self.repo.save_listing(updated_listing, address, key)
 
         def list_candidates(self) -> list[dict[str, Any]]:
             candidates = []
@@ -962,6 +1360,26 @@ else:
 
         def save_candidate(self, draft: Any) -> None:
             if hasattr(self.repo, "save_candidate"):
+                if isinstance(getattr(draft, "listing", None), ListingAdapterWrapper):
+                    from dataclasses import replace
+
+                    listing = self.repo.get_listing(draft.listing.listing_id)
+                    address = None
+                    if listing is not None:
+                        if hasattr(self.repo, "get_address"):
+                            address = self.repo.get_address(listing.address_id)
+                        elif hasattr(self.repo, "_store") and hasattr(
+                            self.repo, "_ADDRESSES"
+                        ):
+                            address = self.repo._store.get(
+                                self.repo._ADDRESSES,
+                                listing.address_id,
+                            )
+                    if listing is None or address is None:
+                        raise ValueError(
+                            "Candidate source listing or address is unavailable"
+                        )
+                    draft = replace(draft, listing=listing, address=address)
                 self.repo.save_candidate(draft)
 
 
@@ -1026,16 +1444,990 @@ else:
                 "Idempotency-Replayed": {"type": "boolean"},
                 "Retry-After": {"type": "integer", "minimum": 1},
             }
-            return {
-                name: {"schema": schemas[name]}
-                for name in names
-            }
+            return {name: {"schema": schemas[name]} for name in names}
 
         def now() -> str:
             return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
+        def runtime_service(request: Request):
+            from modules.opsboard.application.network_listings import (
+                NetworkListingService,
+            )
+
+            return NetworkListingService(
+                listing_repository=_repository(request),
+                intake_repository=getattr(request.app.state, "operator_intake_repository", None),
+            )
+
+        def runtime_field_values(
+            parsed_fields: dict[str, dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            values: list[dict[str, Any]] = []
+            for field_path, cell in parsed_fields.items():
+                corrected = cell.get("correctedValue")
+                normalized = cell.get("normalizedValue")
+                parsed = cell.get("sourceValue")
+                effective = (
+                    corrected
+                    if corrected is not None
+                    else normalized
+                    if normalized is not None
+                    else parsed
+                )
+                values.append(
+                    {
+                        "field_path": field_path,
+                        "classification": "INTERNAL",
+                        "masked": bool(cell.get("masked")),
+                        "parsed": parsed,
+                        "normalized": normalized,
+                        "corrected": corrected,
+                        "effective": effective,
+                        "confidence": (0.4 if cell.get("lowConfidence") else 1.0),
+                        "mask_reason_code": cell.get("mask_reason_code"),
+                        "correction_actor": cell.get("correctionActor"),
+                        "correction_actor_role": cell.get("correctionActorRoleId"),
+                        "correction_reason": cell.get("correctionReason"),
+                        "corrected_at": cell.get("correctedAt"),
+                        "source_snapshot_id": cell.get("sourceSnapshotId"),
+                        "parser_run_id": cell.get("parserRunId"),
+                        "parser_version": cell.get("parserVersion"),
+                    }
+                )
+            return values
+
+        def graph_plan_to_api(graph_plan: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not graph_plan:
+                return None
+
+            def pick(source: dict[str, Any], snake: str, camel: str) -> Any:
+                return source.get(snake, source.get(camel))
+
+            def node(node_value: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "node_id": pick(node_value, "node_id", "nodeId"),
+                    "node_type": pick(node_value, "node_type", "nodeType"),
+                    "status": node_value.get("status") or "EFFECTIVE",
+                }
+
+            def edge(edge_value: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "edge_id": pick(edge_value, "edge_id", "edgeId"),
+                    "relation": edge_value.get("relation"),
+                    "status": edge_value.get("status") or "EFFECTIVE",
+                    "source_property_id": pick(
+                        edge_value, "source_property_id", "sourcePropertyId"
+                    ),
+                    "target_property_id": pick(
+                        edge_value, "target_property_id", "targetPropertyId"
+                    ),
+                    "property_id": pick(edge_value, "property_id", "propertyId"),
+                    "listing_id": pick(edge_value, "listing_id", "listingId"),
+                    "intake_id": pick(edge_value, "intake_id", "intakeId"),
+                    "decision_id": pick(edge_value, "decision_id", "decisionId"),
+                    "supersedes_edge_ids": list(
+                        pick(
+                            edge_value,
+                            "supersedes_edge_ids",
+                            "supersedesEdgeIds",
+                        )
+                        or []
+                    ),
+                }
+
+            def snapshot(source: dict[str, Any] | None) -> dict[str, Any]:
+                source = source or {}
+                return {
+                    "version": int(source.get("version") or 0),
+                    "nodes": [node(item) for item in source.get("nodes") or []],
+                    "edges": [edge(item) for item in source.get("edges") or []],
+                }
+
+            lineage = pick(graph_plan, "lineage_impact", "lineageImpact") or {}
+            proposer = graph_plan.get("proposer")
+            reviewer = graph_plan.get("reviewer")
+            original = pick(graph_plan, "original_decision", "originalDecision")
+            requires_human = pick(
+                graph_plan,
+                "requires_human_decision",
+                "requiresHumanDecision",
+            )
+            return {
+                "plan_id": pick(graph_plan, "plan_id", "planId"),
+                "plan_type": pick(graph_plan, "plan_type", "planType"),
+                "status": graph_plan.get("status") or "PROPOSED",
+                "operations": copy.deepcopy(graph_plan.get("operations") or []),
+                "permitted_decision_types": list(
+                    pick(
+                        graph_plan,
+                        "permitted_decision_types",
+                        "permittedDecisionTypes",
+                    )
+                    or []
+                ),
+                "requires_human_decision": (
+                    bool(requires_human) if requires_human is not None else True
+                ),
+                "before_graph": snapshot(
+                    pick(graph_plan, "before_graph", "beforeGraph")
+                ),
+                "after_graph": snapshot(
+                    pick(graph_plan, "after_graph", "afterGraph")
+                ),
+                "redirects": [
+                    {
+                        "from_property_id": pick(
+                            item, "from_property_id", "fromPropertyId"
+                        ),
+                        "to_property_id": pick(
+                            item, "to_property_id", "toPropertyId"
+                        ),
+                        "reason": item.get("reason"),
+                        "status": item.get("status") or "PROPOSED",
+                    }
+                    for item in graph_plan.get("redirects") or []
+                ],
+                "candidate_impacts": [
+                    {
+                        "candidate_site_id": pick(
+                            item, "candidate_site_id", "candidateSiteId"
+                        ),
+                        "disposition": item.get("disposition"),
+                        "source_property_id": pick(
+                            item, "source_property_id", "sourcePropertyId"
+                        ),
+                        "target_property_id": pick(
+                            item, "target_property_id", "targetPropertyId"
+                        ),
+                    }
+                    for item in pick(
+                        graph_plan, "candidate_impacts", "candidateImpacts"
+                    )
+                    or []
+                ],
+                "lineage_impact": {
+                    "append_only": bool(
+                        pick(lineage, "append_only", "appendOnly")
+                    ),
+                    "source_evidence_preserved": bool(
+                        pick(
+                            lineage,
+                            "source_evidence_preserved",
+                            "sourceEvidencePreserved",
+                        )
+                    ),
+                    "superseded_edge_ids": list(
+                        pick(
+                            lineage,
+                            "superseded_edge_ids",
+                            "supersededEdgeIds",
+                        )
+                        or []
+                    ),
+                    "affected_decision_ids": list(
+                        pick(
+                            lineage,
+                            "affected_decision_ids",
+                            "affectedDecisionIds",
+                        )
+                        or []
+                    ),
+                    "summary": lineage.get("summary") or "",
+                },
+                "proposer": (
+                    {
+                        "subject_id": pick(proposer, "subject_id", "subjectId"),
+                        "role_id": pick(proposer, "role_id", "roleId"),
+                    }
+                    if proposer
+                    else None
+                ),
+                "reviewer": (
+                    {
+                        "subject_id": pick(reviewer, "subject_id", "subjectId"),
+                        "role_id": pick(reviewer, "role_id", "roleId"),
+                    }
+                    if reviewer
+                    else None
+                ),
+                "expected_graph_version": int(
+                    pick(
+                        graph_plan,
+                        "expected_graph_version",
+                        "expectedGraphVersion",
+                    )
+                    or 0
+                ),
+                "original_decision": (
+                    {
+                        "decision_id": pick(
+                            original, "decision_id", "decisionId"
+                        ),
+                        "action": original.get("action"),
+                        "status": original.get("status"),
+                        "version": original.get("version"),
+                    }
+                    if original
+                    else None
+                ),
+                "generated_at": pick(graph_plan, "generated_at", "generatedAt")
+                or now(),
+            }
+
+        def mutation_receipt_to_api(
+            receipt_value: dict[str, Any] | None,
+        ) -> dict[str, Any]:
+            receipt_value = receipt_value or {}
+
+            def pick(snake: str, camel: str) -> Any:
+                return receipt_value.get(snake, receipt_value.get(camel))
+
+            return {
+                "receipt_id": pick("receipt_id", "receiptId"),
+                "transition_id": pick("transition_id", "transitionId"),
+                "assignment_id": pick("assignment_id", "assignmentId"),
+                "sla_instance_id": pick("sla_instance_id", "slaInstanceId"),
+                "job_id": pick("job_id", "jobId"),
+                "promotion_decision_id": pick(
+                    "promotion_decision_id", "promotionDecisionId"
+                ),
+                "decision_id": pick("decision_id", "decisionId"),
+                "intake_id": pick("intake_id", "intakeId"),
+                "listing_id": pick("listing_id", "listingId"),
+                "listing_revision_id": pick(
+                    "listing_revision_id", "listingRevisionId"
+                ),
+                "identity_edge_id": pick("identity_edge_id", "identityEdgeId"),
+                "candidate_site_id": pick("candidate_site_id", "candidateSiteId"),
+                "site_score_job_id": pick("site_score_job_id", "siteScoreJobId"),
+                "status": receipt_value.get("status"),
+                "state": receipt_value.get("state"),
+                "from_state": pick("from_state", "fromState"),
+                "to_state": pick("to_state", "toState"),
+                "action": receipt_value.get("action")
+                or receipt_value.get("decision"),
+                "version": receipt_value.get("version"),
+                "version_after": pick("version_after", "versionAfter"),
+                "audit_event_id": pick("audit_event_id", "auditEventId"),
+                "correlation_id": pick("correlation_id", "correlationId"),
+                "actor": receipt_value.get("actor"),
+                "reason": receipt_value.get("reason"),
+                "checkpoint": receipt_value.get("checkpoint"),
+                "attempt": receipt_value.get("attempt"),
+                "retryable": receipt_value.get("retryable"),
+                "occurred_at": pick("occurred_at", "occurredAt"),
+                "created_at": pick("created_at", "createdAt"),
+                "updated_at": pick("updated_at", "updatedAt"),
+                "issued_at": pick("issued_at", "issuedAt"),
+            }
+
+        def decision_effect_to_api(
+            effect: dict[str, Any] | None,
+        ) -> dict[str, Any] | None:
+            if not effect:
+                return None
+            return {
+                "receipt_id": effect.get("receipt_id") or effect.get("receiptId"),
+                "decision_id": effect.get("decision_id") or effect.get("decisionId"),
+                "status": effect.get("status"),
+                "identity_edge_ids": list(
+                    effect.get("identity_edge_ids")
+                    or effect.get("identityEdgeIds")
+                    or []
+                ),
+                "runtime_receipt": (
+                    mutation_receipt_to_api(
+                        effect.get("runtime_receipt") or effect.get("runtimeReceipt")
+                    )
+                    if effect.get("runtime_receipt")
+                    or effect.get("runtimeReceipt")
+                    else None
+                ),
+                "audit_event_id": effect.get("audit_event_id")
+                or effect.get("auditEventId"),
+                "correlation_id": effect.get("correlation_id")
+                or effect.get("correlationId"),
+                "version": int(effect.get("version") or 1),
+                "issued_at": effect.get("issued_at") or effect.get("issuedAt"),
+                "evidence_state": effect.get("evidence_state")
+                or effect.get("evidenceState")
+                or "PARTIAL",
+            }
+
+        def match_case_to_api(match_case: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not match_case:
+                return None
+            graph_plan = match_case.get("graphPlan") or {}
+            return {
+                "match_case_id": match_case["matchCaseId"],
+                "version": int(match_case.get("version") or 1),
+                "intake_id": match_case["intakeId"],
+                "outcome": match_case["outcome"],
+                "confidence": float(match_case.get("confidence") or 0),
+                "target_listing_id": match_case.get("targetListingId"),
+                "summary": match_case.get("summary") or "",
+                "comparison_fields": [
+                    {
+                        "field_path": field["fieldPath"],
+                        "label": field.get("label") or field["fieldPath"],
+                        "submitted_value": copy.deepcopy(field.get("submittedValue")),
+                        "existing_value": copy.deepcopy(field.get("existingValue")),
+                        "agrees": bool(field.get("agrees")),
+                        "detail": field.get("detail"),
+                    }
+                    for field in match_case.get("comparisonFields") or []
+                ],
+                "signals": [
+                    {
+                        "key": signal["key"],
+                        "label": signal.get("label") or signal["key"],
+                        "agrees": bool(signal.get("agrees")),
+                        "detail": signal.get("detail") or "",
+                    }
+                    for signal in match_case.get("signals") or []
+                ],
+                "graph_plan": graph_plan_to_api(graph_plan),
+                "source_snapshot_id": match_case.get("sourceSnapshotId"),
+                "parser_version": match_case.get("parserVersion"),
+                "created_at": match_case["createdAt"],
+                "updated_at": match_case["updatedAt"],
+            }
+
+        def canonicalize_runtime_intake(
+            runtime: dict[str, Any],
+            *,
+            scope: dict[str, Any] | None = None,
+            submitted_by: str | None = None,
+        ) -> dict[str, Any]:
+            history = runtime.get("processingHistory") or []
+            submitted_at = history[0].get("occurredAt") if history else now()
+            canonical_history = [
+                {
+                    "transition_id": transition.get("transitionId") or str(uuid4()),
+                    "from_state": transition.get("fromStage"),
+                    "to_state": transition.get("toStage") or runtime.get("stage"),
+                    "occurred_at": transition.get("occurredAt") or now(),
+                    "actor": transition.get("actor") or "system",
+                    "reason_code": transition.get("reasonCode"),
+                    "version_after": int(
+                        transition.get("versionAfter") or runtime.get("version") or 1
+                    ),
+                }
+                for transition in history
+            ]
+            canonical_audit = [
+                {
+                    "audit_event_id": event.get("id") or str(uuid4()),
+                    "action": event.get("action") or "intake.event",
+                    "occurred_at": event.get("occurredAt") or now(),
+                    "result": ("FAILED" if runtime.get("stage") == "FAILED" else "SUCCEEDED"),
+                    "reason_code": (
+                        (event.get("metadata") or {}).get("reasonCode")
+                        or (event.get("metadata") or {}).get("reason")
+                    ),
+                    "actor": event.get("actorName"),
+                    "actor_role": event.get("actorRoleId"),
+                    "before": copy.deepcopy(
+                        (event.get("metadata") or {}).get("before")
+                    ),
+                    "after": copy.deepcopy(
+                        (event.get("metadata") or {}).get("after")
+                    ),
+                    "source_snapshot_id": (
+                        (event.get("metadata") or {}).get("sourceSnapshotId")
+                    ),
+                    "parser_version": (
+                        (event.get("metadata") or {}).get("parserVersion")
+                    ),
+                    "related_ids": copy.deepcopy(
+                        (event.get("metadata") or {}).get("relatedIds") or {}
+                    ),
+                    "correlation_id": event.get("correlationId"),
+                    "resource_version": (
+                        ((event.get("metadata") or {}).get("after") or {}).get(
+                            "version"
+                        )
+                    ),
+                    "evidence_state": (
+                        (event.get("metadata") or {}).get("evidenceState")
+                    ),
+                }
+                for event in runtime.get("auditEvents") or []
+            ]
+            target_listing_id = (runtime.get("matchResult") or {}).get("targetListingId")
+            value = {
+                "intake_id": runtime["id"],
+                "id": runtime["id"],
+                "state": runtime["stage"],
+                "intake_method": runtime.get("intakeMethod") or "URL",
+                "scope": scope
+                or runtime.get("scope")
+                or {
+                    "tenant_id": runtime.get("tenantId") or "tenant-a",
+                    "heat_zone_id": runtime.get("heatZoneId"),
+                },
+                "submitted_at": submitted_at,
+                "updated_at": (history[-1].get("occurredAt") if history else submitted_at),
+                "version": int(runtime.get("version") or 1),
+                "job_id": runtime.get("jobId"),
+                "correlation_id": runtime.get("correlationId") or str(uuid4()),
+                "submitted_by": submitted_by or runtime.get("submitter") or "system",
+                "assigned_to": runtime.get("owner"),
+                "original_url": runtime.get("originalUrl"),
+                "canonical_url": runtime.get("canonicalUrl"),
+                "source_id": runtime.get("sourceId"),
+                "policy_state": runtime.get("policy"),
+                "match_outcome": ((runtime.get("matchResult") or {}).get("outcome")),
+                "target_listing_id": target_listing_id,
+                "match_case_id": runtime.get("matchCaseId"),
+                "match_case_version": runtime.get("matchCaseVersion"),
+                "match_case": match_case_to_api(runtime.get("matchCase")),
+                "source_snapshot_id": runtime.get("snapshotId"),
+                "parser_run_id": runtime.get("parserRunId"),
+                "processing_history": canonical_history,
+                "fields": runtime_field_values(runtime.get("parsedFields") or {}),
+                "audit": canonical_audit,
+                "runtime_record": copy.deepcopy(runtime),
+                "latest_decision_receipt": copy.deepcopy(runtime.get("latestDecisionReceipt")),
+                "submission_receipt": copy.deepcopy(runtime.get("submissionReceipt")),
+                "purpose": runtime.get("purpose"),
+            }
+            return value
+
+        def runtime_actor_role(principal: Principal, request: Request) -> str:
+            operator_role = get_operator_role_id(request)
+            if operator_role:
+                return operator_role
+            if principal.has_role(Role.DATA_OWNER, Role.INTAKE_DATA_STEWARD):
+                return "dataSteward"
+            if principal.has_role(
+                Role.SITE_REVIEWER,
+                Role.EXECUTIVE,
+                Role.INTAKE_EXPANSION_MANAGER,
+            ):
+                return "expansionManager"
+            if principal.has_role(
+                Role.AUDITOR,
+                Role.ARCHITECTURE_OWNER,
+                Role.INTAKE_GOVERNANCE_REVIEWER,
+            ):
+                return "governanceReviewer"
+            if principal.has_role(Role.FINANCE_LEGAL, Role.INTAKE_PRIVACY_OFFICER):
+                return "privacyOfficer"
+            if principal.has_role(Role.INTAKE_PERMISSION_LIMITED):
+                return "permissionLimited"
+            return "expansionStaff"
+
+        def identity_decision_to_api(
+            decision: dict[str, Any],
+        ) -> dict[str, Any]:
+            effect = decision.get("effectReceipt") or {}
+            resource_versions: dict[str, int] = {
+                "identityDecision": int(decision.get("version") or 1)
+            }
+            runtime_receipt = effect.get("runtimeReceipt") or {}
+            if runtime_receipt.get("version") is not None:
+                resource_versions["intake"] = int(runtime_receipt["version"])
+            return {
+                "decision_id": decision["decisionId"],
+                "status": decision["status"],
+                "resource_versions": resource_versions,
+                "job_id": None,
+                "audit_event_id": decision["auditEventId"],
+                "correlation_id": decision.get("correlationId") or str(uuid4()),
+                "version": int(decision.get("version") or 1),
+                "action": decision.get("action"),
+                "tenant_id": decision["tenantId"],
+                "proposer": decision.get("proposer"),
+                "reviewer": decision.get("reviewer"),
+                "reason": decision.get("reason"),
+                "graph_plan": graph_plan_to_api(decision.get("plan")),
+                "effect_receipt": decision_effect_to_api(effect),
+                "reverses_decision_id": decision.get("reversesDecisionId"),
+                "created_at": decision.get("createdAt"),
+                "updated_at": decision.get("updatedAt"),
+            }
+
+        def canonical_role_mode(principal: Principal) -> str:
+            if principal.has_role(Role.FINANCE_LEGAL, Role.INTAKE_PRIVACY_OFFICER):
+                return "privacy-officer"
+            if principal.has_role(
+                Role.AUDITOR,
+                Role.ARCHITECTURE_OWNER,
+                Role.INTAKE_GOVERNANCE_REVIEWER,
+            ):
+                return "governance-reviewer"
+            if principal.has_role(Role.DATA_OWNER, Role.INTAKE_DATA_STEWARD):
+                return "data-steward"
+            if principal.has_role(
+                Role.SITE_REVIEWER,
+                Role.EXECUTIVE,
+                Role.INTAKE_EXPANSION_MANAGER,
+            ):
+                return "expansion-manager"
+            if principal.has_role(Role.EXPANSION_USER, Role.INTAKE_EXPANSION_STAFF):
+                return "expansion-staff"
+            if principal.has_role(Role.INTAKE_PERMISSION_LIMITED):
+                return "permission-limited"
+            return "permission-limited"
+
+        def allowed_intake_actions(
+            *,
+            principal: Principal,
+            value: dict[str, Any],
+            decisions: list[dict[str, Any]],
+            promotion: dict[str, Any] | None,
+        ) -> tuple[list[str], dict[str, str], dict[str, Any]]:
+            role_mode = canonical_role_mode(principal)
+            state = value.get("state")
+            all_actions = {
+                "VIEW",
+                "SUBMIT_URL",
+                "CORRECT",
+                "ASSIGN",
+                "CLAIM",
+                "TRANSFER",
+                "ESCALATE",
+                "COMPLETE",
+                "CANCEL",
+                "RETRY",
+                "REOPEN",
+                "DECIDE_MATCH",
+                "MERGE",
+                "SPLIT",
+                "UNMERGE",
+                "REVERSE",
+                "REQUEST_PROMOTION",
+                "REVIEW_PROMOTION",
+                "PAUSE_SLA",
+                "RESUME_SLA",
+                "CANCEL_JOB",
+                "REPLAY_JOB",
+                "EXPORT_EVIDENCE",
+            }
+            permitted_by_role = {
+                "expansion-staff": {
+                    "VIEW",
+                    "SUBMIT_URL",
+                    "CORRECT",
+                    "ASSIGN",
+                    "CLAIM",
+                    "TRANSFER",
+                    "COMPLETE",
+                    "CANCEL",
+                    "RETRY",
+                    "REQUEST_PROMOTION",
+                },
+                "expansion-manager": all_actions - {"EXPORT_EVIDENCE"},
+                "data-steward": all_actions - {"REVIEW_PROMOTION"},
+                "governance-reviewer": {"VIEW", "EXPORT_EVIDENCE"},
+                "privacy-officer": {"VIEW", "REOPEN", "EXPORT_EVIDENCE"},
+                "permission-limited": {"VIEW"},
+            }[role_mode]
+            state_denials: dict[str, str] = {}
+            if state == "CANCELLED":
+                for action in permitted_by_role - {"VIEW", "EXPORT_EVIDENCE"}:
+                    state_denials[action] = "WORKFLOW_STATE_DENIED"
+            if state != "FAILED":
+                state_denials["RETRY"] = "WORKFLOW_STATE_DENIED"
+            if state != "QUARANTINED":
+                state_denials["REOPEN"] = "WORKFLOW_STATE_DENIED"
+            if state not in {"READY", "NEEDS_REVIEW"}:
+                state_denials["DECIDE_MATCH"] = "WORKFLOW_STATE_DENIED"
+                state_denials["REQUEST_PROMOTION"] = "WORKFLOW_STATE_DENIED"
+
+            pending_decisions = [
+                decision
+                for decision in decisions
+                if decision.get("status") in {"PENDING_REVIEW", "REVERSAL_PENDING"}
+            ]
+            pending_promotion = (
+                promotion
+                if promotion
+                and promotion.get("status") in {"REQUESTED", "VALIDATING", "APPROVED"}
+                else None
+            )
+            proposers = {
+                decision.get("proposer")
+                for decision in pending_decisions
+                if decision.get("proposer")
+            }
+            if pending_promotion and pending_promotion.get("proposer_subject_id"):
+                proposers.add(pending_promotion["proposer_subject_id"])
+            self_review_denied = principal.subject_id in proposers
+            if self_review_denied:
+                for action in {
+                    "DECIDE_MATCH",
+                    "MERGE",
+                    "SPLIT",
+                    "UNMERGE",
+                    "REVERSE",
+                    "REVIEW_PROMOTION",
+                    "REOPEN",
+                }:
+                    state_denials[action] = "SELF_REVIEW_DENIED"
+
+            allowed = sorted(
+                action for action in permitted_by_role if action not in state_denials
+            )
+            denied = {
+                action: state_denials.get(action, "ROLE_DENIED")
+                for action in sorted(all_actions - set(allowed))
+            }
+            second_actor = {
+                "required": bool(pending_decisions or pending_promotion),
+                "pending_decision_ids": [
+                    decision["decision_id"] for decision in pending_decisions
+                ],
+                "proposer_subject_ids": sorted(proposers),
+                "self_review_denied": self_review_denied,
+                "reason_code": (
+                    "SELF_REVIEW_DENIED"
+                    if self_review_denied
+                    else ("SECOND_ACTOR_REQUIRED" if proposers else None)
+                ),
+            }
+            return allowed, denied, second_actor
+
+        def persisted_identity_decision(
+            request: Request,
+            *,
+            tenant_id: str,
+            decision_id: str,
+        ) -> dict[str, Any] | None:
+            decision = runtime_service(request).get_identity_decision(
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
+            if decision is None:
+                return active.decisions.get(decision_id)
+            value = identity_decision_to_api(decision)
+            active.decisions[decision_id] = value
+            return value
+
+        def build_lifecycle_aggregate(
+            *,
+            request: Request,
+            value: dict[str, Any],
+            masked_value: dict[str, Any],
+            principal: Principal,
+        ) -> dict[str, Any]:
+            runtime = value.get("runtime_record") or {}
+            intake_id = value["intake_id"]
+            tenant_id = value["scope"]["tenant_id"]
+            service = runtime_service(request)
+            decisions = [
+                identity_decision_to_api(decision)
+                for decision in service.list_identity_decisions(
+                    tenant_id=tenant_id,
+                    intake_id=intake_id,
+                )
+            ]
+            promotion = V1PromotionRepositoryAdapter(
+                active,
+                request.app.state,
+            ).get_promotion_for_intake(intake_id)
+            assignment = next(
+                (
+                    copy.deepcopy(candidate)
+                    for candidate in active.assignments.values()
+                    if candidate.get("intake_id") == intake_id
+                    and candidate.get("status") != "COMPLETED"
+                ),
+                None,
+            ) or copy.deepcopy(
+                (runtime.get("lifecycleProjections") or {}).get("assignment")
+            )
+            sla = next(
+                (
+                    copy.deepcopy(candidate)
+                    for candidate in active.slas.values()
+                    if candidate.get("intake_id") == intake_id
+                ),
+                None,
+            ) or copy.deepcopy((runtime.get("lifecycleProjections") or {}).get("sla"))
+
+            job = None
+            promotion_job_id = (
+                promotion.get("site_score_job_id") if promotion else None
+            )
+            if promotion_job_id:
+                job = copy.deepcopy(active.jobs.get(promotion_job_id)) or {
+                    "job_id": promotion_job_id,
+                    "status": (
+                        "SUCCEEDED"
+                        if promotion.get("status") == "COMPLETED"
+                        else "FAILED"
+                        if promotion.get("status") == "SCORE_FAILED"
+                        else "QUEUED"
+                    ),
+                    "checkpoint": "SCORE_QUEUED",
+                    "attempt": 0,
+                    "version": 1,
+                }
+            job_id = runtime.get("jobId") or value.get("job_id")
+            queue = getattr(request.app.state, "job_queue", None)
+            if job is None and queue is not None and job_id:
+                queued_job = queue.get(job_id)
+                if queued_job is not None:
+                    job = queued_job.to_dict()
+                    job["status"] = str(job["status"]).upper()
+                    job["checkpoint"] = (
+                        (runtime.get("processingHistory") or [{}])[-1].get("checkpoint")
+                    )
+            if job is None:
+                job = copy.deepcopy(
+                    (runtime.get("lifecycleProjections") or {}).get("job")
+                    or runtime.get("jobReceipt")
+                )
+            if job is not None:
+                job = {
+                    "job_id": job.get("job_id") or job.get("jobId"),
+                    "status": str(job.get("status") or "QUEUED").upper(),
+                    "attempt": int(job.get("attempt") or job.get("attempts") or 0),
+                    "checkpoint": job.get("checkpoint"),
+                    "next_retry_at": job.get("next_retry_at")
+                    or job.get("nextRetryAt"),
+                    "fence_token": job.get("fence_token")
+                    or job.get("fenceToken"),
+                    "version": job.get("version"),
+                }
+
+            allowed, denied, second_actor = allowed_intake_actions(
+                principal=principal,
+                value=value,
+                decisions=decisions,
+                promotion=promotion,
+            )
+            masked_fields = list(masked_value.get("masked_fields") or [])
+            mask_reason_codes = sorted(
+                {
+                    field.get("mask_reason_code")
+                    for field in masked_value.get("fields") or []
+                    if field.get("masked") and field.get("mask_reason_code")
+                }
+            )
+            purpose_value = value.get("purpose")
+            role_mode = canonical_role_mode(principal)
+            actor_facts = {
+                "role_mode": role_mode,
+                "allowed_actions": allowed,
+                "denied_action_reasons": denied,
+                "scope": {
+                    "principal_tenant_id": principal.tenant_id,
+                    "resource": copy.deepcopy(value.get("scope") or {}),
+                    "in_scope": True,
+                },
+                "masking": {
+                    "masked_fields": masked_fields,
+                    "reason_codes": mask_reason_codes,
+                    "has_masked_fields": bool(masked_fields),
+                    "clearance": getattr(principal.scope.clearance, "name", None)
+                    or str(principal.scope.clearance),
+                },
+                "purpose": {
+                    "value": purpose_value,
+                    "required": role_mode in {
+                        "governance-reviewer",
+                        "privacy-officer",
+                    },
+                    "bound": bool(purpose_value),
+                    "reason_code": (
+                        None
+                        if purpose_value
+                        or role_mode
+                        not in {"governance-reviewer", "privacy-officer"}
+                        else "PURPOSE_REQUIRED"
+                    ),
+                },
+                "second_actor": second_actor,
+            }
+            raw_receipts = copy.deepcopy(runtime.get("lifecycleReceipts") or [])
+            raw_receipts.extend(
+                {
+                    "receiptId": receipt.get("receiptId"),
+                    "category": "decision",
+                    "action": receipt.get("decision"),
+                    "resourceId": receipt.get("decisionId") or receipt.get("receiptId"),
+                    "resourceVersion": receipt.get("version"),
+                    "status": receipt.get("status"),
+                    "actor": receipt.get("actor"),
+                    "correlationId": receipt.get("correlationId"),
+                    "occurredAt": receipt.get("issuedAt"),
+                    "receipt": copy.deepcopy(receipt),
+                }
+                for receipt in runtime.get("decisionReceipts") or []
+            )
+
+            def lifecycle_receipt_to_api(
+                receipt_value: dict[str, Any],
+            ) -> dict[str, Any]:
+                return {
+                    "receipt_id": receipt_value.get("receipt_id")
+                    or receipt_value.get("receiptId"),
+                    "category": receipt_value.get("category") or "intake",
+                    "action": receipt_value.get("action"),
+                    "resource_id": receipt_value.get("resource_id")
+                    or receipt_value.get("resourceId"),
+                    "resource_version": receipt_value.get("resource_version")
+                    or receipt_value.get("resourceVersion"),
+                    "status": receipt_value.get("status"),
+                    "actor": receipt_value.get("actor"),
+                    "correlation_id": receipt_value.get("correlation_id")
+                    or receipt_value.get("correlationId"),
+                    "occurred_at": receipt_value.get("occurred_at")
+                    or receipt_value.get("occurredAt"),
+                    "receipt": mutation_receipt_to_api(
+                        receipt_value.get("receipt") or {}
+                    ),
+                }
+
+            mutation_receipts = [
+                lifecycle_receipt_to_api(receipt_value)
+                for receipt_value in raw_receipts
+            ]
+
+            def decision_receipt_to_api(
+                receipt_value: dict[str, Any] | None,
+            ) -> dict[str, Any] | None:
+                if not receipt_value:
+                    return None
+                return {
+                    "decision_id": receipt_value.get("decision_id")
+                    or receipt_value.get("decisionId"),
+                    "receipt_id": receipt_value.get("receipt_id")
+                    or receipt_value.get("receiptId"),
+                    "status": receipt_value.get("status") or "EXECUTED",
+                    "action": receipt_value.get("action")
+                    or receipt_value.get("decision"),
+                    "version": int(receipt_value.get("version") or 1),
+                    "proposer": receipt_value.get("proposer"),
+                    "reviewer": receipt_value.get("reviewer"),
+                    "graph_plan": graph_plan_to_api(
+                        receipt_value.get("graph_plan")
+                        or receipt_value.get("graphPlan")
+                    ),
+                    "correlation_id": receipt_value.get("correlation_id")
+                    or receipt_value.get("correlationId"),
+                    "created_at": receipt_value.get("created_at")
+                    or receipt_value.get("issuedAt"),
+                    "updated_at": receipt_value.get("updated_at")
+                    or receipt_value.get("issuedAt"),
+                }
+
+            submission = value.get("submission_receipt")
+            submission_receipt = (
+                {
+                    "receipt_id": submission.get("receiptId"),
+                    "receipt_type": submission.get("receiptType"),
+                    "intake_id": submission.get("intakeId"),
+                    "state": submission.get("state"),
+                    "existing_listing_id": submission.get("existingListingId"),
+                    "navigation_target": submission.get("navigationTarget"),
+                    "correlation_id": submission.get("correlationId"),
+                    "issued_at": submission.get("issuedAt"),
+                }
+                if submission
+                else None
+            )
+
+            def history(category: str) -> list[dict[str, Any]]:
+                return [
+                    receipt_value
+                    for receipt_value in mutation_receipts
+                    if receipt_value["category"] == category
+                ]
+
+            return {
+                "intake_id": intake_id,
+                "version": int(value["version"]),
+                "etag": f'W/"{value["version"]}"',
+                "actor_facts": actor_facts,
+                "assignment": assignment,
+                "sla": sla,
+                "decisions": decisions,
+                "promotion": copy.deepcopy(promotion),
+                "job": job,
+                "assignment_history": history("assignment"),
+                "sla_history": history("sla"),
+                "decision_history": history("decision"),
+                "promotion_history": history("promotion"),
+                "job_history": history("job"),
+                "mutation_receipts": mutation_receipts,
+                "latest_decision_receipt": decision_receipt_to_api(
+                    value.get("latest_decision_receipt")
+                ),
+                "submission_receipt": submission_receipt,
+            }
+
+        def persist_lifecycle_receipt(
+            *,
+            request: Request,
+            intake_id: str,
+            category: str,
+            action: str,
+            receipt_value: dict[str, Any],
+            actor: str,
+            correlation_id: str | None,
+        ) -> dict[str, Any]:
+            entry = runtime_service(request).record_lifecycle_receipt(
+                intake_id=intake_id,
+                category=category,
+                action=action,
+                receipt=receipt_value,
+                actor=actor,
+                correlation_id=correlation_id,
+            )
+            refreshed = runtime_service(request).get_intake(intake_id)
+            active.intakes[intake_id] = canonicalize_runtime_intake(refreshed)
+            return entry
+
+        def authoritative_job_record(
+            request: Request,
+            job_id: str,
+        ) -> tuple[dict[str, Any] | None, Any | None]:
+            queue = getattr(request.app.state, "job_queue", None)
+            queued = queue.get(job_id) if queue is not None else None
+            if queued is None:
+                return active.jobs.get(job_id), queue
+
+            value = queued.to_dict()
+            payload = value.get("payload") or {}
+            value["status"] = str(value["status"]).upper()
+            value["tenant_id"] = payload.get("tenant_id")
+            value["intake_id"] = payload.get("intake_id")
+            value["attempt"] = int(value.pop("attempts", 0))
+            value["checkpoint"] = payload.get("current_stage")
+            intake_id = value.get("intake_id")
+            if intake_id:
+                try:
+                    runtime = runtime_service(request).get_intake(intake_id)
+                except Exception:
+                    runtime = None
+                if runtime is not None:
+                    history = runtime.get("processingHistory") or []
+                    if history:
+                        value["checkpoint"] = (
+                            history[-1].get("checkpoint")
+                            or history[-1].get("toStage")
+                        )
+            value["checkpoint"] = value.get("checkpoint") or "SUBMITTED"
+            active.jobs[job_id] = copy.deepcopy(value)
+            return value, queue
+
+        def job_receipt_value(job: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "job_id": job["job_id"],
+                "status": str(job["status"]).upper(),
+                "checkpoint": job.get("checkpoint") or "SUBMITTED",
+                "attempt": int(job.get("attempt") or job.get("attempts") or 0),
+                "version": int(job.get("version") or 1),
+                "correlation_id": job.get("correlation_id") or str(uuid4()),
+            }
+
         def get_principal(request: Request) -> Principal:
             from apps.api.oday_api.security.dependencies import principal_from_headers
+
             return principal_from_headers(request.headers)
 
         def get_operator_role_id(request: Request) -> str | None:
@@ -1044,6 +2436,14 @@ else:
             # routes derive grants from the authenticated principal itself and
             # therefore normally return None here.
             return getattr(request.state, "operator_role_id", None)
+
+        def request_correlation_id(request: Request) -> str:
+            return (
+                request.headers.get("x-correlation-id")
+                or request.headers.get("X-Correlation-Id")
+                or getattr(request.state, "correlation_id", None)
+                or str(uuid4())
+            )
 
         def intake_auth_resource(value: dict[str, Any]) -> dict[str, Any]:
             resource = dict(value)
@@ -1265,12 +2665,19 @@ else:
         ) -> tuple[Any, ...]:
             intake_id = value.get("intake_id", "")
             if sort_value == "submitted_at_desc":
-                return (value.get("submitted_at", ""), intake_id)
+                timestamp = datetime_value(value.get("submitted_at"))
+                return (timestamp.timestamp() if timestamp else 0, intake_id)
             if sort_value == "updated_at_desc":
-                return (value.get("updated_at", ""), intake_id)
+                timestamp = datetime_value(value.get("updated_at"))
+                return (timestamp.timestamp() if timestamp else 0, intake_id)
             if sort_value == "due_at_asc":
                 due_at = value.get("due_at")
-                return (due_at is None, due_at or "", intake_id)
+                timestamp = datetime_value(due_at)
+                return (
+                    due_at is None,
+                    timestamp.timestamp() if timestamp else 0,
+                    intake_id,
+                )
             return (value.get("state", ""), intake_id)
 
         def receipt(
@@ -1284,6 +2691,271 @@ else:
                 "occurred_at": now(), "actor": actor_id, "version_after": version,
             }
 
+        def visible_saved_views(
+            principal: Principal,
+            tenant_id: str,
+        ) -> list[dict[str, Any]]:
+            role_mode = canonical_role_mode(principal)
+            return [
+                copy.deepcopy(view)
+                for view in active.saved_views
+                if view.get("tenant_id") == tenant_id
+                and view.get("resource") == "intake"
+                and (
+                    view.get("owner_subject_id") == principal.subject_id
+                    or view.get("visibility") == "TENANT"
+                    or (
+                        view.get("visibility") == "ROLE"
+                        and view.get("shared_role") == role_mode
+                    )
+                )
+            ]
+
+        def parse_saved_view_values(
+            *,
+            principal: Principal,
+            tenant_id: str,
+            saved_view_id: str | None,
+        ) -> dict[str, Any]:
+            if not saved_view_id:
+                return {}
+            view = next(
+                (
+                    candidate
+                    for candidate in visible_saved_views(principal, tenant_id)
+                    if candidate.get("saved_view_id") == saved_view_id
+                ),
+                None,
+            )
+            if view is None:
+                raise HTTPException(404, "saved view not found")
+            query = view.get("query")
+            if not isinstance(query, dict):
+                raise HTTPException(409, "saved view query is invalid")
+            return copy.deepcopy(query)
+
+        def inbox_projection(value: dict[str, Any]) -> dict[str, Any]:
+            projected = copy.deepcopy(value)
+            runtime = projected.get("runtime_record") or {}
+            intake_id = projected["intake_id"]
+            lifecycle = runtime.get("lifecycleProjections") or {}
+
+            assignments = [
+                copy.deepcopy(candidate)
+                for candidate in active.assignments.values()
+                if candidate.get("intake_id") == intake_id
+            ]
+            assignments.sort(
+                key=lambda candidate: (
+                    candidate.get("updated_at") or candidate.get("assigned_at") or "",
+                    int(candidate.get("version") or 0),
+                ),
+                reverse=True,
+            )
+            assignment = (
+                assignments[0]
+                if assignments
+                else copy.deepcopy(lifecycle.get("assignment") or {})
+            )
+
+            slas = [
+                copy.deepcopy(candidate)
+                for candidate in active.slas.values()
+                if candidate.get("intake_id") == intake_id
+            ]
+            slas.sort(
+                key=lambda candidate: (
+                    candidate.get("updated_at") or candidate.get("created_at") or "",
+                    int(candidate.get("version") or 0),
+                ),
+                reverse=True,
+            )
+            sla = slas[0] if slas else copy.deepcopy(lifecycle.get("sla") or {})
+
+            projected["assignment_id"] = assignment.get(
+                "assignment_id", assignment.get("assignmentId")
+            )
+            projected["assignment_status"] = assignment.get("status")
+            projected["owner_subject_id"] = assignment.get(
+                "owner_subject_id", assignment.get("ownerSubjectId")
+            ) or projected.get("assigned_to")
+            projected["assigned_to"] = projected["owner_subject_id"]
+            projected["queue_id"] = assignment.get(
+                "queue_id", assignment.get("queueId")
+            )
+            projected["sla_instance_id"] = sla.get(
+                "sla_instance_id", sla.get("slaInstanceId")
+            )
+            projected["sla_state"] = sla.get("state")
+            projected["due_at"] = (
+                sla.get("due_at")
+                or sla.get("dueAt")
+                or assignment.get("due_at")
+                or assignment.get("dueAt")
+                or projected.get("due_at")
+            )
+
+            failure = runtime.get("failure") or projected.get("failure") or {}
+            state = projected.get("state")
+            issue = failure.get("code")
+            next_action = failure.get("nextAction") or failure.get("next_action")
+            if not issue and state == "NEEDS_REVIEW":
+                issue, next_action = "MATCH_REVIEW_REQUIRED", "REVIEW"
+            elif not issue and state == "AWAITING_ASSISTED_ENTRY":
+                issue, next_action = "ASSISTED_ENTRY_REQUIRED", "ENTER_DATA"
+            elif not issue and state == "QUARANTINED":
+                issue, next_action = (
+                    runtime.get("policyReason") or "QUARANTINED",
+                    "REVIEW_QUARANTINE",
+                )
+
+            retryable = bool(
+                failure.get("retryable")
+                or (runtime.get("jobReceipt") or {}).get("retryable")
+                or (
+                    state == "FAILED"
+                    and (runtime.get("jobReceipt") or {}).get("status")
+                    in {"RETRYING", "FAILED"}
+                )
+            )
+            fields = projected.get("fields") or []
+
+            def effective_field(*paths: str) -> Any:
+                wanted = {path.lower() for path in paths}
+                for field in fields:
+                    if str(field.get("field_path") or "").lower() in wanted:
+                        return field.get("effective")
+                return None
+
+            restricted_data = bool(projected.get("restricted_data")) or any(
+                field.get("classification") == "RESTRICTED"
+                or bool(field.get("masked"))
+                for field in fields
+            )
+            last_observed_at = (
+                runtime.get("capturedAt")
+                or runtime.get("observedAt")
+                or projected.get("last_observed_at")
+                or projected.get("submitted_at")
+            )
+            projected.update(
+                {
+                    "issue": issue,
+                    "next_action": next_action,
+                    "retryable": retryable,
+                    "quarantined": state == "QUARANTINED",
+                    "failed": state == "FAILED",
+                    "restricted_data": restricted_data,
+                    "last_observed_at": last_observed_at,
+                    "location": {
+                        "address": effective_field(
+                            "address",
+                            "address_raw",
+                            "normalized_address",
+                        ),
+                        "district": effective_field("district"),
+                        "assigned_area_id": (
+                            projected.get("scope") or {}
+                        ).get("assigned_area_id"),
+                        "heat_zone_id": (
+                            projected.get("scope") or {}
+                        ).get("heat_zone_id"),
+                    },
+                }
+            )
+            return projected
+
+        def datetime_value(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        @router.get(
+            "/intakes/bootstrap",
+            operation_id="getIntakeInboxBootstrap",
+            response_model=IntakeInboxBootstrap,
+            responses=api_error_responses(403),
+        )
+        def get_intake_inbox_bootstrap(
+            request: Request,
+            tenant_id: str = Depends(require_actor),
+        ) -> IntakeInboxBootstrap:
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
+            heat_zones = []
+            for zone in runtime_service(request).snapshot().get("heatZones") or []:
+                heat_zone_id = str(zone.get("id") or zone.get("heatZoneId") or "")
+                if not heat_zone_id or not principal.scope.permits_heat_zone(
+                    heat_zone_id
+                ):
+                    continue
+                heat_zones.append(
+                    InboxHeatZone(
+                        heat_zone_id=heat_zone_id,
+                        label=str(zone.get("label") or zone.get("name") or heat_zone_id),
+                        assigned_area_id=zone.get("assignedAreaId"),
+                        region_id=zone.get("regionId"),
+                        rank=zone.get("rank"),
+                    )
+                )
+            return IntakeInboxBootstrap(
+                tenant_id=tenant_id,
+                subject_id=principal.subject_id,
+                role_mode=canonical_role_mode(principal),
+                scope={
+                    "tenant_id": tenant_id,
+                    "brand_ids": sorted(principal.scope.brand_ids),
+                    "region_ids": sorted(principal.scope.region_ids),
+                    "assigned_area_ids": sorted(principal.scope.assigned_area_ids),
+                    "heat_zone_ids": sorted(principal.scope.heat_zone_ids),
+                },
+                heat_zones=heat_zones,
+                selected_heat_zone_id=(
+                    heat_zones[0].heat_zone_id if heat_zones else None
+                ),
+                intake_methods=list(IntakeMethod),
+                intake_states=list(IntakeState),
+                match_outcomes=list(MatchOutcome),
+                assignment_states=list(AssignmentStatus),
+                sla_states=list(SlaState),
+                saved_views=[
+                    SavedView(**view)
+                    for view in visible_saved_views(principal, tenant_id)
+                ],
+                commands={
+                    "assign": InboxCommandContract(
+                        method="PUT",
+                        path_template="/api/v1/intakes/{intake_id}/assignment",
+                        requires_if_match=True,
+                        requires_idempotency_key=True,
+                    ),
+                    "claim": InboxCommandContract(
+                        method="POST",
+                        path_template="/api/v1/assignments/{assignment_id}/actions/claim",
+                        requires_if_match=True,
+                        requires_idempotency_key=True,
+                    ),
+                    "transfer": InboxCommandContract(
+                        method="POST",
+                        path_template="/api/v1/assignments/{assignment_id}/actions/transfer",
+                        requires_if_match=True,
+                        requires_idempotency_key=True,
+                    ),
+                    "complete": InboxCommandContract(
+                        method="POST",
+                        path_template="/api/v1/assignments/{assignment_id}/actions/complete",
+                        requires_if_match=True,
+                        requires_idempotency_key=True,
+                    ),
+                },
+            )
+
         @router.get(
             "/intakes",
             operation_id="listIntakes",
@@ -1296,27 +2968,123 @@ else:
             page_size: int = Query(50, ge=1, le=200),
             sort: IntakeSort | None = None,
             status: list[IntakeState] | None = Query(None),
+            intake_method: list[IntakeMethod] | None = Query(None),
             source_id: list[str] | None = Query(None),
             match_outcome: list[MatchOutcome] | None = Query(None),
             submitted_by: UuidString | None = None,
             needs_review: bool | None = None,
+            owner_subject_id: list[str] | None = Query(None),
+            assignment_status: list[AssignmentStatus] | None = Query(None),
+            assigned: bool | None = None,
+            sla_state: list[SlaState] | None = Query(None),
             assigned_area_id: UuidString | None = None,
             heat_zone_id: UuidString | None = None,
+            observed_from: DateTimeString | None = None,
+            observed_to: DateTimeString | None = None,
+            updated_from: DateTimeString | None = None,
+            updated_to: DateTimeString | None = None,
+            restricted_data: bool | None = None,
+            quarantined: bool | None = None,
+            failed: bool | None = None,
+            retryable: bool | None = None,
+            saved_view_id: UuidString | None = None,
             q: str | None = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
+            principal = get_principal(request)
+            saved_query = parse_saved_view_values(
+                principal=principal,
+                tenant_id=tenant_id,
+                saved_view_id=saved_view_id,
+            )
+
+            def saved_list(
+                current: list[Any] | None,
+                name: str,
+                enum_type: type[Enum] | None = None,
+            ) -> list[Any] | None:
+                if current:
+                    return current
+                raw = saved_query.get(name)
+                if raw is None:
+                    return current
+                values = raw if isinstance(raw, list) else [raw]
+                try:
+                    return (
+                        [enum_type(value) for value in values]
+                        if enum_type is not None
+                        else [str(value) for value in values]
+                    )
+                except ValueError:
+                    raise HTTPException(
+                        422, f"saved view contains invalid {name}"
+                    ) from None
+
+            def saved_scalar(current: Any, name: str) -> Any:
+                return current if current is not None else saved_query.get(name)
+
+            status = saved_list(status, "status", IntakeState)
+            intake_method = saved_list(
+                intake_method, "intake_method", IntakeMethod
+            )
+            source_id = saved_list(source_id, "source_id")
+            match_outcome = saved_list(
+                match_outcome, "match_outcome", MatchOutcome
+            )
+            owner_subject_id = saved_list(owner_subject_id, "owner_subject_id")
+            assignment_status = saved_list(
+                assignment_status, "assignment_status", AssignmentStatus
+            )
+            sla_state = saved_list(sla_state, "sla_state", SlaState)
+            submitted_by = saved_scalar(submitted_by, "submitted_by")
+            needs_review = saved_scalar(needs_review, "needs_review")
+            assigned = saved_scalar(assigned, "assigned")
+            assigned_area_id = saved_scalar(
+                assigned_area_id, "assigned_area_id"
+            )
+            heat_zone_id = saved_scalar(heat_zone_id, "heat_zone_id")
+            observed_from = saved_scalar(observed_from, "observed_from")
+            observed_to = saved_scalar(observed_to, "observed_to")
+            updated_from = saved_scalar(updated_from, "updated_from")
+            updated_to = saved_scalar(updated_to, "updated_to")
+            restricted_data = saved_scalar(
+                restricted_data, "restricted_data"
+            )
+            quarantined = saved_scalar(quarantined, "quarantined")
+            failed = saved_scalar(failed, "failed")
+            retryable = saved_scalar(retryable, "retryable")
+            q = saved_scalar(q, "q")
+
             sort_value = (sort or IntakeSort.SUBMITTED_AT_DESC).value
             query_parameters = {
                 "assigned_area_id": assigned_area_id,
+                "assigned": assigned,
+                "assignment_status": [
+                    value.value for value in assignment_status or []
+                ],
+                "failed": failed,
                 "heat_zone_id": heat_zone_id,
+                "intake_method": [
+                    value.value for value in intake_method or []
+                ],
                 "match_outcome": [value.value for value in match_outcome or []],
                 "needs_review": needs_review,
+                "observed_from": observed_from,
+                "observed_to": observed_to,
+                "owner_subject_id": owner_subject_id or [],
                 "page_size": page_size,
                 "q": q,
+                "quarantined": quarantined,
+                "restricted_data": restricted_data,
+                "retryable": retryable,
+                "saved_view_id": saved_view_id,
+                "sla_state": [value.value for value in sla_state or []],
                 "sort": sort_value,
                 "source_id": source_id or [],
                 "status": [value.value for value in status or []],
                 "submitted_by": submitted_by,
+                "updated_from": updated_from,
+                "updated_to": updated_to,
             }
             query_fingerprint = fingerprint(query_parameters)
             snapshot_time = now()
@@ -1325,7 +3093,6 @@ else:
                 cursor_data = decode_cursor(cursor, tenant_id, query_fingerprint, sort_value)
                 snapshot_time = cursor_data["snapshot_time"]
 
-            principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
@@ -1337,10 +3104,22 @@ else:
                 correlation_id=correlation_id,
             )
 
+            # Canonical queries are rebuilt from the durable runtime before
+            # filtering. The process-local projection is only a read cache.
+            for runtime in runtime_service(request).list_intakes():
+                cached = active.intakes.get(runtime["id"]) or {}
+                active.intakes[runtime["id"]] = canonicalize_runtime_intake(
+                    runtime,
+                    scope=copy.deepcopy(cached.get("scope")),
+                    submitted_by=cached.get("submitted_by"),
+                )
+
             tenant_items = [
-                v for v in active.intakes.values()
+                inbox_projection(v) for v in active.intakes.values()
                 if v.get("scope", {}).get("tenant_id") == tenant_id
-                and v.get("submitted_at", "") <= snapshot_time
+                and datetime_value(v.get("submitted_at")) is not None
+                and datetime_value(v.get("submitted_at"))
+                <= datetime_value(snapshot_time)
                 and intake_resource_in_scope(principal, v)
             ]
 
@@ -1358,13 +3137,49 @@ else:
                 ]
 
             if status:
-                tenant_items = [v for v in tenant_items if v.get("state") in status]
+                tenant_items = [
+                    v for v in tenant_items if v.get("state") in {
+                        item.value for item in status
+                    }
+                ]
+            if intake_method:
+                tenant_items = [
+                    v for v in tenant_items if v.get("intake_method") in {
+                        item.value for item in intake_method
+                    }
+                ]
             if source_id:
                 tenant_items = [v for v in tenant_items if v.get("source_id") in source_id]
             if match_outcome:
-                tenant_items = [v for v in tenant_items if v.get("match_outcome") in match_outcome]
+                tenant_items = [
+                    v for v in tenant_items if v.get("match_outcome") in {
+                        item.value for item in match_outcome
+                    }
+                ]
             if submitted_by:
                 tenant_items = [v for v in tenant_items if v.get("submitted_by") == submitted_by]
+            if owner_subject_id:
+                tenant_items = [
+                    v for v in tenant_items
+                    if v.get("owner_subject_id") in owner_subject_id
+                ]
+            if assignment_status:
+                tenant_items = [
+                    v for v in tenant_items if v.get("assignment_status") in {
+                        item.value for item in assignment_status
+                    }
+                ]
+            if assigned is not None:
+                tenant_items = [
+                    v for v in tenant_items
+                    if bool(v.get("assignment_id")) is bool(assigned)
+                ]
+            if sla_state:
+                tenant_items = [
+                    v for v in tenant_items if v.get("sla_state") in {
+                        item.value for item in sla_state
+                    }
+                ]
             if heat_zone_id:
                 tenant_items = [v for v in tenant_items if v.get("scope", {}).get("heat_zone_id") == heat_zone_id]
             if assigned_area_id:
@@ -1374,6 +3189,43 @@ else:
                     tenant_items = [v for v in tenant_items if v.get("state") == "NEEDS_REVIEW"]
                 else:
                     tenant_items = [v for v in tenant_items if v.get("state") != "NEEDS_REVIEW"]
+            if observed_from:
+                lower = datetime_value(observed_from)
+                tenant_items = [
+                    v for v in tenant_items
+                    if datetime_value(v.get("last_observed_at")) is not None
+                    and datetime_value(v.get("last_observed_at")) >= lower
+                ]
+            if observed_to:
+                upper = datetime_value(observed_to)
+                tenant_items = [
+                    v for v in tenant_items
+                    if datetime_value(v.get("last_observed_at")) is not None
+                    and datetime_value(v.get("last_observed_at")) <= upper
+                ]
+            if updated_from:
+                lower = datetime_value(updated_from)
+                tenant_items = [
+                    v for v in tenant_items
+                    if datetime_value(v.get("updated_at")) >= lower
+                ]
+            if updated_to:
+                upper = datetime_value(updated_to)
+                tenant_items = [
+                    v for v in tenant_items
+                    if datetime_value(v.get("updated_at")) <= upper
+                ]
+            for flag_name, expected in (
+                ("restricted_data", restricted_data),
+                ("quarantined", quarantined),
+                ("failed", failed),
+                ("retryable", retryable),
+            ):
+                if expected is not None:
+                    tenant_items = [
+                        v for v in tenant_items
+                        if bool(v.get(flag_name)) is bool(expected)
+                    ]
 
             if q:
                 q_lower = q.lower()
@@ -1410,19 +3262,60 @@ else:
             summaries = []
             for value in items:
                 masked_val = mask_intake(principal, value)
+                masked_field_paths = set(masked_val.get("masked_fields") or [])
+                location_value = copy.deepcopy(masked_val.get("location") or {})
+                if masked_field_paths.intersection(
+                    {"address", "address_raw", "normalized_address"}
+                ):
+                    location_value["address"] = None
+                if "district" in masked_field_paths:
+                    location_value["district"] = None
                 summaries.append(IntakeSummary(
                     intake_id=masked_val["intake_id"],
                     state=masked_val["state"],
                     intake_method=masked_val["intake_method"],
                     source_id=masked_val.get("source_id"),
+                    original_url=masked_val.get("original_url"),
+                    canonical_url=masked_val.get("canonical_url"),
+                    policy_state=masked_val.get("policy_state"),
                     match_outcome=masked_val.get("match_outcome"),
                     submitted_by=masked_val.get("submitted_by"),
                     assigned_to=masked_val.get("assigned_to"),
+                    assignment_id=masked_val.get("assignment_id"),
+                    assignment_status=masked_val.get("assignment_status"),
+                    owner_subject_id=masked_val.get("owner_subject_id"),
+                    queue_id=masked_val.get("queue_id"),
+                    sla_instance_id=masked_val.get("sla_instance_id"),
+                    sla_state=masked_val.get("sla_state"),
                     due_at=masked_val.get("due_at"),
+                    last_observed_at=masked_val.get("last_observed_at"),
                     submitted_at=masked_val.get("submitted_at"),
                     updated_at=masked_val.get("updated_at"),
                     version=masked_val["version"],
                     scope=ScopeContext(**masked_val["scope"]),
+                    issue=masked_val.get("issue"),
+                    next_action=masked_val.get("next_action"),
+                    retryable=bool(masked_val.get("retryable")),
+                    quarantined=bool(masked_val.get("quarantined")),
+                    failed=bool(masked_val.get("failed")),
+                    location=InboxLocationSummary(**location_value),
+                    masking=InboxMaskingSummary(
+                        restricted_data=bool(
+                            masked_val.get("restricted_data")
+                        ),
+                        has_masked_fields=bool(
+                            masked_val.get("masked_fields")
+                        ),
+                        masked_fields=masked_val.get("masked_fields") or [],
+                        reason_codes=sorted(
+                            {
+                                field.get("mask_reason_code")
+                                for field in masked_val.get("fields") or []
+                                if field.get("masked")
+                                and field.get("mask_reason_code")
+                            }
+                        ),
+                    ),
                     masked_fields=masked_val.get("masked_fields") or [],
                 ))
 
@@ -1452,6 +3345,7 @@ else:
             operation_id="submitUrlIntake",
             status_code=202,
             response_model=IntakeSubmissionReceipt,
+            response_model_exclude_none=True,
             responses={
                 202: {
                     "model": IntakeSubmissionReceipt,
@@ -1493,59 +3387,71 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                intake_id, job_id = str(uuid4()), str(uuid4())
-                correlation_id_str = str(uuid4())
-                ts = now()
-
-                value = {
-                    "intake_id": intake_id,
-                    "state": "SUBMITTED",
-                    "intake_method": "URL",
-                    "scope": body.scope.model_dump(),
-                    "submitted_at": ts,
-                    "updated_at": ts,
-                    "version": 1,
-                    "job_id": job_id,
-                    "correlation_id": correlation_id_str,
-                    "submitted_by": actor_id,
-                    "original_url": body.original_url,
-                    "canonical_url": body.original_url,
-                    "policy_state": "APPROVED_RETRIEVAL",
-                    "processing_history": [
-                        {
-                            "transition_id": str(uuid4()),
-                            "from_state": None,
-                            "to_state": "SUBMITTED",
-                            "occurred_at": ts,
-                            "actor": actor_id,
-                            "version_after": 1,
-                        }
-                    ],
-                    "fields": [],
-                    "audit": [],
-                }
-                active.intakes[intake_id] = value
-
-                active.jobs[job_id] = {
-                    "job_id": job_id,
-                    "status": "QUEUED",
-                    "checkpoint": "RETRIEVING",
-                    "attempt": 0,
-                    "version": 1,
-                    "correlation_id": correlation_id_str,
-                    "intake_id": intake_id,
-                    "tenant_id": tenant_id,
-                }
-
+                intake_id = str(uuid4())
+                correlation_id_str = correlation_id or str(uuid4())
+                queue = getattr(request.app.state, "job_queue", None)
+                if queue is None:
+                    raise HTTPException(
+                        503,
+                        "BACKPRESSURE_ACTIVE: durable intake queue unavailable",
+                    )
+                if queue.count_active_jobs() >= 200:
+                    raise HTTPException(503, "BACKPRESSURE_ACTIVE")
+                actor_role_id = runtime_actor_role(principal, request)
+                service = runtime_service(request)
+                runtime = service.submit_intake(
+                    url=body.original_url,
+                    heat_zone_id=body.scope.heat_zone_id,
+                    actor_role_id=actor_role_id,
+                    actor_name=actor_id,
+                    idempotency_key=key,
+                    correlation_id=correlation_id_str,
+                    job_queue=queue,
+                    async_intake=True,
+                    tenant_id=tenant_id,
+                    intake_id=intake_id,
+                    scope_context=body.scope.model_dump(),
+                )
+                runtime.setdefault("matchCaseId", str(uuid4()))
+                runtime["purpose"] = body.purpose
+                runtime["submittedBy"] = actor_id
+                service._save_intake(runtime)
+                value = canonicalize_runtime_intake(
+                    runtime,
+                    scope=body.scope.model_dump(),
+                    submitted_by=actor_id,
+                )
+                active.intakes[runtime["id"]] = value
+                job_id = runtime.get("jobId")
+                if job_id:
+                    active.jobs[job_id] = {
+                        "job_id": job_id,
+                        "status": "QUEUED",
+                        "checkpoint": "CHECKING_IDENTITY",
+                        "attempt": 0,
+                        "version": 1,
+                        "correlation_id": correlation_id_str,
+                        "intake_id": runtime["id"],
+                        "tenant_id": tenant_id,
+                    }
+                duplicate_receipt = runtime.get("submissionReceipt") or {}
+                existing_listing_id = duplicate_receipt.get("existingListingId")
                 receipt_val = {
-                    "intake_id": intake_id,
-                    "state": "SUBMITTED",
-                    "version": 1,
+                    "intake_id": runtime["id"],
+                    "state": runtime["stage"],
+                    "version": int(runtime.get("version") or 1),
                     "job_id": job_id,
                     "correlation_id": correlation_id_str,
-                    "submitted_at": ts,
+                    "submitted_at": value["submitted_at"],
+                    "duplicate_hint": existing_listing_id,
+                    "identity_outcome": (
+                        "EXACT_DUPLICATE" if existing_listing_id else None
+                    ),
+                    "existing_listing_id": existing_listing_id,
+                    "navigation_target": duplicate_receipt.get("navigationTarget"),
+                    "submission_receipt_id": duplicate_receipt.get("receiptId"),
                 }
-                return receipt_val, 202
+                return receipt_val, (200 if existing_listing_id else 202)
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
             response.status_code = 200 if was_replayed else code
@@ -1593,7 +3499,8 @@ else:
             def make() -> tuple[dict[str, Any], int]:
                 receipts, accepted = [], 0
                 ts = now()
-                correlation_id_str = str(uuid4())
+                correlation_id_str = correlation_id or str(uuid4())
+                service = runtime_service(request)
 
                 for index, row in enumerate(body.rows):
                     if not row.address_raw:
@@ -1612,32 +3519,32 @@ else:
                     else:
                         accepted += 1
                         intake_id = str(uuid4())
-
-                        value = {
-                            "intake_id": intake_id,
-                            "state": "SUBMITTED",
-                            "intake_method": body.method.value.upper(),
-                            "scope": body.scope.model_dump(),
-                            "submitted_at": ts,
-                            "updated_at": ts,
-                            "version": 1,
-                            "submitted_by": actor_id,
-                            "original_url": row.original_url,
-                            "canonical_url": row.original_url,
-                            "policy_state": "APPROVED_RETRIEVAL",
-                            "processing_history": [
-                                {
-                                    "transition_id": str(uuid4()),
-                                    "from_state": None,
-                                    "to_state": "SUBMITTED",
-                                    "occurred_at": ts,
-                                    "actor": actor_id,
-                                    "version_after": 1,
-                                }
-                            ],
-                            "fields": [],
-                            "audit": [],
-                        }
+                        runtime = service.submit_structured_intake(
+                            method=body.method.value,
+                            fields={
+                                "address": row.address_raw,
+                                "area_ping": row.area_ping,
+                                "currency": row.currency,
+                                "floor": row.floor,
+                                "rent": row.rent_amount,
+                                "source_listing_id": row.source_listing_id,
+                            },
+                            source_id=row.source_id,
+                            original_url=row.original_url,
+                            heat_zone_id=body.scope.heat_zone_id,
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            idempotency_key=f"{key}:row:{index + 1}",
+                            correlation_id=correlation_id_str,
+                            tenant_id=tenant_id,
+                            intake_id=intake_id,
+                            scope_context=body.scope.model_dump(),
+                        )
+                        value = canonicalize_runtime_intake(
+                            runtime,
+                            scope=body.scope.model_dump(),
+                            submitted_by=actor_id,
+                        )
                         active.intakes[intake_id] = value
                         receipts.append({
                             "row_index": index + 1,
@@ -1680,9 +3587,16 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> IntakeDetail:
-            value = active.intakes.get(intake_id)
-            if value is None:
+            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                intake_id
+            )
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            if persisted.get("stage") is not None:
+                value = canonicalize_runtime_intake(persisted)
+                active.intakes[intake_id] = value
+            else:
+                value = persisted
             if value.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -1701,12 +3615,6 @@ else:
                 correlation_id=correlation_id,
             )
 
-            # Lookup assignment if assigned_to is set but no assignment exists
-            active_assignment = next(
-                (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
-                None
-            )
-
             # Lookup SLA if exists
             active_sla = next(
                 (s for s in active.slas.values() if s.get("intake_id") == intake_id),
@@ -1715,7 +3623,22 @@ else:
 
             response.headers["ETag"] = f'W/"{value["version"]}"'
 
-            masked_val = mask_intake(principal, value)
+            projected_value = inbox_projection(value)
+            masked_val = mask_intake(principal, projected_value)
+            lifecycle = build_lifecycle_aggregate(
+                request=request,
+                value=projected_value,
+                masked_value=masked_val,
+                principal=principal,
+            )
+            masked_field_paths = set(masked_val.get("masked_fields") or [])
+            location_value = copy.deepcopy(masked_val.get("location") or {})
+            if masked_field_paths.intersection(
+                {"address", "address_raw", "normalized_address"}
+            ):
+                location_value["address"] = None
+            if "district" in masked_field_paths:
+                location_value["district"] = None
             detail = IntakeDetail(
                 intake_id=masked_val["intake_id"],
                 state=masked_val["state"],
@@ -1724,11 +3647,37 @@ else:
                 match_outcome=masked_val.get("match_outcome"),
                 submitted_by=masked_val.get("submitted_by"),
                 assigned_to=masked_val.get("assigned_to"),
+                assignment_id=masked_val.get("assignment_id"),
+                assignment_status=masked_val.get("assignment_status"),
+                owner_subject_id=masked_val.get("owner_subject_id"),
+                queue_id=masked_val.get("queue_id"),
+                sla_instance_id=masked_val.get("sla_instance_id"),
+                sla_state=masked_val.get("sla_state"),
                 due_at=masked_val.get("due_at"),
+                last_observed_at=masked_val.get("last_observed_at"),
                 submitted_at=masked_val.get("submitted_at"),
                 updated_at=masked_val.get("updated_at"),
                 version=masked_val["version"],
                 scope=ScopeContext(**masked_val["scope"]),
+                issue=masked_val.get("issue"),
+                next_action=masked_val.get("next_action"),
+                retryable=bool(masked_val.get("retryable")),
+                quarantined=bool(masked_val.get("quarantined")),
+                failed=bool(masked_val.get("failed")),
+                location=InboxLocationSummary(**location_value),
+                masking=InboxMaskingSummary(
+                    restricted_data=bool(masked_val.get("restricted_data")),
+                    has_masked_fields=bool(masked_val.get("masked_fields")),
+                    masked_fields=masked_val.get("masked_fields") or [],
+                    reason_codes=sorted(
+                        {
+                            field.get("mask_reason_code")
+                            for field in masked_val.get("fields") or []
+                            if field.get("masked")
+                            and field.get("mask_reason_code")
+                        }
+                    ),
+                ),
                 masked_fields=masked_val.get("masked_fields") or [],
                 original_url=masked_val.get("original_url"),
                 canonical_url=masked_val.get("canonical_url"),
@@ -1736,14 +3685,37 @@ else:
                 source_snapshot_id=masked_val.get("source_snapshot_id"),
                 parser_run_id=masked_val.get("parser_run_id"),
                 match_case_id=masked_val.get("match_case_id"),
+                match_case_version=masked_val.get("match_case_version"),
+                match_case=masked_val.get("match_case"),
                 processing_history=masked_val.get("processing_history") or [],
                 fields=masked_val.get("fields") or [],
                 audit=masked_val.get("audit") or [],
-                assignment_id=active_assignment.get("assignment_id") if active_assignment else None,
-                assignment_status=active_assignment.get("status") if active_assignment else None,
-                sla_instance_id=active_sla.get("sla_instance_id") if active_sla else None,
-                sla_state=active_sla.get("state") if active_sla else None,
+                evidence=SourceEvidenceDetail(
+                    original_url=masked_val.get("original_url"),
+                    canonical_url=masked_val.get("canonical_url"),
+                    source_id=masked_val.get("source_id"),
+                    policy_state=masked_val.get("policy_state"),
+                    source_snapshot_id=masked_val.get("source_snapshot_id"),
+                    captured_at=(
+                        (masked_val.get("runtime_record") or {}).get("capturedAt")
+                    ),
+                    parser_run_id=masked_val.get("parser_run_id"),
+                    parser_version=(
+                        (masked_val.get("runtime_record") or {}).get(
+                            "parserVersion"
+                        )
+                    ),
+                    correlation_id=masked_val.get("correlation_id"),
+                    freshness_state=(
+                        "STALE"
+                        if masked_val.get("stale_snapshot")
+                        else "CURRENT"
+                        if masked_val.get("source_snapshot_id")
+                        else "NOT_CAPTURED"
+                    ),
+                ),
                 sla_receipt=active_sla.get("receipt") if active_sla else None,
+                lifecycle=lifecycle,
             )
             return detail
 
@@ -1776,9 +3748,16 @@ else:
             ),
         ) -> CorrectionReceipt:
             validate_idempotency_key(key)
-            current = active.intakes.get(intake_id)
-            if current is None:
+            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                intake_id
+            )
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            runtime_record = persisted if persisted.get("stage") else None
+            current = (
+                canonicalize_runtime_intake(persisted) if runtime_record is not None else persisted
+            )
+            active.intakes[intake_id] = current
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
@@ -1810,6 +3789,88 @@ else:
                 )
                 if current.get("state") not in allowed_states:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                if runtime_record is not None:
+                    require_version(if_match, runtime_record["version"])
+                    service = runtime_service(request)
+                    correlation_id_str = correlation_id or request_correlation_id(request)
+                    correction_id = str(uuid4())
+                    if is_identity_affecting:
+                        decision = service.propose_identity_decision(
+                            tenant_id=tenant_id,
+                            action="identity_correction",
+                            plan={
+                                "intakeId": intake_id,
+                                "correctionId": correction_id,
+                                "fieldPath": body.field_path,
+                                "correctedValue": copy.deepcopy(body.corrected_value),
+                                "sourceSnapshotId": runtime_record.get("snapshotId"),
+                                "parserVersion": runtime_record.get("parserVersion"),
+                                "relatedIds": {
+                                    "intakeId": intake_id,
+                                    "correctionId": correction_id,
+                                    "listingId": (
+                                        runtime_record.get("matchResult") or {}
+                                    ).get("targetListingId"),
+                                },
+                                "evidenceState": (
+                                    "COMPLETE"
+                                    if runtime_record.get("snapshotId")
+                                    and runtime_record.get("parserVersion")
+                                    else "PARTIAL"
+                                ),
+                            },
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            reason=body.reason or "Identity-affecting correction proposed.",
+                            risk_acknowledged=bool(body.risk_acknowledged),
+                            correlation_id=correlation_id_str,
+                            decision_id=correction_id,
+                        )
+                        proposal = {
+                            "correctionId": correction_id,
+                            "decisionId": decision["decisionId"],
+                            "fieldPath": body.field_path,
+                            "correctedValue": copy.deepcopy(body.corrected_value),
+                            "reason": body.reason,
+                            "proposer": actor_id,
+                            "status": "PENDING_REVIEW",
+                            "sourceSnapshotId": runtime_record.get("snapshotId"),
+                            "parserVersion": runtime_record.get("parserVersion"),
+                            "correlationId": correlation_id_str,
+                            "createdAt": now(),
+                        }
+                        runtime_record.setdefault("correctionProposals", []).append(proposal)
+                        runtime_record["version"] = int(runtime_record["version"]) + 1
+                        service._save_intake(runtime_record)
+                        updated_runtime = runtime_record
+                        audit_event_id = decision["auditEventId"]
+                        status_value = "PENDING_REVIEW"
+                    else:
+                        try:
+                            updated_runtime = service.correct_intake(
+                                intake_id=intake_id,
+                                fields={body.field_path: copy.deepcopy(body.corrected_value)},
+                                reason=body.reason,
+                                risk_summary=body.reason or "Field correction requested.",
+                                risk_acknowledged=True,
+                                actor_role_id=runtime_actor_role(principal, request),
+                                actor_name=actor_id,
+                                idempotency_key=key,
+                                correlation_id=correlation_id_str,
+                            )
+                        except Exception as exc:
+                            raise HTTPException(409, str(exc)) from exc
+                        audit_event_id = updated_runtime["auditEvents"][-1]["id"]
+                        status_value = "APPLIED"
+                    active.intakes[intake_id] = canonicalize_runtime_intake(updated_runtime)
+                    return {
+                        "correction_id": correction_id,
+                        "status": status_value,
+                        "intake_id": intake_id,
+                        "version": updated_runtime["version"],
+                        "audit_event_id": audit_event_id,
+                        "correlation_id": correlation_id_str,
+                    }, 201
                 require_version(if_match, current["version"])
                 cid = str(uuid4())
                 correlation_id_str = str(uuid4())
@@ -1995,6 +4056,19 @@ else:
             )
             response.status_code = code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="assignment",
+                action="ASSIGN",
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "handoff_note": body.handoff_note,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -2026,7 +4100,7 @@ else:
             ),
         ) -> JobReceipt:
             validate_idempotency_key(key)
-            job = active.jobs.get(job_id)
+            job, queue = authoritative_job_record(request, job_id)
             if job is None:
                 raise HTTPException(404, "job not found")
 
@@ -2082,19 +4156,28 @@ else:
                 if body.checkpoint.value != job.get("checkpoint"):
                     raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
                 require_version(if_match, job["version"])
-                job["attempt"] += 1
-                job["version"] += 1
-                job["status"] = "QUEUED"
-                job["checkpoint"] = body.checkpoint.value
-
-                receipt_val = {
-                    "job_id": job_id,
-                    "status": "QUEUED",
-                    "checkpoint": body.checkpoint.value,
-                    "attempt": job["attempt"],
-                    "version": job["version"],
-                    "correlation_id": job["correlation_id"],
-                }
+                queued = queue.get(job_id) if queue is not None else None
+                if queued is not None:
+                    try:
+                        queue.replay(
+                            job_id,
+                            expected_version=queued.version,
+                            fence_token=queued.fence_token,
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(409, f"JOB_FENCE_REJECTED: {exc}") from exc
+                    updated, _ = authoritative_job_record(request, job_id)
+                    if updated is None:
+                        raise HTTPException(409, "DEPENDENCY_CONFLICT")
+                    updated["checkpoint"] = body.checkpoint.value
+                    active.jobs[job_id] = updated
+                    receipt_val = job_receipt_value(updated)
+                else:
+                    job["attempt"] += 1
+                    job["version"] += 1
+                    job["status"] = "QUEUED"
+                    job["checkpoint"] = body.checkpoint.value
+                    receipt_val = job_receipt_value(job)
                 return receipt_val, 202
 
             val, code, was_replayed = replay(
@@ -2107,6 +4190,114 @@ else:
                 resource_id=job_id,
             )
             response.status_code = code
+            response.headers["ETag"] = f'W/"{val["version"]}"'
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="job",
+                action="RETRY",
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "override_retry_budget": body.override_retry_budget,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
+            return JobReceipt(**val)
+
+        @router.post(
+            "/jobs/{job_id}/actions/cancel",
+            operation_id="cancelJob",
+            status_code=200,
+            response_model=JobReceipt,
+            responses={
+                200: {
+                    "model": JobReceipt,
+                    "description": "Job cancellation committed",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
+        )
+        def cancel_job(
+            job_id: UuidString,
+            body: ReasonCommand,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+            key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
+            if_match: IfMatchValue = IF_MATCH_HEADER,
+        ) -> JobReceipt:
+            validate_idempotency_key(key)
+            job, queue = authoritative_job_record(request, job_id)
+            if job is None:
+                raise HTTPException(404, "job not found")
+            if job.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            intake_id = job.get("intake_id")
+            if not intake_id:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT")
+            persisted = V1IntakeRepositoryAdapter(
+                active,
+                request.app.state,
+            ).get_listing_intake(intake_id)
+            if persisted is None:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT")
+            principal = get_principal(request)
+            require_intake_scope(principal, persisted)
+            role_mode = canonical_role_mode(principal)
+            if role_mode not in {"expansion-manager", "data-steward"}:
+                raise HTTPException(403, "ROLE_DENIED")
+            actor_id = principal.subject_id
+
+            def make() -> tuple[dict[str, Any], int]:
+                if job.get("status") not in {"QUEUED", "RUNNING", "RETRYING"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                require_version(if_match, int(job["version"]))
+                queued = queue.get(job_id) if queue is not None else None
+                if queued is not None:
+                    from shared.jobs.queue import JobStatus as QueueJobStatus
+
+                    try:
+                        queue.update_status(
+                            job_id,
+                            QueueJobStatus.CANCELLED,
+                            expected_version=queued.version,
+                            fence_token=queued.fence_token,
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(409, f"JOB_FENCE_REJECTED: {exc}") from exc
+                    updated, _ = authoritative_job_record(request, job_id)
+                    if updated is None:
+                        raise HTTPException(409, "DEPENDENCY_CONFLICT")
+                    value = job_receipt_value(updated)
+                else:
+                    job["status"] = "CANCELLED"
+                    job["version"] = int(job["version"]) + 1
+                    value = job_receipt_value(job)
+                return value, 200
+
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "cancelJob",
+                make,
+                resource_id=job_id,
+            )
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="job",
+                action="CANCEL",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
+            response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             return JobReceipt(**val)
@@ -2130,7 +4321,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> JobReceipt:
-            job = active.jobs.get(job_id)
+            job, _queue = authoritative_job_record(request, job_id)
             if job is None:
                 raise HTTPException(404, "job not found")
             if job.get("tenant_id") != tenant_id:
@@ -2149,7 +4340,7 @@ else:
                 correlation_id=request.headers.get("x-correlation-id"),
             )
             response.headers["ETag"] = f'W/"{job["version"]}"'
-            return JobReceipt(**job)
+            return JobReceipt(**job_receipt_value(job))
 
         @router.get(
             "/saved-views",
@@ -2163,24 +4354,17 @@ else:
         ) -> list[SavedView]:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            authorize_intake_action(
+                principal,
+                "view",
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
             )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
-                raise HTTPException(403, "ROLE_DENIED")
-
-            actor_id = principal.subject_id
-            views = [
-                v for v in active.saved_views
-                if v.get("owner_subject_id") == actor_id and v.get("tenant_id") == tenant_id
+            return [
+                SavedView(**view)
+                for view in visible_saved_views(principal, tenant_id)
             ]
-            return [SavedView(**v) for v in views]
 
         @router.post(
             "/saved-views",
@@ -2389,6 +4573,15 @@ else:
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="promotion",
+                action="REQUEST",
+                receipt_value=val,
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return PromotionDecisionReceipt(**val)
 
         @router.get(
@@ -2493,6 +4686,69 @@ else:
             return PromotionDecisionReceipt(**val)
 
         @router.get(
+            "/listings/{listing_id}/revisions",
+            operation_id="listListingRevisions",
+            responses=api_error_responses(403, 404),
+        )
+        def list_listing_revisions(
+            listing_id: str,
+            request: Request,
+            tenant_id: str = Depends(require_actor),
+        ) -> dict[str, Any]:
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={"tenant_id": tenant_id},
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
+            try:
+                revisions = runtime_service(request).list_listing_revisions(listing_id)
+            except Exception as exc:
+                raise HTTPException(404, str(exc)) from exc
+            return {
+                "listing_id": listing_id,
+                "revisions": revisions,
+                "count": len(revisions),
+            }
+
+        @router.get(
+            "/identity/edges",
+            operation_id="listIdentityEdges",
+            responses=api_error_responses(403),
+        )
+        def list_identity_edges(
+            request: Request,
+            listing_id: str | None = None,
+            intake_id: str | None = None,
+            include_superseded: bool = True,
+            tenant_id: str = Depends(require_actor),
+        ) -> dict[str, Any]:
+            principal = get_principal(request)
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={"tenant_id": tenant_id},
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request.headers.get("x-correlation-id"),
+            )
+            service = runtime_service(request)
+            graph_edges = service.list_global_identity_edges(
+                tenant_id=tenant_id,
+                include_superseded=include_superseded,
+            )
+            listing_edges = service.list_identity_edges(
+                listing_id=listing_id,
+                intake_id=intake_id,
+                include_superseded=include_superseded,
+            )
+            edges = graph_edges + listing_edges
+            return {"edges": edges, "count": len(edges)}
+
+        @router.get(
             "/identity-decisions/{decision_id}",
             operation_id="getIdentityDecision",
             response_model=DecisionReceipt,
@@ -2511,9 +4767,13 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> DecisionReceipt:
-            if decision_id not in active.decisions:
+            val = persisted_identity_decision(
+                request,
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
+            if val is None:
                 raise HTTPException(404, "identity decision not found")
-            val = active.decisions[decision_id]
 
             if val.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
@@ -2541,6 +4801,54 @@ else:
 
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
+
+        @router.get(
+            "/match-cases/{match_case_id}",
+            operation_id="getMatchCase",
+            response_model=MatchCaseDetail,
+            responses={
+                200: {
+                    "model": MatchCaseDetail,
+                    "description": "Authoritative match comparison and graph plan",
+                    "headers": response_headers("ETag"),
+                },
+                **api_error_responses(403, 404),
+            },
+        )
+        def get_match_case(
+            match_case_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> MatchCaseDetail:
+            service = runtime_service(request)
+            runtime = next(
+                (
+                    intake
+                    for intake in service.list_intakes()
+                    if intake.get("matchCaseId") == match_case_id
+                ),
+                None,
+            )
+            if runtime is None or runtime.get("matchCase") is None:
+                raise HTTPException(404, "match case not found")
+            if runtime.get("tenantId") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+            value = canonicalize_runtime_intake(runtime)
+            authorize_intake_action(
+                get_principal(request),
+                "view",
+                resource=intake_auth_resource(value),
+                operator_role_id=get_operator_role_id(request),
+                audit_log=active_audit_log,
+                correlation_id=request_correlation_id(request),
+            )
+            match_case = match_case_to_api(runtime["matchCase"])
+            if match_case is None:
+                raise HTTPException(404, "match case not found")
+            response.headers["ETag"] = f'W/"{match_case["version"]}"'
+            return MatchCaseDetail(**match_case)
 
         @router.post(
             "/match-cases/{match_case_id}/decisions",
@@ -2581,23 +4889,63 @@ else:
             )
 
             actor_id = principal.subject_id
+            service = runtime_service(request)
+            runtime = next(
+                (
+                    intake
+                    for intake in service.list_intakes()
+                    if intake.get("matchCaseId") == match_case_id
+                ),
+                None,
+            )
+            if runtime is None or runtime.get("matchCase") is None:
+                raise HTTPException(404, "match case not found")
+            if runtime.get("tenantId") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            match_case = runtime["matchCase"]
+            require_intake_scope(principal, canonicalize_runtime_intake(runtime))
 
             def make() -> tuple[dict[str, Any], int]:
-                require_version(if_match, 1)
-                did = str(uuid4())
-                value = {
-                    "decision_id": did,
-                    "status": "PENDING_REVIEW",
-                    "resource_versions": {},
-                    "job_id": str(uuid4()),
-                    "audit_event_id": str(uuid4()),
-                    "correlation_id": str(uuid4()),
-                    "version": 1,
-                    "action": "match_decision",
-                    "tenant_id": tenant_id,
-                    "proposer": actor_id,
-                }
-                active.decisions[did] = value
+                require_version(if_match, int(match_case["version"]))
+                decision = service.propose_identity_decision(
+                    tenant_id=tenant_id,
+                    action="match_decision",
+                    plan={
+                        "matchCaseId": match_case_id,
+                        "matchCaseVersion": int(match_case["version"]),
+                        "intakeId": runtime["id"],
+                        "decisionType": body.decision_type.value,
+                        "targetListingId": (
+                            body.target_listing_id
+                            or match_case.get("targetListingId")
+                        ),
+                        "targetPropertyId": body.target_property_id,
+                        "graphPlan": copy.deepcopy(match_case["graphPlan"]),
+                        "comparisonFields": copy.deepcopy(
+                            match_case["comparisonFields"]
+                        ),
+                        "signals": copy.deepcopy(match_case["signals"]),
+                        "sourceSnapshotId": runtime.get("snapshotId"),
+                        "parserVersion": runtime.get("parserVersion"),
+                        "relatedIds": {
+                            "intakeId": runtime["id"],
+                            "listingId": body.target_listing_id,
+                            "matchCaseId": match_case_id,
+                        },
+                        "evidenceState": (
+                            "COMPLETE"
+                            if runtime.get("snapshotId") and runtime.get("parserVersion")
+                            else "PARTIAL"
+                        ),
+                    },
+                    actor_role_id=runtime_actor_role(principal, request),
+                    actor_name=actor_id,
+                    reason=body.reason,
+                    risk_acknowledged=body.risk_acknowledged,
+                    correlation_id=correlation_id,
+                )
+                value = identity_decision_to_api(decision)
+                active.decisions[value["decision_id"]] = value
                 return value, 201
 
             val, code, was_replayed = replay(
@@ -2647,20 +4995,30 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, 1)
-                did = str(uuid4())
-                value = {
-                    "decision_id": did,
-                    "status": "PENDING_REVIEW",
-                    "resource_versions": {},
-                    "job_id": str(uuid4()),
-                    "audit_event_id": str(uuid4()),
-                    "correlation_id": str(uuid4()),
-                    "version": 1,
-                    "action": "merge",
-                    "tenant_id": tenant_id,
-                    "proposer": actor_id,
-                }
-                active.decisions[did] = value
+                decision = runtime_service(request).propose_identity_decision(
+                    tenant_id=tenant_id,
+                    action="merge",
+                    plan={
+                        "sourcePropertyIds": list(body.source_property_ids),
+                        "targetPropertyId": body.target_property_id,
+                        "candidateReassignmentPlan": [
+                            item.model_dump() for item in body.candidate_reassignment_plan or []
+                        ],
+                        "expectedPropertyVersions": dict(body.expected_property_versions or {}),
+                        "relatedIds": {
+                            "sourcePropertyIds": list(body.source_property_ids),
+                            "targetPropertyId": body.target_property_id,
+                        },
+                        "evidenceState": "COMPLETE",
+                    },
+                    actor_role_id=runtime_actor_role(principal, request),
+                    actor_name=actor_id,
+                    reason=body.reason,
+                    risk_acknowledged=body.risk_acknowledged,
+                    correlation_id=correlation_id,
+                )
+                value = identity_decision_to_api(decision)
+                active.decisions[value["decision_id"]] = value
                 return value, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "mergeProperties", make)
@@ -2701,20 +5059,38 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, 1)
-                did = str(uuid4())
-                value = {
-                    "decision_id": did,
-                    "status": "PENDING_REVIEW",
-                    "resource_versions": {},
-                    "job_id": str(uuid4()),
-                    "audit_event_id": str(uuid4()),
-                    "correlation_id": str(uuid4()),
-                    "version": 1,
-                    "action": "split",
-                    "tenant_id": tenant_id,
-                    "proposer": actor_id,
-                }
-                active.decisions[did] = value
+                partitions = [
+                    {
+                        "targetPropertyId": partition.target_property_id,
+                        "sourceIdentityEdgeIds": list(partition.source_identity_edge_ids),
+                    }
+                    for partition in body.partitions
+                ]
+                decision = runtime_service(request).propose_identity_decision(
+                    tenant_id=tenant_id,
+                    action="split",
+                    plan={
+                        "sourcePropertyId": body.source_property_id,
+                        "partitions": partitions,
+                        "sourceIdentityEdgeIds": [
+                            edge_id
+                            for partition in partitions
+                            for edge_id in partition["sourceIdentityEdgeIds"]
+                        ],
+                        "sourcePropertyVersion": body.source_property_version,
+                        "relatedIds": {
+                            "sourcePropertyId": body.source_property_id,
+                        },
+                        "evidenceState": "COMPLETE",
+                    },
+                    actor_role_id=runtime_actor_role(principal, request),
+                    actor_name=actor_id,
+                    reason=body.reason,
+                    risk_acknowledged=body.risk_acknowledged,
+                    correlation_id=correlation_id,
+                )
+                value = identity_decision_to_api(decision)
+                active.decisions[value["decision_id"]] = value
                 return value, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "splitProperty", make)
@@ -2755,20 +5131,31 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, 1)
-                did = str(uuid4())
-                value = {
-                    "decision_id": did,
-                    "status": "PENDING_REVIEW",
-                    "resource_versions": {},
-                    "job_id": str(uuid4()),
-                    "audit_event_id": str(uuid4()),
-                    "correlation_id": str(uuid4()),
-                    "version": 1,
-                    "action": "unmerge",
-                    "tenant_id": tenant_id,
-                    "proposer": actor_id,
-                }
-                active.decisions[did] = value
+                decision = runtime_service(request).propose_identity_decision(
+                    tenant_id=tenant_id,
+                    action="unmerge",
+                    plan={
+                        "originalDecisionId": body.original_decision_id,
+                        "replacementEdges": [
+                            {
+                                "targetPropertyId": partition.target_property_id,
+                                "sourceIdentityEdgeIds": list(partition.source_identity_edge_ids),
+                            }
+                            for partition in body.replacement_edges
+                        ],
+                        "relatedIds": {
+                            "originalDecisionId": body.original_decision_id,
+                        },
+                        "evidenceState": "COMPLETE",
+                    },
+                    actor_role_id=runtime_actor_role(principal, request),
+                    actor_name=actor_id,
+                    reason=body.reason,
+                    risk_acknowledged=body.risk_acknowledged,
+                    correlation_id=correlation_id,
+                )
+                value = identity_decision_to_api(decision)
+                active.decisions[value["decision_id"]] = value
                 return value, 202
 
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "unmergeProperty", make)
@@ -2829,9 +5216,16 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
             validate_idempotency_key(key)
-            current = active.intakes.get(intake_id)
-            if current is None:
+            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                intake_id
+            )
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            runtime_record = persisted if persisted.get("stage") else None
+            current = (
+                canonicalize_runtime_intake(persisted) if runtime_record is not None else persisted
+            )
+            active.intakes[intake_id] = current
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -2853,6 +5247,30 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                if runtime_record is not None:
+                    require_version(if_match, runtime_record["version"])
+                    try:
+                        updated_runtime = runtime_service(request).cancel_intake(
+                            intake_id=intake_id,
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            reason=body.reason,
+                            correlation_id=(correlation_id or request_correlation_id(request)),
+                            job_queue=getattr(request.app.state, "job_queue", None),
+                        )
+                    except Exception as exc:
+                        raise HTTPException(409, str(exc)) from exc
+                    active.intakes[intake_id] = canonicalize_runtime_intake(updated_runtime)
+                    transition = updated_runtime["processingHistory"][-1]
+                    return {
+                        "transition_id": transition["transitionId"],
+                        "from_state": transition["fromStage"],
+                        "to_state": transition["toStage"],
+                        "occurred_at": transition["occurredAt"],
+                        "actor": transition["actor"],
+                        "reason_code": transition["reasonCode"],
+                        "version_after": transition["versionAfter"],
+                    }, 200
                 if current.get("state") not in {
                     "SUBMITTED", "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW"
                 }:
@@ -2877,6 +5295,15 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="intake",
+                action="CANCEL",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -2952,6 +5379,19 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="intake",
+                action="QUARANTINE",
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "risk_acknowledged": body.risk_acknowledged,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -2978,9 +5418,16 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
             validate_idempotency_key(key)
-            current = active.intakes.get(intake_id)
-            if current is None:
+            persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                intake_id
+            )
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            runtime_record = persisted if persisted.get("stage") else None
+            current = (
+                canonicalize_runtime_intake(persisted) if runtime_record is not None else persisted
+            )
+            active.intakes[intake_id] = current
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -3007,6 +5454,66 @@ else:
 
             def make() -> tuple[dict[str, Any], int]:
                 from_state = current.get("state")
+                if runtime_record is not None:
+                    require_version(if_match, runtime_record["version"])
+                    service = runtime_service(request)
+                    try:
+                        if from_state == "QUARANTINED":
+                            pending = runtime_record.get("pendingQuarantineRelease")
+                            if pending is None:
+                                updated_runtime = service.propose_quarantine_release(
+                                    intake_id=intake_id,
+                                    actor_role_id=runtime_actor_role(principal, request),
+                                    actor_name=actor_id,
+                                    reason=body.reason,
+                                    correlation_id=(
+                                        correlation_id or request_correlation_id(request)
+                                    ),
+                                )
+                            else:
+                                if pending.get("proposer") == actor_id:
+                                    raise HTTPException(403, "SELF_REVIEW_DENIED")
+                                updated_runtime = service.release_quarantine(
+                                    intake_id=intake_id,
+                                    actor_role_id=runtime_actor_role(principal, request),
+                                    actor_name=actor_id,
+                                    reason=body.reason,
+                                    correlation_id=(
+                                        correlation_id or request_correlation_id(request)
+                                    ),
+                                )
+                        elif from_state == "FAILED":
+                            updated_runtime = service.retry_intake(
+                                intake_id=intake_id,
+                                actor_role_id=runtime_actor_role(principal, request),
+                                actor_name=actor_id,
+                                correlation_id=(correlation_id or request_correlation_id(request)),
+                                job_queue=getattr(request.app.state, "job_queue", None),
+                                tenant_id=tenant_id,
+                            )
+                        else:
+                            raise HTTPException(
+                                409,
+                                (
+                                    "WORKFLOW_STATE_DENIED: cannot reopen intake in state "
+                                    f"{from_state}"
+                                ),
+                            )
+                    except HTTPException:
+                        raise
+                    except Exception as exc:
+                        raise HTTPException(409, str(exc)) from exc
+                    active.intakes[intake_id] = canonicalize_runtime_intake(updated_runtime)
+                    transition = updated_runtime["processingHistory"][-1]
+                    return {
+                        "transition_id": transition["transitionId"],
+                        "from_state": transition["fromStage"],
+                        "to_state": transition["toStage"],
+                        "occurred_at": transition["occurredAt"],
+                        "actor": transition["actor"],
+                        "reason_code": transition["reasonCode"],
+                        "version_after": transition["versionAfter"],
+                    }, 200
                 if from_state == "QUARANTINED":
                     pending = current.get("pending_quarantine_release")
                     if pending is None:
@@ -3066,6 +5573,19 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=intake_id,
+                category="intake",
+                action=("RETRY" if current.get("state") == "FAILED" else "REOPEN"),
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "risk_acknowledged": body.risk_acknowledged,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -3160,6 +5680,15 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="assignment",
+                action="CLAIM",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -3261,6 +5790,101 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="assignment",
+                action="TRANSFER",
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "handoff_note": body.handoff_note,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
+            return AssignmentReceipt(**val)
+
+        @router.post(
+            "/assignments/{assignment_id}/actions/escalate",
+            operation_id="escalateAssignment",
+            status_code=200,
+            response_model=AssignmentReceipt,
+            responses={
+                200: {
+                    "model": AssignmentReceipt,
+                    "description": "Assignment escalated",
+                    "headers": response_headers("ETag", "Idempotency-Replayed"),
+                },
+                **api_error_responses(403, 409, 422, 428),
+            },
+        )
+        def escalate_assignment(
+            assignment_id: UuidString,
+            body: ReasonCommand,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+            key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
+            if_match: IfMatchValue = IF_MATCH_HEADER,
+        ) -> AssignmentReceipt:
+            validate_idempotency_key(key)
+            current = active.assignments.get(assignment_id)
+            if current is None:
+                raise HTTPException(404, "assignment not found")
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            intake = linked_intake(current)
+            if intake is None:
+                raise HTTPException(409, "DEPENDENCY_CONFLICT")
+            require_intake_scope(principal, intake)
+            if canonical_role_mode(principal) not in {
+                "expansion-manager",
+                "data-steward",
+            }:
+                raise HTTPException(403, "ROLE_DENIED")
+            actor_id = principal.subject_id
+
+            def make() -> tuple[dict[str, Any], int]:
+                if current.get("status") not in {
+                    "ASSIGNED",
+                    "CLAIMED",
+                    "TRANSFERRED",
+                }:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                require_version(if_match, current["version"])
+                updated = generic_mutate(
+                    active.assignments,
+                    assignment_id,
+                    "ESCALATED",
+                    actor_id,
+                )
+                updated["audit_event_id"] = str(uuid4())
+                updated["escalation_reason"] = body.reason
+                return updated, 200
+
+            val, code, was_replayed = replay(
+                key,
+                body.model_dump(),
+                tenant_id,
+                actor_id,
+                "escalateAssignment",
+                make,
+                resource_id=assignment_id,
+            )
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="assignment",
+                action="ESCALATE",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
+            response.status_code = 200 if was_replayed else code
+            response.headers["ETag"] = f'W/"{val["version"]}"'
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -3337,6 +5961,15 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="assignment",
+                action="COMPLETE",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -3405,6 +6038,19 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="sla",
+                action="PAUSE",
+                receipt_value={
+                    **val,
+                    "reason": body.reason,
+                    "expected_resume_at": body.expected_resume_at,
+                },
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return SlaReceipt(**val)
 
         @router.post(
@@ -3472,6 +6118,15 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="sla",
+                action="RESUME",
+                receipt_value={**val, "reason": body.reason},
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return SlaReceipt(**val)
 
         @router.post(
@@ -3621,6 +6276,15 @@ else:
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
+            persist_lifecycle_receipt(
+                request=request,
+                intake_id=current["intake_id"],
+                category="promotion",
+                action=body.decision.value,
+                receipt_value=val,
+                actor=actor_id,
+                correlation_id=request_correlation_id(request),
+            )
             return PromotionDecisionReceipt(**val)
 
         @router.post(
@@ -3652,7 +6316,16 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
             validate_idempotency_key(key)
-            current = active.decisions.get(decision_id)
+            service = runtime_service(request)
+            service_decision = service.get_identity_decision(
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
+            current = persisted_identity_decision(
+                request,
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
             if current is None:
                 raise HTTPException(404, "identity decision not found")
 
@@ -3681,9 +6354,31 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") != "PENDING_REVIEW":
+                if current.get("status") not in {
+                    "PENDING_REVIEW",
+                    "REVERSAL_PENDING",
+                }:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
+                if service_decision is not None:
+                    try:
+                        reviewed = service.review_identity_decision(
+                            tenant_id=tenant_id,
+                            decision_id=decision_id,
+                            approve=body.decision == ReviewDecision.APPROVE,
+                            reviewer_role_id=runtime_actor_role(principal, request),
+                            reviewer_name=actor_id,
+                            reason=body.reason,
+                            risk_acknowledged=body.risk_acknowledged,
+                            correlation_id=request_correlation_id(request),
+                        )
+                    except Exception as exc:
+                        message = str(exc)
+                        status_code = 403 if "SELF_REVIEW_DENIED" in message else 409
+                        raise HTTPException(status_code, message) from exc
+                    updated = identity_decision_to_api(reviewed)
+                    active.decisions[decision_id] = updated
+                    return updated, 200
                 to_state = "APPROVED" if body.decision == ReviewDecision.APPROVE else "REJECTED"
                 correction = None
                 correction_intake = None
@@ -3750,7 +6445,16 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
             validate_idempotency_key(key)
-            current = active.decisions.get(decision_id)
+            service = runtime_service(request)
+            service_decision = service.get_identity_decision(
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
+            current = persisted_identity_decision(
+                request,
+                tenant_id=tenant_id,
+                decision_id=decision_id,
+            )
             if current is None:
                 raise HTTPException(404, "identity decision not found")
 
@@ -3780,7 +6484,24 @@ else:
                 if current.get("status") != "EXECUTED":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
-                updated = generic_mutate(active.decisions, decision_id, "REVERSAL_PENDING", actor_id)
+                if service_decision is not None:
+                    try:
+                        reversal = service.request_identity_reversal(
+                            tenant_id=tenant_id,
+                            original_decision_id=decision_id,
+                            actor_role_id=runtime_actor_role(principal, request),
+                            actor_name=actor_id,
+                            reason=body.reason,
+                            correlation_id=correlation_id,
+                        )
+                    except Exception as exc:
+                        raise HTTPException(409, str(exc)) from exc
+                    updated = identity_decision_to_api(reversal)
+                    active.decisions[updated["decision_id"]] = updated
+                    return updated, 202
+                updated = generic_mutate(
+                    active.decisions, decision_id, "REVERSAL_PENDING", actor_id
+                )
                 return updated, 202
 
             val, code, was_replayed = replay(

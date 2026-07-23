@@ -145,7 +145,11 @@ def authorize_intake_action(
 
     # 4. Role mapping and matrix rules
     is_admin = principal.has_role(Role.PLATFORM_ADMIN) or operator_role_id == "platform-admin"
-    is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+    is_manager = principal.has_role(
+        Role.SITE_REVIEWER,
+        Role.EXECUTIVE,
+        Role.INTAKE_EXPANSION_MANAGER,
+    ) or operator_role_id in (
         "expansion-manager",
         "expansionManager",
         "site-reviewer",
@@ -153,7 +157,7 @@ def authorize_intake_action(
         "executive",
     )
     is_staff = (
-        principal.has_role(Role.EXPANSION_USER)
+        principal.has_role(Role.EXPANSION_USER, Role.INTAKE_EXPANSION_STAFF)
         or operator_role_id in (
             "expansion-staff",
             "expansionStaff",
@@ -162,17 +166,28 @@ def authorize_intake_action(
         )
     ) and not is_manager
 
-    is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in (
+    is_steward = principal.has_role(
+        Role.DATA_OWNER,
+        Role.INTAKE_DATA_STEWARD,
+    ) or operator_role_id in (
         "data-steward",
         "dataSteward",
     )
     is_governance = principal.has_role(
-        Role.AUDITOR, Role.ARCHITECTURE_OWNER
+        Role.AUDITOR,
+        Role.ARCHITECTURE_OWNER,
+        Role.INTAKE_GOVERNANCE_REVIEWER,
     ) or operator_role_id in ("governance-reviewer", "governanceReviewer")
-    is_privacy = principal.has_role(Role.FINANCE_LEGAL) or operator_role_id in (
+    is_privacy = principal.has_role(
+        Role.FINANCE_LEGAL,
+        Role.INTAKE_PRIVACY_OFFICER,
+    ) or operator_role_id in (
         "privacy-officer",
         "privacyOfficer",
     )
+    is_permission_limited = principal.has_role(
+        Role.INTAKE_PERMISSION_LIMITED
+    ) or operator_role_id in ("permission-limited", "permissionLimited")
 
     # Deny platform admin from accessing business data
     if is_admin and not (is_manager or is_staff or is_steward):
@@ -194,7 +209,14 @@ def authorize_intake_action(
             if not _is_owner(owner, submitter):
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         # Ensure allowed roles
-        if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
+        if not (
+            is_staff
+            or is_manager
+            or is_steward
+            or is_governance
+            or is_privacy
+            or is_permission_limited
+        ):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):
@@ -341,10 +363,25 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
+    if principal.has_role(Role.INTAKE_PERMISSION_LIMITED):
+        clearance = DataClassification.PUBLIC
     if clearance >= DataClassification.RESTRICTED:
         return intake
 
     masked = intake.copy()
+    if principal.has_role(Role.INTAKE_PERMISSION_LIMITED):
+        masked_field_paths = list(masked.get("masked_fields") or [])
+        for field_name in (
+            "original_url",
+            "canonical_url",
+            "source_snapshot_id",
+            "parser_run_id",
+        ):
+            if masked.get(field_name) is not None:
+                masked[field_name] = None
+                if field_name not in masked_field_paths:
+                    masked_field_paths.append(field_name)
+        masked["masked_fields"] = masked_field_paths
 
     # Mask the canonical v1 FieldValue collection according to each field's
     # declared classification. Field names are not a safe substitute for the
