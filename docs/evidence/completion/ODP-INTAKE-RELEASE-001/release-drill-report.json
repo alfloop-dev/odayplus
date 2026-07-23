@@ -1,11 +1,13 @@
 {
+  "cutover_authorized": false,
   "cutover_blocked": true,
   "design_ref": "ODP-SD-INTAKE-001 v0.2.1",
   "failed_phases": [],
-  "generated_at": "2026-07-23T11:51:27.683570+00:00",
+  "generated_at": "2026-07-23T13:03:35.642520+00:00",
+  "live_runtime_evidence_recorded": false,
   "not_executed_targets": [
     {
-      "reason": "No live staging environment is provisioned (Human/Ops gate); production units of the canary ladder stay BLOCKED by \u00a712 pending approvals.",
+      "reason": "Live staging runtime evidence is not recorded in infra/assisted-listing-intake/live_runtime_evidence.yaml (Human/Ops gate); production units of the canary ladder stay BLOCKED until \u00a712 approvals plus live evidence are recorded.",
       "release_gate": true,
       "target": "live_staging_and_production_canary"
     }

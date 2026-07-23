@@ -13,6 +13,7 @@ from typing import Any
 
 from scripts.release.assisted_listing_intake.config import (
     EXPECTED_FLAG_KEYS,
+    REQUIRED_LIVE_TARGETS,
     ReleaseConfig,
 )
 from shared.auth.feature_flags import (
@@ -77,6 +78,55 @@ def check_release_authority(config: ReleaseConfig) -> dict[str, Any]:
         "cutover_blocked": bool(pending),
         "fail_closed_effects_active": [
             g["fail_closed_effect"] for g in rows if g["status"] != "approved"
+        ],
+    }
+
+
+def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
+    """Evaluate the governed live runtime evidence register.
+
+    The register is already schema-validated fail-closed at load time
+    (``_validate_live_evidence``): this check surfaces its state as gate
+    facts. ``recorded`` is true only when a human release authority
+    attested every required live target with its own evidence reference.
+    Production canary units may pass only via a recorded live result here.
+    """
+
+    record = config.live_evidence
+    recorded = bool(record.get("recorded"))
+    targets = {t.get("target"): t for t in record.get("targets", [])}
+    canary_units = {
+        int(u["unit"]): {
+            "passed": bool(u.get("passed")),
+            "completed_at": u.get("completed_at"),
+            "evidence_ref": u.get("evidence_ref"),
+        }
+        for u in (record.get("canary_units") or [])
+    }
+    return {
+        "checked_at": _now(),
+        "register": str(config.infra_dir / "live_runtime_evidence.yaml"),
+        "recorded": recorded,
+        "recorded_by": record.get("recorded_by"),
+        "recorded_at": record.get("recorded_at"),
+        "evidence_ref": record.get("evidence_ref"),
+        "error_budget_intact": bool(record.get("error_budget_intact"))
+        if recorded
+        else None,
+        "required_targets": list(REQUIRED_LIVE_TARGETS),
+        "targets": {
+            name: {
+                "status": entry.get("status"),
+                "completed_at": entry.get("completed_at"),
+                "evidence_ref": entry.get("evidence_ref"),
+            }
+            for name, entry in targets.items()
+        },
+        "canary_units": canary_units,
+        "missing_targets": [
+            t
+            for t in REQUIRED_LIVE_TARGETS
+            if targets.get(t, {}).get("status") != "completed"
         ],
     }
 

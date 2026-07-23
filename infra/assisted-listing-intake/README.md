@@ -12,6 +12,7 @@ drill/gate harness) and by human release authority.
 | `release_authority.yaml` | §12 owner approval register. All rows `pending` ⇒ every fail-closed effect active and governed cutover BLOCKED. Humans record approvals here; automation never flips a row. |
 | `canary_plan.yaml` | Shadow acceptance metrics + write-canary tenant/source ladder (internal → low-volume prod → 5/25/50/100%) with entry gates per unit. |
 | `rollback_triggers.yaml` | Kill-switch/rollback trigger register and the §5.2 mechanism order the rollback drill executes. |
+| `live_runtime_evidence.yaml` | Live runtime evidence register (runbook §4). Humans record completed live targets and live canary unit results here via task PR; automation never flips `recorded`. Schema-validated fail-closed — a partial or smuggled record blocks the harness as drift. Cutover unblocks only when every §12 row is approved AND this register is recorded. |
 
 Run the gates:
 
@@ -21,5 +22,8 @@ python3 scripts/release/assisted_listing_intake/run.py --phase all \
 ```
 
 The harness fails closed: any pending approval, enabled production flag, or
-missing runtime evidence blocks the cutover phase and exits nonzero on drift.
+unrecorded live runtime evidence blocks the cutover phase and exits nonzero
+on drift. Cutover reaches `cutover_authorized: true` only when every §12
+row is approved, `live_runtime_evidence.yaml` is validly recorded, and
+every drill is green.
 See `docs/runbooks/assisted-listing-intake-release.md` for the operator flow.

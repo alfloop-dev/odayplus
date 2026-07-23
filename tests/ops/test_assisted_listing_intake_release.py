@@ -19,11 +19,13 @@ import yaml
 from scripts.release.assisted_listing_intake import drills
 from scripts.release.assisted_listing_intake.config import (
     INFRA_DIR,
+    REQUIRED_LIVE_TARGETS,
     ReleaseConfigError,
     load_release_config,
 )
 from scripts.release.assisted_listing_intake.gates import (
     check_feature_flags,
+    check_live_runtime_evidence,
     check_production_readiness,
     check_release_authority,
 )
@@ -253,6 +255,264 @@ def test_uat_rejects_report_with_failures(tmp_path: Path) -> None:
     result = drills.run_uat(tmp_path / "uat", report_path=path)
     assert result["passed"] is False
     assert result["failed_cases"] == ["case"]
+
+
+# ---------------------------------------------------------------------------
+# Live runtime evidence register (governed cutover path)
+# ---------------------------------------------------------------------------
+
+_EVIDENCE_BASE = "docs/evidence/completion/ODP-INTAKE-RELEASE-001"
+
+
+def _approve_all_authority(infra: Path) -> None:
+    """Simulate the human release authority approving every §12 row."""
+    authority_path = infra / "release_authority.yaml"
+    register = yaml.safe_load(authority_path.read_text())
+    for gate in register["gates"]:
+        gate["status"] = "approved"
+        gate["approver"] = "release-authority@example.com"
+        gate["approved_at"] = "2026-07-23T00:00:00Z"
+        gate["evidence_ref"] = f"{_EVIDENCE_BASE}/release-drill-report.json"
+    authority_path.write_text(yaml.safe_dump(register))
+
+
+def _record_live_evidence(infra: Path, *, canary_units=None, error_budget: bool = True) -> None:
+    """Simulate the human release authority recording live runtime evidence."""
+    path = infra / "live_runtime_evidence.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["recorded"] = True
+    record["recorded_by"] = "release-authority@example.com"
+    record["recorded_at"] = "2026-07-23T00:00:00Z"
+    record["evidence_ref"] = "gs://odp-release-evidence/intake-v1/live/"
+    record["error_budget_intact"] = error_budget
+    for target in record["targets"]:
+        target["status"] = "completed"
+        target["completed_at"] = "2026-07-22T00:00:00Z"
+        target["evidence_ref"] = f"gs://odp-release-evidence/intake-v1/live/{target['target']}.json"
+    record["canary_units"] = canary_units or []
+    path.write_text(yaml.safe_dump(record))
+
+
+def _live_unit(unit: int, passed: bool = True) -> dict:
+    return {
+        "unit": unit,
+        "passed": passed,
+        "completed_at": "2026-07-22T12:00:00Z",
+        "evidence_ref": f"gs://odp-release-evidence/intake-v1/live/canary-unit-{unit}.json",
+    }
+
+
+def test_live_evidence_default_not_recorded(config) -> None:
+    report = check_live_runtime_evidence(config)
+    assert report["recorded"] is False
+    assert report["missing_targets"] == list(REQUIRED_LIVE_TARGETS)
+    assert report["canary_units"] == {}
+
+
+def test_live_evidence_recorded_without_attestation_is_drift(infra_copy: Path) -> None:
+    """recorded: true without the human attestation fields must fail closed."""
+    path = infra_copy / "live_runtime_evidence.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["recorded"] = True  # no recorded_by/recorded_at/evidence_ref
+    path.write_text(yaml.safe_dump(record))
+    with pytest.raises(ReleaseConfigError, match="automation drift"):
+        load_release_config(infra_copy)
+
+
+def test_live_evidence_recorded_with_pending_target_is_drift(infra_copy: Path) -> None:
+    """recorded: true while a required live target is still pending fails closed."""
+    _record_live_evidence(infra_copy)
+    path = infra_copy / "live_runtime_evidence.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["targets"][0]["status"] = "pending"
+    record["targets"][0]["completed_at"] = None
+    record["targets"][0]["evidence_ref"] = None
+    path.write_text(yaml.safe_dump(record))
+    with pytest.raises(ReleaseConfigError, match="not completed"):
+        load_release_config(infra_copy)
+
+
+def test_live_evidence_completed_target_without_evidence_is_drift(infra_copy: Path) -> None:
+    path = infra_copy / "live_runtime_evidence.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["targets"][0]["status"] = "completed"  # no completed_at/evidence_ref
+    path.write_text(yaml.safe_dump(record))
+    with pytest.raises(ReleaseConfigError, match="automation drift"):
+        load_release_config(infra_copy)
+
+
+def test_live_evidence_unrecorded_cannot_smuggle_claims(infra_copy: Path) -> None:
+    """recorded: false with live canary results present is a broken record."""
+    path = infra_copy / "live_runtime_evidence.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["canary_units"] = [_live_unit(3)]
+    path.write_text(yaml.safe_dump(record))
+    with pytest.raises(ReleaseConfigError, match="automation drift"):
+        load_release_config(infra_copy)
+
+
+def test_live_evidence_canary_unit_without_evidence_is_drift(infra_copy: Path) -> None:
+    unit = _live_unit(3)
+    unit["evidence_ref"] = None
+    _record_live_evidence(infra_copy, canary_units=[unit])
+    with pytest.raises(ReleaseConfigError, match="automation drift"):
+        load_release_config(infra_copy)
+
+
+def test_live_evidence_rejects_non_production_canary_unit(infra_copy: Path) -> None:
+    _record_live_evidence(infra_copy, canary_units=[_live_unit(2)])
+    with pytest.raises(ReleaseConfigError, match="not a production unit"):
+        load_release_config(infra_copy)
+
+
+def test_canary_blocked_with_approvals_but_no_live_evidence(infra_copy: Path, tmp_path: Path) -> None:
+    """All §12 rows approved but no live evidence: unit 3 must stay blocked."""
+    _approve_all_authority(infra_copy)
+    cfg = load_release_config(infra_copy)
+    authority = check_release_authority(cfg)
+    assert authority["all_approved"] is True
+    result = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=authority,
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    unit3 = next(u for u in result["units"] if u["unit"] == 3)
+    assert unit3["blocked"] is True
+    assert "live_staging_evidence_recorded" in unit3["unmet_entry_gates"]
+    assert result["passed"] is True  # consistent fail-closed state
+
+
+def test_canary_blocked_with_live_evidence_but_pending_approvals(infra_copy: Path, tmp_path: Path) -> None:
+    """Live evidence recorded but §12 pending: unit 3 must stay blocked."""
+    _record_live_evidence(infra_copy)
+    cfg = load_release_config(infra_copy)
+    result = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    unit3 = next(u for u in result["units"] if u["unit"] == 3)
+    assert unit3["blocked"] is True
+    assert any("release_authority_approved missing" in g for g in unit3["unmet_entry_gates"])
+    assert result["passed"] is True
+
+
+def test_canary_unit3_cleared_when_exact_gates_pass(infra_copy: Path, tmp_path: Path) -> None:
+    """Approvals + live evidence (no live unit results yet): unit 3 is CLEARED
+    for live execution, never executed on a surrogate; units 4-7 wait on it."""
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy)
+    cfg = load_release_config(infra_copy)
+    result = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    unit3 = next(u for u in result["units"] if u["unit"] == 3)
+    assert unit3["blocked"] is False
+    assert unit3["transition_allowed"] is True
+    assert unit3["executed"] is False
+    assert unit3["awaiting_live_execution"] is True
+    unit4 = next(u for u in result["units"] if u["unit"] == 4)
+    assert unit4["blocked"] is True
+    assert result["passed"] is True
+
+
+def test_canary_full_ladder_transitions_on_recorded_live_results(infra_copy: Path, tmp_path: Path) -> None:
+    """Approved + live evidence + recorded live unit results: the whole
+    ladder transitions — and still no production unit executes locally."""
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
+    cfg = load_release_config(infra_copy)
+    result = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    production = [u for u in result["units"] if u["environment"] == "production"]
+    assert all(u["live_result_recorded"] for u in production)
+    assert all(u["passed"] for u in production)
+    assert all(u["executed"] is False for u in production)
+    assert result["gate_facts"]["unit_7_passed"] is True
+    assert result["live_unit_failures"] == []
+    assert result["passed"] is True
+
+
+def test_canary_recorded_live_failure_fails_ladder(infra_copy: Path, tmp_path: Path) -> None:
+    """A live-recorded unit failure halts the ladder and fails the drill."""
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(
+        infra_copy, canary_units=[_live_unit(3), _live_unit(4, passed=False)]
+    )
+    cfg = load_release_config(infra_copy)
+    result = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    unit4 = next(u for u in result["units"] if u["unit"] == 4)
+    assert unit4["live_result_recorded"] is True
+    assert unit4["passed"] is False
+    unit5 = next(u for u in result["units"] if u["unit"] == 5)
+    assert unit5["blocked"] is True
+    assert result["live_unit_failures"] == [4]
+    assert result["passed"] is False
+
+
+def test_cutover_blocked_without_live_evidence_even_when_approved(infra_copy: Path, tmp_path: Path) -> None:
+    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+
+    _approve_all_authority(infra_copy)
+    cfg = load_release_config(infra_copy)
+    prior = {name: {"passed": True} for name in ("readiness", "migration", "shadow", "killswitch", "restore", "canary", "uat")}
+    result = run_cutover_gate(cfg, tmp_path, prior)
+    assert result["cutover_blocked"] is True
+    assert result["cutover_authorized"] is False
+    assert any("no live staging runtime evidence" in r for r in result["blocked_reasons"])
+    assert not any("§12 approvals pending" in r for r in result["blocked_reasons"])
+    assert result["passed"] is True  # fail-closed state, no drift
+
+
+def test_cutover_authorized_when_approvals_and_live_evidence_recorded(infra_copy: Path, tmp_path: Path) -> None:
+    """Runbook §4: cutover unblocks after all approvals plus live evidence."""
+    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
+    cfg = load_release_config(infra_copy)
+    prior = {name: {"passed": True} for name in ("readiness", "migration", "shadow", "killswitch", "restore", "canary", "uat")}
+    result = run_cutover_gate(cfg, tmp_path, prior)
+    assert result["cutover_blocked"] is False
+    assert result["cutover_authorized"] is True
+    assert result["blocked_reasons"] == []
+    assert result["passed"] is True
+
+    # A failed drill still blocks the authorized path.
+    prior["restore"] = {"passed": False}
+    result = run_cutover_gate(cfg, tmp_path, prior)
+    assert result["cutover_blocked"] is True
+    assert result["cutover_authorized"] is False
+    assert result["passed"] is False
 
 
 def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:

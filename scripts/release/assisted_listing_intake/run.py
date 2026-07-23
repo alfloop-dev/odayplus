@@ -9,13 +9,20 @@ evidence per phase plus a summary report:
     shadow      shadow processing canary metrics (runbook §4 Phase 4)
     killswitch  rollback trigger + §5.2 mechanism order drill
     restore     reliability contract §4 restore order (runs after rollback)
-    canary      tenant/source write canary ladder (units 3+ must be BLOCKED)
+    canary      tenant/source write canary ladder (units 3+ BLOCKED until
+                their exact entry gates — §12 approvals + live evidence —
+                pass; passed only via recorded live results)
     uat         role-based operator UAT (Playwright report ingestion)
-    cutover     governed cutover gate — must be BLOCKED while §12 is pending
+    cutover     governed cutover gate — BLOCKED while any §12 row is
+                pending or live runtime evidence is unrecorded; AUTHORIZED
+                once every approval and the live-evidence register pass
 
 The harness fails closed: any pending approval, enabled production flag,
-governance-config drift, or missing runtime evidence blocks the cutover
-phase and exits nonzero on drift.
+governance-config drift, or missing live runtime evidence blocks the
+cutover phase and exits nonzero on drift. Live evidence is supplied only
+through the governed, schema-validated register
+infra/assisted-listing-intake/live_runtime_evidence.yaml (human-recorded
+via task PR — there is no CLI override).
 
 Usage:
     python3 scripts/release/assisted_listing_intake/run.py --phase all \
@@ -98,44 +105,76 @@ def run_readiness(config, output_dir: Path) -> dict[str, Any]:
 def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
     from scripts.release.assisted_listing_intake.gates import (
         check_feature_flags,
+        check_live_runtime_evidence,
         check_release_authority,
     )
 
     authority = check_release_authority(config)
     flags = check_feature_flags(config)
+    live = check_live_runtime_evidence(config)
 
     drill_gates = {
         name: bool(result.get("passed"))
         for name, result in phase_results.items()
         if name not in ("cutover",)
     }
+    failed_drills = [name for name, ok in drill_gates.items() if not ok]
+
+    # Runbook §4: cutover unblocks only when every §12 row is approved AND
+    # live staging runtime evidence is recorded in the governed register.
+    # Each blocker below is a real unmet gate — none is unconditional.
     blocked_reasons = []
     if authority["pending_owners"]:
         blocked_reasons.append(f"§12 approvals pending: {authority['pending_owners']}")
-    if flags["enabled_production_flags"]:
-        blocked_reasons.append(f"production flags enabled prematurely: {flags['enabled_production_flags']}")
-    blocked_reasons.append("no live staging runtime evidence recorded (staging environment not provisioned)")
+    if not live["recorded"]:
+        blocked_reasons.append(
+            "no live staging runtime evidence recorded in "
+            "infra/assisted-listing-intake/live_runtime_evidence.yaml "
+            f"(missing targets: {live['missing_targets']})"
+        )
+    # Flags may only be enabled (via dual approval) once every §12 row is
+    # approved and live evidence exists; earlier than that is drift.
+    premature_flags = (
+        flags["enabled_production_flags"]
+        if (authority["pending_owners"] or not live["recorded"])
+        else []
+    )
+    if premature_flags:
+        blocked_reasons.append(f"production flags enabled prematurely: {premature_flags}")
+    if failed_drills:
+        blocked_reasons.append(f"failed drill phases: {failed_drills}")
 
-    failed_drills = [name for name, ok in drill_gates.items() if not ok]
     cutover_blocked = bool(blocked_reasons)
+    cutover_authorized = not cutover_blocked
 
-    # The correct, expected state today is BLOCKED with flags off and all
-    # drill evidence recorded. Drift (an enabled flag, an "approved" row
-    # without evidence, a failed drill) fails the phase.
+    # Two valid passing states: (a) BLOCKED fail-closed with flags off and
+    # every drill green while gates are pending; (b) AUTHORIZED when every
+    # §12 row is approved, live runtime evidence is recorded, and every
+    # drill is green. Drift (a premature flag, an "approved" row without
+    # evidence, a failed drill) fails the phase in either state.
     result = {
         "phase": "cutover",
         "checked_at": _now(),
         "cutover_blocked": cutover_blocked,
+        "cutover_authorized": cutover_authorized,
         "blocked_reasons": blocked_reasons,
         "drill_gates": drill_gates,
         "failed_drills": failed_drills,
         "release_authority": {
             "pending_owners": authority["pending_owners"],
+            "all_approved": authority["all_approved"],
             "fail_closed_effects_active": authority["fail_closed_effects_active"],
+        },
+        "live_runtime_evidence": {
+            "register": live["register"],
+            "recorded": live["recorded"],
+            "recorded_by": live["recorded_by"],
+            "evidence_ref": live["evidence_ref"],
+            "missing_targets": live["missing_targets"],
         },
         "production_flags_disabled": not flags["enabled_production_flags"],
         "rule": config.release_authority.get("cutover_rule"),
-        "passed": cutover_blocked and not flags["enabled_production_flags"] and not failed_drills,
+        "passed": not premature_flags and not failed_drills,
     }
     _write(output_dir, "cutover", result)
     return result
@@ -218,7 +257,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 _write(output_dir, "restore", results["restore"])
             elif phase == "canary":
-                from scripts.release.assisted_listing_intake.gates import check_release_authority
+                from scripts.release.assisted_listing_intake.gates import (
+                    check_live_runtime_evidence,
+                    check_release_authority,
+                )
 
                 shadow = results.get("shadow") or _load_existing(output_dir, "shadow") or {}
                 migration = results.get("migration") or _load_existing(output_dir, "migration") or {}
@@ -230,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
                     migration_result=migration,
                     killswitch_result=killswitch,
                     authority_report=check_release_authority(config),
+                    live_evidence_report=check_live_runtime_evidence(config),
                 )
                 _write(output_dir, "canary", results["canary"])
             elif phase == "uat":
@@ -246,7 +289,24 @@ def main(argv: list[str] | None = None) -> int:
         if scratch_ctx is not None:
             scratch_ctx.cleanup()
 
+    from scripts.release.assisted_listing_intake.gates import check_live_runtime_evidence
+
+    live = check_live_runtime_evidence(config)
     failed = [name for name, result in results.items() if not result.get("passed")]
+    not_executed = []
+    if not live["recorded"]:
+        not_executed.append(
+            {
+                "target": "live_staging_and_production_canary",
+                "reason": (
+                    "Live staging runtime evidence is not recorded in "
+                    "infra/assisted-listing-intake/live_runtime_evidence.yaml "
+                    "(Human/Ops gate); production units of the canary ladder stay "
+                    "BLOCKED until §12 approvals plus live evidence are recorded."
+                ),
+                "release_gate": True,
+            }
+        )
     summary = {
         "task": "ODP-INTAKE-RELEASE-001",
         "design_ref": "ODP-SD-INTAKE-001 v0.2.1",
@@ -255,14 +315,10 @@ def main(argv: list[str] | None = None) -> int:
         "phase_status": {name: bool(result.get("passed")) for name, result in results.items()},
         "failed_phases": failed,
         "cutover_blocked": results.get("cutover", {}).get("cutover_blocked"),
-        "production_ready": False,
-        "not_executed_targets": [
-            {
-                "target": "live_staging_and_production_canary",
-                "reason": "No live staging environment is provisioned (Human/Ops gate); production units of the canary ladder stay BLOCKED by §12 pending approvals.",
-                "release_gate": True,
-            }
-        ],
+        "cutover_authorized": results.get("cutover", {}).get("cutover_authorized"),
+        "live_runtime_evidence_recorded": live["recorded"],
+        "production_ready": bool(results.get("cutover", {}).get("cutover_authorized")) and not failed,
+        "not_executed_targets": not_executed,
         "passed": not failed,
     }
     if args.phase == "all":

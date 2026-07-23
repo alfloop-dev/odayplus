@@ -19,6 +19,7 @@ fail-closed cutover gate.
 | `infra/assisted-listing-intake/release_authority.yaml` | §12 owner approval register. Humans record approvals here; automation never flips a row. An `approved` row without `approver` + `approved_at` + `evidence_ref` is treated as drift and fails the harness. |
 | `infra/assisted-listing-intake/canary_plan.yaml` | Shadow acceptance metrics + 7-unit tenant/source write-canary ladder with entry gates. |
 | `infra/assisted-listing-intake/rollback_triggers.yaml` | Kill-switch trigger register and the §5.2 mechanism order the rollback drill executes. |
+| `infra/assisted-listing-intake/live_runtime_evidence.yaml` | Live runtime evidence register. Humans record the completed live targets (production shadow window, live staging E2E, live PITR/failover) and live canary unit results here; automation never flips `recorded`. `recorded: true` without the full attestation, a completed target without its own evidence, or a live claim while `recorded: false` is drift and fails the harness. |
 
 ## 2. The release harness
 
@@ -68,10 +69,18 @@ Phases run in this fixed order; each emits `<phase>.json` evidence:
 6. **canary** — the 7-unit write-canary ladder in strict order. Units 1–2
    (internal tenant: assisted-entry-only, then one approved retrieval
    source) execute real write flows on the staging surrogate. Units 3–7
-   (production) evaluate their entry gates and **must come out BLOCKED**
-   while any §12 approval is pending — a production unit executing today
-   would itself be a release failure. The ladder halts at the first blocked
-   unit. Promotion stays separately gated (`assisted_intake_v1_promotion`).
+   (production) transition only on their **exact entry gates**:
+   - while any required §12 approval is pending or live staging runtime
+     evidence is unrecorded, they come out **BLOCKED** — a production unit
+     executing today would itself be a release failure;
+   - once a unit's gates genuinely pass it is marked **CLEARED for live
+     execution** (`transition_allowed: true`) — the harness never executes
+     a production unit on a surrogate;
+   - a production unit counts as **passed** only via a human-recorded live
+     result in `live_runtime_evidence.yaml → canary_units`; a recorded
+     live failure halts the ladder and fails the drill.
+   The ladder halts at the first blocked/awaiting unit. Promotion stays
+   separately gated (`assisted_intake_v1_promotion`).
 7. **uat** — role-based operator UAT. Run the exact product gate:
 
    ```bash
@@ -82,10 +91,16 @@ Phases run in this fixed order; each emits `<phase>.json` evidence:
    ```
 
    Without a report the phase fails closed.
-8. **cutover** — governed cutover gate. Recomputes the §12 register and
-   flag manifest. Expected (and passing) state today: `cutover_blocked:
-   true` with every production flag off and every drill green. Any enabled
-   flag, drifted approval row, or failed drill fails this phase.
+8. **cutover** — governed cutover gate. Recomputes the §12 register, flag
+   manifest, and live-evidence register. Two valid passing states:
+   - **BLOCKED** (today's expected state): any §12 row pending or live
+     runtime evidence unrecorded, with every production flag off and every
+     drill green;
+   - **AUTHORIZED** (`cutover_authorized: true`): every §12 row approved
+     **and** live staging runtime evidence recorded **and** every drill
+     green (runbook §4 rule).
+   Any prematurely enabled flag, drifted approval/evidence row, or failed
+   drill fails this phase in either state.
 
 Exit codes: `0` all executed phases passed (including cutover *correctly
 blocked*), `1` a phase failed, `2` governance-config drift (fail closed).
@@ -120,6 +135,30 @@ as production-ready; the readiness phase proves each rejection at runtime.
    treats an approved row without those fields as drift and blocks.
 4. Re-run `--phase cutover`. Cutover unblocks only when **all** rows are
    approved **and** live staging runtime evidence is recorded.
+
+### Recording live staging runtime evidence (human release authority only)
+
+The governed input for live evidence is
+`infra/assisted-listing-intake/live_runtime_evidence.yaml` — there is no
+CLI override. To record it:
+
+1. Complete the live targets in the register (production shadow window,
+   live staging E2E over GCS/Cloud Tasks/Pub/Sub, live Cloud SQL PITR +
+   regional failover) and collect their evidence artifacts.
+2. Set each target `status: completed` with `completed_at` (UTC ISO) and a
+   per-target `evidence_ref`, then set `recorded: true` with
+   `recorded_by`, `recorded_at`, `evidence_ref`, and the
+   `error_budget_intact` attestation.
+3. As live canary units 3–7 complete, append their results under
+   `canary_units` (`unit`, `passed`, `completed_at`, `evidence_ref`).
+   The harness accepts a production unit as passed **only** from this
+   record — never from a surrogate execution.
+4. Commit via a task PR and re-run `--phase canary` / `--phase cutover`.
+
+The register is schema-validated fail-closed at load: `recorded: true`
+missing any attestation field or required target, a completed target or
+canary unit without its own evidence, or a live claim while
+`recorded: false` blocks the harness as drift (exit code 2).
 
 ## 5. Enabling a production flag (after full §12 approval only)
 

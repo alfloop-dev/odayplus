@@ -1,6 +1,6 @@
 {
   "drill": "write_canary_ladder",
-  "finished_at": "2026-07-23T11:51:27.679925+00:00",
+  "finished_at": "2026-07-23T13:03:35.638400+00:00",
   "gate_facts": {
     "all_p0_contract_group_approvals": false,
     "error_budget_intact": true,
@@ -12,13 +12,15 @@
     "unit_1_passed": true,
     "unit_2_passed": true
   },
-  "note": "Production units MUST be blocked while \u00a712 approvals are pending; their blocked state is the asserted-correct outcome, not a drill failure.",
+  "live_evidence_recorded": false,
+  "live_unit_failures": [],
+  "note": "Production units transition only on their exact entry gates: BLOCKED while \u00a712 approvals or live staging evidence are pending, CLEARED for live execution once the gates pass, and passed only via a human-recorded live result in live_runtime_evidence.yaml \u2014 never via surrogate execution.",
   "passed": true,
   "promotion_gate": {
     "flag": "assisted_intake_v1_promotion",
     "status": "disabled \u2014 separately gated after identity/review UAT (\u00a74 Phase 5/6)"
   },
-  "started_at": "2026-07-23T11:51:27.678522+00:00",
+  "started_at": "2026-07-23T13:03:35.637144+00:00",
   "units": [
     {
       "completed": 6,

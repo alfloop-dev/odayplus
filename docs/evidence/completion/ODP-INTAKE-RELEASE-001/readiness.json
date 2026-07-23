@@ -1,7 +1,7 @@
 {
-  "checked_at": "2026-07-23T11:51:26.612496+00:00",
+  "checked_at": "2026-07-23T13:03:34.683681+00:00",
   "feature_flags": {
-    "checked_at": "2026-07-23T11:51:25.214052+00:00",
+    "checked_at": "2026-07-23T13:03:33.522298+00:00",
     "dual_approval_minimum": 2,
     "enabled_production_flags": [],
     "flags": [
@@ -56,7 +56,7 @@
   "passed": true,
   "phase": "readiness",
   "production_readiness": {
-    "checked_at": "2026-07-23T11:51:26.612342+00:00",
+    "checked_at": "2026-07-23T13:03:34.683486+00:00",
     "passed": true,
     "proofs": [
       {
@@ -93,7 +93,7 @@
   },
   "release_authority": {
     "all_approved": false,
-    "checked_at": "2026-07-23T11:51:25.213919+00:00",
+    "checked_at": "2026-07-23T13:03:33.522118+00:00",
     "cutover_blocked": true,
     "fail_closed_effects_active": [
       "No production write/promotion",

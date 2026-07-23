@@ -42,6 +42,19 @@ EXPECTED_AUTHORITY_OWNERS = (
 # §5.2 rollback mechanism must retain exactly this many ordered steps.
 EXPECTED_MECHANISM_STEPS = 8
 
+# Live runtime targets that must be completed (each with its own evidence
+# reference) before the live-evidence register may claim `recorded: true`.
+# These mirror the not_executed_targets the staging-surrogate drills declare.
+REQUIRED_LIVE_TARGETS = (
+    "production_shadow_window_7d_or_10k_rows",
+    "live_staging_e2e_gcs_cloud_tasks_pubsub",
+    "cloud_sql_pitr_and_regional_failover",
+)
+
+# Canary units that run in production and may only pass via a recorded live
+# result in the live-evidence register (never via a surrogate execution).
+PRODUCTION_CANARY_UNITS = (3, 4, 5, 6, 7)
+
 
 class ReleaseConfigError(ValueError):
     """A governance config is missing or drifted; the release fails closed."""
@@ -53,6 +66,7 @@ class ReleaseConfig:
     release_authority: dict[str, Any]
     canary_plan: dict[str, Any]
     rollback_triggers: dict[str, Any]
+    live_evidence: dict[str, Any]
     infra_dir: Path
 
 
@@ -135,27 +149,125 @@ def _validate_triggers(register: dict[str, Any], path: Path) -> None:
         raise ReleaseConfigError(f"{path}: evidence_packet.required_fields missing")
 
 
+def _validate_live_evidence(record: dict[str, Any], path: Path) -> None:
+    """Fail-closed validation of the live runtime evidence register.
+
+    Mirrors the release-authority drift rules: a record that claims live
+    evidence without a human attestation (recorded_by/recorded_at/
+    evidence_ref), a completed target without its own evidence, or a
+    recorded canary-unit result missing its fields is a broken governance
+    record and must block the release rather than be skipped.
+    """
+
+    recorded = record.get("recorded")
+    if not isinstance(recorded, bool):
+        raise ReleaseConfigError(f"{path}: 'recorded' must be a boolean")
+
+    targets = record.get("targets")
+    if not isinstance(targets, list):
+        raise ReleaseConfigError(f"{path}: 'targets' must be a list")
+    by_target: dict[str, dict[str, Any]] = {}
+    for entry in targets:
+        name = entry.get("target")
+        status = entry.get("status")
+        if status not in ("pending", "completed"):
+            raise ReleaseConfigError(
+                f"{path}: target {name!r} has invalid status {status!r}"
+            )
+        if status == "completed" and not (entry.get("completed_at") and entry.get("evidence_ref")):
+            raise ReleaseConfigError(
+                f"{path}: target {name!r} completed without completed_at/evidence_ref "
+                "(automation drift)"
+            )
+        by_target[name] = entry
+
+    canary_units = record.get("canary_units")
+    if canary_units is None:
+        canary_units = []
+    if not isinstance(canary_units, list):
+        raise ReleaseConfigError(f"{path}: 'canary_units' must be a list")
+    seen_units: set[int] = set()
+    for entry in canary_units:
+        unit = entry.get("unit")
+        if unit not in PRODUCTION_CANARY_UNITS:
+            raise ReleaseConfigError(
+                f"{path}: canary_units entry {unit!r} is not a production unit "
+                f"{PRODUCTION_CANARY_UNITS}"
+            )
+        if unit in seen_units:
+            raise ReleaseConfigError(f"{path}: duplicate canary_units entry for unit {unit}")
+        seen_units.add(unit)
+        if not isinstance(entry.get("passed"), bool):
+            raise ReleaseConfigError(f"{path}: canary unit {unit} missing boolean 'passed'")
+        if not (entry.get("completed_at") and entry.get("evidence_ref")):
+            raise ReleaseConfigError(
+                f"{path}: canary unit {unit} recorded without completed_at/evidence_ref "
+                "(automation drift)"
+            )
+
+    if not recorded:
+        # A not-recorded register must not smuggle in live claims.
+        completed = [n for n, e in by_target.items() if e.get("status") == "completed"]
+        if completed:
+            raise ReleaseConfigError(
+                f"{path}: recorded is false but targets claim completed: {completed} "
+                "(automation drift)"
+            )
+        if canary_units:
+            raise ReleaseConfigError(
+                f"{path}: recorded is false but canary_units results are present "
+                "(automation drift)"
+            )
+        return
+
+    # recorded: true — require the full human attestation.
+    for field in ("recorded_by", "recorded_at", "evidence_ref"):
+        if not record.get(field):
+            raise ReleaseConfigError(
+                f"{path}: recorded is true without {field!r} (automation drift)"
+            )
+    if not isinstance(record.get("error_budget_intact"), bool):
+        raise ReleaseConfigError(
+            f"{path}: recorded is true without boolean 'error_budget_intact'"
+        )
+    missing = [t for t in REQUIRED_LIVE_TARGETS if t not in by_target]
+    if missing:
+        raise ReleaseConfigError(f"{path}: missing required live targets {missing}")
+    incomplete = [
+        t for t in REQUIRED_LIVE_TARGETS if by_target[t].get("status") != "completed"
+    ]
+    if incomplete:
+        raise ReleaseConfigError(
+            f"{path}: recorded is true but required live targets are not completed: "
+            f"{incomplete}"
+        )
+
+
 def load_release_config(infra_dir: Path | None = None) -> ReleaseConfig:
     base = infra_dir or INFRA_DIR
     flags_path = base / "feature_flags.yaml"
     authority_path = base / "release_authority.yaml"
     canary_path = base / "canary_plan.yaml"
     triggers_path = base / "rollback_triggers.yaml"
+    live_evidence_path = base / "live_runtime_evidence.yaml"
 
     feature_flags = _load_yaml(flags_path)
     release_authority = _load_yaml(authority_path)
     canary_plan = _load_yaml(canary_path)
     rollback_triggers = _load_yaml(triggers_path)
+    live_evidence = _load_yaml(live_evidence_path)
 
     _validate_flags(feature_flags, flags_path)
     _validate_authority(release_authority, authority_path)
     _validate_canary(canary_plan, canary_path)
     _validate_triggers(rollback_triggers, triggers_path)
+    _validate_live_evidence(live_evidence, live_evidence_path)
 
     return ReleaseConfig(
         feature_flags=feature_flags,
         release_authority=release_authority,
         canary_plan=canary_plan,
         rollback_triggers=rollback_triggers,
+        live_evidence=live_evidence,
         infra_dir=base,
     )

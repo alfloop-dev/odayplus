@@ -1228,14 +1228,20 @@ def run_write_canary(
     migration_result: dict[str, Any],
     killswitch_result: dict[str, Any],
     authority_report: dict[str, Any],
+    live_evidence_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute the tenant/source write-canary ladder in strict order.
 
     Staging-surrogate units (1–2) run real write flows through the intake
     state machine — assisted-entry-only first, then one approved retrieval
-    source. Production units (3–7) evaluate their entry gates and must
-    come out BLOCKED while any §12 approval is pending: reaching them
-    "passing" today would itself be a release-gate failure.
+    source. Production units (3–7) transition only on their exact entry
+    gates: while any required §12 approval is pending or live staging
+    runtime evidence is unrecorded they must come out BLOCKED, and once
+    the gates genuinely pass a production unit is CLEARED to execute in
+    the live environment — the drill never executes it on a surrogate. A
+    production unit counts as *passed* only via a human-recorded live
+    result in the governed ``live_runtime_evidence.yaml`` register
+    (``live_evidence_report`` from ``check_live_runtime_evidence``).
     """
 
     from modules.external_data.application.source_snapshots import SourceSnapshotService
@@ -1248,16 +1254,25 @@ def run_write_canary(
 
     workdir.mkdir(parents=True, exist_ok=True)
     started = _now()
+    live = live_evidence_report or {"recorded": False}
+    live_recorded = bool(live.get("recorded"))
+    # Human-recorded live production unit results; only valid when the
+    # register itself is recorded (schema-validated fail-closed at load).
+    live_units: dict[int, dict[str, Any]] = (
+        {int(k): v for k, v in (live.get("canary_units") or {}).items()} if live_recorded else {}
+    )
     gate_facts = {
         "shadow_acceptance_met": bool(shadow_result.get("passed")),
         "migration_blocking_findings_zero": migration_result.get("blocking_findings") == 0,
         "kill_switch_verified": bool(killswitch_result.get("kill_switch_verified")),
         "unit_1_passed": False,
         "unit_2_passed": False,
-        "error_budget_intact": True,
+        # Error budget defaults to intact pre-production; once live evidence
+        # is recorded the human attestation in the register is authoritative.
+        "error_budget_intact": bool(live.get("error_budget_intact")) if live_recorded else True,
         "release_authority_all_approved": bool(authority_report.get("all_approved")),
         "all_p0_contract_group_approvals": bool(authority_report.get("all_approved")),
-        "live_staging_evidence_recorded": False,  # no live staging environment exists yet
+        "live_staging_evidence_recorded": live_recorded,
     }
 
     units_report = []
@@ -1275,7 +1290,7 @@ def run_write_canary(
             elif not gate_facts.get(gate, False):
                 unmet.append(gate)
 
-        if ladder_halted or unit["environment"] == "production" or unmet:
+        if ladder_halted or unmet:
             units_report.append(
                 {
                     "unit": unit["unit"],
@@ -1288,6 +1303,46 @@ def run_write_canary(
                 }
             )
             ladder_halted = True
+            continue
+
+        if unit["environment"] == "production":
+            # Exact entry gates passed. The drill never executes a production
+            # unit on a surrogate: it either accepts the human-recorded live
+            # result from the governed register, or marks the unit CLEARED
+            # for live execution and halts the ladder there.
+            live_result = live_units.get(unit["unit"])
+            if live_result is not None:
+                unit_passed = bool(live_result.get("passed"))
+                gate_facts[f"unit_{unit['unit']}_passed"] = unit_passed
+                units_report.append(
+                    {
+                        "unit": unit["unit"],
+                        "name": unit["name"],
+                        "environment": unit["environment"],
+                        "executed": False,
+                        "blocked": False,
+                        "transition_allowed": True,
+                        "live_result_recorded": True,
+                        "live_evidence_ref": live_result.get("evidence_ref"),
+                        "passed": unit_passed,
+                    }
+                )
+                if not unit_passed:
+                    ladder_halted = True
+            else:
+                units_report.append(
+                    {
+                        "unit": unit["unit"],
+                        "name": unit["name"],
+                        "environment": unit["environment"],
+                        "executed": False,
+                        "blocked": False,
+                        "transition_allowed": True,
+                        "live_result_recorded": False,
+                        "awaiting_live_execution": True,
+                    }
+                )
+                ladder_halted = True
             continue
 
         # Execute a staging-surrogate unit with real write flows.
@@ -1375,13 +1430,23 @@ def run_write_canary(
             ladder_halted = True
 
     executed_units = [u for u in units_report if u.get("executed")]
-    blocked_production = [
-        u for u in units_report if not u.get("executed") and u.get("expected_blocked")
+    production_units = [u for u in units_report if u["environment"] == "production"]
+    # Honesty invariants: no production unit ever executes on a surrogate;
+    # while gates are unmet production units stay blocked; a live-recorded
+    # failure fails the ladder.
+    production_consistent = all(
+        (u.get("blocked") and u.get("unmet_entry_gates"))
+        or (u.get("transition_allowed") and not u.get("executed"))
+        for u in production_units
+    )
+    live_failures = [
+        u["unit"] for u in units_report if u.get("live_result_recorded") and not u.get("passed")
     ]
     passed = (
         len(executed_units) == 2
         and all(u["passed"] for u in executed_units)
-        and len(blocked_production) == 5
+        and production_consistent
+        and not live_failures
     )
     return {
         "drill": "write_canary_ladder",
@@ -1389,11 +1454,18 @@ def run_write_canary(
         "finished_at": _now(),
         "gate_facts": gate_facts,
         "units": units_report,
+        "live_evidence_recorded": live_recorded,
+        "live_unit_failures": live_failures,
         "promotion_gate": {
             "flag": config.canary_plan["promotion_gate"]["flag"],
             "status": "disabled — separately gated after identity/review UAT (§4 Phase 5/6)",
         },
-        "note": "Production units MUST be blocked while §12 approvals are pending; their blocked state is the asserted-correct outcome, not a drill failure.",
+        "note": (
+            "Production units transition only on their exact entry gates: BLOCKED while "
+            "§12 approvals or live staging evidence are pending, CLEARED for live "
+            "execution once the gates pass, and passed only via a human-recorded live "
+            "result in live_runtime_evidence.yaml — never via surrogate execution."
+        ),
         "passed": passed,
     }
 

@@ -1,13 +1,13 @@
 {
   "drill": "uat",
   "failed_cases": [],
-  "finished_at": "2026-07-23T11:51:27.680711+00:00",
+  "finished_at": "2026-07-23T13:03:35.639895+00:00",
   "intake_spec_cases": 8,
   "passed": true,
   "report": "docs/evidence/completion/ODP-INTAKE-RELEASE-001/uat-playwright-report.json",
   "roles_note": "Spec exercises operator/manager role flows against the running product (see spec file for role fixtures).",
   "spec": "tests/e2e/operator-assisted-listing-intake.spec.ts",
-  "started_at": "2026-07-23T11:51:27.680325+00:00",
+  "started_at": "2026-07-23T13:03:35.638851+00:00",
   "stats": {
     "duration": 442304.481,
     "expected": 7,

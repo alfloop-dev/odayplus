@@ -34,7 +34,7 @@
       "checksum_mismatch_detected": true
     },
     "release_authority_approval": "pending \u2014 drill evidence recorded for \u00a712 register; no production approval exists or is claimed",
-    "snapshot_manifest": "/tmp/intake-release-drill-5_3ataeb/killswitch/killswitch-snapshot-manifest.json",
+    "snapshot_manifest": "/tmp/intake-release-drill-qn34fgpv/killswitch/killswitch-snapshot-manifest.json",
     "task_counts": {
       "cancelled": 6
     },
@@ -53,7 +53,7 @@
     }
   },
   "evidence_packet_missing_fields": [],
-  "finished_at": "2026-07-23T11:51:27.616293+00:00",
+  "finished_at": "2026-07-23T13:03:35.585992+00:00",
   "kill_switch_verified": true,
   "mechanism_steps": [
     {
@@ -122,7 +122,7 @@
     }
   ],
   "passed": true,
-  "runtime_db": "/tmp/intake-release-drill-5_3ataeb/killswitch/killswitch-runtime.sqlite3",
-  "started_at": "2026-07-23T11:51:27.533183+00:00",
+  "runtime_db": "/tmp/intake-release-drill-qn34fgpv/killswitch/killswitch-runtime.sqlite3",
+  "started_at": "2026-07-23T13:03:35.514277+00:00",
   "trigger_detected": true
 }
