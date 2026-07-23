@@ -1,0 +1,428 @@
+{
+  "intake_id": "67a56f28-78fc-4a32-9153-e1596b808f04",
+  "state": "NEEDS_REVIEW",
+  "intake_method": "URL",
+  "source_id": "SRC-SYNTHETIC",
+  "original_url": "https://www.synthetic.example/detail-50000005.html",
+  "canonical_url": "https://www.synthetic.example/detail-50000005.html",
+  "policy_state": "APPROVED_RETRIEVAL",
+  "match_outcome": null,
+  "submitted_by": "00000000-0000-4000-8000-000000000202",
+  "assigned_to": "00000000-0000-4000-8000-000000000202",
+  "assignment_id": null,
+  "assignment_status": null,
+  "assignment_version": null,
+  "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+  "queue_id": null,
+  "sla_instance_id": null,
+  "sla_state": null,
+  "sla_version": null,
+  "due_at": null,
+  "last_observed_at": "2026-07-23T22:10:29.807186Z",
+  "submitted_at": "2026-07-23T22:10:29.264636Z",
+  "updated_at": "2026-07-23T22:10:29.810469Z",
+  "version": 6,
+  "scope": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "assigned_area_id": null,
+    "brand_id": null,
+    "heat_zone_id": null,
+    "region_id": null
+  },
+  "issue": "STALE_SOURCE_SNAPSHOT",
+  "next_action": "REFRESH_SOURCE_OR_REVIEW",
+  "retryable": false,
+  "quarantined": false,
+  "failed": false,
+  "location": {
+    "address": null,
+    "district": null,
+    "assigned_area_id": null,
+    "heat_zone_id": null,
+    "latitude": null,
+    "longitude": null,
+    "confidence": null,
+    "source": null
+  },
+  "masking": {
+    "restricted_data": false,
+    "has_masked_fields": false,
+    "masked_fields": [],
+    "reason_codes": []
+  },
+  "masked_fields": [],
+  "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+  "source_snapshot_id": "9cbae117-8f1a-569c-bab5-c08dac5e3083",
+  "parser_run_id": null,
+  "match_case_id": "b233f757-d6e8-4a3c-a06e-62986952d72f",
+  "match_case_version": 0,
+  "match_case": null,
+  "processing_history": [
+    {
+      "transition_id": "04834076-d130-4d10-be6d-6f00751926d7",
+      "from_state": null,
+      "to_state": "SUBMITTED",
+      "occurred_at": "2026-07-23T22:10:29.264636Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 1
+    },
+    {
+      "transition_id": "46ded365-3b6c-4969-8cfd-9e030e3b9dd7",
+      "from_state": "SUBMITTED",
+      "to_state": "CHECKING_IDENTITY",
+      "occurred_at": "2026-07-23T22:10:29.688602Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 3
+    },
+    {
+      "transition_id": "1325f6f9-c0b2-42c3-b9a9-6547febd22e9",
+      "from_state": "CHECKING_IDENTITY",
+      "to_state": "CHECKING_SOURCE_POLICY",
+      "occurred_at": "2026-07-23T22:10:29.781979Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 4
+    },
+    {
+      "transition_id": "6e954345-f22b-4001-a16a-50d7e9d75b09",
+      "from_state": "CHECKING_SOURCE_POLICY",
+      "to_state": "RETRIEVING",
+      "occurred_at": "2026-07-23T22:10:29.803019Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": null,
+      "version_after": 5
+    },
+    {
+      "transition_id": "5f7cb54e-491e-41ac-9f14-2910a9f8991d",
+      "from_state": "RETRIEVING",
+      "to_state": "NEEDS_REVIEW",
+      "occurred_at": "2026-07-23T22:10:29.810469Z",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "reason_code": "STALE_SOURCE_SNAPSHOT",
+      "version_after": 6
+    }
+  ],
+  "fields": [],
+  "audit": [
+    {
+      "audit_event_id": "85c8d9f9-e6b6-4ec4-b79d-99666917e2a0",
+      "action": "intake.create",
+      "occurred_at": "2026-07-23T22:10:29.268867Z",
+      "result": "SUCCEEDED",
+      "reason_code": "User-submitted listing intake",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "expansionManager",
+      "before": null,
+      "after": {
+        "stage": "SUBMITTED",
+        "version": 1
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "67a56f28-78fc-4a32-9153-e1596b808f04",
+        "jobId": "fabf4cbf-9836-40b0-81d0-51abcda83567"
+      },
+      "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+      "resource_version": 1,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "8c5085f9-9df9-4770-b0be-90e5c04310ab",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T22:10:29.688602Z",
+      "result": "SUCCEEDED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "SUBMITTED"
+      },
+      "after": {
+        "stage": "CHECKING_IDENTITY",
+        "version": 3
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "67a56f28-78fc-4a32-9153-e1596b808f04",
+        "jobId": "fabf4cbf-9836-40b0-81d0-51abcda83567"
+      },
+      "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+      "resource_version": 3,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "5680da88-4559-483f-9b9b-552b67c14494",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T22:10:29.781979Z",
+      "result": "SUCCEEDED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "CHECKING_IDENTITY"
+      },
+      "after": {
+        "stage": "CHECKING_SOURCE_POLICY",
+        "version": 4
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "67a56f28-78fc-4a32-9153-e1596b808f04",
+        "jobId": "fabf4cbf-9836-40b0-81d0-51abcda83567"
+      },
+      "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+      "resource_version": 4,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "45319ea2-bc66-43c9-8913-91fcc2172681",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T22:10:29.803019Z",
+      "result": "SUCCEEDED",
+      "reason_code": null,
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "CHECKING_SOURCE_POLICY"
+      },
+      "after": {
+        "stage": "RETRIEVING",
+        "version": 5
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "67a56f28-78fc-4a32-9153-e1596b808f04",
+        "jobId": "fabf4cbf-9836-40b0-81d0-51abcda83567"
+      },
+      "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+      "resource_version": 5,
+      "evidence_state": "PARTIAL"
+    },
+    {
+      "audit_event_id": "172a5db6-d279-4f0b-9ecf-938b2b21658a",
+      "action": "intake.stage_transition",
+      "occurred_at": "2026-07-23T22:10:29.810469Z",
+      "result": "SUCCEEDED",
+      "reason_code": "STALE_SOURCE_SNAPSHOT",
+      "actor": "00000000-0000-4000-8000-000000000202",
+      "actor_role": "system",
+      "before": {
+        "stage": "RETRIEVING"
+      },
+      "after": {
+        "stage": "NEEDS_REVIEW",
+        "version": 6
+      },
+      "source_snapshot_id": "9cbae117-8f1a-569c-bab5-c08dac5e3083",
+      "parser_version": "listing-parser v1.4",
+      "related_ids": {
+        "intakeId": "67a56f28-78fc-4a32-9153-e1596b808f04",
+        "jobId": "fabf4cbf-9836-40b0-81d0-51abcda83567"
+      },
+      "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+      "resource_version": 6,
+      "evidence_state": "COMPLETE"
+    }
+  ],
+  "evidence": {
+    "original_url": "https://www.synthetic.example/detail-50000005.html",
+    "canonical_url": "https://www.synthetic.example/detail-50000005.html",
+    "source_id": "SRC-SYNTHETIC",
+    "policy_state": "APPROVED_RETRIEVAL",
+    "policy_reason": "模擬測試專用之核准擷取來源（控制實驗 fixture）。",
+    "policy_version": "assisted-intake-source-policy-2026.07",
+    "policy_evaluated_at": "2026-07-23T22:10:29.264546Z",
+    "policy_expires_at": "2026-08-22T22:10:29Z",
+    "source_snapshot_id": "9cbae117-8f1a-569c-bab5-c08dac5e3083",
+    "captured_at": "2026-07-23T22:10:29.807186Z",
+    "parser_run_id": null,
+    "parser_version": "listing-parser v1.4",
+    "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+    "freshness_state": "CURRENT",
+    "resource_version": 6,
+    "etag": "W/\"6\""
+  },
+  "sla_receipt": null,
+  "lifecycle": {
+    "intake_id": "67a56f28-78fc-4a32-9153-e1596b808f04",
+    "version": 6,
+    "etag": "W/\"6\"",
+    "actor_facts": {
+      "role_mode": "expansion-manager",
+      "allowed_actions": [
+        "ASSIGN",
+        "CANCEL",
+        "CANCEL_JOB",
+        "CLAIM",
+        "COMPLETE",
+        "CORRECT",
+        "DECIDE_MATCH",
+        "ESCALATE",
+        "MERGE",
+        "PAUSE_SLA",
+        "REPLAY_JOB",
+        "REQUEST_PROMOTION",
+        "RESUME_SLA",
+        "REVERSE",
+        "REVIEW_PROMOTION",
+        "SPLIT",
+        "SUBMIT_URL",
+        "TRANSFER",
+        "UNMERGE",
+        "VIEW"
+      ],
+      "denied_action_reasons": {
+        "EXPORT_EVIDENCE": "ROLE_DENIED",
+        "REOPEN": "WORKFLOW_STATE_DENIED",
+        "RETRY": "WORKFLOW_STATE_DENIED"
+      },
+      "scope": {
+        "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+        "resource": {
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "assigned_area_id": null,
+          "brand_id": null,
+          "heat_zone_id": null,
+          "region_id": null
+        },
+        "in_scope": true
+      },
+      "masking": {
+        "masked_fields": [],
+        "reason_codes": [],
+        "has_masked_fields": false,
+        "clearance": "CONFIDENTIAL"
+      },
+      "purpose": {
+        "value": "Functional coverage verification",
+        "required": false,
+        "bound": true,
+        "reason_code": null
+      },
+      "second_actor": {
+        "required": false,
+        "pending_decision_ids": [],
+        "proposer_subject_ids": [],
+        "self_review_denied": false,
+        "reason_code": null
+      }
+    },
+    "assignment": null,
+    "sla": null,
+    "decisions": [],
+    "promotion": null,
+    "job": {
+      "job_id": "fabf4cbf-9836-40b0-81d0-51abcda83567",
+      "status": "SUCCEEDED",
+      "attempt": 1,
+      "checkpoint": "RETRIEVING",
+      "next_retry_at": null,
+      "fence_token": 1,
+      "version": 6
+    },
+    "assignment_history": [],
+    "sla_history": [],
+    "decision_history": [],
+    "promotion_history": [],
+    "job_history": [
+      {
+        "receipt_id": "9c27a477-437b-4f21-8c6b-718adf90b275",
+        "category": "job",
+        "action": "RUN",
+        "resource_id": "fabf4cbf-9836-40b0-81d0-51abcda83567",
+        "resource_version": 2,
+        "status": "RUNNING",
+        "actor": "oday-worker",
+        "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+        "occurred_at": "2026-07-23T22:10:29.675755+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "fabf4cbf-9836-40b0-81d0-51abcda83567",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "RUNNING",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 2,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "CHECKING_IDENTITY",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T22:10:29.675755+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      }
+    ],
+    "mutation_receipts": [
+      {
+        "receipt_id": "9c27a477-437b-4f21-8c6b-718adf90b275",
+        "category": "job",
+        "action": "RUN",
+        "resource_id": "fabf4cbf-9836-40b0-81d0-51abcda83567",
+        "resource_version": 2,
+        "status": "RUNNING",
+        "actor": "oday-worker",
+        "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+        "occurred_at": "2026-07-23T22:10:29.675755+00:00",
+        "receipt": {
+          "receipt_id": null,
+          "transition_id": null,
+          "assignment_id": null,
+          "sla_instance_id": null,
+          "job_id": "fabf4cbf-9836-40b0-81d0-51abcda83567",
+          "promotion_decision_id": null,
+          "decision_id": null,
+          "intake_id": null,
+          "listing_id": null,
+          "listing_revision_id": null,
+          "identity_edge_id": null,
+          "candidate_site_id": null,
+          "site_score_job_id": null,
+          "status": "RUNNING",
+          "state": null,
+          "from_state": null,
+          "to_state": null,
+          "action": null,
+          "version": 2,
+          "version_after": null,
+          "audit_event_id": null,
+          "correlation_id": "e4de9fbb-7886-4b16-8574-bb3396a15d82",
+          "actor": null,
+          "reason": null,
+          "checkpoint": "CHECKING_IDENTITY",
+          "attempt": 1,
+          "retryable": null,
+          "occurred_at": "2026-07-23T22:10:29.675755+00:00",
+          "created_at": null,
+          "updated_at": null,
+          "issued_at": null
+        }
+      }
+    ],
+    "latest_decision_receipt": null,
+    "submission_receipt": null
+  }
+}

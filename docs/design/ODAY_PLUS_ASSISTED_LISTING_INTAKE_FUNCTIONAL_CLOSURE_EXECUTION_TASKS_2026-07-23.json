@@ -1,8 +1,9 @@
 {
   "schema": "oday-plus.assisted-listing-intake.functional-closure-tasks.v1",
   "doc_id": "ODP-INTAKE-FUNCTIONAL-CLOSURE-EXEC-001",
-  "status": "implemented_pending_independent_functional_acceptance",
+  "status": "functionally_complete",
   "audited_commit": "eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585",
+  "accepted_implementation_commit": "361d0c8e8457f8c3b969f28d34b3cd8217ab00a5",
   "target_branch": "task/ODP-INTAKE-FCL-INTEGRATION-001",
   "audit": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_COMPLETENESS_AUDIT_2026-07-23.md",
   "requirement_trace": {
@@ -24,7 +25,7 @@
   "tasks": [
     {
       "id": "ODP-INTAKE-FCL-RUNTIME-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Claude2",
@@ -41,7 +42,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-SHELL-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Codex2",
@@ -58,7 +59,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-ROLES-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Codex",
@@ -74,7 +75,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-INBOX-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity3",
@@ -91,7 +92,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-REVIEW-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity4",
@@ -108,7 +109,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-IDENTITY-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity5",
@@ -125,7 +126,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-EVIDENCE-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity6",
@@ -142,7 +143,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-LIFECYCLE-001",
-      "status": "integrated",
+      "status": "completed",
       "wave": 1,
       "priority": "P0",
       "owner": "Antigravity7",
@@ -159,7 +160,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-INTEGRATION-001",
-      "status": "verified_pending_commit",
+      "status": "completed",
       "wave": 2,
       "priority": "P0",
       "owner": "Claude",
@@ -186,7 +187,7 @@
     },
     {
       "id": "ODP-INTAKE-FCL-ACCEPTANCE-001",
-      "status": "pending_exact_commit",
+      "status": "functionally_complete",
       "wave": 3,
       "priority": "P0",
       "owner": "Codex2",
@@ -206,6 +207,16 @@
   "umbrella_completion": {
     "required_disposition": "FUNCTIONALLY_COMPLETE",
     "requires_all_tasks_integrated": true,
-    "requires_independent_acceptance": true
+    "requires_independent_acceptance": true,
+    "actual_disposition": "FUNCTIONALLY_COMPLETE",
+    "acceptance_task": "ODP-INTAKE-FCL-ACCEPTANCE-001",
+    "acceptance_report": "docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_REPORT.md",
+    "acceptance_matrix": "docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_MATRIX.json",
+    "requirement_counts": {
+      "PASS": 197,
+      "FAIL": 0,
+      "NOT_APPLICABLE": 0,
+      "SKIP": 0
+    }
   }
 }

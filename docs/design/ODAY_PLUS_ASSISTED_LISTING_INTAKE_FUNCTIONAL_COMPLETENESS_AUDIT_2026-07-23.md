@@ -1,12 +1,15 @@
 ---
 doc_id: ODP-INTAKE-FUNCTIONAL-AUDIT-001
 title: ODay Plus Assisted Listing Intake Functional Completeness Audit
-version: 1.0.0
-status: changes-required
+version: 1.1.0
+status: closed-functionally-complete
 owner: Product Platform Engineering
 audited_requirement: ODP-UXD-003-ADD-002
 requirement_version: 1.0.1
 audited_commit: eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585
+accepted_implementation_commit: 361d0c8e8457f8c3b969f28d34b3cd8217ab00a5
+acceptance_task: ODP-INTAKE-FCL-ACCEPTANCE-001
+acceptance_disposition: FUNCTIONALLY_COMPLETE
 supersedes_completion_claims:
   - ODP-INTAKE-UX-001
   - ODP-INTAKE-UX-FND-001
@@ -24,10 +27,21 @@ updated_at: 2026-07-23
 
 ## 1. Decision
 
-The Assisted Listing Intake implementation at the audited commit is
+The original Assisted Listing Intake implementation at audited commit
+`eb94d53b0d1af9beb1cf6b290ce5e6b4d98b6585` was
 `FUNCTIONALLY_INCOMPLETE`.
 
-This decision is based on the complete UI and Visual Design Handoff
+All findings in this audit were subsequently implemented and independently
+verified at commit `361d0c8e8457f8c3b969f28d34b3cd8217ab00a5`.
+The final disposition is `FUNCTIONALLY_COMPLETE`: every `FTR-001` through
+`FTR-197` row is `PASS`, with zero failure, skip, or not-applicable row.
+
+Final acceptance authority:
+
+- `docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_REPORT.md`
+- `docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_MATRIX.json`
+
+The original decision was based on the complete UI and Visual Design Handoff
 Requirements, not on security, rollout, or infrastructure gates. Existing
 completion evidence proves that selected components and eight curated E2E
 scenarios execute. It does not prove that every required route, role, field
@@ -265,4 +279,3 @@ Functional completion requires all of the following:
 The execution authority for this closure is:
 
 `docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_FUNCTIONAL_CLOSURE_EXECUTION_TASKS_2026-07-23.json`
-

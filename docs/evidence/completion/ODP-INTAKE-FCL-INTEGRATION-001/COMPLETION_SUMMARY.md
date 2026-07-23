@@ -1,7 +1,10 @@
 ---
 task_id: ODP-INTAKE-FCL-INTEGRATION-001
 artifact: integration-completion-summary
-status: verified-pending-exact-commit-acceptance
+status: functionally-accepted
+accepted_implementation_commit: 361d0c8e8457f8c3b969f28d34b3cd8217ab00a5
+acceptance_task: ODP-INTAKE-FCL-ACCEPTANCE-001
+acceptance_disposition: FUNCTIONALLY_COMPLETE
 updated_at: 2026-07-23
 ---
 
@@ -41,9 +44,14 @@ projections cannot roll back newer scalar state, and every claimed intake job
 persists a `RUN` receipt before a stage may expose failure. A two-engine
 concurrency regression test covers the API/worker process boundary.
 
-## Acceptance Boundary
+## Independent Acceptance
 
-This integration task is not the final umbrella decision. The branch must be
-committed and pushed, then a Fleet that did not implement the integration must
-verify the exact commit and disposition every `FTR-001` through `FTR-197`.
-Only its `FUNCTIONALLY_COMPLETE` result may close the umbrella.
+An independent Fleet verified exact implementation commit
+`361d0c8e8457f8c3b969f28d34b3cd8217ab00a5` and returned
+`FUNCTIONALLY_COMPLETE`: `197 PASS`, `0 FAIL`, `0 NOT_APPLICABLE`, and
+`0 SKIP`.
+
+Final acceptance authority:
+
+- `../ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_REPORT.md`
+- `../ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_MATRIX.json`

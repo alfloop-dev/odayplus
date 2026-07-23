@@ -1,0 +1,103 @@
+{
+  "failedDecision": {
+    "promotion_decision_id": "8cbb4c78-88ac-4af4-9a77-9a13a967680c",
+    "intake_id": "d0866d42-425d-487e-8d67-e5d47a5325e1",
+    "listing_id": "L-2037",
+    "status": "SCORE_FAILED",
+    "decision_type": "STANDARD",
+    "version": 7,
+    "audit_event_id": "89130130-7596-4fa1-961f-09ebfa4be70a",
+    "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+    "candidate_site_id": "0c1ab70a-7b8c-4287-8158-754dfc3867a5",
+    "proposer_subject_id": "00000000-0000-4000-8000-000000000202",
+    "reviewer_subject_id": null,
+    "site_score_job_id": "7a75cb3f-1dd4-4813-8146-15c4a4350f04",
+    "status_history": [
+      {
+        "transition_id": "ebc06c7c-8ae2-452c-aae1-4e8a418245fb",
+        "from_state": null,
+        "to_state": "REQUESTED",
+        "occurred_at": "2026-07-23T22:09:34.711976+00:00",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "EXPANSION_STAFF",
+        "reason": "Request Candidate creation after verified Listing commit.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 1
+      },
+      {
+        "transition_id": "577b679b-ff6a-40ca-9e7c-410a3da1d68d",
+        "from_state": "REQUESTED",
+        "to_state": "VALIDATING",
+        "occurred_at": "2026-07-23T22:09:34.711976+00:00",
+        "actor": "system",
+        "actor_role": "SVC_PROMOTION",
+        "reason": "Candidate gate validated; independent review required.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 2
+      },
+      {
+        "transition_id": "8ab51c59-a057-41b6-9373-cc68b26227f3",
+        "from_state": "VALIDATING",
+        "to_state": "APPROVED",
+        "occurred_at": "2026-07-23T22:09:34.768778+00:00",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actor_role": "EXPANSION_MANAGER",
+        "reason": "Approve Candidate and exercise real score queue failure.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 3
+      },
+      {
+        "transition_id": "92fa54d1-89ef-44d9-9b64-d5295eae66c6",
+        "from_state": "APPROVED",
+        "to_state": "CANDIDATE_CREATING",
+        "occurred_at": "2026-07-23T22:09:34.769044+00:00",
+        "actor": "system",
+        "actor_role": "SVC_PROMOTION",
+        "reason": "Candidate creation transaction started.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 4
+      },
+      {
+        "transition_id": "b8175dbe-b064-46f4-ab94-87fb02d304d5",
+        "from_state": "CANDIDATE_CREATING",
+        "to_state": "CANDIDATE_CREATED",
+        "occurred_at": "2026-07-23T22:09:34.775615+00:00",
+        "actor": "system",
+        "actor_role": "SVC_PROMOTION",
+        "reason": "Candidate Site committed.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 5
+      },
+      {
+        "transition_id": "3808a612-e7e8-4ee8-a376-fffeaee2081f",
+        "from_state": "CANDIDATE_CREATED",
+        "to_state": "SCORE_QUEUED",
+        "occurred_at": "2026-07-23T22:09:34.776280+00:00",
+        "actor": "system",
+        "actor_role": "SVC_PROMOTION",
+        "reason": "Durable SiteScore job enqueue requested.",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 6
+      },
+      {
+        "transition_id": "2fad9354-66f5-4863-9da1-4b8ad08c1b09",
+        "from_state": "SCORE_QUEUED",
+        "to_state": "SCORE_FAILED",
+        "occurred_at": "2026-07-23T22:09:34.777792+00:00",
+        "actor": "system",
+        "actor_role": "SVC_PROMOTION",
+        "reason": "ODP_TEST_SCORE_FAILURE",
+        "correlation_id": "8d4aa8c4-7b95-4c74-8d26-c4aaa5ab579a",
+        "version_after": 7
+      }
+    ]
+  },
+  "job": {
+    "job_id": "7a75cb3f-1dd4-4813-8146-15c4a4350f04",
+    "status": "FAILED",
+    "checkpoint": "SCORE_QUEUED",
+    "attempt": 0,
+    "version": 2,
+    "correlation_id": "38ddc04d-a303-4f9d-a0a7-b03e9f34e515"
+  }
+}

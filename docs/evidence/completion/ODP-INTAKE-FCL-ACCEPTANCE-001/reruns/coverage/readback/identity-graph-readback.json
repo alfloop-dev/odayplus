@@ -1,0 +1,1700 @@
+{
+  "afterReversal": {
+    "edges": [
+      {
+        "edgeId": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "relation": "MERGED_INTO",
+        "sourcePropertyId": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+        "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [],
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "effectiveFrom": "2026-07-23T22:09:26.681401Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.681419Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "relation": "MERGED_INTO",
+        "sourcePropertyId": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+        "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [],
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "effectiveFrom": "2026-07-23T22:09:26.681443Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.681447Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "c180c914-d154-4669-bc84-7f6332db1322",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+        "relation": "REVERSAL_OF",
+        "sourcePropertyId": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+        "targetPropertyId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [
+          "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+        ],
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "effectiveFrom": "2026-07-23T22:09:26.798831Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.798841Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+        "relation": "REVERSAL_OF",
+        "sourcePropertyId": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+        "targetPropertyId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [
+          "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+        ],
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "effectiveFrom": "2026-07-23T22:09:26.798856Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.798860Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "41f6658e-8a9c-4e39-a84c-d7cd636ec1cd",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "intakeId": "cee92ea0-5fc1-4a5e-829a-9de614c53cfc",
+        "listingId": "L-2035",
+        "propertyId": "PROPERTY-L-2035",
+        "relation": "SOURCE_OF",
+        "status": "EFFECTIVE",
+        "sourceIdentity": {
+          "sourceId": "coverage-exact-source",
+          "sourceListingId": "coverage-exact-1784844476550-z1unz3z",
+          "canonicalUrl": "https://example.com/possible-base-1784844476549-i6elhck"
+        },
+        "decisionId": "52f7d159-6d01-48dd-9c60-3c3d013c4651",
+        "reason": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "sourceSnapshotId": null,
+        "parserVersion": "structured-intake-v1",
+        "correlationId": "2f345d81-c600-44d4-b590-e89d0adf0aab",
+        "effectiveFrom": "2026-07-23T22:07:56.748621Z",
+        "effectiveTo": null,
+        "supersedesEdgeIds": [],
+        "createdAt": "2026-07-23T22:07:56.748665Z",
+        "evidenceState": "PARTIAL"
+      },
+      {
+        "edgeId": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+        "listingId": "L-2036",
+        "propertyId": "PROPERTY-L-2036",
+        "relation": "SOURCE_OF",
+        "status": "EFFECTIVE",
+        "sourceIdentity": {
+          "sourceId": "coverage-exact-source",
+          "sourceListingId": "coverage-exact-1784844558167-wkfbi82",
+          "canonicalUrl": "https://example.com/exact-duplicate-1784844558166-yzhh54s"
+        },
+        "decisionId": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+        "reason": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "sourceSnapshotId": null,
+        "parserVersion": "structured-intake-v1",
+        "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "effectiveFrom": "2026-07-23T22:09:18.340087Z",
+        "effectiveTo": null,
+        "supersedesEdgeIds": [],
+        "createdAt": "2026-07-23T22:09:18.340126Z",
+        "evidenceState": "PARTIAL"
+      }
+    ],
+    "count": 6
+  },
+  "mergeEdges": {
+    "edges": [
+      {
+        "edgeId": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "relation": "MERGED_INTO",
+        "sourcePropertyId": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+        "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [],
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "effectiveFrom": "2026-07-23T22:09:26.681401Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.681419Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "decisionId": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "relation": "MERGED_INTO",
+        "sourcePropertyId": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+        "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+        "status": "EFFECTIVE",
+        "supersedesEdgeIds": [],
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "effectiveFrom": "2026-07-23T22:09:26.681443Z",
+        "effectiveTo": null,
+        "createdAt": "2026-07-23T22:09:26.681447Z",
+        "evidenceState": "COMPLETE"
+      },
+      {
+        "edgeId": "41f6658e-8a9c-4e39-a84c-d7cd636ec1cd",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "intakeId": "cee92ea0-5fc1-4a5e-829a-9de614c53cfc",
+        "listingId": "L-2035",
+        "propertyId": "PROPERTY-L-2035",
+        "relation": "SOURCE_OF",
+        "status": "EFFECTIVE",
+        "sourceIdentity": {
+          "sourceId": "coverage-exact-source",
+          "sourceListingId": "coverage-exact-1784844476550-z1unz3z",
+          "canonicalUrl": "https://example.com/possible-base-1784844476549-i6elhck"
+        },
+        "decisionId": "52f7d159-6d01-48dd-9c60-3c3d013c4651",
+        "reason": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "sourceSnapshotId": null,
+        "parserVersion": "structured-intake-v1",
+        "correlationId": "2f345d81-c600-44d4-b590-e89d0adf0aab",
+        "effectiveFrom": "2026-07-23T22:07:56.748621Z",
+        "effectiveTo": null,
+        "supersedesEdgeIds": [],
+        "createdAt": "2026-07-23T22:07:56.748665Z",
+        "evidenceState": "PARTIAL"
+      },
+      {
+        "edgeId": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+        "tenantId": "00000000-0000-0000-0000-000000000001",
+        "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+        "listingId": "L-2036",
+        "propertyId": "PROPERTY-L-2036",
+        "relation": "SOURCE_OF",
+        "status": "EFFECTIVE",
+        "sourceIdentity": {
+          "sourceId": "coverage-exact-source",
+          "sourceListingId": "coverage-exact-1784844558167-wkfbi82",
+          "canonicalUrl": "https://example.com/exact-duplicate-1784844558166-yzhh54s"
+        },
+        "decisionId": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+        "reason": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "sourceSnapshotId": null,
+        "parserVersion": "structured-intake-v1",
+        "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "effectiveFrom": "2026-07-23T22:09:18.340087Z",
+        "effectiveTo": null,
+        "supersedesEdgeIds": [],
+        "createdAt": "2026-07-23T22:09:18.340126Z",
+        "evidenceState": "PARTIAL"
+      }
+    ],
+    "count": 4
+  },
+  "merged": {
+    "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+    "status": "EXECUTED",
+    "resource_versions": {
+      "identityDecision": 4
+    },
+    "job_id": null,
+    "audit_event_id": "2f4b7c52-14e5-4764-b9dd-9a2879a6ceba",
+    "correlation_id": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+    "version": 4,
+    "action": "merge",
+    "proposer": "00000000-0000-4000-8000-000000000204",
+    "reviewer": "00000000-0000-4000-8000-000000000203",
+    "reason": "Merge two independently verified duplicate property identities.",
+    "graph_plan": {
+      "plan_id": "b62338de-f12f-4c0e-919b-a62bde09bf79",
+      "plan_type": "MERGE",
+      "status": "PROPOSED",
+      "operations": [
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "MERGED_INTO",
+          "sourcePropertyId": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+          "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "supersedesEdgeIds": []
+        },
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "MERGED_INTO",
+          "sourcePropertyId": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+          "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "supersedesEdgeIds": []
+        }
+      ],
+      "permitted_decision_types": [],
+      "requires_human_decision": true,
+      "before_graph": {
+        "version": 4,
+        "nodes": [],
+        "edges": []
+      },
+      "after_graph": {
+        "version": 6,
+        "nodes": [
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          }
+        ]
+      },
+      "redirects": [
+        {
+          "from_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+          "to_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "reason": "MERGE",
+          "status": "PROPOSED"
+        },
+        {
+          "from_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+          "to_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "reason": "MERGE",
+          "status": "PROPOSED"
+        }
+      ],
+      "candidate_impacts": [],
+      "lineage_impact": {
+        "append_only": true,
+        "source_evidence_preserved": true,
+        "superseded_edge_ids": [],
+        "affected_decision_ids": [],
+        "summary": "The operation appends immutable identity edges and preserves superseded lineage."
+      },
+      "proposer": {
+        "subject_id": "00000000-0000-4000-8000-000000000204",
+        "role_id": "dataSteward"
+      },
+      "reviewer": {
+        "subject_id": "00000000-0000-4000-8000-000000000203",
+        "role_id": "expansionManager"
+      },
+      "expected_graph_version": 4,
+      "original_decision": null,
+      "generated_at": "2026-07-23T22:09:26.585988Z"
+    },
+    "effect_receipt": {
+      "receipt_id": "24dc60c1-f8c8-4cba-a7ff-2f7aad7d1cb5",
+      "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+      "status": "EXECUTED",
+      "identity_edge_ids": [
+        "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+        "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+      ],
+      "runtime_receipt": null,
+      "audit_event_id": "2f4b7c52-14e5-4764-b9dd-9a2879a6ceba",
+      "correlation_id": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+      "version": 4,
+      "issued_at": "2026-07-23T22:09:26.681545Z",
+      "evidence_state": "COMPLETE"
+    },
+    "reverses_decision_id": null,
+    "created_at": "2026-07-23T22:09:26.585324Z",
+    "updated_at": "2026-07-23T22:09:26.681461Z",
+    "status_history": [
+      {
+        "transitionId": "aa6d5d0b-1fc9-4500-8c47-0c454ef933f1",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "PENDING_REVIEW",
+        "occurredAt": "2026-07-23T22:09:26.585324Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "Merge two independently verified duplicate property identities.",
+        "correlationId": "558d10e3-a118-49b1-97f5-e542f9bb77fb",
+        "versionAfter": 1
+      },
+      {
+        "transitionId": "ea948e27-39a4-40ff-9bca-1bcf790639f2",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "APPROVED",
+        "occurredAt": "2026-07-23T22:09:26.678484Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 2
+      },
+      {
+        "transitionId": "f2f622b2-2035-47c6-8344-c9d7ed5cd9ed",
+        "fromStatus": "APPROVED",
+        "toStatus": "EXECUTING",
+        "occurredAt": "2026-07-23T22:09:26.678523Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 3
+      },
+      {
+        "transitionId": "1aae1842-8b8f-4141-b8a0-86af639f5421",
+        "fromStatus": "EXECUTING",
+        "toStatus": "EXECUTED",
+        "occurredAt": "2026-07-23T22:09:26.681461Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 4
+      }
+    ],
+    "lifecycle_contract": {
+      "persisted_states": [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "REJECTED",
+        "EXECUTING",
+        "EXECUTED",
+        "FAILED",
+        "REVERSAL_PENDING",
+        "REVERSED",
+        "SUPERSEDED"
+      ],
+      "non_persisted_states": {
+        "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+      }
+    }
+  },
+  "originalAfter": {
+    "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+    "status": "REVERSED",
+    "resource_versions": {
+      "identityDecision": 5
+    },
+    "job_id": null,
+    "audit_event_id": "2f4b7c52-14e5-4764-b9dd-9a2879a6ceba",
+    "correlation_id": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+    "version": 5,
+    "action": "merge",
+    "proposer": "00000000-0000-4000-8000-000000000204",
+    "reviewer": "00000000-0000-4000-8000-000000000203",
+    "reason": "Merge two independently verified duplicate property identities.",
+    "graph_plan": {
+      "plan_id": "b62338de-f12f-4c0e-919b-a62bde09bf79",
+      "plan_type": "MERGE",
+      "status": "PROPOSED",
+      "operations": [
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "MERGED_INTO",
+          "sourcePropertyId": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+          "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "supersedesEdgeIds": []
+        },
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "MERGED_INTO",
+          "sourcePropertyId": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+          "targetPropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "supersedesEdgeIds": []
+        }
+      ],
+      "permitted_decision_types": [],
+      "requires_human_decision": true,
+      "before_graph": {
+        "version": 4,
+        "nodes": [],
+        "edges": []
+      },
+      "after_graph": {
+        "version": 6,
+        "nodes": [
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          }
+        ]
+      },
+      "redirects": [
+        {
+          "from_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+          "to_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "reason": "MERGE",
+          "status": "PROPOSED"
+        },
+        {
+          "from_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+          "to_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "reason": "MERGE",
+          "status": "PROPOSED"
+        }
+      ],
+      "candidate_impacts": [],
+      "lineage_impact": {
+        "append_only": true,
+        "source_evidence_preserved": true,
+        "superseded_edge_ids": [],
+        "affected_decision_ids": [],
+        "summary": "The operation appends immutable identity edges and preserves superseded lineage."
+      },
+      "proposer": {
+        "subject_id": "00000000-0000-4000-8000-000000000204",
+        "role_id": "dataSteward"
+      },
+      "reviewer": {
+        "subject_id": "00000000-0000-4000-8000-000000000203",
+        "role_id": "expansionManager"
+      },
+      "expected_graph_version": 4,
+      "original_decision": null,
+      "generated_at": "2026-07-23T22:09:26.585988Z"
+    },
+    "effect_receipt": {
+      "receipt_id": "24dc60c1-f8c8-4cba-a7ff-2f7aad7d1cb5",
+      "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+      "status": "EXECUTED",
+      "identity_edge_ids": [
+        "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+        "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+      ],
+      "runtime_receipt": null,
+      "audit_event_id": "2f4b7c52-14e5-4764-b9dd-9a2879a6ceba",
+      "correlation_id": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+      "version": 4,
+      "issued_at": "2026-07-23T22:09:26.681545Z",
+      "evidence_state": "COMPLETE"
+    },
+    "reverses_decision_id": null,
+    "created_at": "2026-07-23T22:09:26.585324Z",
+    "updated_at": "2026-07-23T22:09:26.798888Z",
+    "status_history": [
+      {
+        "transitionId": "aa6d5d0b-1fc9-4500-8c47-0c454ef933f1",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "PENDING_REVIEW",
+        "occurredAt": "2026-07-23T22:09:26.585324Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "Merge two independently verified duplicate property identities.",
+        "correlationId": "558d10e3-a118-49b1-97f5-e542f9bb77fb",
+        "versionAfter": 1
+      },
+      {
+        "transitionId": "ea948e27-39a4-40ff-9bca-1bcf790639f2",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "APPROVED",
+        "occurredAt": "2026-07-23T22:09:26.678484Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 2
+      },
+      {
+        "transitionId": "f2f622b2-2035-47c6-8344-c9d7ed5cd9ed",
+        "fromStatus": "APPROVED",
+        "toStatus": "EXECUTING",
+        "occurredAt": "2026-07-23T22:09:26.678523Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 3
+      },
+      {
+        "transitionId": "1aae1842-8b8f-4141-b8a0-86af639f5421",
+        "fromStatus": "EXECUTING",
+        "toStatus": "EXECUTED",
+        "occurredAt": "2026-07-23T22:09:26.681461Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "dd531dbc-dc36-4e6e-b037-d6170ebfb452",
+        "versionAfter": 4
+      },
+      {
+        "transitionId": "7062c37d-248f-46df-8474-a141bc57ec97",
+        "fromStatus": "EXECUTED",
+        "toStatus": "REVERSED",
+        "occurredAt": "2026-07-23T22:09:26.798888Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "versionAfter": 5
+      }
+    ],
+    "lifecycle_contract": {
+      "persisted_states": [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "REJECTED",
+        "EXECUTING",
+        "EXECUTED",
+        "FAILED",
+        "REVERSAL_PENDING",
+        "REVERSED",
+        "SUPERSEDED"
+      ],
+      "non_persisted_states": {
+        "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+      }
+    }
+  },
+  "reversed": {
+    "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+    "status": "EXECUTED",
+    "resource_versions": {
+      "identityDecision": 5
+    },
+    "job_id": null,
+    "audit_event_id": "a2d8e6c3-c9ba-48ec-9a90-3e9fad5df53a",
+    "correlation_id": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+    "version": 5,
+    "action": "reversal",
+    "proposer": "00000000-0000-4000-8000-000000000204",
+    "reviewer": "00000000-0000-4000-8000-000000000203",
+    "reason": "New authoritative evidence requires reversing the merge.",
+    "graph_plan": {
+      "plan_id": "6e863261-625e-4356-9ad4-d240bdadc05f",
+      "plan_type": "REVERSAL",
+      "status": "PROPOSED",
+      "operations": [],
+      "permitted_decision_types": [],
+      "requires_human_decision": true,
+      "before_graph": {
+        "version": 6,
+        "nodes": [
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          }
+        ]
+      },
+      "after_graph": {
+        "version": 8,
+        "nodes": [
+          {
+            "node_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "c180c914-d154-4669-bc84-7f6332db1322",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+            ]
+          },
+          {
+            "edge_id": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          }
+        ]
+      },
+      "redirects": [],
+      "candidate_impacts": [],
+      "lineage_impact": {
+        "append_only": true,
+        "source_evidence_preserved": true,
+        "superseded_edge_ids": [],
+        "affected_decision_ids": [
+          "4241c06d-f128-45d6-a3b3-674857f88cf4"
+        ],
+        "summary": "The operation appends immutable identity edges and preserves superseded lineage."
+      },
+      "proposer": {
+        "subject_id": "00000000-0000-4000-8000-000000000204",
+        "role_id": "dataSteward"
+      },
+      "reviewer": {
+        "subject_id": "00000000-0000-4000-8000-000000000203",
+        "role_id": "expansionManager"
+      },
+      "expected_graph_version": 6,
+      "original_decision": {
+        "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "action": "merge",
+        "status": "EXECUTED",
+        "version": 4
+      },
+      "generated_at": "2026-07-23T22:09:26.747220Z"
+    },
+    "effect_receipt": {
+      "receipt_id": "3d886573-6f07-43e3-b796-7690fe40fbd6",
+      "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+      "status": "EXECUTED",
+      "identity_edge_ids": [
+        "c180c914-d154-4669-bc84-7f6332db1322",
+        "2e765c3d-837a-4166-9a49-2fa8f8453a69"
+      ],
+      "runtime_receipt": null,
+      "audit_event_id": "a2d8e6c3-c9ba-48ec-9a90-3e9fad5df53a",
+      "correlation_id": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+      "version": 5,
+      "issued_at": "2026-07-23T22:09:26.799000Z",
+      "evidence_state": "COMPLETE"
+    },
+    "reverses_decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+    "created_at": "2026-07-23T22:09:26.746438Z",
+    "updated_at": "2026-07-23T22:09:26.798874Z",
+    "status_history": [
+      {
+        "transitionId": "2ca70f3b-cbd6-4f02-8d9a-b2b75efcdcd8",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "PENDING_REVIEW",
+        "occurredAt": "2026-07-23T22:09:26.746438Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "New authoritative evidence requires reversing the merge.",
+        "correlationId": "09680e4d-55cd-4a64-aa0e-a59ed75eea69",
+        "versionAfter": 1
+      },
+      {
+        "transitionId": "3c69c4de-616b-4591-8086-776fff6504eb",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "REVERSAL_PENDING",
+        "occurredAt": "2026-07-23T22:09:26.749719Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "New authoritative evidence requires reversing the merge.",
+        "correlationId": "09680e4d-55cd-4a64-aa0e-a59ed75eea69",
+        "versionAfter": 2
+      },
+      {
+        "transitionId": "47d65008-de02-484a-bcfd-85fb18b46a48",
+        "fromStatus": "REVERSAL_PENDING",
+        "toStatus": "APPROVED",
+        "occurredAt": "2026-07-23T22:09:26.797187Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "versionAfter": 3
+      },
+      {
+        "transitionId": "31e36f46-2298-449d-ae77-72469271b60c",
+        "fromStatus": "APPROVED",
+        "toStatus": "EXECUTING",
+        "occurredAt": "2026-07-23T22:09:26.797223Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "versionAfter": 4
+      },
+      {
+        "transitionId": "bddec0d2-cf60-411e-8106-39e70f8f4ceb",
+        "fromStatus": "EXECUTING",
+        "toStatus": "EXECUTED",
+        "occurredAt": "2026-07-23T22:09:26.798874Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves reversal and lineage retention.",
+        "correlationId": "2a27b6d6-c1f4-4955-8ec5-cce15333dc9f",
+        "versionAfter": 5
+      }
+    ],
+    "lifecycle_contract": {
+      "persisted_states": [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "REJECTED",
+        "EXECUTING",
+        "EXECUTED",
+        "FAILED",
+        "REVERSAL_PENDING",
+        "REVERSED",
+        "SUPERSEDED"
+      ],
+      "non_persisted_states": {
+        "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+      }
+    }
+  },
+  "split": {
+    "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+    "status": "EXECUTED",
+    "resource_versions": {
+      "identityDecision": 4
+    },
+    "job_id": null,
+    "audit_event_id": "8482dd7b-f786-4eb5-b00e-1dbfcd76c0a8",
+    "correlation_id": "d28e1044-e6cf-4b70-b292-2271659510f1",
+    "version": 4,
+    "action": "split",
+    "proposer": "00000000-0000-4000-8000-000000000204",
+    "reviewer": "00000000-0000-4000-8000-000000000203",
+    "reason": "Split source edges into two separately verified properties.",
+    "graph_plan": {
+      "plan_id": "8ef31576-bcfc-474d-bf95-3280903573d1",
+      "plan_type": "SPLIT",
+      "status": "PROPOSED",
+      "operations": [
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "SPLIT_TO",
+          "sourcePropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "targetPropertyId": "5addd620-f70c-4300-9158-c06e99de1bc7",
+          "supersedesEdgeIds": [
+            "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+          ]
+        },
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "SPLIT_TO",
+          "sourcePropertyId": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+          "targetPropertyId": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+          "supersedesEdgeIds": [
+            "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+          ]
+        }
+      ],
+      "permitted_decision_types": [],
+      "requires_human_decision": true,
+      "before_graph": {
+        "version": 8,
+        "nodes": [
+          {
+            "node_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "c180c914-d154-4669-bc84-7f6332db1322",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+            ]
+          },
+          {
+            "edge_id": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          }
+        ]
+      },
+      "after_graph": {
+        "version": 10,
+        "nodes": [
+          {
+            "node_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "c180c914-d154-4669-bc84-7f6332db1322",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+            ]
+          },
+          {
+            "edge_id": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "7d8a5457-f8dd-464c-b4bc-70d653997e82",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "1993b32d-5448-487c-aefb-b640caf4adec",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          }
+        ]
+      },
+      "redirects": [],
+      "candidate_impacts": [],
+      "lineage_impact": {
+        "append_only": true,
+        "source_evidence_preserved": true,
+        "superseded_edge_ids": [
+          "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+          "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+        ],
+        "affected_decision_ids": [],
+        "summary": "The operation appends immutable identity edges and preserves superseded lineage."
+      },
+      "proposer": {
+        "subject_id": "00000000-0000-4000-8000-000000000204",
+        "role_id": "dataSteward"
+      },
+      "reviewer": {
+        "subject_id": "00000000-0000-4000-8000-000000000203",
+        "role_id": "expansionManager"
+      },
+      "expected_graph_version": 8,
+      "original_decision": null,
+      "generated_at": "2026-07-23T22:09:26.862710Z"
+    },
+    "effect_receipt": {
+      "receipt_id": "459db0b7-be73-440d-83fa-9f3423ab2c4b",
+      "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+      "status": "EXECUTED",
+      "identity_edge_ids": [
+        "7d8a5457-f8dd-464c-b4bc-70d653997e82",
+        "1993b32d-5448-487c-aefb-b640caf4adec"
+      ],
+      "runtime_receipt": null,
+      "audit_event_id": "8482dd7b-f786-4eb5-b00e-1dbfcd76c0a8",
+      "correlation_id": "d28e1044-e6cf-4b70-b292-2271659510f1",
+      "version": 4,
+      "issued_at": "2026-07-23T22:09:26.923523Z",
+      "evidence_state": "COMPLETE"
+    },
+    "reverses_decision_id": null,
+    "created_at": "2026-07-23T22:09:26.861879Z",
+    "updated_at": "2026-07-23T22:09:26.923364Z",
+    "status_history": [
+      {
+        "transitionId": "e0ecfd59-5c5f-4680-9b99-a588a853039f",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "PENDING_REVIEW",
+        "occurredAt": "2026-07-23T22:09:26.861879Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "Split source edges into two separately verified properties.",
+        "correlationId": "ce35ea5f-6e30-40d3-8eab-12d4d0d33f26",
+        "versionAfter": 1
+      },
+      {
+        "transitionId": "e02662e8-eefd-4970-aef4-d1ba41d56ed5",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "APPROVED",
+        "occurredAt": "2026-07-23T22:09:26.921993Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "d28e1044-e6cf-4b70-b292-2271659510f1",
+        "versionAfter": 2
+      },
+      {
+        "transitionId": "eb72c29f-bd72-4378-b527-57f1938dae0e",
+        "fromStatus": "APPROVED",
+        "toStatus": "EXECUTING",
+        "occurredAt": "2026-07-23T22:09:26.922033Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "d28e1044-e6cf-4b70-b292-2271659510f1",
+        "versionAfter": 3
+      },
+      {
+        "transitionId": "65823cb7-9028-49b9-b7e1-aeb159bfef05",
+        "fromStatus": "EXECUTING",
+        "toStatus": "EXECUTED",
+        "occurredAt": "2026-07-23T22:09:26.923364Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "d28e1044-e6cf-4b70-b292-2271659510f1",
+        "versionAfter": 4
+      }
+    ],
+    "lifecycle_contract": {
+      "persisted_states": [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "REJECTED",
+        "EXECUTING",
+        "EXECUTED",
+        "FAILED",
+        "REVERSAL_PENDING",
+        "REVERSED",
+        "SUPERSEDED"
+      ],
+      "non_persisted_states": {
+        "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+      }
+    }
+  },
+  "unmerge": {
+    "decision_id": "af0f9486-4269-44fa-866a-ae7aa54c45ff",
+    "status": "EXECUTED",
+    "resource_versions": {
+      "identityDecision": 4
+    },
+    "job_id": null,
+    "audit_event_id": "8214f857-617c-478d-97b2-3279dffbe69e",
+    "correlation_id": "ae9c9322-f0c8-4db5-ae7c-1b076316169e",
+    "version": 4,
+    "action": "unmerge",
+    "proposer": "00000000-0000-4000-8000-000000000204",
+    "reviewer": "00000000-0000-4000-8000-000000000203",
+    "reason": "Restore the first source identity with explicit replacement lineage.",
+    "graph_plan": {
+      "plan_id": "e7598d41-fc90-4b8c-8cb1-201d06fbf388",
+      "plan_type": "UNMERGE",
+      "status": "PROPOSED",
+      "operations": [
+        {
+          "operation": "APPEND_IDENTITY_EDGE",
+          "relation": "UNMERGED_TO",
+          "sourcePropertyId": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+          "targetPropertyId": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+          "supersedesEdgeIds": [
+            "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+          ]
+        }
+      ],
+      "permitted_decision_types": [],
+      "requires_human_decision": true,
+      "before_graph": {
+        "version": 10,
+        "nodes": [
+          {
+            "node_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "c180c914-d154-4669-bc84-7f6332db1322",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+            ]
+          },
+          {
+            "edge_id": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "7d8a5457-f8dd-464c-b4bc-70d653997e82",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "1993b32d-5448-487c-aefb-b640caf4adec",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          }
+        ]
+      },
+      "after_graph": {
+        "version": 12,
+        "nodes": [
+          {
+            "node_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          },
+          {
+            "node_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "node_type": "PROPERTY",
+            "status": "EFFECTIVE"
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "relation": "MERGED_INTO",
+            "status": "EFFECTIVE",
+            "source_property_id": "d3151539-1dfe-4ba7-9d29-b9ebbaca4aa5",
+            "target_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "supersedes_edge_ids": []
+          },
+          {
+            "edge_id": "c180c914-d154-4669-bc84-7f6332db1322",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+            ]
+          },
+          {
+            "edge_id": "2e765c3d-837a-4166-9a49-2fa8f8453a69",
+            "relation": "REVERSAL_OF",
+            "status": "EFFECTIVE",
+            "source_property_id": "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+            "target_property_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "768ff493-5a5d-4d3e-af21-b4efadbc26a7",
+            "supersedes_edge_ids": [
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "7d8a5457-f8dd-464c-b4bc-70d653997e82",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "5addd620-f70c-4300-9158-c06e99de1bc7",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "1993b32d-5448-487c-aefb-b640caf4adec",
+            "relation": "SPLIT_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "5294ed86-c6a2-402c-9573-1e0fac99ab13",
+            "target_property_id": "b5f1a9c1-fde0-4c65-bd96-f2c5e3cba71f",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "381b6e0b-f1d6-4303-9f19-bbee8f2004ac",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          },
+          {
+            "edge_id": "b1c2994b-ed38-4316-8064-7169db557450",
+            "relation": "UNMERGED_TO",
+            "status": "EFFECTIVE",
+            "source_property_id": "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+            "target_property_id": "f448a97d-68b9-4563-a4b9-a9a1c6095e85",
+            "property_id": null,
+            "listing_id": null,
+            "intake_id": null,
+            "decision_id": "af0f9486-4269-44fa-866a-ae7aa54c45ff",
+            "supersedes_edge_ids": [
+              "9323ad6c-cbb1-41c7-87b7-2d6fef38037a",
+              "8611a9f1-1897-4ecf-8f2b-6c850bec0871"
+            ]
+          }
+        ]
+      },
+      "redirects": [],
+      "candidate_impacts": [],
+      "lineage_impact": {
+        "append_only": true,
+        "source_evidence_preserved": true,
+        "superseded_edge_ids": [
+          "8611a9f1-1897-4ecf-8f2b-6c850bec0871",
+          "9323ad6c-cbb1-41c7-87b7-2d6fef38037a"
+        ],
+        "affected_decision_ids": [
+          "4241c06d-f128-45d6-a3b3-674857f88cf4"
+        ],
+        "summary": "The operation appends immutable identity edges and preserves superseded lineage."
+      },
+      "proposer": {
+        "subject_id": "00000000-0000-4000-8000-000000000204",
+        "role_id": "dataSteward"
+      },
+      "reviewer": {
+        "subject_id": "00000000-0000-4000-8000-000000000203",
+        "role_id": "expansionManager"
+      },
+      "expected_graph_version": 10,
+      "original_decision": {
+        "decision_id": "4241c06d-f128-45d6-a3b3-674857f88cf4",
+        "action": "merge",
+        "status": "REVERSED",
+        "version": 5
+      },
+      "generated_at": "2026-07-23T22:09:26.961752Z"
+    },
+    "effect_receipt": {
+      "receipt_id": "496f9d1e-2f47-498e-8d7f-f588cd8b056f",
+      "decision_id": "af0f9486-4269-44fa-866a-ae7aa54c45ff",
+      "status": "EXECUTED",
+      "identity_edge_ids": [
+        "b1c2994b-ed38-4316-8064-7169db557450"
+      ],
+      "runtime_receipt": null,
+      "audit_event_id": "8214f857-617c-478d-97b2-3279dffbe69e",
+      "correlation_id": "ae9c9322-f0c8-4db5-ae7c-1b076316169e",
+      "version": 4,
+      "issued_at": "2026-07-23T22:09:27.054957Z",
+      "evidence_state": "COMPLETE"
+    },
+    "reverses_decision_id": null,
+    "created_at": "2026-07-23T22:09:26.959165Z",
+    "updated_at": "2026-07-23T22:09:27.054754Z",
+    "status_history": [
+      {
+        "transitionId": "f3c484af-cf10-435c-a557-8ae644f10d72",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "PENDING_REVIEW",
+        "occurredAt": "2026-07-23T22:09:26.959165Z",
+        "actor": "00000000-0000-4000-8000-000000000204",
+        "actorRoleId": "dataSteward",
+        "reason": "Restore the first source identity with explicit replacement lineage.",
+        "correlationId": "ac2b6a50-8146-48bc-bd20-3b496ffd3903",
+        "versionAfter": 1
+      },
+      {
+        "transitionId": "96073550-3829-40ab-8ff8-898008a1a985",
+        "fromStatus": "PENDING_REVIEW",
+        "toStatus": "APPROVED",
+        "occurredAt": "2026-07-23T22:09:27.052498Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "ae9c9322-f0c8-4db5-ae7c-1b076316169e",
+        "versionAfter": 2
+      },
+      {
+        "transitionId": "de43686f-9356-4ab2-aa30-1f212be82b14",
+        "fromStatus": "APPROVED",
+        "toStatus": "EXECUTING",
+        "occurredAt": "2026-07-23T22:09:27.052553Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "ae9c9322-f0c8-4db5-ae7c-1b076316169e",
+        "versionAfter": 3
+      },
+      {
+        "transitionId": "28b0983c-555f-47e5-b955-1c19df772d50",
+        "fromStatus": "EXECUTING",
+        "toStatus": "EXECUTED",
+        "occurredAt": "2026-07-23T22:09:27.054754Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actorRoleId": "expansionManager",
+        "reason": "Independent reviewer approves the persisted graph plan.",
+        "correlationId": "ae9c9322-f0c8-4db5-ae7c-1b076316169e",
+        "versionAfter": 4
+      }
+    ],
+    "lifecycle_contract": {
+      "persisted_states": [
+        "PENDING_REVIEW",
+        "APPROVED",
+        "REJECTED",
+        "EXECUTING",
+        "EXECUTED",
+        "FAILED",
+        "REVERSAL_PENDING",
+        "REVERSED",
+        "SUPERSEDED"
+      ],
+      "non_persisted_states": {
+        "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+      }
+    }
+  }
+}

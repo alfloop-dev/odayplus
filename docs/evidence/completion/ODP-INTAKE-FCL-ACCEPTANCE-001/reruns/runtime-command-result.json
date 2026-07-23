@@ -1,0 +1,18 @@
+{
+  "task_id": "ODP-INTAKE-FCL-ACCEPTANCE-001",
+  "reviewed_commit": "361d0c8e8457f8c3b969f28d34b3cd8217ab00a5",
+  "command": "python3 scripts/e2e/run_assisted_intake_functional_runtime.py",
+  "result": "PASS",
+  "passed": 23,
+  "failed": 0,
+  "skipped": 0,
+  "fixme": 0,
+  "duration": "5.3m",
+  "record_source": "Acceptance Fleet terminal stdout from the completed required rerun",
+  "retained_artifacts": [
+    "docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/reruns/runtime/screenshots/viewport-390.png",
+    "docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/reruns/runtime/screenshots/viewport-1024.png",
+    "docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/reruns/runtime/screenshots/viewport-1440.png"
+  ],
+  "note": "A Playwright .last-run marker from a later pre-scenario sandbox startup failure was not evidence for this completed run and was removed."
+}

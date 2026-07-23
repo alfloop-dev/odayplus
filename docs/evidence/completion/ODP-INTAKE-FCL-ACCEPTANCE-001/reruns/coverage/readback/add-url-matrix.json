@@ -1,0 +1,3256 @@
+{
+  "canonical": {
+    "intake_id": "2297d105-19d8-4e0e-a86a-71688bd67f79",
+    "state": "CHECKING_IDENTITY",
+    "intake_method": "URL",
+    "source_id": "SRC-UNKNOWN",
+    "original_url": "HTTPS://EXAMPLE.COM/listing/canonical-1784844536716-rhh7rfb?utm_source=coverage&utm_campaign=test#detail",
+    "canonical_url": "https://example.com/listing/canonical-1784844536716-rhh7rfb",
+    "policy_state": "POLICY_UNKNOWN",
+    "match_outcome": null,
+    "submitted_by": "00000000-0000-4000-8000-000000000202",
+    "assigned_to": "00000000-0000-4000-8000-000000000202",
+    "assignment_id": null,
+    "assignment_status": null,
+    "assignment_version": null,
+    "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+    "queue_id": null,
+    "sla_instance_id": null,
+    "sla_state": null,
+    "sla_version": null,
+    "due_at": null,
+    "last_observed_at": "2026-07-23T22:08:56.884383Z",
+    "submitted_at": "2026-07-23T22:08:56.884383Z",
+    "updated_at": "2026-07-23T22:08:57.175787Z",
+    "version": 3,
+    "scope": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "assigned_area_id": null,
+      "brand_id": null,
+      "heat_zone_id": null,
+      "region_id": null
+    },
+    "issue": null,
+    "next_action": null,
+    "retryable": false,
+    "quarantined": false,
+    "failed": false,
+    "location": {
+      "address": null,
+      "district": null,
+      "assigned_area_id": null,
+      "heat_zone_id": null,
+      "latitude": null,
+      "longitude": null,
+      "confidence": null,
+      "source": null
+    },
+    "masking": {
+      "restricted_data": false,
+      "has_masked_fields": false,
+      "masked_fields": [],
+      "reason_codes": []
+    },
+    "masked_fields": [],
+    "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+    "source_snapshot_id": null,
+    "parser_run_id": null,
+    "match_case_id": "35899b67-cd66-4588-b424-7a1ae62667a3",
+    "match_case_version": 0,
+    "match_case": null,
+    "processing_history": [
+      {
+        "transition_id": "5a4ab276-8983-4888-a32d-ff9911a3e040",
+        "from_state": null,
+        "to_state": "SUBMITTED",
+        "occurred_at": "2026-07-23T22:08:56.884383Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 1
+      },
+      {
+        "transition_id": "7a64b782-3391-4f63-8b2c-f6151bb08859",
+        "from_state": "SUBMITTED",
+        "to_state": "CHECKING_IDENTITY",
+        "occurred_at": "2026-07-23T22:08:57.175787Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 3
+      }
+    ],
+    "fields": [],
+    "audit": [
+      {
+        "audit_event_id": "618b6aed-303e-4334-8dfa-737f92f508fc",
+        "action": "intake.create",
+        "occurred_at": "2026-07-23T22:08:56.885958Z",
+        "result": "SUCCEEDED",
+        "reason_code": "User-submitted listing intake",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "expansionManager",
+        "before": null,
+        "after": {
+          "stage": "SUBMITTED",
+          "version": 1
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "2297d105-19d8-4e0e-a86a-71688bd67f79",
+          "jobId": "61cb34e0-f0de-463d-a004-625042c3b912"
+        },
+        "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+        "resource_version": 1,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "d01f3444-9745-485e-bf8d-1b87c6835bf5",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:08:57.175787Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "SUBMITTED"
+        },
+        "after": {
+          "stage": "CHECKING_IDENTITY",
+          "version": 3
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "2297d105-19d8-4e0e-a86a-71688bd67f79",
+          "jobId": "61cb34e0-f0de-463d-a004-625042c3b912"
+        },
+        "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+        "resource_version": 3,
+        "evidence_state": "PARTIAL"
+      }
+    ],
+    "evidence": {
+      "original_url": "HTTPS://EXAMPLE.COM/listing/canonical-1784844536716-rhh7rfb?utm_source=coverage&utm_campaign=test#detail",
+      "canonical_url": "https://example.com/listing/canonical-1784844536716-rhh7rfb",
+      "source_id": "SRC-UNKNOWN",
+      "policy_state": "POLICY_UNKNOWN",
+      "policy_reason": "此來源尚未登錄授權與資料使用範圍；依 fail-closed 原則停止處理並送治理覆核。",
+      "policy_version": "assisted-intake-source-policy-2026.07",
+      "policy_evaluated_at": "2026-07-23T22:08:56.884293Z",
+      "policy_expires_at": "2026-08-22T22:08:56Z",
+      "source_snapshot_id": null,
+      "captured_at": null,
+      "parser_run_id": null,
+      "parser_version": "listing-parser v1.4",
+      "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+      "freshness_state": "NOT_CAPTURED",
+      "resource_version": 3,
+      "etag": "W/\"3\""
+    },
+    "sla_receipt": null,
+    "lifecycle": {
+      "intake_id": "2297d105-19d8-4e0e-a86a-71688bd67f79",
+      "version": 3,
+      "etag": "W/\"3\"",
+      "actor_facts": {
+        "role_mode": "expansion-manager",
+        "allowed_actions": [
+          "ASSIGN",
+          "CANCEL",
+          "CANCEL_JOB",
+          "CLAIM",
+          "COMPLETE",
+          "CORRECT",
+          "ESCALATE",
+          "MERGE",
+          "PAUSE_SLA",
+          "REPLAY_JOB",
+          "RESUME_SLA",
+          "REVERSE",
+          "REVIEW_PROMOTION",
+          "SPLIT",
+          "SUBMIT_URL",
+          "TRANSFER",
+          "UNMERGE",
+          "VIEW"
+        ],
+        "denied_action_reasons": {
+          "DECIDE_MATCH": "WORKFLOW_STATE_DENIED",
+          "EXPORT_EVIDENCE": "ROLE_DENIED",
+          "REOPEN": "WORKFLOW_STATE_DENIED",
+          "REQUEST_PROMOTION": "WORKFLOW_STATE_DENIED",
+          "RETRY": "WORKFLOW_STATE_DENIED"
+        },
+        "scope": {
+          "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+          "resource": {
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "assigned_area_id": null,
+            "brand_id": null,
+            "heat_zone_id": null,
+            "region_id": null
+          },
+          "in_scope": true
+        },
+        "masking": {
+          "masked_fields": [],
+          "reason_codes": [],
+          "has_masked_fields": false,
+          "clearance": "CONFIDENTIAL"
+        },
+        "purpose": {
+          "value": null,
+          "required": false,
+          "bound": false,
+          "reason_code": null
+        },
+        "second_actor": {
+          "required": false,
+          "pending_decision_ids": [],
+          "proposer_subject_ids": [],
+          "self_review_denied": false,
+          "reason_code": null
+        }
+      },
+      "assignment": null,
+      "sla": null,
+      "decisions": [],
+      "promotion": null,
+      "job": {
+        "job_id": "61cb34e0-f0de-463d-a004-625042c3b912",
+        "status": "RUNNING",
+        "attempt": 1,
+        "checkpoint": "CHECKING_IDENTITY",
+        "next_retry_at": null,
+        "fence_token": 1,
+        "version": 3
+      },
+      "assignment_history": [],
+      "sla_history": [],
+      "decision_history": [],
+      "promotion_history": [],
+      "job_history": [
+        {
+          "receipt_id": "4aff3b12-e1ff-402a-b8a0-e16d01cb131e",
+          "category": "job",
+          "action": "RUN",
+          "resource_id": "61cb34e0-f0de-463d-a004-625042c3b912",
+          "resource_version": 2,
+          "status": "RUNNING",
+          "actor": "oday-worker",
+          "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+          "occurred_at": "2026-07-23T22:08:57.168602+00:00",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": "61cb34e0-f0de-463d-a004-625042c3b912",
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "RUNNING",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": null,
+            "version": 2,
+            "version_after": null,
+            "audit_event_id": null,
+            "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+            "actor": null,
+            "reason": null,
+            "checkpoint": "CHECKING_IDENTITY",
+            "attempt": 1,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:08:57.168602+00:00",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "mutation_receipts": [
+        {
+          "receipt_id": "4aff3b12-e1ff-402a-b8a0-e16d01cb131e",
+          "category": "job",
+          "action": "RUN",
+          "resource_id": "61cb34e0-f0de-463d-a004-625042c3b912",
+          "resource_version": 2,
+          "status": "RUNNING",
+          "actor": "oday-worker",
+          "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+          "occurred_at": "2026-07-23T22:08:57.168602+00:00",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": "61cb34e0-f0de-463d-a004-625042c3b912",
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "RUNNING",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": null,
+            "version": 2,
+            "version_after": null,
+            "audit_event_id": null,
+            "correlation_id": "corr-2e315713-2ed1-4607-bc7c-91119f55d513",
+            "actor": null,
+            "reason": null,
+            "checkpoint": "CHECKING_IDENTITY",
+            "attempt": 1,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:08:57.168602+00:00",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "latest_decision_receipt": null,
+      "submission_receipt": null
+    }
+  },
+  "exactBeforeDuplicate": {
+    "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+    "state": "READY",
+    "intake_method": "MANUAL",
+    "source_id": "coverage-exact-source",
+    "original_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+    "canonical_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+    "policy_state": "ASSISTED_ENTRY_ONLY",
+    "match_outcome": "NEW",
+    "submitted_by": "00000000-0000-4000-8000-000000000202",
+    "assigned_to": "00000000-0000-4000-8000-000000000202",
+    "assignment_id": null,
+    "assignment_status": null,
+    "assignment_version": null,
+    "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+    "queue_id": null,
+    "sla_instance_id": null,
+    "sla_state": null,
+    "sla_version": null,
+    "due_at": null,
+    "last_observed_at": "2026-07-23T22:09:18.178469Z",
+    "submitted_at": "2026-07-23T22:09:18.178469Z",
+    "updated_at": "2026-07-23T22:09:18.341054Z",
+    "version": 4,
+    "scope": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "assigned_area_id": null,
+      "brand_id": null,
+      "heat_zone_id": null,
+      "region_id": null
+    },
+    "issue": null,
+    "next_action": null,
+    "retryable": false,
+    "quarantined": false,
+    "failed": false,
+    "location": {
+      "address": "台北市中山區完整路101號",
+      "district": null,
+      "assigned_area_id": null,
+      "heat_zone_id": null,
+      "latitude": null,
+      "longitude": null,
+      "confidence": null,
+      "source": null
+    },
+    "masking": {
+      "restricted_data": false,
+      "has_masked_fields": false,
+      "masked_fields": [],
+      "reason_codes": []
+    },
+    "masked_fields": [],
+    "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+    "source_snapshot_id": null,
+    "parser_run_id": null,
+    "match_case_id": "2b683e29-5ed6-42ae-91bd-a26edbcd0a90",
+    "match_case_version": 1,
+    "match_case": {
+      "match_case_id": "2b683e29-5ed6-42ae-91bd-a26edbcd0a90",
+      "version": 1,
+      "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+      "outcome": "POSSIBLE_MATCH",
+      "confidence": 0.5,
+      "target_listing_id": "L-2035",
+      "summary": "與 L-2035 部分訊號一致（信心 0.50），但 正規化地址、物件型態 矛盾；需人工判定，不會自動合併。",
+      "comparison_fields": [
+        {
+          "field_path": "floor",
+          "label": "樓層",
+          "submitted_value": "1F",
+          "existing_value": "1F",
+          "agrees": true,
+          "detail": "送件 1F · 既有 1F"
+        },
+        {
+          "field_path": "areaPing",
+          "label": "坪數",
+          "submitted_value": 21,
+          "existing_value": 21,
+          "agrees": true,
+          "detail": "送件 21 · 既有 21"
+        },
+        {
+          "field_path": "rent",
+          "label": "租金",
+          "submitted_value": 63000,
+          "existing_value": 63000,
+          "agrees": true,
+          "detail": "送件 63000 · 既有 63000"
+        },
+        {
+          "field_path": "normalizedAddress",
+          "label": "正規化地址",
+          "submitted_value": "台北市中山區完整路101號",
+          "existing_value": "",
+          "agrees": false,
+          "detail": "送件 台北市中山區完整路101號 · 既有 —"
+        },
+        {
+          "field_path": "listingType",
+          "label": "物件型態",
+          "submitted_value": "店面",
+          "existing_value": null,
+          "agrees": false,
+          "detail": "送件 店面 · 既有 None"
+        }
+      ],
+      "signals": [
+        {
+          "key": "floor",
+          "label": "樓層",
+          "agrees": true,
+          "detail": "送件 1F · 既有 1F"
+        },
+        {
+          "key": "areaPing",
+          "label": "坪數",
+          "agrees": true,
+          "detail": "送件 21 · 既有 21"
+        },
+        {
+          "key": "rent",
+          "label": "租金",
+          "agrees": true,
+          "detail": "送件 63000 · 既有 63000"
+        },
+        {
+          "key": "normalizedAddress",
+          "label": "正規化地址",
+          "agrees": false,
+          "detail": "送件 台北市中山區完整路101號 · 既有 —"
+        },
+        {
+          "key": "listingType",
+          "label": "物件型態",
+          "agrees": false,
+          "detail": "送件 店面 · 既有 None"
+        }
+      ],
+      "graph_plan": {
+        "plan_id": "cb40042a-a834-4ecd-9c55-de0d98a7d073",
+        "plan_type": "HUMAN_DECISION_REQUIRED",
+        "status": "PROPOSED",
+        "operations": [],
+        "permitted_decision_types": [
+          "CREATE",
+          "REVISE",
+          "DUPLICATE",
+          "QUARANTINE",
+          "REJECT"
+        ],
+        "requires_human_decision": true,
+        "before_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "L-2035",
+              "node_type": "LISTING",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "PROPERTY-L-2035",
+              "node_type": "PROPERTY",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "after_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "L-2035",
+              "node_type": "LISTING",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "PROPERTY-L-2035",
+              "node_type": "PROPERTY",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "redirects": [],
+        "candidate_impacts": [],
+        "lineage_impact": {
+          "append_only": true,
+          "source_evidence_preserved": true,
+          "superseded_edge_ids": [],
+          "affected_decision_ids": [],
+          "summary": "The plan preserves source evidence and appends lineage only after an authorized human decision."
+        },
+        "proposer": null,
+        "reviewer": null,
+        "expected_graph_version": 2,
+        "original_decision": null,
+        "generated_at": "2026-07-23T22:09:18.185037Z"
+      },
+      "source_snapshot_id": null,
+      "parser_version": "structured-intake-v1",
+      "created_at": "2026-07-23T22:09:18.185049Z",
+      "updated_at": "2026-07-23T22:09:18.185053Z"
+    },
+    "processing_history": [
+      {
+        "transition_id": "5ade9f94-9bd0-4a8a-aa69-3c33f91fd93d",
+        "from_state": null,
+        "to_state": "SUBMITTED",
+        "occurred_at": "2026-07-23T22:09:18.178469Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 1
+      },
+      {
+        "transition_id": "7dabc04f-cc7f-4c65-88bc-448fd1d6e543",
+        "from_state": "SUBMITTED",
+        "to_state": "MATCHING",
+        "occurred_at": "2026-07-23T22:09:18.182316Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 2
+      },
+      {
+        "transition_id": "2f8c55fa-760d-434f-8218-513723d9de4a",
+        "from_state": "MATCHING",
+        "to_state": "NEEDS_REVIEW",
+        "occurred_at": "2026-07-23T22:09:18.185190Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 3
+      },
+      {
+        "transition_id": "0a16f98d-c05d-4006-b76b-5f4d560550c2",
+        "from_state": "NEEDS_REVIEW",
+        "to_state": "READY",
+        "occurred_at": "2026-07-23T22:09:18.341054Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "reason_code": "DECISION_CREATE",
+        "version_after": 4
+      }
+    ],
+    "fields": [
+      {
+        "field_path": "providerListingId",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "coverage-exact-1784844558167-wkfbi82",
+        "normalized": "coverage-exact-1784844558167-wkfbi82",
+        "corrected": null,
+        "effective": "coverage-exact-1784844558167-wkfbi82",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "address",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "台北市中山區完整路 101 號 1F",
+        "normalized": "台北市中山區完整路101號",
+        "corrected": null,
+        "effective": "台北市中山區完整路101號",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "rent",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": 63000,
+        "normalized": 63000,
+        "corrected": null,
+        "effective": 63000,
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "areaPing",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": 21,
+        "normalized": 21,
+        "corrected": null,
+        "effective": 21,
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "floor",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "1F",
+        "normalized": "1F",
+        "corrected": null,
+        "effective": "1F",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "listingType",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "店面",
+        "normalized": "店面",
+        "corrected": null,
+        "effective": "店面",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "listingStatus",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "active",
+        "normalized": "active",
+        "corrected": null,
+        "effective": "active",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "currency",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "TWD",
+        "normalized": "TWD",
+        "corrected": null,
+        "effective": "TWD",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      }
+    ],
+    "audit": [
+      {
+        "audit_event_id": "2a5fdfa8-a8aa-4117-8d69-1dd4de70dd65",
+        "action": "intake.create_structured",
+        "occurred_at": "2026-07-23T22:09:18.178469Z",
+        "result": "SUCCEEDED",
+        "reason_code": "Structured intake submission",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "expansionManager",
+        "before": null,
+        "after": {
+          "stage": "SUBMITTED",
+          "version": 1
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797"
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 1,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "7e7c93ce-8af9-42a9-ad20-21f3d234fd71",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.182316Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "SUBMITTED"
+        },
+        "after": {
+          "stage": "MATCHING",
+          "version": 2
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 2,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "c3daa373-a5f1-413e-8c7a-a25fc60cdb35",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.185190Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "MATCHING"
+        },
+        "after": {
+          "stage": "NEEDS_REVIEW",
+          "version": 3
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 3,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "3aa028de-47fc-45aa-8990-fa71e151f85b",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.341054Z",
+        "result": "SUCCEEDED",
+        "reason_code": "DECISION_CREATE",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actor_role": "system",
+        "before": {
+          "stage": "NEEDS_REVIEW"
+        },
+        "after": {
+          "stage": "READY",
+          "version": 4
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "resource_version": 4,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+        "action": "intake.decide.create",
+        "occurred_at": "2026-07-23T22:09:18.343192Z",
+        "result": "SUCCEEDED",
+        "reason_code": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actor_role": "expansionManager",
+        "before": {
+          "stage": {
+            "before": "NEEDS_REVIEW",
+            "after": "READY"
+          },
+          "listings_count": {
+            "before": 5,
+            "after": 6
+          }
+        },
+        "after": {
+          "stage": "READY",
+          "version": 4
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "listingId": "L-2036",
+          "listingRevisionId": null,
+          "identityEdgeId": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+          "decisionId": "d16ec745-ad1e-4d5f-8a79-33627a04971c"
+        },
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "resource_version": 4,
+        "evidence_state": "PARTIAL"
+      }
+    ],
+    "evidence": {
+      "original_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+      "canonical_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+      "source_id": "coverage-exact-source",
+      "policy_state": "ASSISTED_ENTRY_ONLY",
+      "policy_reason": "Structured data was supplied without page retrieval.",
+      "policy_version": "assisted-intake-source-policy-2026.07",
+      "policy_evaluated_at": "2026-07-23T22:09:18.178469Z",
+      "policy_expires_at": "2026-08-22T22:09:18Z",
+      "source_snapshot_id": null,
+      "captured_at": "2026-07-23T22:09:18.178469Z",
+      "parser_run_id": null,
+      "parser_version": "structured-intake-v1",
+      "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+      "freshness_state": "NOT_CAPTURED",
+      "resource_version": 4,
+      "etag": "W/\"4\""
+    },
+    "sla_receipt": null,
+    "lifecycle": {
+      "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+      "version": 4,
+      "etag": "W/\"4\"",
+      "actor_facts": {
+        "role_mode": "expansion-manager",
+        "allowed_actions": [
+          "ASSIGN",
+          "CANCEL",
+          "CANCEL_JOB",
+          "CLAIM",
+          "COMPLETE",
+          "CORRECT",
+          "DECIDE_MATCH",
+          "ESCALATE",
+          "MERGE",
+          "PAUSE_SLA",
+          "REPLAY_JOB",
+          "REQUEST_PROMOTION",
+          "RESUME_SLA",
+          "REVERSE",
+          "REVIEW_PROMOTION",
+          "SPLIT",
+          "SUBMIT_URL",
+          "TRANSFER",
+          "UNMERGE",
+          "VIEW"
+        ],
+        "denied_action_reasons": {
+          "EXPORT_EVIDENCE": "ROLE_DENIED",
+          "REOPEN": "WORKFLOW_STATE_DENIED",
+          "RETRY": "WORKFLOW_STATE_DENIED"
+        },
+        "scope": {
+          "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+          "resource": {
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "assigned_area_id": null,
+            "brand_id": null,
+            "heat_zone_id": null,
+            "region_id": null
+          },
+          "in_scope": true
+        },
+        "masking": {
+          "masked_fields": [],
+          "reason_codes": [],
+          "has_masked_fields": false,
+          "clearance": "CONFIDENTIAL"
+        },
+        "purpose": {
+          "value": null,
+          "required": false,
+          "bound": false,
+          "reason_code": null
+        },
+        "second_actor": {
+          "required": false,
+          "pending_decision_ids": [],
+          "proposer_subject_ids": [],
+          "self_review_denied": false,
+          "reason_code": null
+        }
+      },
+      "assignment": null,
+      "sla": null,
+      "decisions": [
+        {
+          "decision_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "receipt_id": null,
+          "status": "EXECUTED",
+          "action": "match_decision",
+          "version": 4,
+          "proposer": "00000000-0000-4000-8000-000000000202",
+          "reviewer": "00000000-0000-4000-8000-000000000203",
+          "graph_plan": {
+            "plan_id": "cb40042a-a834-4ecd-9c55-de0d98a7d073",
+            "plan_type": "HUMAN_DECISION_REQUIRED",
+            "status": "PROPOSED",
+            "operations": [],
+            "permitted_decision_types": [],
+            "requires_human_decision": true,
+            "before_graph": {
+              "version": 2,
+              "nodes": [
+                {
+                  "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+                  "node_type": "INTAKE",
+                  "status": "EFFECTIVE"
+                },
+                {
+                  "node_id": "L-2035",
+                  "node_type": "LISTING",
+                  "status": "EFFECTIVE"
+                },
+                {
+                  "node_id": "PROPERTY-L-2035",
+                  "node_type": "PROPERTY",
+                  "status": "EFFECTIVE"
+                }
+              ],
+              "edges": []
+            },
+            "after_graph": {
+              "version": 4,
+              "nodes": [],
+              "edges": []
+            },
+            "redirects": [],
+            "candidate_impacts": [],
+            "lineage_impact": {
+              "append_only": true,
+              "source_evidence_preserved": true,
+              "superseded_edge_ids": [],
+              "affected_decision_ids": [],
+              "summary": "The plan preserves source evidence and appends lineage only after an authorized human decision."
+            },
+            "proposer": {
+              "subject_id": "00000000-0000-4000-8000-000000000202",
+              "role_id": "expansionManager"
+            },
+            "reviewer": {
+              "subject_id": "00000000-0000-4000-8000-000000000203",
+              "role_id": "expansionManager"
+            },
+            "expected_graph_version": 2,
+            "original_decision": null,
+            "generated_at": "2026-07-23T22:09:18.185037Z"
+          },
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "created_at": "2026-07-23T22:09:18.292484Z",
+          "updated_at": "2026-07-23T22:09:18.348765Z",
+          "resource_versions": {
+            "identityDecision": 4,
+            "intake": 4
+          },
+          "job_id": null,
+          "audit_event_id": "4cdd68d6-8a75-4d69-a47a-c39e87be2088",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "reason": "Create the authoritative Listing used by exact URL coverage.",
+          "effect_receipt": {
+            "receipt_id": "45ed1179-4067-4a2f-8563-0482093b6e83",
+            "decision_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+            "status": "EXECUTED",
+            "identity_edge_ids": [
+              "fc08d4f1-d757-4a36-9d45-bc9b8254e401"
+            ],
+            "runtime_receipt": {
+              "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+              "transition_id": null,
+              "assignment_id": null,
+              "sla_instance_id": null,
+              "job_id": null,
+              "promotion_decision_id": null,
+              "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+              "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "listing_id": "L-2036",
+              "listing_revision_id": null,
+              "identity_edge_id": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+              "candidate_site_id": null,
+              "site_score_job_id": null,
+              "status": "EXECUTED",
+              "state": null,
+              "from_state": null,
+              "to_state": null,
+              "action": "CREATE",
+              "version": 4,
+              "version_after": null,
+              "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+              "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "actor": null,
+              "reason": null,
+              "checkpoint": null,
+              "attempt": null,
+              "retryable": null,
+              "occurred_at": null,
+              "created_at": null,
+              "updated_at": null,
+              "issued_at": "2026-07-23T22:09:18.343236Z"
+            },
+            "audit_event_id": "4cdd68d6-8a75-4d69-a47a-c39e87be2088",
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "version": 4,
+            "issued_at": "2026-07-23T22:09:18.348818Z",
+            "evidence_state": "COMPLETE"
+          },
+          "reverses_decision_id": null,
+          "status_history": [
+            {
+              "transitionId": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+              "fromStatus": "PENDING_REVIEW",
+              "toStatus": "PENDING_REVIEW",
+              "occurredAt": "2026-07-23T22:09:18.292484Z",
+              "actor": "00000000-0000-4000-8000-000000000202",
+              "actorRoleId": "expansionManager",
+              "reason": "Create the authoritative Listing used by exact URL coverage.",
+              "correlationId": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+              "versionAfter": 1
+            },
+            {
+              "transitionId": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+              "fromStatus": "PENDING_REVIEW",
+              "toStatus": "APPROVED",
+              "occurredAt": "2026-07-23T22:09:18.331248Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 2
+            },
+            {
+              "transitionId": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+              "fromStatus": "APPROVED",
+              "toStatus": "EXECUTING",
+              "occurredAt": "2026-07-23T22:09:18.331287Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 3
+            },
+            {
+              "transitionId": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+              "fromStatus": "EXECUTING",
+              "toStatus": "EXECUTED",
+              "occurredAt": "2026-07-23T22:09:18.348765Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 4
+            }
+          ],
+          "lifecycle_contract": {
+            "persisted_states": [
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED",
+              "REVERSAL_PENDING",
+              "REVERSED",
+              "SUPERSEDED"
+            ],
+            "non_persisted_states": {
+              "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+            }
+          }
+        }
+      ],
+      "promotion": null,
+      "job": null,
+      "assignment_history": [],
+      "sla_history": [],
+      "decision_history": [
+        {
+          "receipt_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+          "category": "decision",
+          "action": "PENDING_REVIEW",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 1,
+          "status": "PENDING_REVIEW",
+          "actor": "00000000-0000-4000-8000-000000000202",
+          "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+          "occurred_at": "2026-07-23T22:09:18.292484Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "PENDING_REVIEW",
+            "action": null,
+            "version": null,
+            "version_after": 1,
+            "audit_event_id": null,
+            "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+            "actor": "00000000-0000-4000-8000-000000000202",
+            "reason": "Create the authoritative Listing used by exact URL coverage.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.292484Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+          "category": "decision",
+          "action": "APPROVED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 2,
+          "status": "APPROVED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331248Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "APPROVED",
+            "action": null,
+            "version": null,
+            "version_after": 2,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331248Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+          "category": "decision",
+          "action": "EXECUTING",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 3,
+          "status": "EXECUTING",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331287Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "APPROVED",
+            "to_state": "EXECUTING",
+            "action": null,
+            "version": null,
+            "version_after": 3,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331287Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+          "category": "decision",
+          "action": "EXECUTED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.348765Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "EXECUTING",
+            "to_state": "EXECUTED",
+            "action": null,
+            "version": null,
+            "version_after": 4,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.348765Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "promotion_history": [],
+      "job_history": [],
+      "mutation_receipts": [
+        {
+          "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+          "category": "decision",
+          "action": "CREATE",
+          "resource_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": null,
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.343236Z",
+          "receipt": {
+            "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+            "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+            "listing_id": "L-2036",
+            "listing_revision_id": null,
+            "identity_edge_id": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "EXECUTED",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": "CREATE",
+            "version": 4,
+            "version_after": null,
+            "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": null,
+            "reason": null,
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": null,
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": "2026-07-23T22:09:18.343236Z"
+          }
+        },
+        {
+          "receipt_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+          "category": "decision",
+          "action": "PENDING_REVIEW",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 1,
+          "status": "PENDING_REVIEW",
+          "actor": "00000000-0000-4000-8000-000000000202",
+          "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+          "occurred_at": "2026-07-23T22:09:18.292484Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "PENDING_REVIEW",
+            "action": null,
+            "version": null,
+            "version_after": 1,
+            "audit_event_id": null,
+            "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+            "actor": "00000000-0000-4000-8000-000000000202",
+            "reason": "Create the authoritative Listing used by exact URL coverage.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.292484Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+          "category": "decision",
+          "action": "APPROVED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 2,
+          "status": "APPROVED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331248Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "APPROVED",
+            "action": null,
+            "version": null,
+            "version_after": 2,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331248Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+          "category": "decision",
+          "action": "EXECUTING",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 3,
+          "status": "EXECUTING",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331287Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "APPROVED",
+            "to_state": "EXECUTING",
+            "action": null,
+            "version": null,
+            "version_after": 3,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331287Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+          "category": "decision",
+          "action": "EXECUTED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.348765Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "EXECUTING",
+            "to_state": "EXECUTED",
+            "action": null,
+            "version": null,
+            "version_after": 4,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.348765Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "latest_decision_receipt": {
+        "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+        "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+        "status": "EXECUTED",
+        "action": "CREATE",
+        "version": 4,
+        "proposer": null,
+        "reviewer": null,
+        "graph_plan": null,
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "created_at": "2026-07-23T22:09:18.343236Z",
+        "updated_at": "2026-07-23T22:09:18.343236Z"
+      },
+      "submission_receipt": {
+        "receipt_id": "f5fb23c0-3b6e-46fa-8510-8aa85bd1d026",
+        "receipt_type": "MANUAL_INTAKE",
+        "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+        "state": "NEEDS_REVIEW",
+        "existing_listing_id": "L-2035",
+        "navigation_target": "/w/expansion/listings/intake/bd791232-aa86-42e2-b183-f308dcc45797",
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "issued_at": "2026-07-23T22:09:18.186853Z"
+      }
+    }
+  },
+  "exactDetail": {
+    "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+    "state": "READY",
+    "intake_method": "MANUAL",
+    "source_id": "coverage-exact-source",
+    "original_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+    "canonical_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+    "policy_state": "ASSISTED_ENTRY_ONLY",
+    "match_outcome": "NEW",
+    "submitted_by": "00000000-0000-4000-8000-000000000202",
+    "assigned_to": "00000000-0000-4000-8000-000000000202",
+    "assignment_id": null,
+    "assignment_status": null,
+    "assignment_version": null,
+    "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+    "queue_id": null,
+    "sla_instance_id": null,
+    "sla_state": null,
+    "sla_version": null,
+    "due_at": null,
+    "last_observed_at": "2026-07-23T22:09:18.178469Z",
+    "submitted_at": "2026-07-23T22:09:18.178469Z",
+    "updated_at": "2026-07-23T22:09:18.341054Z",
+    "version": 4,
+    "scope": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "assigned_area_id": null,
+      "brand_id": null,
+      "heat_zone_id": null,
+      "region_id": null
+    },
+    "issue": null,
+    "next_action": null,
+    "retryable": false,
+    "quarantined": false,
+    "failed": false,
+    "location": {
+      "address": "台北市中山區完整路101號",
+      "district": null,
+      "assigned_area_id": null,
+      "heat_zone_id": null,
+      "latitude": null,
+      "longitude": null,
+      "confidence": null,
+      "source": null
+    },
+    "masking": {
+      "restricted_data": false,
+      "has_masked_fields": false,
+      "masked_fields": [],
+      "reason_codes": []
+    },
+    "masked_fields": [],
+    "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+    "source_snapshot_id": null,
+    "parser_run_id": null,
+    "match_case_id": "2b683e29-5ed6-42ae-91bd-a26edbcd0a90",
+    "match_case_version": 1,
+    "match_case": {
+      "match_case_id": "2b683e29-5ed6-42ae-91bd-a26edbcd0a90",
+      "version": 1,
+      "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+      "outcome": "POSSIBLE_MATCH",
+      "confidence": 0.5,
+      "target_listing_id": "L-2035",
+      "summary": "與 L-2035 部分訊號一致（信心 0.50），但 正規化地址、物件型態 矛盾；需人工判定，不會自動合併。",
+      "comparison_fields": [
+        {
+          "field_path": "floor",
+          "label": "樓層",
+          "submitted_value": "1F",
+          "existing_value": "1F",
+          "agrees": true,
+          "detail": "送件 1F · 既有 1F"
+        },
+        {
+          "field_path": "areaPing",
+          "label": "坪數",
+          "submitted_value": 21,
+          "existing_value": 21,
+          "agrees": true,
+          "detail": "送件 21 · 既有 21"
+        },
+        {
+          "field_path": "rent",
+          "label": "租金",
+          "submitted_value": 63000,
+          "existing_value": 63000,
+          "agrees": true,
+          "detail": "送件 63000 · 既有 63000"
+        },
+        {
+          "field_path": "normalizedAddress",
+          "label": "正規化地址",
+          "submitted_value": "台北市中山區完整路101號",
+          "existing_value": "",
+          "agrees": false,
+          "detail": "送件 台北市中山區完整路101號 · 既有 —"
+        },
+        {
+          "field_path": "listingType",
+          "label": "物件型態",
+          "submitted_value": "店面",
+          "existing_value": null,
+          "agrees": false,
+          "detail": "送件 店面 · 既有 None"
+        }
+      ],
+      "signals": [
+        {
+          "key": "floor",
+          "label": "樓層",
+          "agrees": true,
+          "detail": "送件 1F · 既有 1F"
+        },
+        {
+          "key": "areaPing",
+          "label": "坪數",
+          "agrees": true,
+          "detail": "送件 21 · 既有 21"
+        },
+        {
+          "key": "rent",
+          "label": "租金",
+          "agrees": true,
+          "detail": "送件 63000 · 既有 63000"
+        },
+        {
+          "key": "normalizedAddress",
+          "label": "正規化地址",
+          "agrees": false,
+          "detail": "送件 台北市中山區完整路101號 · 既有 —"
+        },
+        {
+          "key": "listingType",
+          "label": "物件型態",
+          "agrees": false,
+          "detail": "送件 店面 · 既有 None"
+        }
+      ],
+      "graph_plan": {
+        "plan_id": "cb40042a-a834-4ecd-9c55-de0d98a7d073",
+        "plan_type": "HUMAN_DECISION_REQUIRED",
+        "status": "PROPOSED",
+        "operations": [],
+        "permitted_decision_types": [
+          "CREATE",
+          "REVISE",
+          "DUPLICATE",
+          "QUARANTINE",
+          "REJECT"
+        ],
+        "requires_human_decision": true,
+        "before_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "L-2035",
+              "node_type": "LISTING",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "PROPERTY-L-2035",
+              "node_type": "PROPERTY",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "after_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "L-2035",
+              "node_type": "LISTING",
+              "status": "EFFECTIVE"
+            },
+            {
+              "node_id": "PROPERTY-L-2035",
+              "node_type": "PROPERTY",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "redirects": [],
+        "candidate_impacts": [],
+        "lineage_impact": {
+          "append_only": true,
+          "source_evidence_preserved": true,
+          "superseded_edge_ids": [],
+          "affected_decision_ids": [],
+          "summary": "The plan preserves source evidence and appends lineage only after an authorized human decision."
+        },
+        "proposer": null,
+        "reviewer": null,
+        "expected_graph_version": 2,
+        "original_decision": null,
+        "generated_at": "2026-07-23T22:09:18.185037Z"
+      },
+      "source_snapshot_id": null,
+      "parser_version": "structured-intake-v1",
+      "created_at": "2026-07-23T22:09:18.185049Z",
+      "updated_at": "2026-07-23T22:09:18.185053Z"
+    },
+    "processing_history": [
+      {
+        "transition_id": "5ade9f94-9bd0-4a8a-aa69-3c33f91fd93d",
+        "from_state": null,
+        "to_state": "SUBMITTED",
+        "occurred_at": "2026-07-23T22:09:18.178469Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 1
+      },
+      {
+        "transition_id": "7dabc04f-cc7f-4c65-88bc-448fd1d6e543",
+        "from_state": "SUBMITTED",
+        "to_state": "MATCHING",
+        "occurred_at": "2026-07-23T22:09:18.182316Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 2
+      },
+      {
+        "transition_id": "2f8c55fa-760d-434f-8218-513723d9de4a",
+        "from_state": "MATCHING",
+        "to_state": "NEEDS_REVIEW",
+        "occurred_at": "2026-07-23T22:09:18.185190Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 3
+      },
+      {
+        "transition_id": "0a16f98d-c05d-4006-b76b-5f4d560550c2",
+        "from_state": "NEEDS_REVIEW",
+        "to_state": "READY",
+        "occurred_at": "2026-07-23T22:09:18.341054Z",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "reason_code": "DECISION_CREATE",
+        "version_after": 4
+      }
+    ],
+    "fields": [
+      {
+        "field_path": "providerListingId",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "coverage-exact-1784844558167-wkfbi82",
+        "normalized": "coverage-exact-1784844558167-wkfbi82",
+        "corrected": null,
+        "effective": "coverage-exact-1784844558167-wkfbi82",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "address",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "台北市中山區完整路 101 號 1F",
+        "normalized": "台北市中山區完整路101號",
+        "corrected": null,
+        "effective": "台北市中山區完整路101號",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "rent",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": 63000,
+        "normalized": 63000,
+        "corrected": null,
+        "effective": 63000,
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "areaPing",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": 21,
+        "normalized": 21,
+        "corrected": null,
+        "effective": 21,
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "floor",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "1F",
+        "normalized": "1F",
+        "corrected": null,
+        "effective": "1F",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "listingType",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "店面",
+        "normalized": "店面",
+        "corrected": null,
+        "effective": "店面",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "listingStatus",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "active",
+        "normalized": "active",
+        "corrected": null,
+        "effective": "active",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      },
+      {
+        "field_path": "currency",
+        "classification": "INTERNAL",
+        "masked": false,
+        "parsed": "TWD",
+        "normalized": "TWD",
+        "corrected": null,
+        "effective": "TWD",
+        "confidence": 1,
+        "mask_reason_code": null,
+        "correction_actor": null,
+        "correction_actor_role": null,
+        "correction_reason": null,
+        "corrected_at": null,
+        "source_snapshot_id": null,
+        "parser_run_id": null,
+        "parser_version": "structured-intake-v1"
+      }
+    ],
+    "audit": [
+      {
+        "audit_event_id": "2a5fdfa8-a8aa-4117-8d69-1dd4de70dd65",
+        "action": "intake.create_structured",
+        "occurred_at": "2026-07-23T22:09:18.178469Z",
+        "result": "SUCCEEDED",
+        "reason_code": "Structured intake submission",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "expansionManager",
+        "before": null,
+        "after": {
+          "stage": "SUBMITTED",
+          "version": 1
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797"
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 1,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "7e7c93ce-8af9-42a9-ad20-21f3d234fd71",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.182316Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "SUBMITTED"
+        },
+        "after": {
+          "stage": "MATCHING",
+          "version": 2
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 2,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "c3daa373-a5f1-413e-8c7a-a25fc60cdb35",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.185190Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "MATCHING"
+        },
+        "after": {
+          "stage": "NEEDS_REVIEW",
+          "version": 3
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+        "resource_version": 3,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "3aa028de-47fc-45aa-8990-fa71e151f85b",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:18.341054Z",
+        "result": "SUCCEEDED",
+        "reason_code": "DECISION_CREATE",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actor_role": "system",
+        "before": {
+          "stage": "NEEDS_REVIEW"
+        },
+        "after": {
+          "stage": "READY",
+          "version": 4
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "jobId": null
+        },
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "resource_version": 4,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+        "action": "intake.decide.create",
+        "occurred_at": "2026-07-23T22:09:18.343192Z",
+        "result": "SUCCEEDED",
+        "reason_code": "Independent reviewer approves the Listing creation.",
+        "actor": "00000000-0000-4000-8000-000000000203",
+        "actor_role": "expansionManager",
+        "before": {
+          "stage": {
+            "before": "NEEDS_REVIEW",
+            "after": "READY"
+          },
+          "listings_count": {
+            "before": 5,
+            "after": 6
+          }
+        },
+        "after": {
+          "stage": "READY",
+          "version": 4
+        },
+        "source_snapshot_id": null,
+        "parser_version": "structured-intake-v1",
+        "related_ids": {
+          "intakeId": "bd791232-aa86-42e2-b183-f308dcc45797",
+          "listingId": "L-2036",
+          "listingRevisionId": null,
+          "identityEdgeId": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+          "decisionId": "d16ec745-ad1e-4d5f-8a79-33627a04971c"
+        },
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "resource_version": 4,
+        "evidence_state": "PARTIAL"
+      }
+    ],
+    "evidence": {
+      "original_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+      "canonical_url": "https://example.com/exact-duplicate-1784844558166-yzhh54s",
+      "source_id": "coverage-exact-source",
+      "policy_state": "ASSISTED_ENTRY_ONLY",
+      "policy_reason": "Structured data was supplied without page retrieval.",
+      "policy_version": "assisted-intake-source-policy-2026.07",
+      "policy_evaluated_at": "2026-07-23T22:09:18.178469Z",
+      "policy_expires_at": "2026-08-22T22:09:18Z",
+      "source_snapshot_id": null,
+      "captured_at": "2026-07-23T22:09:18.178469Z",
+      "parser_run_id": null,
+      "parser_version": "structured-intake-v1",
+      "correlation_id": "1b77f181-c59f-4273-947f-37877ae398eb",
+      "freshness_state": "NOT_CAPTURED",
+      "resource_version": 4,
+      "etag": "W/\"4\""
+    },
+    "sla_receipt": null,
+    "lifecycle": {
+      "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+      "version": 4,
+      "etag": "W/\"4\"",
+      "actor_facts": {
+        "role_mode": "expansion-manager",
+        "allowed_actions": [
+          "ASSIGN",
+          "CANCEL",
+          "CANCEL_JOB",
+          "CLAIM",
+          "COMPLETE",
+          "CORRECT",
+          "DECIDE_MATCH",
+          "ESCALATE",
+          "MERGE",
+          "PAUSE_SLA",
+          "REPLAY_JOB",
+          "REQUEST_PROMOTION",
+          "RESUME_SLA",
+          "REVERSE",
+          "REVIEW_PROMOTION",
+          "SPLIT",
+          "SUBMIT_URL",
+          "TRANSFER",
+          "UNMERGE",
+          "VIEW"
+        ],
+        "denied_action_reasons": {
+          "EXPORT_EVIDENCE": "ROLE_DENIED",
+          "REOPEN": "WORKFLOW_STATE_DENIED",
+          "RETRY": "WORKFLOW_STATE_DENIED"
+        },
+        "scope": {
+          "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+          "resource": {
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "assigned_area_id": null,
+            "brand_id": null,
+            "heat_zone_id": null,
+            "region_id": null
+          },
+          "in_scope": true
+        },
+        "masking": {
+          "masked_fields": [],
+          "reason_codes": [],
+          "has_masked_fields": false,
+          "clearance": "CONFIDENTIAL"
+        },
+        "purpose": {
+          "value": null,
+          "required": false,
+          "bound": false,
+          "reason_code": null
+        },
+        "second_actor": {
+          "required": false,
+          "pending_decision_ids": [],
+          "proposer_subject_ids": [],
+          "self_review_denied": false,
+          "reason_code": null
+        }
+      },
+      "assignment": null,
+      "sla": null,
+      "decisions": [
+        {
+          "decision_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "receipt_id": null,
+          "status": "EXECUTED",
+          "action": "match_decision",
+          "version": 4,
+          "proposer": "00000000-0000-4000-8000-000000000202",
+          "reviewer": "00000000-0000-4000-8000-000000000203",
+          "graph_plan": {
+            "plan_id": "cb40042a-a834-4ecd-9c55-de0d98a7d073",
+            "plan_type": "HUMAN_DECISION_REQUIRED",
+            "status": "PROPOSED",
+            "operations": [],
+            "permitted_decision_types": [],
+            "requires_human_decision": true,
+            "before_graph": {
+              "version": 2,
+              "nodes": [
+                {
+                  "node_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+                  "node_type": "INTAKE",
+                  "status": "EFFECTIVE"
+                },
+                {
+                  "node_id": "L-2035",
+                  "node_type": "LISTING",
+                  "status": "EFFECTIVE"
+                },
+                {
+                  "node_id": "PROPERTY-L-2035",
+                  "node_type": "PROPERTY",
+                  "status": "EFFECTIVE"
+                }
+              ],
+              "edges": []
+            },
+            "after_graph": {
+              "version": 4,
+              "nodes": [],
+              "edges": []
+            },
+            "redirects": [],
+            "candidate_impacts": [],
+            "lineage_impact": {
+              "append_only": true,
+              "source_evidence_preserved": true,
+              "superseded_edge_ids": [],
+              "affected_decision_ids": [],
+              "summary": "The plan preserves source evidence and appends lineage only after an authorized human decision."
+            },
+            "proposer": {
+              "subject_id": "00000000-0000-4000-8000-000000000202",
+              "role_id": "expansionManager"
+            },
+            "reviewer": {
+              "subject_id": "00000000-0000-4000-8000-000000000203",
+              "role_id": "expansionManager"
+            },
+            "expected_graph_version": 2,
+            "original_decision": null,
+            "generated_at": "2026-07-23T22:09:18.185037Z"
+          },
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "created_at": "2026-07-23T22:09:18.292484Z",
+          "updated_at": "2026-07-23T22:09:18.348765Z",
+          "resource_versions": {
+            "identityDecision": 4,
+            "intake": 4
+          },
+          "job_id": null,
+          "audit_event_id": "4cdd68d6-8a75-4d69-a47a-c39e87be2088",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "reason": "Create the authoritative Listing used by exact URL coverage.",
+          "effect_receipt": {
+            "receipt_id": "45ed1179-4067-4a2f-8563-0482093b6e83",
+            "decision_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+            "status": "EXECUTED",
+            "identity_edge_ids": [
+              "fc08d4f1-d757-4a36-9d45-bc9b8254e401"
+            ],
+            "runtime_receipt": {
+              "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+              "transition_id": null,
+              "assignment_id": null,
+              "sla_instance_id": null,
+              "job_id": null,
+              "promotion_decision_id": null,
+              "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+              "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+              "listing_id": "L-2036",
+              "listing_revision_id": null,
+              "identity_edge_id": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+              "candidate_site_id": null,
+              "site_score_job_id": null,
+              "status": "EXECUTED",
+              "state": null,
+              "from_state": null,
+              "to_state": null,
+              "action": "CREATE",
+              "version": 4,
+              "version_after": null,
+              "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+              "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "actor": null,
+              "reason": null,
+              "checkpoint": null,
+              "attempt": null,
+              "retryable": null,
+              "occurred_at": null,
+              "created_at": null,
+              "updated_at": null,
+              "issued_at": "2026-07-23T22:09:18.343236Z"
+            },
+            "audit_event_id": "4cdd68d6-8a75-4d69-a47a-c39e87be2088",
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "version": 4,
+            "issued_at": "2026-07-23T22:09:18.348818Z",
+            "evidence_state": "COMPLETE"
+          },
+          "reverses_decision_id": null,
+          "status_history": [
+            {
+              "transitionId": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+              "fromStatus": "PENDING_REVIEW",
+              "toStatus": "PENDING_REVIEW",
+              "occurredAt": "2026-07-23T22:09:18.292484Z",
+              "actor": "00000000-0000-4000-8000-000000000202",
+              "actorRoleId": "expansionManager",
+              "reason": "Create the authoritative Listing used by exact URL coverage.",
+              "correlationId": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+              "versionAfter": 1
+            },
+            {
+              "transitionId": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+              "fromStatus": "PENDING_REVIEW",
+              "toStatus": "APPROVED",
+              "occurredAt": "2026-07-23T22:09:18.331248Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 2
+            },
+            {
+              "transitionId": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+              "fromStatus": "APPROVED",
+              "toStatus": "EXECUTING",
+              "occurredAt": "2026-07-23T22:09:18.331287Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 3
+            },
+            {
+              "transitionId": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+              "fromStatus": "EXECUTING",
+              "toStatus": "EXECUTED",
+              "occurredAt": "2026-07-23T22:09:18.348765Z",
+              "actor": "00000000-0000-4000-8000-000000000203",
+              "actorRoleId": "expansionManager",
+              "reason": "Independent reviewer approves the Listing creation.",
+              "correlationId": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+              "versionAfter": 4
+            }
+          ],
+          "lifecycle_contract": {
+            "persisted_states": [
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED",
+              "REVERSAL_PENDING",
+              "REVERSED",
+              "SUPERSEDED"
+            ],
+            "non_persisted_states": {
+              "DRAFT": "Client request construction only; the server does not claim a durable decision before submission."
+            }
+          }
+        }
+      ],
+      "promotion": null,
+      "job": null,
+      "assignment_history": [],
+      "sla_history": [],
+      "decision_history": [
+        {
+          "receipt_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+          "category": "decision",
+          "action": "PENDING_REVIEW",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 1,
+          "status": "PENDING_REVIEW",
+          "actor": "00000000-0000-4000-8000-000000000202",
+          "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+          "occurred_at": "2026-07-23T22:09:18.292484Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "PENDING_REVIEW",
+            "action": null,
+            "version": null,
+            "version_after": 1,
+            "audit_event_id": null,
+            "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+            "actor": "00000000-0000-4000-8000-000000000202",
+            "reason": "Create the authoritative Listing used by exact URL coverage.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.292484Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+          "category": "decision",
+          "action": "APPROVED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 2,
+          "status": "APPROVED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331248Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "APPROVED",
+            "action": null,
+            "version": null,
+            "version_after": 2,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331248Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+          "category": "decision",
+          "action": "EXECUTING",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 3,
+          "status": "EXECUTING",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331287Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "APPROVED",
+            "to_state": "EXECUTING",
+            "action": null,
+            "version": null,
+            "version_after": 3,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331287Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+          "category": "decision",
+          "action": "EXECUTED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.348765Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "EXECUTING",
+            "to_state": "EXECUTED",
+            "action": null,
+            "version": null,
+            "version_after": 4,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.348765Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "promotion_history": [],
+      "job_history": [],
+      "mutation_receipts": [
+        {
+          "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+          "category": "decision",
+          "action": "CREATE",
+          "resource_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": null,
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.343236Z",
+          "receipt": {
+            "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+            "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+            "listing_id": "L-2036",
+            "listing_revision_id": null,
+            "identity_edge_id": "fc08d4f1-d757-4a36-9d45-bc9b8254e401",
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "EXECUTED",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": "CREATE",
+            "version": 4,
+            "version_after": null,
+            "audit_event_id": "56714df3-bede-4e90-b680-f66edb120a57",
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": null,
+            "reason": null,
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": null,
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": "2026-07-23T22:09:18.343236Z"
+          }
+        },
+        {
+          "receipt_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+          "category": "decision",
+          "action": "PENDING_REVIEW",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 1,
+          "status": "PENDING_REVIEW",
+          "actor": "00000000-0000-4000-8000-000000000202",
+          "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+          "occurred_at": "2026-07-23T22:09:18.292484Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "2ba0013e-2c5c-4f81-9348-3862192af5a7",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "PENDING_REVIEW",
+            "action": null,
+            "version": null,
+            "version_after": 1,
+            "audit_event_id": null,
+            "correlation_id": "4cc520b9-6446-46f5-8955-c7c8518a32df",
+            "actor": "00000000-0000-4000-8000-000000000202",
+            "reason": "Create the authoritative Listing used by exact URL coverage.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.292484Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+          "category": "decision",
+          "action": "APPROVED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 2,
+          "status": "APPROVED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331248Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "e9dddcd5-8181-4f5d-b06a-5c3cdfac3108",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "PENDING_REVIEW",
+            "to_state": "APPROVED",
+            "action": null,
+            "version": null,
+            "version_after": 2,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331248Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+          "category": "decision",
+          "action": "EXECUTING",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 3,
+          "status": "EXECUTING",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.331287Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "20eb287d-5351-47fb-b47c-c0617ee165b1",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "APPROVED",
+            "to_state": "EXECUTING",
+            "action": null,
+            "version": null,
+            "version_after": 3,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.331287Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        },
+        {
+          "receipt_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+          "category": "decision",
+          "action": "EXECUTED",
+          "resource_id": "226489ae-cadc-4d11-8872-8659b02088e4",
+          "resource_version": 4,
+          "status": "EXECUTED",
+          "actor": "00000000-0000-4000-8000-000000000203",
+          "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+          "occurred_at": "2026-07-23T22:09:18.348765Z",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": "3edaa1c9-d90e-49be-9cab-590d9138289d",
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": null,
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": null,
+            "state": null,
+            "from_state": "EXECUTING",
+            "to_state": "EXECUTED",
+            "action": null,
+            "version": null,
+            "version_after": 4,
+            "audit_event_id": null,
+            "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+            "actor": "00000000-0000-4000-8000-000000000203",
+            "reason": "Independent reviewer approves the Listing creation.",
+            "checkpoint": null,
+            "attempt": null,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:18.348765Z",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "latest_decision_receipt": {
+        "decision_id": "d16ec745-ad1e-4d5f-8a79-33627a04971c",
+        "receipt_id": "84167992-3ca3-47bd-b44f-ee87e5d3ec9a",
+        "status": "EXECUTED",
+        "action": "CREATE",
+        "version": 4,
+        "proposer": null,
+        "reviewer": null,
+        "graph_plan": null,
+        "correlation_id": "b580938d-a7b0-4559-b5a0-a6fa5b904f2f",
+        "created_at": "2026-07-23T22:09:18.343236Z",
+        "updated_at": "2026-07-23T22:09:18.343236Z"
+      },
+      "submission_receipt": {
+        "receipt_id": "61ec3a04-ac5b-460f-9ad9-71763f4b0dda",
+        "receipt_type": "EXACT_SOURCE_IDENTITY",
+        "intake_id": "bd791232-aa86-42e2-b183-f308dcc45797",
+        "state": "READY",
+        "existing_listing_id": "L-2036",
+        "navigation_target": "/w/expansion/listings/L-2036",
+        "correlation_id": "corr-af273c82-f686-44b6-8c37-5b9af84ca1a9",
+        "issued_at": "2026-07-23T22:09:24.586062Z"
+      }
+    }
+  },
+  "exactListingId": "L-2036",
+  "exactTarget": "/w/expansion/listings/L-2036",
+  "retrievalCountAfter": 0,
+  "retrievalCountBefore": 0,
+  "requestCount": 3,
+  "unsupported": {
+    "intake_id": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+    "state": "QUARANTINED",
+    "intake_method": "URL",
+    "source_id": "SRC-UNKNOWN",
+    "original_url": "https://unsupported-1784844556855-ohaqzyc.invalid/listing/1",
+    "canonical_url": "https://unsupported-1784844556855-ohaqzyc.invalid/listing/1",
+    "policy_state": "POLICY_UNKNOWN",
+    "match_outcome": "QUARANTINED",
+    "submitted_by": "00000000-0000-4000-8000-000000000202",
+    "assigned_to": "00000000-0000-4000-8000-000000000202",
+    "assignment_id": null,
+    "assignment_status": null,
+    "assignment_version": null,
+    "owner_subject_id": "00000000-0000-4000-8000-000000000202",
+    "queue_id": null,
+    "sla_instance_id": null,
+    "sla_state": null,
+    "sla_version": null,
+    "due_at": null,
+    "last_observed_at": "2026-07-23T22:09:17.015894Z",
+    "submitted_at": "2026-07-23T22:09:17.015894Z",
+    "updated_at": "2026-07-23T22:09:17.766663Z",
+    "version": 5,
+    "scope": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "assigned_area_id": null,
+      "brand_id": null,
+      "heat_zone_id": null,
+      "region_id": null
+    },
+    "issue": "此來源尚未登錄授權與資料使用範圍；依 fail-closed 原則停止處理並送治理覆核。",
+    "next_action": "REVIEW_QUARANTINE",
+    "retryable": false,
+    "quarantined": true,
+    "failed": false,
+    "location": {
+      "address": null,
+      "district": null,
+      "assigned_area_id": null,
+      "heat_zone_id": null,
+      "latitude": null,
+      "longitude": null,
+      "confidence": null,
+      "source": null
+    },
+    "masking": {
+      "restricted_data": false,
+      "has_masked_fields": false,
+      "masked_fields": [],
+      "reason_codes": []
+    },
+    "masked_fields": [],
+    "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+    "source_snapshot_id": null,
+    "parser_run_id": null,
+    "match_case_id": "3dd9b68a-915d-4e5c-b7d1-9631d668790d",
+    "match_case_version": 1,
+    "match_case": {
+      "match_case_id": "3dd9b68a-915d-4e5c-b7d1-9631d668790d",
+      "version": 1,
+      "intake_id": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+      "outcome": "QUARANTINED",
+      "confidence": 0,
+      "target_listing_id": null,
+      "summary": "依來源政策 POLICY_UNKNOWN 予以隔離：此來源尚未登錄授權與資料使用範圍；依 fail-closed 原則停止處理並送治理覆核。",
+      "comparison_fields": [],
+      "signals": [],
+      "graph_plan": {
+        "plan_id": "e99fbb7b-6752-4dd7-8df8-af94814e85f1",
+        "plan_type": "NO_GRAPH_MUTATION",
+        "status": "PROPOSED",
+        "operations": [],
+        "permitted_decision_types": [
+          "REOPEN",
+          "REJECT"
+        ],
+        "requires_human_decision": true,
+        "before_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "after_graph": {
+          "version": 2,
+          "nodes": [
+            {
+              "node_id": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+              "node_type": "INTAKE",
+              "status": "EFFECTIVE"
+            }
+          ],
+          "edges": []
+        },
+        "redirects": [],
+        "candidate_impacts": [],
+        "lineage_impact": {
+          "append_only": true,
+          "source_evidence_preserved": true,
+          "superseded_edge_ids": [],
+          "affected_decision_ids": [],
+          "summary": "The plan preserves source evidence and appends lineage only after an authorized human decision."
+        },
+        "proposer": null,
+        "reviewer": null,
+        "expected_graph_version": 2,
+        "original_decision": null,
+        "generated_at": "2026-07-23T22:09:17.766510Z"
+      },
+      "source_snapshot_id": null,
+      "parser_version": "listing-parser v1.4",
+      "created_at": "2026-07-23T22:09:17.766553Z",
+      "updated_at": "2026-07-23T22:09:17.766557Z"
+    },
+    "processing_history": [
+      {
+        "transition_id": "6737cbb6-0051-4315-bb76-685109241031",
+        "from_state": null,
+        "to_state": "SUBMITTED",
+        "occurred_at": "2026-07-23T22:09:17.015894Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 1
+      },
+      {
+        "transition_id": "13310edc-ef04-426a-87d9-9bf5818bddc2",
+        "from_state": "SUBMITTED",
+        "to_state": "CHECKING_IDENTITY",
+        "occurred_at": "2026-07-23T22:09:17.674414Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 3
+      },
+      {
+        "transition_id": "064dbb95-01fa-4880-84d5-8b97d5592fa3",
+        "from_state": "CHECKING_IDENTITY",
+        "to_state": "CHECKING_SOURCE_POLICY",
+        "occurred_at": "2026-07-23T22:09:17.749718Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": null,
+        "version_after": 4
+      },
+      {
+        "transition_id": "aaa6b26b-3f20-4a5e-8567-0cd338f25621",
+        "from_state": "CHECKING_SOURCE_POLICY",
+        "to_state": "QUARANTINED",
+        "occurred_at": "2026-07-23T22:09:17.766663Z",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "reason_code": "POLICY_UNKNOWN",
+        "version_after": 5
+      }
+    ],
+    "fields": [],
+    "audit": [
+      {
+        "audit_event_id": "e80e5efe-4e24-467a-8242-1634e6e95d92",
+        "action": "intake.create",
+        "occurred_at": "2026-07-23T22:09:17.017209Z",
+        "result": "SUCCEEDED",
+        "reason_code": "User-submitted listing intake",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "expansionManager",
+        "before": null,
+        "after": {
+          "stage": "SUBMITTED",
+          "version": 1
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+          "jobId": "aece6ddf-d2df-4b07-966e-98966b91d28c"
+        },
+        "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+        "resource_version": 1,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "f8ca946f-e3e1-4673-b66a-c50e5ff08333",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:17.674414Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "SUBMITTED"
+        },
+        "after": {
+          "stage": "CHECKING_IDENTITY",
+          "version": 3
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+          "jobId": "aece6ddf-d2df-4b07-966e-98966b91d28c"
+        },
+        "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+        "resource_version": 3,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "21bd5d40-2a08-4bab-bc3e-9fe3de089e6c",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:17.749718Z",
+        "result": "SUCCEEDED",
+        "reason_code": null,
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "CHECKING_IDENTITY"
+        },
+        "after": {
+          "stage": "CHECKING_SOURCE_POLICY",
+          "version": 4
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+          "jobId": "aece6ddf-d2df-4b07-966e-98966b91d28c"
+        },
+        "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+        "resource_version": 4,
+        "evidence_state": "PARTIAL"
+      },
+      {
+        "audit_event_id": "afa0ba76-1b0d-4f9a-8bde-9b3d6d6a5f52",
+        "action": "intake.stage_transition",
+        "occurred_at": "2026-07-23T22:09:17.766663Z",
+        "result": "SUCCEEDED",
+        "reason_code": "POLICY_UNKNOWN",
+        "actor": "00000000-0000-4000-8000-000000000202",
+        "actor_role": "system",
+        "before": {
+          "stage": "CHECKING_SOURCE_POLICY"
+        },
+        "after": {
+          "stage": "QUARANTINED",
+          "version": 5
+        },
+        "source_snapshot_id": null,
+        "parser_version": "listing-parser v1.4",
+        "related_ids": {
+          "intakeId": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+          "jobId": "aece6ddf-d2df-4b07-966e-98966b91d28c"
+        },
+        "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+        "resource_version": 5,
+        "evidence_state": "PARTIAL"
+      }
+    ],
+    "evidence": {
+      "original_url": "https://unsupported-1784844556855-ohaqzyc.invalid/listing/1",
+      "canonical_url": "https://unsupported-1784844556855-ohaqzyc.invalid/listing/1",
+      "source_id": "SRC-UNKNOWN",
+      "policy_state": "POLICY_UNKNOWN",
+      "policy_reason": "此來源尚未登錄授權與資料使用範圍；依 fail-closed 原則停止處理並送治理覆核。",
+      "policy_version": "assisted-intake-source-policy-2026.07",
+      "policy_evaluated_at": "2026-07-23T22:09:17.015790Z",
+      "policy_expires_at": "2026-08-22T22:09:17Z",
+      "source_snapshot_id": null,
+      "captured_at": null,
+      "parser_run_id": null,
+      "parser_version": "listing-parser v1.4",
+      "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+      "freshness_state": "NOT_CAPTURED",
+      "resource_version": 5,
+      "etag": "W/\"5\""
+    },
+    "sla_receipt": null,
+    "lifecycle": {
+      "intake_id": "4c50b4fb-aa6e-4d2b-abde-ed2df1c77ad4",
+      "version": 5,
+      "etag": "W/\"5\"",
+      "actor_facts": {
+        "role_mode": "expansion-manager",
+        "allowed_actions": [
+          "ASSIGN",
+          "CANCEL",
+          "CANCEL_JOB",
+          "CLAIM",
+          "COMPLETE",
+          "CORRECT",
+          "ESCALATE",
+          "MERGE",
+          "PAUSE_SLA",
+          "REOPEN",
+          "REPLAY_JOB",
+          "RESUME_SLA",
+          "REVERSE",
+          "REVIEW_PROMOTION",
+          "SPLIT",
+          "SUBMIT_URL",
+          "TRANSFER",
+          "UNMERGE",
+          "VIEW"
+        ],
+        "denied_action_reasons": {
+          "DECIDE_MATCH": "WORKFLOW_STATE_DENIED",
+          "EXPORT_EVIDENCE": "ROLE_DENIED",
+          "REQUEST_PROMOTION": "WORKFLOW_STATE_DENIED",
+          "RETRY": "WORKFLOW_STATE_DENIED"
+        },
+        "scope": {
+          "principal_tenant_id": "00000000-0000-0000-0000-000000000001",
+          "resource": {
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "assigned_area_id": null,
+            "brand_id": null,
+            "heat_zone_id": null,
+            "region_id": null
+          },
+          "in_scope": true
+        },
+        "masking": {
+          "masked_fields": [],
+          "reason_codes": [],
+          "has_masked_fields": false,
+          "clearance": "CONFIDENTIAL"
+        },
+        "purpose": {
+          "value": null,
+          "required": false,
+          "bound": false,
+          "reason_code": null
+        },
+        "second_actor": {
+          "required": false,
+          "pending_decision_ids": [],
+          "proposer_subject_ids": [],
+          "self_review_denied": false,
+          "reason_code": null
+        }
+      },
+      "assignment": null,
+      "sla": null,
+      "decisions": [],
+      "promotion": null,
+      "job": {
+        "job_id": "aece6ddf-d2df-4b07-966e-98966b91d28c",
+        "status": "SUCCEEDED",
+        "attempt": 1,
+        "checkpoint": "CHECKING_SOURCE_POLICY",
+        "next_retry_at": null,
+        "fence_token": 1,
+        "version": 5
+      },
+      "assignment_history": [],
+      "sla_history": [],
+      "decision_history": [],
+      "promotion_history": [],
+      "job_history": [
+        {
+          "receipt_id": "dbdc00c0-bab9-407e-a1d3-7d651505b777",
+          "category": "job",
+          "action": "RUN",
+          "resource_id": "aece6ddf-d2df-4b07-966e-98966b91d28c",
+          "resource_version": 2,
+          "status": "RUNNING",
+          "actor": "oday-worker",
+          "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+          "occurred_at": "2026-07-23T22:09:17.468148+00:00",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": "aece6ddf-d2df-4b07-966e-98966b91d28c",
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "RUNNING",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": null,
+            "version": 2,
+            "version_after": null,
+            "audit_event_id": null,
+            "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+            "actor": null,
+            "reason": null,
+            "checkpoint": "CHECKING_IDENTITY",
+            "attempt": 1,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:17.468148+00:00",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "mutation_receipts": [
+        {
+          "receipt_id": "dbdc00c0-bab9-407e-a1d3-7d651505b777",
+          "category": "job",
+          "action": "RUN",
+          "resource_id": "aece6ddf-d2df-4b07-966e-98966b91d28c",
+          "resource_version": 2,
+          "status": "RUNNING",
+          "actor": "oday-worker",
+          "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+          "occurred_at": "2026-07-23T22:09:17.468148+00:00",
+          "receipt": {
+            "receipt_id": null,
+            "transition_id": null,
+            "assignment_id": null,
+            "sla_instance_id": null,
+            "job_id": "aece6ddf-d2df-4b07-966e-98966b91d28c",
+            "promotion_decision_id": null,
+            "decision_id": null,
+            "intake_id": null,
+            "listing_id": null,
+            "listing_revision_id": null,
+            "identity_edge_id": null,
+            "candidate_site_id": null,
+            "site_score_job_id": null,
+            "status": "RUNNING",
+            "state": null,
+            "from_state": null,
+            "to_state": null,
+            "action": null,
+            "version": 2,
+            "version_after": null,
+            "audit_event_id": null,
+            "correlation_id": "corr-aad62823-d04a-4029-b497-dbc0483f1f4a",
+            "actor": null,
+            "reason": null,
+            "checkpoint": "CHECKING_IDENTITY",
+            "attempt": 1,
+            "retryable": null,
+            "occurred_at": "2026-07-23T22:09:17.468148+00:00",
+            "created_at": null,
+            "updated_at": null,
+            "issued_at": null
+          }
+        }
+      ],
+      "latest_decision_receipt": null,
+      "submission_receipt": null
+    }
+  }
+}

@@ -1,13 +1,16 @@
 ---
 doc_id: ODP-INTAKE-FUNCTIONAL-TRACE-001
 title: ODay Plus Assisted Listing Intake Complete Functional Requirement Trace
-version: 1.0.0
-status: execution-binding
+version: 1.1.0
+status: functionally-accepted
 owner: Product Platform Engineering
 source_requirement: ODP-UXD-003-ADD-002
 source_requirement_version: 1.0.1
 completion_audit: ODP-INTAKE-FUNCTIONAL-AUDIT-001
 execution_plan: ODP-INTAKE-FUNCTIONAL-CLOSURE-EXEC-001
+accepted_implementation_commit: 361d0c8e8457f8c3b969f28d34b3cd8217ab00a5
+acceptance_task: ODP-INTAKE-FCL-ACCEPTANCE-001
+acceptance_disposition: FUNCTIONALLY_COMPLETE
 updated_at: 2026-07-23
 ---
 
@@ -27,8 +30,10 @@ runtime evidence passes at the exact integrated commit.
 
 Allowed row results are `PASS`, `FAIL`, or `NOT_APPLICABLE` with an approved
 reason. `PARTIAL`, a component-only test, a fixture, or an unmounted screen
-cannot close a row. Until independent acceptance, every row remains
-`PENDING_ACCEPTANCE`, even when implementation evidence exists.
+cannot close a row. Independent acceptance at
+`361d0c8e8457f8c3b969f28d34b3cd8217ab00a5` closed all 197 rows as `PASS`.
+The row-level decision and evidence authority is
+`docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/ACCEPTANCE_MATRIX.json`.
 
 ## 2. Product Scope and Authority
 

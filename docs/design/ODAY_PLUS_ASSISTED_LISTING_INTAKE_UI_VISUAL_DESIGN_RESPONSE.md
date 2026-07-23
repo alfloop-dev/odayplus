@@ -1,13 +1,15 @@
 ---
 doc_id: ODP-UXD-003-ADD-002-RESPONSE
 title: ODay Plus Assisted Listing Intake UI Visual Design Response
-version: 1.1.0
-status: implemented-pending-independent-functional-acceptance
+version: 1.2.0
+status: implemented-functionally-accepted
 canonical_design_tool: Claude Design
 canonical_package: operator-console-r7-20260720-package-10
 responds_to: ODP-UXD-003-ADD-002
 engineering_task: ODP-INTAKE-UX-001
 functional_trace: ODP-INTAKE-FUNCTIONAL-TRACE-001
+accepted_implementation_commit: 361d0c8e8457f8c3b969f28d34b3cd8217ab00a5
+functional_acceptance: ODP-INTAKE-FCL-ACCEPTANCE-001
 updated_at: 2026-07-23
 ---
 
@@ -232,14 +234,13 @@ state, permission, or outcome.
 | Product | Claude Design Package 10 selected as canonical; Figma not required. |
 | System Design | `ODP-SD-INTAKE-001` v0.2.1 approved baseline; UI cannot redefine its states or mutations. |
 | Product Platform / visual review | Package 10 `APPROVED_WITH_CONDITIONS`; `VDC-001` through `VDC-005` are production acceptance gates. |
-| Frontend / Accessibility / QA | Historical child-task approvals and runtime evidence are recorded under `docs/evidence/completion/ODP-INTAKE-UX-001/`; the 2026-07-23 composed functional closure still requires exact-commit independent re-acceptance. |
-| Functional Acceptance Fleet | `PENDING`; must disposition every `FTR-001` through `FTR-197` against the pushed integration commit. |
+| Frontend / Accessibility / QA | Historical child-task evidence is retained under `docs/evidence/completion/ODP-INTAKE-UX-001/`; final composed implementation evidence is under `ODP-INTAKE-FCL-INTEGRATION-001`, with exact-commit independent acceptance under `ODP-INTAKE-FCL-ACCEPTANCE-001`. |
+| Functional Acceptance Fleet | `FUNCTIONALLY_COMPLETE` at `361d0c8e8457f8c3b969f28d34b3cd8217ab00a5`; `197 PASS`, `0 FAIL`, `0 NOT_APPLICABLE`, `0 SKIP`. |
 
-If the independent acceptance result finds any unmet requirement, this response
-remains `implemented-pending-independent-functional-acceptance`; no partial
-result may be relabeled as complete. The only valid functional closure is a
-single exact-commit evidence package with every FTR row `PASS` or an explicitly
-approved `NOT_APPLICABLE`.
+The independent acceptance result found no unmet functional requirement. This
+response is closed as `implemented-functionally-accepted` by the exact-commit
+evidence package under
+`docs/evidence/completion/ODP-INTAKE-FCL-ACCEPTANCE-001/`.
 
 ## Engineering Handoff Index
 
