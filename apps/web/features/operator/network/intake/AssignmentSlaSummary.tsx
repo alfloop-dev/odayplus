@@ -1,10 +1,26 @@
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
+import type {
+  AssignmentLifecycleReceipt,
+  IntakeLifecycleAction,
+  PersistedLifecycleTransition,
+  SlaLifecycleReceipt,
+} from "./useIntakeLifecycle";
 
-export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED";
+export type SlaStatusState =
+  | "ON_TRACK"
+  | "DUE_SOON"
+  | "OVERDUE"
+  | "BREACHED"
+  | "PAUSED"
+  | "COMPLETED";
 
 export interface AssignmentSlaSummaryProps {
   record: AssistedIntake;
+  assignment?: AssignmentLifecycleReceipt | null;
+  sla?: SlaLifecycleReceipt | null;
+  history?: PersistedLifecycleTransition[];
+  allowedActions?: readonly IntakeLifecycleAction[];
   busy?: boolean;
   onClaim?: () => void;
   onOpenTransfer?: () => void;
@@ -18,70 +34,57 @@ export interface AssignmentSlaSummaryProps {
 }
 
 export function computeSlaState(record: AssistedIntake): SlaStatusState {
-  if ((record as any).isSlaPaused || (record as any).slaState === "PAUSED") {
-    return "PAUSED";
-  }
-  if ((record as any).slaState === "BREACHED" || (record as any).isBreached) {
-    return "BREACHED";
-  }
-
-  const dueAt = (record as any).dueAt || (record as any).slaDueAt;
-  if (!dueAt) return "ON_TRACK";
+  const legacy = record as AssistedIntake & {
+    isSlaPaused?: boolean;
+    isBreached?: boolean;
+    slaDueAt?: string | null;
+  };
+  if (legacy.isSlaPaused) return "PAUSED";
+  if (legacy.isBreached) return "BREACHED";
+  const serverState = record.slaState as SlaStatusState | null | undefined;
+  if (serverState && serverState !== "ON_TRACK") return serverState;
+  const dueAt = record.dueAt ?? legacy.slaDueAt;
+  if (!dueAt) return serverState ?? "ON_TRACK";
 
   const dueTime = new Date(dueAt).getTime();
-  const now = Date.now();
-  const diffMinutes = Math.floor((dueTime - now) / (1000 * 60));
-
+  const diffMinutes = Math.floor((dueTime - Date.now()) / 60_000);
   if (diffMinutes < 0) return "OVERDUE";
   if (diffMinutes <= 60) return "DUE_SOON";
   return "ON_TRACK";
 }
 
-/** SLA status display details with text AND icon/pattern for WCAG compliance */
 export const SLA_STATE_MAP: Record<
   SlaStatusState,
   { label: string; icon: string; pattern: string; toneClass: string }
 > = {
-  ON_TRACK: {
-    label: "正常 (On Track)",
-    icon: "✓",
-    pattern: "[✓ ON TRACK]",
-    toneClass: "good",
-  },
-  DUE_SOON: {
-    label: "即將到期 (Due Soon)",
-    icon: "⚠",
-    pattern: "[⚠ DUE SOON]",
-    toneClass: "watch",
-  },
-  OVERDUE: {
-    label: "已逾期 (Overdue)",
-    icon: "‼",
-    pattern: "[‼ OVERDUE]",
-    toneClass: "risk",
-  },
-  BREACHED: {
-    label: "違約 (Breached)",
-    icon: "🔥",
-    pattern: "[🔥 BREACHED]",
-    toneClass: "risk",
-  },
-  PAUSED: {
-    label: "已暫停 (Paused)",
-    icon: "⏸",
-    pattern: "[⏸ PAUSED]",
-    toneClass: "info",
-  },
+  ON_TRACK: { label: "正常 (On Track)", icon: "✓", pattern: "[✓ ON TRACK]", toneClass: "good" },
+  DUE_SOON: { label: "即將到期 (Due Soon)", icon: "⚠", pattern: "[⚠ DUE SOON]", toneClass: "watch" },
+  OVERDUE: { label: "已逾期 (Overdue)", icon: "‼", pattern: "[‼ OVERDUE]", toneClass: "risk" },
+  BREACHED: { label: "已違反 SLA (Breached)", icon: "🔥", pattern: "[🔥 BREACHED]", toneClass: "risk" },
+  PAUSED: { label: "已暫停 (Paused)", icon: "⏸", pattern: "[⏸ PAUSED]", toneClass: "info" },
+  COMPLETED: { label: "已完成 (Completed)", icon: "✓", pattern: "[✓ COMPLETED]", toneClass: "good" },
 };
 
-/**
- * AssignmentSlaSummary component
- * Renders assignment state, SLA timer, owner/queue/due-time/history, and action triggers.
- * SLA presentation uses text + icon/pattern to satisfy WCAG AA (non-color dependent).
- * No optimistic mutations: all operations trigger async callbacks to backend API.
- */
+function formatTime(value?: string | null): string {
+  if (!value) return "伺服器未提供";
+  return new Date(value).toLocaleString("zh-TW", { timeZoneName: "short" });
+}
+
+function actionAllowed(
+  action: IntakeLifecycleAction,
+  allowedActions: readonly IntakeLifecycleAction[] | undefined,
+  callback: (() => void) | undefined,
+): boolean {
+  if (!callback) return false;
+  return allowedActions ? allowedActions.includes(action) : true;
+}
+
 export function AssignmentSlaSummary({
   record,
+  assignment = null,
+  sla = null,
+  history = [],
+  allowedActions,
   busy = false,
   onClaim,
   onOpenTransfer,
@@ -93,72 +96,131 @@ export function AssignmentSlaSummary({
   currentUserId,
   className,
 }: AssignmentSlaSummaryProps) {
-  const slaState = computeSlaState(record);
+  const slaState: SlaStatusState = sla?.state ?? computeSlaState(record);
   const slaInfo = SLA_STATE_MAP[slaState];
+  const currentOwner =
+    assignment?.owner_display_name ??
+    assignment?.owner_subject_id ??
+    record.owner ??
+    "未指派 (UNASSIGNED)";
+  const queue = assignment?.queue_name ?? "伺服器未提供";
+  const dueAt = sla?.due_at ?? assignment?.due_at ?? record.dueAt ?? null;
+  const persistedHistory = [...history].sort(
+    (left, right) =>
+      new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
+  );
 
-  const currentOwner = record.owner || (record as any).assignedOwner || "未指派 (Unassigned)";
-  const assignedQueue = (record as any).assignedQueue || (record as any).target_owner_role || "治理覆核佇列";
-  const dueAtString = (record as any).dueAt || (record as any).slaDueAt || null;
-  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "無時限 (No SLA Limit)";
-
-  const isPaused = slaState === "PAUSED";
-  const historyItems: any[] = (record as any).assignmentHistory || (record as any).slaHistory || [];
+  const canClaim = actionAllowed("CLAIM_ASSIGNMENT", allowedActions, onClaim);
+  const canTransfer = actionAllowed("TRANSFER_ASSIGNMENT", allowedActions, onOpenTransfer);
+  const canPause = actionAllowed("PAUSE_SLA", allowedActions, onOpenPause);
+  const canResume = actionAllowed("RESUME_SLA", allowedActions, onResume);
+  const canEscalate = actionAllowed("ESCALATE_ASSIGNMENT", allowedActions, onEscalate);
+  const canComplete = actionAllowed("COMPLETE_ASSIGNMENT", allowedActions, onComplete);
 
   return (
-    <div
+    <section
+      aria-label="指派與 SLA"
       className={`${styles.sectionBox} ${className || ""}`}
+      data-current-user={currentUserId}
+      data-role={userRole}
       data-testid="assignment-sla-summary"
     >
       <div className={styles.sectionHead}>
-        指派與 SLA 狀態 (ASSIGNMENT & SLA SUMMARY)
+        指派與 SLA 狀態 ASSIGNMENT &amp; SLA
+        <span className={styles.chip} data-tone={slaInfo.toneClass}>
+          {slaInfo.pattern}
+        </span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", margin: "10px 0" }}>
-        {/* Owner Card */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>目前 Owner / 負責人</div>
-          <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px" }} data-testid="asg-owner">
+      <div className={styles.metaGrid}>
+        <div>
+          <span className={styles.metaCaption}>Assignment status</span>
+          <div className={styles.metaValue} data-testid="asg-status">
+            {assignment?.status ?? record.assignmentStatus ?? "UNASSIGNED"}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Owner</span>
+          <div className={styles.metaValue} data-testid="asg-owner">
             {currentOwner}
           </div>
-          <div style={{ fontSize: "10.5px", color: "#94a3b8" }}>佇列：{assignedQueue}</div>
         </div>
-
-        {/* SLA Status Card with Text + Icon/Pattern */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>SLA 處理狀態</div>
-          <div
-            style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}
-            data-testid="asg-sla-status"
-          >
-            <span style={{ fontSize: "16px" }} aria-hidden="true">{slaInfo.icon}</span>
-            <span>{slaInfo.label}</span>
-            <span style={{ fontSize: "10px", padding: "1px 4px", background: "#e2e8f0", borderRadius: "3px", fontFamily: "monospace" }}>
-              {slaInfo.pattern}
-            </span>
+        <div>
+          <span className={styles.metaCaption}>Queue</span>
+          <div className={styles.metaValue} data-testid="asg-queue">
+            {queue}
           </div>
-          <div style={{ fontSize: "10.5px", color: "#94a3b8" }}>到期時間：{formattedDueAt}</div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Assigned at</span>
+          <div className={styles.metaValue} data-testid="asg-assigned-at">
+            {formatTime(assignment?.assigned_at)}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Claimed at</span>
+          <div className={styles.metaValue} data-testid="asg-claimed-at">
+            {formatTime(assignment?.claimed_at)}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Due at</span>
+          <div className={styles.metaValue} data-testid="asg-due-at">
+            {formatTime(dueAt)}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>SLA state</span>
+          <div className={styles.metaValue} data-testid="asg-sla-status">
+            <span aria-hidden="true">{slaInfo.icon}</span> {slaState} · {slaInfo.label}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Expected resume</span>
+          <div className={styles.metaValue} data-testid="asg-expected-resume">
+            {formatTime(sla?.expected_resume_at)}
+          </div>
+        </div>
+        <div>
+          <span className={styles.metaCaption}>Escalation level</span>
+          <div className={styles.metaValue} data-testid="asg-escalation-level">
+            {sla?.escalation_level ?? "無"}
+          </div>
         </div>
       </div>
 
-      {/* SLA History / Log if present */}
-      {historyItems.length > 0 && (
-        <div style={{ marginTop: "10px", padding: "8px", background: "#ffffff", borderRadius: "4px", border: "1px dashed #cbd5e1" }}>
-          <div style={{ fontSize: "11px", fontWeight: 600, color: "#475569" }}>指派與 SLA 異動歷程 ({historyItems.length})</div>
-          <ul style={{ margin: "4px 0 0 0", paddingLeft: "18px", fontSize: "11px", color: "#334155" }}>
-            {historyItems.map((item, idx) => (
-              <li key={idx} style={{ marginBottom: "2px" }}>
-                <span>[{item.timestamp || item.occurredAt || "時間未知"}] </span>
-                <strong>{item.action || item.type || "變更"}: </strong>
-                <span>{item.note || item.reason || item.description || "無說明"}</span>
-              </li>
-            ))}
-          </ul>
+      {persistedHistory.length ? (
+        <ol className={styles.timeline} data-testid="asg-history">
+          {persistedHistory.map((entry) => (
+            <li className={styles.timelineItem} key={entry.transition_id}>
+              <span className={styles.timelineMark} aria-hidden="true">
+                {entry.to_state === "ESCALATED" || entry.to_state === "BREACHED" ? "!" : "✓"}
+              </span>
+              <div className={styles.timelineContent}>
+                <div className={styles.timelineTitle}>
+                  {entry.stream ?? "ASSIGNMENT"} · {entry.from_state ?? "—"} → {entry.to_state}
+                </div>
+                <div className={styles.timelineMeta}>
+                  {formatTime(entry.occurred_at)} · {entry.actor}
+                  {entry.actor_role ? ` (${entry.actor_role})` : ""} · v{entry.version_after}
+                </div>
+                <div className={styles.timelineMeta}>
+                  {entry.reason ?? entry.reason_code ?? "伺服器未提供原因"}
+                  {entry.owner_subject_id ? ` · Owner ${entry.owner_subject_id}` : ""}
+                  {entry.queue_name ? ` · Queue ${entry.queue_name}` : ""}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className={styles.noteBox} data-testid="asg-history-unavailable">
+          伺服器尚未回傳 assignment/SLA history；不從目前 owner 或 due time 推算歷程。
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px" }}>
-        {onClaim && (
+      <div className={styles.actionRow} data-testid="asg-direct-actions">
+        {canClaim ? (
           <button
             className={styles.primaryButton}
             data-testid="asg-btn-claim"
@@ -166,11 +228,10 @@ export function AssignmentSlaSummary({
             onClick={onClaim}
             type="button"
           >
-            {busy ? "處理中…" : "認領 (Claim)"}
+            {busy ? "處理中…" : "認領 Claim"}
           </button>
-        )}
-
-        {onOpenTransfer && (
+        ) : null}
+        {canTransfer ? (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-transfer"
@@ -178,11 +239,10 @@ export function AssignmentSlaSummary({
             onClick={onOpenTransfer}
             type="button"
           >
-            轉交 (Transfer)
+            轉交 Transfer
           </button>
-        )}
-
-        {!isPaused && onOpenPause && (
+        ) : null}
+        {slaState !== "PAUSED" && canPause ? (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-pause"
@@ -190,11 +250,10 @@ export function AssignmentSlaSummary({
             onClick={onOpenPause}
             type="button"
           >
-            暫停 SLA (Pause)
+            暫停 SLA
           </button>
-        )}
-
-        {isPaused && onResume && (
+        ) : null}
+        {slaState === "PAUSED" && canResume ? (
           <button
             className={styles.primaryButton}
             data-testid="asg-btn-resume"
@@ -202,24 +261,21 @@ export function AssignmentSlaSummary({
             onClick={onResume}
             type="button"
           >
-            {busy ? "處理中…" : "恢復 SLA (Resume)"}
+            恢復 SLA
           </button>
-        )}
-
-        {onEscalate && (
+        ) : null}
+        {canEscalate ? (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-escalate"
             disabled={busy}
             onClick={onEscalate}
-            style={{ color: "#b3261e", borderColor: "#f3cbc7" }}
             type="button"
           >
-            升級 (Escalate)
+            升級 Escalate
           </button>
-        )}
-
-        {onComplete && (
+        ) : null}
+        {canComplete ? (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-complete"
@@ -227,10 +283,10 @@ export function AssignmentSlaSummary({
             onClick={onComplete}
             type="button"
           >
-            標記完成 (Complete)
+            標記完成
           </button>
-        )}
+        ) : null}
       </div>
-    </div>
+    </section>
   );
 }

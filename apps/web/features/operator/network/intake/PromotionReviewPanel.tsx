@@ -26,6 +26,10 @@ import styles from "./intake.module.css";
 import type { IntakeApiError } from "./intakeClient";
 import type { IntakeTone } from "./intakeTypes";
 import { SiteScoreJobStatus, type ScoreReplayInput } from "./SiteScoreJobStatus";
+import type {
+  JobLifecycleReceipt,
+  PersistedLifecycleTransition,
+} from "./useIntakeLifecycle";
 
 /** zh-TW label per canonical promotion saga state (state contracts §7). */
 export const PROMOTION_STATUS_LABEL: Record<PromotionStatus, string> = {
@@ -131,6 +135,10 @@ export type PromotionReviewPanelProps = {
   promotion?: PromotionDecisionReceipt | null;
   /** Authoritative score-job receipt, once one exists. */
   scoreJob?: JobReceipt | null;
+  /** Persisted histories returned by the lifecycle read boundary. */
+  promotionHistory?: PersistedLifecycleTransition[];
+  decisionHistory?: PersistedLifecycleTransition[];
+  scoreJobHistory?: PersistedLifecycleTransition[];
   currentOperator: PromotionActor;
   /** Proposer subject — defaults to the promotion receipt, then the submitter. */
   proposerId?: string;
@@ -141,6 +149,7 @@ export type PromotionReviewPanelProps = {
   canRequest?: boolean;
   canReview?: boolean;
   canReplayScore?: boolean;
+  canCancelScore?: boolean;
   busy?: boolean;
   error?: IntakeApiError | null;
   /** True when the server answered from a prior durable receipt. */
@@ -148,9 +157,16 @@ export type PromotionReviewPanelProps = {
   onRequestPromotion?: (input: PromotionRequestInput) => Promise<PromotionDecisionReceipt | void> | void;
   onReviewPromotion?: (input: PromotionReviewInput) => Promise<PromotionDecisionReceipt | void> | void;
   onReplayScore?: (input: ScoreReplayInput) => Promise<JobReceipt | void> | void;
+  onCancelScore?: (input: {
+    jobId: string;
+    ifMatch: string;
+  }) => Promise<JobReceipt | void> | void;
   /** Lost-response recovery via decision lookup (GET promotion-decisions/:id). */
   onLookupDecision?: () => void;
   onRefresh?: () => void;
+  refreshing?: boolean;
+  lastRefreshedAt?: string | null;
+  nextRefreshAt?: string | null;
   testId?: string;
 };
 
@@ -158,6 +174,9 @@ export function PromotionReviewPanel({
   record,
   promotion = null,
   scoreJob = null,
+  promotionHistory = [],
+  decisionHistory = [],
+  scoreJobHistory = [],
   currentOperator,
   proposerId: proposerIdProp,
   gateSnapshotSha256,
@@ -165,14 +184,19 @@ export function PromotionReviewPanel({
   canRequest = true,
   canReview = true,
   canReplayScore = false,
+  canCancelScore = false,
   busy = false,
   error = null,
   idempotencyReplayed = false,
   onRequestPromotion,
   onReviewPromotion,
   onReplayScore,
+  onCancelScore,
   onLookupDecision,
   onRefresh,
+  refreshing = false,
+  lastRefreshedAt = null,
+  nextRefreshAt = null,
   testId = "promotion-review-panel",
 }: PromotionReviewPanelProps) {
   // ---- request draft state (preserved across conflicts and lost responses) --
@@ -289,8 +313,18 @@ export function PromotionReviewPanel({
   }
 
   const shownError = localError || error?.summary || null;
-  const steps = status ? promotionStagePath(status) : [];
-  const currentIndex = status ? steps.indexOf(status) : -1;
+  const persistedPromotionHistory = [...promotionHistory].sort(
+    (left, right) =>
+      new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
+  );
+  const persistedStates = persistedPromotionHistory
+    .map((entry) => entry.to_state as PromotionStatus)
+    .filter((entry) => entry in PROMOTION_STATUS_LABEL);
+  const steps =
+    status && persistedStates[persistedStates.length - 1] !== status
+      ? [...persistedStates, status]
+      : persistedStates;
+  const currentIndex = steps.length - 1;
 
   return (
     <section
@@ -318,13 +352,26 @@ export function PromotionReviewPanel({
           <button
             className={styles.secondaryButton}
             data-testid="promotion-refresh-btn"
+            disabled={busy || refreshing}
             onClick={onRefresh}
             style={{ marginLeft: "auto", padding: "3px 8px", fontSize: "11px" }}
             type="button"
           >
-            🔄 重新整理
+            {refreshing ? "更新中…" : "重新整理"}
           </button>
         ) : null}
+      </div>
+
+      <div className={styles.metaSub} data-testid="promotion-refresh-status">
+        最近伺服器更新：
+        {lastRefreshedAt
+          ? new Date(lastRefreshedAt).toLocaleString("zh-TW", { timeZoneName: "short" })
+          : "尚未讀取"}
+        {nextRefreshAt
+          ? ` · 下次輪詢 ${new Date(nextRefreshAt).toLocaleString("zh-TW", {
+              timeZoneName: "short",
+            })}`
+          : ""}
       </div>
 
       {/* Screen-reader live summary (VDC-003). */}
@@ -349,7 +396,13 @@ export function PromotionReviewPanel({
             const done = index < currentIndex || (isCurrent && code === "COMPLETED");
             const state = failed ? "failed" : done ? "done" : isCurrent ? "current" : "upcoming";
             return (
-              <span className={styles.step} data-state={state} data-testid={`promo-step-${code}`} key={code} role="listitem">
+              <span
+                className={styles.step}
+                data-state={state}
+                data-testid={isCurrent ? `promo-step-${code}` : `promo-history-step-${index}`}
+                key={`${code}-${index}`}
+                role="listitem"
+              >
                 <span className={styles.stepMark}>{failed ? "✕" : done && !isCurrent ? "✓" : String(index + 1)}</span>
                 <span className={styles.stepText}>
                   <span className={styles.stepName}>{PROMOTION_STATUS_LABEL[code]}</span>
@@ -360,6 +413,70 @@ export function PromotionReviewPanel({
             );
           })}
         </div>
+      ) : null}
+      {status && persistedPromotionHistory.length === 0 ? (
+        <div className={styles.noteBox} data-testid="promotion-history-unavailable">
+          伺服器尚未回傳 promotion history；只顯示目前 authoritative receipt
+          狀態，不推算中間步驟。
+        </div>
+      ) : null}
+      {persistedPromotionHistory.length ? (
+        <ol className={styles.timeline} data-testid="promotion-history">
+          {persistedPromotionHistory.map((entry) => (
+            <li className={styles.timelineItem} key={entry.transition_id}>
+              <span className={styles.timelineMark} aria-hidden="true">
+                {entry.to_state === "REJECTED" ||
+                entry.to_state === "FAILED" ||
+                entry.to_state === "SCORE_FAILED"
+                  ? "!"
+                  : "✓"}
+              </span>
+              <div className={styles.timelineContent}>
+                <div className={styles.timelineTitle}>
+                  Promotion · {entry.from_state ?? "—"} → {entry.to_state}
+                </div>
+                <div className={styles.timelineMeta}>
+                  {new Date(entry.occurred_at).toLocaleString("zh-TW", {
+                    timeZoneName: "short",
+                  })}{" "}
+                  · {entry.actor} · v{entry.version_after}
+                  {entry.reason_code ? ` · ${entry.reason_code}` : ""}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
+      {decisionHistory.length ? (
+        <ol className={styles.timeline} data-testid="promotion-decision-history">
+          {[...decisionHistory]
+            .sort(
+              (left, right) =>
+                new Date(left.occurred_at).getTime() -
+                new Date(right.occurred_at).getTime(),
+            )
+            .map((entry) => (
+              <li className={styles.timelineItem} key={entry.transition_id}>
+                <span className={styles.timelineMark} aria-hidden="true">
+                  {entry.to_state === "REJECTED" || entry.to_state === "FAILED"
+                    ? "!"
+                    : "✓"}
+                </span>
+                <div className={styles.timelineContent}>
+                  <div className={styles.timelineTitle}>
+                    Decision · {entry.from_state ?? "—"} → {entry.to_state}
+                  </div>
+                  <div className={styles.timelineMeta}>
+                    {new Date(entry.occurred_at).toLocaleString("zh-TW", {
+                      timeZoneName: "short",
+                    })}{" "}
+                    · {entry.actor} · v{entry.version_after}
+                  </div>
+                </div>
+              </li>
+            ))}
+        </ol>
       ) : null}
 
       {/* ------------------------------------------- idempotent replay tag --- */}
@@ -739,8 +856,11 @@ export function PromotionReviewPanel({
           <SiteScoreJobStatus
             busy={busy}
             candidateSiteId={candidateId}
+            canCancel={canCancelScore}
             canReplay={canReplayScore}
-            job={scoreJob}
+            history={scoreJobHistory}
+            job={scoreJob as JobLifecycleReceipt | null}
+            onCancel={onCancelScore}
             onReplay={onReplayScore}
             promotionStatus={promotion.status}
           />
