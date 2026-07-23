@@ -1,0 +1,68 @@
+{
+  "taskId": "ODP-INTAKE-FCL-ROLES-001",
+  "baseline": "c900e906f96cb3750274c24e1a8f2922999f9048",
+  "branch": "task/ODP-INTAKE-FCL-ROLES-001",
+  "disposition": "IMPLEMENTED_AWAITING_INTEGRATION",
+  "requiredRoleCount": 6,
+  "roles": [
+    {
+      "id": "expansion-staff",
+      "mode": "own-assigned",
+      "apiRoles": "expansion_user"
+    },
+    {
+      "id": "expansion-manager",
+      "mode": "managed-scope",
+      "apiRoles": "expansion_user,site_reviewer"
+    },
+    {
+      "id": "data-steward",
+      "mode": "source-data",
+      "apiRoles": "data_owner,expansion_user"
+    },
+    {
+      "id": "governance-reviewer",
+      "mode": "governance-read-only",
+      "apiRoles": "auditor"
+    },
+    {
+      "id": "privacy-officer",
+      "mode": "purpose-bound",
+      "apiRoles": "finance_legal,auditor"
+    },
+    {
+      "id": "permission-limited",
+      "mode": "masked-read-only",
+      "apiRoles": "auditor"
+    }
+  ],
+  "proof": {
+    "unitAndComponentTests": {
+      "status": "PASS",
+      "files": 3,
+      "tests": 52
+    },
+    "roleE2E": {
+      "status": "PASS",
+      "tests": 3
+    },
+    "promotionE2E": {
+      "status": "PASS",
+      "tests": 1
+    },
+    "identityContract": {
+      "status": "PASS",
+      "tests": 1
+    },
+    "promotionIntegration": {
+      "status": "PASS",
+      "tests": 1
+    },
+    "webTypecheck": "PASS"
+  },
+  "integrationDependencies": [
+    "ODP-INTAKE-FCL-DETAIL-001",
+    "ODP-INTAKE-FCL-IDENTITY-001",
+    "ODP-INTAKE-FCL-RUNTIME-001"
+  ]
+}

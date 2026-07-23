@@ -31,6 +31,8 @@ import {
   getOperatorRole,
   getWorkspace,
   isWorkspaceAllowed,
+  mergeOperatorRoles,
+  planOperatorRoleSwitch,
   type OperatorRoleId,
   type WorkspaceId,
 } from "./navigation";
@@ -39,6 +41,7 @@ import {
   type NetworkFindAreasBindings,
 } from "./networkFindAreasLoader";
 import styles from "./operator.module.css";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
   TodayWorkspace as ApiTodayWorkspace,
@@ -50,15 +53,6 @@ import type { Issue } from "./types";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
-
-const rolePermissionHeaders: Record<OperatorRoleId, string> = {
-  "cs-lead": "operations_manager",
-  "expansion-manager": "expansion_user,site_reviewer",
-  "field-lead": "regional_supervisor",
-  "marketing-manager": "marketing_manager",
-  "ops-lead": "operations_manager",
-  "pm-audit": "auditor",
-};
 
 const notifications = [
   {
@@ -330,14 +324,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
   const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
 
-  const getSecurityHeaders = (roleId: OperatorRoleId) => {
-    return {
-      "X-Operator-Role": roleId,
-      "X-Roles": rolePermissionHeaders[roleId],
-      "X-Subject-Id": `operator-${roleId}`,
-      "X-Tenant-Id": "tenant-a",
-    };
-  };
+  const getSecurityHeaders = (roleId: OperatorRoleId) =>
+    operatorSecurityHeaders(roleId);
 
   const applyOperatorEnvelope = (payload: unknown) => {
     const nextEnvelope = normalizeShellEnvelope(payload);
@@ -358,14 +346,17 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   };
 
   const rolesForShell = useMemo(() => {
-    return shellEnvelope.navigation.roles.length
-      ? shellEnvelope.navigation.roles.map((role) => ({
-          allowedWorkspaces: role.allowedWorkspaces,
-          id: isOperatorRoleId(role.id) ? role.id : DEFAULT_OPERATOR_ROLE_ID,
-          label: role.label,
-          subtitle: role.subtitle,
-        }))
-      : OPERATOR_ROLES;
+    const remoteRoles = shellEnvelope.navigation.roles.flatMap((role) =>
+      isOperatorRoleId(role.id)
+        ? [{
+            allowedWorkspaces: role.allowedWorkspaces,
+            id: role.id,
+            label: role.label,
+            subtitle: role.subtitle,
+          }]
+        : [],
+    );
+    return mergeOperatorRoles(remoteRoles);
   }, [shellEnvelope.navigation.roles]);
 
   const activeRole = useMemo(() => {
@@ -731,17 +722,18 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
   function handleRoleSelect(roleId: OperatorRoleId) {
     const nextRole = getOperatorRole(roleId);
+    const roleSwitchPlan = planOperatorRoleSwitch(roleId, activeWorkspaceId);
     setActiveRoleId(nextRole.id);
     window.sessionStorage.setItem(roleStorageKey, nextRole.id);
     setIsRoleMenuOpen(false);
 
-    if (!isWorkspaceAllowed(nextRole, activeWorkspaceId)) {
-      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
+    if (!roleSwitchPlan.preserveDeepLink) {
+      setActiveWorkspaceId(roleSwitchPlan.workspaceId);
+      window.sessionStorage.setItem(workspaceStorageKey, roleSwitchPlan.workspaceId);
       updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
+      setSelectedEntityId(null);
+      setActiveTabId("overview");
     }
-    setSelectedEntityId(null);
-    setActiveTabId("overview");
 
     showToast(`已切換為 ${nextRole.label}`);
   }
@@ -1130,6 +1122,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                     <span className={styles.roleOptionText}>
                       <strong>{role.label}</strong>
                       <small>{role.subtitle}</small>
+                      {role.intakeModeLabel ? (
+                        <small data-testid={`intake-role-mode-${role.id}`}>
+                          {role.intakeModeLabel}
+                        </small>
+                      ) : null}
                     </span>
                     <span className={styles.roleAccessList} aria-label={`${role.label} workspace access`}>
                       {WORKSPACES.map((workspace) => {

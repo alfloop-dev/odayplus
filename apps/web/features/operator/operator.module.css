@@ -261,6 +261,8 @@
 }
 
 .roleMenu {
+  max-height: min(720px, calc(100vh - 88px));
+  overflow-y: auto;
   width: 520px;
 }
 
