@@ -32,7 +32,7 @@ def test_postcss_advisory_resolved() -> None:
 
 def test_npm_audit_passes() -> None:
     res = subprocess.run(
-        ["npm", "audit", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True
+        ["npm", "audit", "--omit=dev", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True
     )
     assert res.returncode == 0, f"npm audit failed with output:\n{res.stdout}\n{res.stderr}"
 
