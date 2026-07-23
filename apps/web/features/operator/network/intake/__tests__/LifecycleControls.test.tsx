@@ -220,7 +220,6 @@ describe("lifecycle controls", () => {
         onEscalate={handlers.escalate}
         onOpenPause={handlers.pause}
         onOpenTransfer={handlers.transfer}
-        record={record}
         sla={sla}
       />,
     );

@@ -10,10 +10,15 @@ import {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function snapshot(version: number, stage = "SUBMITTED"): IntakeLifecycleSnapshot {
+function snapshot(
+  version: number,
+  stage = "SUBMITTED",
+  intakeId = "INT-001",
+  sequence = version,
+): IntakeLifecycleSnapshot {
   return {
     record: {
-      id: "INT-001",
+      id: intakeId,
       originalUrl: "https://example.com/listing/1",
       canonicalUrl: "https://example.com/listing/1",
       submitter: "staff-1",
@@ -47,18 +52,22 @@ function snapshot(version: number, stage = "SUBMITTED"): IntakeLifecycleSnapshot
     job_history: [],
     allowed_actions: [],
     refreshed_at: `2026-07-23T12:00:0${version}Z`,
+    sequence,
+    updated_at: `2026-07-23T12:00:0${version}Z`,
     version,
   };
 }
 
 type ProbeProps = {
+  intakeId?: string;
   loadSnapshot: Parameters<typeof useIntakeLifecycle>[0]["loadSnapshot"];
   subscribe?: LifecycleSubscription;
 };
 
-function Probe({ loadSnapshot, subscribe }: ProbeProps) {
+function Probe({ intakeId = "INT-001", loadSnapshot, subscribe }: ProbeProps) {
   const state = useIntakeLifecycle({
     activeIntervalMs: 1_000,
+    intakeId,
     maxBackoffMs: 8_000,
     loadSnapshot,
     subscribe,
@@ -96,6 +105,14 @@ function setVisibility(state: "visible" | "hidden") {
     value: state,
   });
   document.dispatchEvent(new Event("visibilitychange"));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -192,5 +209,118 @@ describe("useIntakeLifecycle", () => {
     act(() => root.unmount());
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     root = createRoot(container);
+  });
+
+  it("rejects a stale poll that resolves after a newer subscription snapshot", async () => {
+    let handlers: Parameters<LifecycleSubscription>[0] | null = null;
+    const subscribe: LifecycleSubscription = (nextHandlers) => {
+      handlers = nextHandlers;
+      return vi.fn();
+    };
+    const delayedPoll = deferred<IntakeLifecycleSnapshot>();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(snapshot(1))
+      .mockReturnValueOnce(delayedPoll.promise);
+    await renderProbe({ loadSnapshot: load, subscribe });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    await act(async () => {
+      handlers?.onSnapshot(snapshot(4, "READY"));
+    });
+    expect(text("version")).toBe("4");
+
+    await act(async () => {
+      delayedPoll.resolve(snapshot(2, "PARSING"));
+      await delayedPoll.promise;
+    });
+    expect(text("version")).toBe("4");
+  });
+
+  it("rejects stale subscription snapshots by version, sequence, and updated time", async () => {
+    let handlers: Parameters<LifecycleSubscription>[0] | null = null;
+    const subscribe: LifecycleSubscription = (nextHandlers) => {
+      handlers = nextHandlers;
+      return vi.fn();
+    };
+    const load = vi.fn().mockResolvedValue(snapshot(2));
+    await renderProbe({ loadSnapshot: load, subscribe });
+
+    await act(async () => {
+      handlers?.onSnapshot(snapshot(5, "READY", "INT-001", 10));
+      handlers?.onSnapshot({
+        ...snapshot(5, "MATCHING", "INT-001", 9),
+        updated_at: "2026-07-23T12:00:04Z",
+      });
+      handlers?.onSnapshot({
+        ...snapshot(5, "MATCHING", "INT-001", 10),
+        updated_at: "2026-07-23T12:00:04Z",
+      });
+      handlers?.onSnapshot(snapshot(4, "PARSING", "INT-001", 11));
+    });
+
+    expect(text("version")).toBe("5");
+  });
+
+  it("unsubscribes and rejects old-record events when intake identity changes", async () => {
+    let firstHandlers: Parameters<LifecycleSubscription>[0] | null = null;
+    let secondHandlers: Parameters<LifecycleSubscription>[0] | null = null;
+    const firstUnsubscribe = vi.fn();
+    const secondUnsubscribe = vi.fn();
+    const firstSubscribe: LifecycleSubscription = (handlers) => {
+      firstHandlers = handlers;
+      return firstUnsubscribe;
+    };
+    const secondSubscribe: LifecycleSubscription = (handlers) => {
+      secondHandlers = handlers;
+      return secondUnsubscribe;
+    };
+    const firstLoad = vi.fn().mockResolvedValue(snapshot(1, "SUBMITTED", "INT-001"));
+    const secondLoad = vi.fn().mockResolvedValue(snapshot(1, "SUBMITTED", "INT-002"));
+    await renderProbe({ intakeId: "INT-001", loadSnapshot: firstLoad, subscribe: firstSubscribe });
+
+    await renderProbe({
+      intakeId: "INT-002",
+      loadSnapshot: secondLoad,
+      subscribe: secondSubscribe,
+    });
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(text("version")).toBe("1");
+
+    await act(async () => {
+      firstHandlers?.onSnapshot(snapshot(8, "READY", "INT-001"));
+      secondHandlers?.onSnapshot(snapshot(2, "PARSING", "INT-002"));
+    });
+    expect(text("version")).toBe("2");
+
+    act(() => root.unmount());
+    expect(secondUnsubscribe).toHaveBeenCalledTimes(1);
+    root = createRoot(container);
+  });
+
+  it("rejects events from a replaced subscription for the same intake", async () => {
+    let firstHandlers: Parameters<LifecycleSubscription>[0] | null = null;
+    let secondHandlers: Parameters<LifecycleSubscription>[0] | null = null;
+    const firstUnsubscribe = vi.fn();
+    const firstSubscribe: LifecycleSubscription = (handlers) => {
+      firstHandlers = handlers;
+      return firstUnsubscribe;
+    };
+    const secondSubscribe: LifecycleSubscription = (handlers) => {
+      secondHandlers = handlers;
+      return vi.fn();
+    };
+    const load = vi.fn().mockResolvedValue(snapshot(1));
+    await renderProbe({ loadSnapshot: load, subscribe: firstSubscribe });
+    await renderProbe({ loadSnapshot: load, subscribe: secondSubscribe });
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstHandlers?.onSnapshot(snapshot(8, "READY"));
+      secondHandlers?.onSnapshot(snapshot(3, "MATCHING"));
+    });
+    expect(text("version")).toBe("3");
   });
 });

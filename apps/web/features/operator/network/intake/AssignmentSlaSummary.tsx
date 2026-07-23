@@ -1,4 +1,3 @@
-import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import type {
   AssignmentLifecycleReceipt,
@@ -16,7 +15,6 @@ export type SlaStatusState =
   | "COMPLETED";
 
 export interface AssignmentSlaSummaryProps {
-  record: AssistedIntake;
   assignment?: AssignmentLifecycleReceipt | null;
   sla?: SlaLifecycleReceipt | null;
   history?: PersistedLifecycleTransition[];
@@ -31,26 +29,6 @@ export interface AssignmentSlaSummaryProps {
   userRole?: string;
   currentUserId?: string;
   className?: string;
-}
-
-export function computeSlaState(record: AssistedIntake): SlaStatusState {
-  const legacy = record as AssistedIntake & {
-    isSlaPaused?: boolean;
-    isBreached?: boolean;
-    slaDueAt?: string | null;
-  };
-  if (legacy.isSlaPaused) return "PAUSED";
-  if (legacy.isBreached) return "BREACHED";
-  const serverState = record.slaState as SlaStatusState | null | undefined;
-  if (serverState && serverState !== "ON_TRACK") return serverState;
-  const dueAt = record.dueAt ?? legacy.slaDueAt;
-  if (!dueAt) return serverState ?? "ON_TRACK";
-
-  const dueTime = new Date(dueAt).getTime();
-  const diffMinutes = Math.floor((dueTime - Date.now()) / 60_000);
-  if (diffMinutes < 0) return "OVERDUE";
-  if (diffMinutes <= 60) return "DUE_SOON";
-  return "ON_TRACK";
 }
 
 export const SLA_STATE_MAP: Record<
@@ -76,11 +54,10 @@ function actionAllowed(
   callback: (() => void) | undefined,
 ): boolean {
   if (!callback) return false;
-  return allowedActions ? allowedActions.includes(action) : true;
+  return allowedActions?.includes(action) ?? false;
 }
 
 export function AssignmentSlaSummary({
-  record,
   assignment = null,
   sla = null,
   history = [],
@@ -96,15 +73,14 @@ export function AssignmentSlaSummary({
   currentUserId,
   className,
 }: AssignmentSlaSummaryProps) {
-  const slaState: SlaStatusState = sla?.state ?? computeSlaState(record);
-  const slaInfo = SLA_STATE_MAP[slaState];
+  const slaState = sla?.state as SlaStatusState | undefined;
+  const slaInfo = slaState ? SLA_STATE_MAP[slaState] : null;
   const currentOwner =
     assignment?.owner_display_name ??
     assignment?.owner_subject_id ??
-    record.owner ??
-    "未指派 (UNASSIGNED)";
+    "伺服器未提供";
   const queue = assignment?.queue_name ?? "伺服器未提供";
-  const dueAt = sla?.due_at ?? assignment?.due_at ?? record.dueAt ?? null;
+  const dueAt = sla?.due_at ?? assignment?.due_at ?? null;
   const persistedHistory = [...history].sort(
     (left, right) =>
       new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
@@ -127,8 +103,8 @@ export function AssignmentSlaSummary({
     >
       <div className={styles.sectionHead}>
         指派與 SLA 狀態 ASSIGNMENT &amp; SLA
-        <span className={styles.chip} data-tone={slaInfo.toneClass}>
-          {slaInfo.pattern}
+        <span className={styles.chip} data-tone={slaInfo?.toneClass ?? "neutral"}>
+          {slaInfo?.pattern ?? "[? UNAVAILABLE]"}
         </span>
       </div>
 
@@ -136,7 +112,7 @@ export function AssignmentSlaSummary({
         <div>
           <span className={styles.metaCaption}>Assignment status</span>
           <div className={styles.metaValue} data-testid="asg-status">
-            {assignment?.status ?? record.assignmentStatus ?? "UNASSIGNED"}
+            {assignment?.status ?? "伺服器未提供"}
           </div>
         </div>
         <div>
@@ -172,7 +148,13 @@ export function AssignmentSlaSummary({
         <div>
           <span className={styles.metaCaption}>SLA state</span>
           <div className={styles.metaValue} data-testid="asg-sla-status">
-            <span aria-hidden="true">{slaInfo.icon}</span> {slaState} · {slaInfo.label}
+            {slaInfo && slaState ? (
+              <>
+                <span aria-hidden="true">{slaInfo.icon}</span> {slaState} · {slaInfo.label}
+              </>
+            ) : (
+              "伺服器未提供"
+            )}
           </div>
         </div>
         <div>
@@ -242,7 +224,7 @@ export function AssignmentSlaSummary({
             轉交 Transfer
           </button>
         ) : null}
-        {slaState !== "PAUSED" && canPause ? (
+        {slaState && slaState !== "PAUSED" && canPause ? (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-pause"

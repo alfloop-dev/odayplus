@@ -125,6 +125,10 @@ export type IntakeLifecycleSnapshot = {
   job_history: PersistedLifecycleTransition[];
   allowed_actions: IntakeLifecycleAction[];
   refreshed_at: string;
+  /** Monotonic aggregate sequence when the server exposes one. */
+  sequence?: number;
+  /** Authoritative aggregate update time, not the browser refresh time. */
+  updated_at?: string;
   version: number;
 };
 
@@ -141,6 +145,7 @@ export type LifecycleSubscription = (
 ) => () => void;
 
 export type UseIntakeLifecycleOptions = {
+  intakeId: string;
   enabled?: boolean;
   initialSnapshot?: IntakeLifecycleSnapshot | null;
   loadSnapshot: (context: LifecycleLoadContext) => Promise<IntakeLifecycleSnapshot>;
@@ -177,6 +182,46 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error("Lifecycle refresh failed");
 }
 
+function parsedTime(value?: string): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Reject snapshots that cannot belong to the active record or are older than
+ * any monotonic server coordinate already rendered.
+ */
+export function isLifecycleSnapshotCurrent(
+  candidate: IntakeLifecycleSnapshot,
+  current: IntakeLifecycleSnapshot | null,
+  intakeId: string,
+): boolean {
+  if (candidate.record.id !== intakeId) return false;
+  if (!current || current.record.id !== intakeId) return true;
+
+  if (candidate.version < current.version) return false;
+  if (
+    candidate.sequence !== undefined &&
+    current.sequence !== undefined &&
+    candidate.sequence < current.sequence
+  ) {
+    return false;
+  }
+
+  const candidateUpdatedAt = parsedTime(candidate.updated_at);
+  const currentUpdatedAt = parsedTime(current.updated_at);
+  if (
+    candidateUpdatedAt !== null &&
+    currentUpdatedAt !== null &&
+    candidateUpdatedAt < currentUpdatedAt
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Canonical lifecycle read boundary.
  *
@@ -184,6 +229,7 @@ function asError(error: unknown): Error {
  * only after the loader/subscription returns a persisted server snapshot.
  */
 export function useIntakeLifecycle({
+  intakeId,
   enabled = true,
   initialSnapshot = null,
   loadSnapshot,
@@ -215,6 +261,31 @@ export function useIntakeLifecycle({
     async () => undefined,
   );
   const failureRef = useRef(0);
+  const activeIntakeIdRef = useRef(intakeId);
+  const subscriptionGenerationRef = useRef(0);
+
+  const applySnapshot = useCallback(
+    (next: IntakeLifecycleSnapshot, expectedIntakeId: string): boolean => {
+      if (
+        !mountedRef.current ||
+        activeIntakeIdRef.current !== expectedIntakeId ||
+        !isLifecycleSnapshotCurrent(next, snapshotRef.current, expectedIntakeId)
+      ) {
+        return false;
+      }
+
+      snapshotRef.current = next;
+      setSnapshot(next);
+      setError(null);
+      failureRef.current = 0;
+      setConsecutiveFailures(0);
+      setLastRefreshedAt(next.refreshed_at);
+      setLoading(false);
+      setRefreshing(false);
+      return true;
+    },
+    [],
+  );
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -240,6 +311,7 @@ export function useIntakeLifecycle({
   const refresh = useCallback(
     async (reason: LifecycleRefreshReason = "MANUAL") => {
       if (!enabled || !visibleRef.current) return;
+      const expectedIntakeId = intakeId;
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
@@ -249,12 +321,7 @@ export function useIntakeLifecycle({
       try {
         const next = await loadSnapshotRef.current({ signal: controller.signal, reason });
         if (!mountedRef.current || controller.signal.aborted) return;
-        snapshotRef.current = next;
-        setSnapshot(next);
-        setError(null);
-        failureRef.current = 0;
-        setConsecutiveFailures(0);
-        setLastRefreshedAt(next.refreshed_at);
+        applySnapshot(next, expectedIntakeId);
         setMode(subscribeRef.current ? "SUBSCRIBED" : "POLLING");
         schedule(0);
       } catch (loadError: unknown) {
@@ -272,7 +339,7 @@ export function useIntakeLifecycle({
         }
       }
     },
-    [enabled, schedule],
+    [applySnapshot, enabled, intakeId, schedule],
   );
 
   refreshRef.current = refresh;
@@ -281,7 +348,16 @@ export function useIntakeLifecycle({
 
   useEffect(() => {
     mountedRef.current = true;
+    activeIntakeIdRef.current = intakeId;
     visibleRef.current = typeof document === "undefined" || document.visibilityState !== "hidden";
+    const initialForIntake = initialSnapshot?.record.id === intakeId ? initialSnapshot : null;
+    snapshotRef.current = initialForIntake;
+    setSnapshot(initialForIntake);
+    setLastRefreshedAt(initialForIntake?.refreshed_at ?? null);
+    setError(null);
+    failureRef.current = 0;
+    setConsecutiveFailures(0);
+    setLoading(enabled && initialForIntake === null);
 
     function handleVisibility() {
       const visible = document.visibilityState !== "hidden";
@@ -300,22 +376,25 @@ export function useIntakeLifecycle({
     document.addEventListener("visibilitychange", handleVisibility);
     if (enabled && visibleRef.current) void refreshRef.current("INITIAL");
 
-    const unsubscribe = enabled && subscribeRef.current
-      ? subscribeRef.current({
+    const activeSubscribe = subscribe;
+    const subscribedIntakeId = intakeId;
+    const subscriptionGeneration = subscriptionGenerationRef.current + 1;
+    subscriptionGenerationRef.current = subscriptionGeneration;
+    const unsubscribe = enabled && activeSubscribe
+      ? activeSubscribe({
           onSnapshot: (next) => {
-            if (!mountedRef.current) return;
-            snapshotRef.current = next;
-            setSnapshot(next);
-            setError(null);
-            failureRef.current = 0;
-            setConsecutiveFailures(0);
-            setLastRefreshedAt(next.refreshed_at);
-            setLoading(false);
-            setRefreshing(false);
+            if (subscriptionGenerationRef.current !== subscriptionGeneration) return;
+            if (!applySnapshot(next, subscribedIntakeId)) return;
             schedule(0);
           },
           onError: (subscriptionError) => {
-            if (!mountedRef.current) return;
+            if (
+              !mountedRef.current ||
+              subscriptionGenerationRef.current !== subscriptionGeneration ||
+              activeIntakeIdRef.current !== subscribedIntakeId
+            ) {
+              return;
+            }
             const failures = failureRef.current + 1;
             failureRef.current = failures;
             setError(asError(subscriptionError));
@@ -332,7 +411,14 @@ export function useIntakeLifecycle({
       clearTimer();
       requestRef.current?.abort();
     };
-  }, [clearTimer, enabled, schedule]);
+  }, [
+    applySnapshot,
+    clearTimer,
+    enabled,
+    intakeId,
+    schedule,
+    subscribe,
+  ]);
 
   useEffect(() => {
     if (!enabled) {
