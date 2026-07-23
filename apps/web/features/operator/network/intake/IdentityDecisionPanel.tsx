@@ -1,637 +1,581 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { AssistedIntake, MatchOutcome } from "@oday-plus/openapi-client";
-import styles from "./intake.module.css";
-import { IntakeDialogShell } from "./IntakeDialogShell";
-import type { IntakeApiError } from "./intakeClient";
-import { ListingCompareTable, type TargetListingData } from "./ListingCompareTable";
+import { useEffect, useMemo, useState } from "react";
+import type { AssistedIntake } from "@oday-plus/openapi-client";
+import styles from "./identity.module.css";
+import { IdentityDecisionReceiptView } from "./IdentityDecisionReceipt";
+import { IdentityGraphPlanView } from "./IdentityGraphPlan";
+import { ListingCompareTable } from "./ListingCompareTable";
 import { MatchEvidencePanel } from "./MatchEvidencePanel";
 import {
-  decisionTitle,
-  matchLabel,
-  matchTone,
-  shortUrl,
-  type IntakeDecisionKind,
-} from "./intakeTypes";
+  IDENTITY_ACTION_LABEL,
+  IDENTITY_OUTCOME_ACTIONS,
+  commandRequiresIndependentReview,
+  defaultOutcomeAction,
+  type IdentityConflict,
+  type IdentityDecisionCommand,
+  type IdentityDecisionDraft,
+  type IdentityDecisionReceipt,
+  type IdentityGraphOperation,
+  type IdentityGraphPlan,
+  type IdentityOutcomeAction,
+  type IdentityReviewWorkflow,
+  type IdentityComparisonContract,
+} from "./identityTypes";
 
-export type IdentityGraphMode = "merge" | "split" | "unmerge" | "reversal";
+type IdentityPanelTab = "evidence" | "compare" | "graph";
 
-export type IdentityDecisionResultReceipt = {
-  receiptId: string;
-  actor: string;
-  actorRole: string;
-  timestamp: string;
-  intakeId: string;
-  targetListingId: string;
-  decisionKind: IntakeDecisionKind;
-  graphMode: IdentityGraphMode;
-  beforeVersion: string;
-  afterVersion: string;
-  correlationId: string;
-  auditEventId: string;
-};
+const GRAPH_OPERATIONS: readonly IdentityGraphOperation[] = [
+  "MERGE",
+  "SPLIT",
+  "UNMERGE",
+  "REVERSAL",
+];
+
+function createInitialDraft(
+  comparison: IdentityComparisonContract,
+  workflow: IdentityReviewWorkflow,
+): IdentityDecisionDraft {
+  if (workflow.proposal) {
+    return {
+      commandType: workflow.proposal.graphOperation ? "GRAPH" : "OUTCOME",
+      outcomeAction: workflow.proposal.outcomeAction,
+      graphOperation: workflow.proposal.graphOperation,
+      graphPlanId: workflow.proposal.graphPlanId,
+      reason: "",
+      riskAcknowledged: false,
+    };
+  }
+  return {
+    commandType: "OUTCOME",
+    outcomeAction: defaultOutcomeAction(comparison.outcome),
+    graphOperation: null,
+    graphPlanId: null,
+    reason: "",
+    riskAcknowledged: false,
+  };
+}
+
+function isStoredDraft(value: unknown): value is IdentityDecisionDraft {
+  if (!value || typeof value !== "object") return false;
+  const draft = value as Partial<IdentityDecisionDraft>;
+  return (
+    (draft.commandType === "OUTCOME" || draft.commandType === "GRAPH") &&
+    typeof draft.reason === "string" &&
+    typeof draft.riskAcknowledged === "boolean"
+  );
+}
+
+function loadDraft(storageKey: string, fallback: IdentityDecisionDraft): IdentityDecisionDraft {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.sessionStorage.getItem(storageKey);
+    if (!raw) return fallback;
+    const parsed: unknown = JSON.parse(raw);
+    return isStoredDraft(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function isIdentityConflict(error: unknown): error is IdentityConflict {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as Partial<IdentityConflict>;
+  return (
+    typeof candidate.code === "string" &&
+    typeof candidate.summary === "string" &&
+    typeof candidate.currentVersion === "number" &&
+    typeof candidate.currentState === "string" &&
+    typeof candidate.correlationId === "string" &&
+    typeof candidate.occurredAt === "string" &&
+    typeof candidate.nextAction === "string"
+  );
+}
 
 export function IdentityDecisionPanel({
   record,
-  currentOperator = { id: "OP-101", name: "Current Operator", role: "operations_manager" },
-  targetListing,
+  comparison,
+  graphPlans,
+  workflow,
+  durableDesktopHref,
   busy = false,
-  error = null,
-  proposerId: customProposerId,
-  reviewerId: customReviewerId,
-  requireSecondActor = true,
-  onSubmitDecision,
-  onRefresh,
+  conflict = null,
+  receipt = null,
+  errorMessage = null,
+  draftStorageKey,
+  persistedDraft,
+  draftPersistence = "SESSION",
+  onDraftChange,
+  onSubmit,
+  onRefreshConflict,
   className,
 }: {
-  record: AssistedIntake;
-  currentOperator?: { id: string; name: string; role: string };
-  targetListing?: TargetListingData | null;
+  record: Pick<
+    AssistedIntake,
+    "id" | "correlationId" | "snapshotId" | "parserVersion"
+  >;
+  comparison: IdentityComparisonContract;
+  graphPlans: IdentityGraphPlan[];
+  workflow: IdentityReviewWorkflow;
+  durableDesktopHref: string;
   busy?: boolean;
-  error?: IntakeApiError | null;
-  proposerId?: string;
-  reviewerId?: string;
-  requireSecondActor?: boolean;
-  onSubmitDecision?: (input: {
-    kind: IntakeDecisionKind;
-    graphMode: IdentityGraphMode;
-    reason: string;
-    riskSummary: string;
-    riskAcknowledged: boolean;
-    proposerId: string;
-    reviewerId: string;
-    ifMatchVersion?: string;
-  }) => Promise<IdentityDecisionResultReceipt | void> | void;
-  onRefresh?: () => void;
+  conflict?: IdentityConflict | null;
+  receipt?: IdentityDecisionReceipt | null;
+  errorMessage?: string | null;
+  draftStorageKey?: string;
+  persistedDraft?: IdentityDecisionDraft | null;
+  draftPersistence?: "SESSION" | "SERVER";
+  onDraftChange?: (draft: IdentityDecisionDraft) => void;
+  onSubmit: (command: IdentityDecisionCommand) => Promise<IdentityDecisionReceipt>;
+  onRefreshConflict?: () => Promise<void> | void;
   className?: string;
 }) {
-  const match = record.matchResult;
-  const outcome: MatchOutcome = match?.outcome ?? "POSSIBLE_MATCH";
-  const targetId = targetListing?.id || match?.targetListingId || "";
-
-  // Proposer and Reviewer setup for 2nd actor governance
-  const proposerId = customProposerId || record.submitter || "OP-100";
-  const reviewerId = customReviewerId || currentOperator.id;
-
-  // Self-review denial check: Proposer and Reviewer cannot be the same person when second actor review is required
-  const isSelfReviewDenied = requireSecondActor && proposerId === reviewerId;
-
-  // Graph action mode state
-  const [graphMode, setGraphMode] = useState<IdentityGraphMode>(() => {
-    if (outcome === "REVISION") return "merge";
-    if (outcome === "EXACT_DUPLICATE") return "merge";
-    return "merge";
+  const storageKey =
+    draftStorageKey ?? `odp:intake:identity-draft:${comparison.matchCaseId}`;
+  const [draft, setDraft] = useState<IdentityDecisionDraft>(() => {
+    const authoritativeDraft = createInitialDraft(comparison, workflow);
+    if (persistedDraft) return persistedDraft;
+    return workflow.proposal ? authoritativeDraft : loadDraft(storageKey, authoritativeDraft);
   });
-
-  // Decision kind state
-  const [decisionKind, setDecisionKind] = useState<IntakeDecisionKind>(() => {
-    if (outcome === "REVISION") return "revise";
-    if (outcome === "EXACT_DUPLICATE") return "dup";
-    if (outcome === "NEW") return "create";
-    return "create";
-  });
-
-  // Inputs
-  const [reason, setReason] = useState("");
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const [activeTab, setActiveTab] = useState<IdentityPanelTab>("evidence");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [caughtConflict, setCaughtConflict] = useState<IdentityConflict | null>(null);
+  const [serverReceipt, setServerReceipt] = useState<IdentityDecisionReceipt | null>(null);
 
-  // Concurrency conflict state & preserved input
-  const [conflictState, setConflictState] = useState<{
-    hasConflict: boolean;
-    currentVersion?: string;
-    currentOwner?: string;
-  } | null>(() => {
-    if (error?.code === "ODP-INTAKE-CONFLICT" || error?.status === 409) {
-      return {
-        hasConflict: true,
-        currentVersion: "v2-updated",
-        currentOwner: record.owner || "Other Operator",
-      };
+  useEffect(() => {
+    if (persistedDraft) setDraft(persistedDraft);
+  }, [persistedDraft]);
+
+  useEffect(() => {
+    if (draftPersistence !== "SESSION") return;
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify(draft));
+    } catch {
+      // Storage can be unavailable in restricted browser contexts. The
+      // controlled command boundary still preserves the in-memory draft.
     }
-    return null;
-  });
+  }, [draft, draftPersistence, storageKey]);
 
-  // Receipt state upon success
-  const [receipt, setReceipt] = useState<IdentityDecisionResultReceipt | null>(null);
+  const shownConflict = conflict ?? caughtConflict;
+  const shownReceipt = receipt ?? serverReceipt;
+  const availableActions = IDENTITY_OUTCOME_ACTIONS[comparison.outcome];
+  const activePlan = useMemo(
+    () =>
+      draft.graphPlanId
+        ? graphPlans.find((plan) => plan.planId === draft.graphPlanId) ?? null
+        : draft.graphOperation
+          ? graphPlans.find((plan) => plan.operation === draft.graphOperation) ?? null
+          : null,
+    [draft.graphOperation, draft.graphPlanId, graphPlans],
+  );
+  const reviewPhase =
+    workflow.status === "PENDING_REVIEW" || workflow.status === "REVERSAL_PENDING";
+  const selfReviewDenied =
+    reviewPhase &&
+    workflow.requiresIndependentReview &&
+    workflow.currentActor.subjectId === workflow.proposer.subjectId;
+  const commandNeedsIndependentReview =
+    workflow.requiresIndependentReview ||
+    commandRequiresIndependentReview(comparison.outcome, draft);
+  const riskRequired =
+    draft.commandType === "GRAPH" ||
+    comparison.outcome === "POSSIBLE_MATCH" ||
+    draft.outcomeAction === "QUARANTINE";
+  const reasonValid = draft.reason.trim().length >= 3;
+  const riskValid = !riskRequired || draft.riskAcknowledged;
+  const canPropose =
+    !reviewPhase &&
+    workflow.canPropose &&
+    reasonValid &&
+    riskValid &&
+    !busy &&
+    !shownConflict;
+  const canReview =
+    reviewPhase &&
+    workflow.canReview &&
+    !selfReviewDenied &&
+    reasonValid &&
+    !busy &&
+    !shownConflict;
 
-  // Tab mode within panel: "summary" | "compare" | "graph"
-  const [activeTab, setActiveTab] = useState<"summary" | "compare" | "graph">("summary");
+  function updateDraft(next: Partial<IdentityDecisionDraft>) {
+    const updated = { ...draft, ...next };
+    setDraft(updated);
+    onDraftChange?.(updated);
+    setLocalError(null);
+  }
 
-  // Dynamic Risk Summary
-  const riskSummaryText = useMemo(() => {
-    const evidence = `快照 ${record.snapshotId ?? "—"} · ${record.parserVersion}`;
-    switch (graphMode) {
-      case "merge":
-        return (
-          `[合併模式 Graph Merge] 將收件 ${record.id} 的內容併入標的物件 ${targetId || "（未指定）"} 並建立新版本；` +
-          `舊版本將被保留，歷史圖譜可追溯。依據：${evidence}。`
-        );
-      case "split":
-        return (
-          `[拆分模式 Graph Split] 將收件 ${record.id} 從標的物件 ${targetId || "（未指定）"} 拆分為全新獨立 Listing；` +
-          `將解除兩者間的關聯圖譜。依據：${evidence}。`
-        );
-      case "unmerge":
-        return (
-          `[反轉合併 Graph Unmerge] 解鎖並撤銷之前對 ${targetId || "（未指定）"} 的合併圖譜關係；` +
-          `恢復為獨立收件節點。依據：${evidence}。`
-        );
-      case "reversal":
-        return (
-          `[歷程回滾 Graph Reversal] 回滾 ${targetId || "（未指定）"} 的識別變更歷史至上一穩定版本。` +
-          `依據：${evidence}。`
-        );
-      default:
-        return `將對收件 ${record.id} 執行身份圖譜變更。依據：${evidence}。`;
-    }
-  }, [graphMode, record.id, record.snapshotId, record.parserVersion, targetId]);
+  function selectOutcomeAction(action: IdentityOutcomeAction) {
+    updateDraft({
+      commandType: "OUTCOME",
+      outcomeAction: action,
+      graphOperation: null,
+      graphPlanId: null,
+      riskAcknowledged: false,
+    });
+  }
 
-  // Graph Plan lineage node state before and after
-  const graphPlan = useMemo(() => {
-    const beforeNodes = [
-      { id: record.id, type: "IntakeSubmission", label: `收件: ${shortUrl(record.canonicalUrl, 20)}` },
-      ...(targetId ? [{ id: targetId, type: "TargetListing", label: `既有物件 ${targetId}` }] : []),
-    ];
+  function selectGraphOperation(operation: IdentityGraphOperation) {
+    const plan = graphPlans.find((candidate) => candidate.operation === operation);
+    if (!plan) return;
+    updateDraft({
+      commandType: "GRAPH",
+      outcomeAction: null,
+      graphOperation: operation,
+      graphPlanId: plan.planId,
+      riskAcknowledged: false,
+    });
+    setActiveTab("graph");
+  }
 
-    let afterNodes: Array<{ id: string; type: string; label: string }> = [];
-    if (graphMode === "merge") {
-      afterNodes = [
-        {
-          id: targetId || `LST-NEW-${record.id.slice(-4)}`,
-          type: "TargetListing (v2)",
-          label: `${targetId || "LST-NEW"} (合併新版本 v2)`,
-        },
-      ];
-    } else if (graphMode === "split") {
-      afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing", label: `${targetId || "既有物件"} (獨立)` },
-        { id: `LST-NEW-${record.id.slice(-4)}`, type: "NewListing", label: `LST-NEW-${record.id.slice(-4)} (獨立新物件)` },
-      ];
-    } else if (graphMode === "unmerge") {
-      afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing", label: `${targetId || "原物件"} (已解除合併)` },
-        { id: record.id, type: "UnmergedIntake", label: `${record.id} (獨立收件節點)` },
-      ];
-    } else {
-      afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing (Rolled back)", label: `${targetId || "既有物件"} (已回滾至 v1)` },
-      ];
-    }
+  function createCommand(
+    phase: IdentityDecisionCommand["phase"],
+    reviewDisposition: IdentityDecisionCommand["reviewDisposition"],
+  ): IdentityDecisionCommand {
+    return {
+      phase,
+      reviewDisposition,
+      matchCaseId: comparison.matchCaseId,
+      matchCaseVersion: comparison.matchCaseVersion,
+      decisionId: workflow.decisionId,
+      outcomeAction: draft.commandType === "OUTCOME" ? draft.outcomeAction : null,
+      graphOperation: draft.commandType === "GRAPH" ? draft.graphOperation : null,
+      graphPlanId: draft.commandType === "GRAPH" ? draft.graphPlanId : null,
+      expectedGraphVersion:
+        draft.commandType === "GRAPH" ? activePlan?.expectedGraphVersion ?? null : null,
+      reason: draft.reason.trim(),
+      riskAcknowledged: draft.riskAcknowledged,
+      proposerId: workflow.proposer.subjectId,
+      reviewerId:
+        phase === "REVIEW"
+          ? workflow.currentActor.subjectId
+          : workflow.reviewer?.subjectId ?? null,
+      requiresIndependentReview: commandNeedsIndependentReview,
+    };
+  }
 
-    return { beforeNodes, afterNodes };
-  }, [graphMode, record.id, record.canonicalUrl, targetId]);
-
-  async function handleSubmit() {
-    if (busy) return;
-    if (isSelfReviewDenied) {
-      setLocalError("提案者與審查者不能為同一人，無法提交此決策 (SELF_REVIEW_DENIED)。");
+  async function submit(
+    phase: IdentityDecisionCommand["phase"],
+    reviewDisposition: IdentityDecisionCommand["reviewDisposition"],
+  ) {
+    if (!reasonValid) {
+      setLocalError("請輸入至少 3 個字的決策原因。");
       return;
     }
-    if (!reason.trim()) {
-      setLocalError("請填寫決策原因（寫入 Audit 與身份圖譜歷程）。");
+    if (riskRequired && !draft.riskAcknowledged && reviewDisposition !== "REJECT") {
+      setLocalError("此決策必須完成風險確認。");
       return;
     }
-    if (!riskAcknowledged) {
-      setLocalError("請勾選風險確認，聲明你已了解圖譜變更影響。");
+    if (phase === "REVIEW" && selfReviewDenied) {
+      setLocalError("SELF_REVIEW_DENIED：提案者不可審查自己的 identity 決策。");
       return;
     }
 
     setLocalError(null);
     try {
-      const res = await onSubmitDecision?.({
-        kind: decisionKind,
-        graphMode,
-        reason: reason.trim(),
-        riskSummary: riskSummaryText,
-        riskAcknowledged,
-        proposerId,
-        reviewerId,
-        ifMatchVersion: conflictState?.currentVersion || "v1",
-      });
-
-      if (res && res.receiptId) {
-        setReceipt(res);
-      } else {
-        // Fallback receipt mock for demonstration when onSubmitDecision returns void
-        setReceipt({
-          receiptId: `RCPT-MATCH-${Date.now().toString(36).toUpperCase()}`,
-          actor: currentOperator.name,
-          actorRole: currentOperator.role,
-          timestamp: new Date().toISOString(),
-          intakeId: record.id,
-          targetListingId: targetId || "LST-AUTO",
-          decisionKind,
-          graphMode,
-          beforeVersion: "v1",
-          afterVersion: "v2",
-          correlationId: record.correlationId || "corr-default",
-          auditEventId: `AUDIT-${Date.now()}`,
-        });
+      const result = await onSubmit(createCommand(phase, reviewDisposition));
+      setServerReceipt(result);
+    } catch (error: unknown) {
+      if (isIdentityConflict(error)) {
+        setCaughtConflict(error);
+        return;
       }
-    } catch (err: unknown) {
-      if (typeof err === "object" && err !== null && "status" in err && (err as { status: number }).status === 409) {
-        setConflictState({
-          hasConflict: true,
-          currentVersion: "v2-updated",
-          currentOwner: record.owner || "Another Operator",
-        });
-        setLocalError("偵測到版本衝突 (409 OWNER_CONFLICT)！其他人員已更新該筆資料，你的輸入已為你完整保留。");
-      } else {
-        setLocalError((err as Error)?.message || "提交決策時發生錯誤，請重試。");
-      }
+      setLocalError(error instanceof Error ? error.message : "Identity command failed.");
     }
   }
 
-  function handleRefreshAndRetry() {
-    onRefresh?.();
-    setConflictState(null);
+  async function refreshConflict() {
+    await onRefreshConflict?.();
+    setCaughtConflict(null);
     setLocalError(null);
   }
 
-  const shownError = localError || error?.summary || null;
-
   return (
-    <div
-      aria-label={`可逆身份決策面板 ${record.id}`}
-      className={`${styles.sectionBox} ${className || ""}`}
+    <section
+      aria-labelledby="identity-decision-title"
+      className={`${styles.boundary} ${className ?? ""}`}
+      data-outcome={comparison.outcome}
       data-testid="identity-decision-panel"
-      role="region"
     >
-      {/* Header */}
-      <div className={styles.sectionHead}>
-        <span>可逆身份圖譜審查與決策 IDENTITY & REVERSIBLE GRAPH REVIEW</span>
-        <span className={styles.chip} data-testid="identity-match-badge" data-tone={matchTone(outcome)}>
-          {outcome} · {matchLabel(outcome)}
+      <div className={styles.headingRow}>
+        <div>
+          <h2 className={styles.title} id="identity-decision-title">
+            Identity comparison and reversible decision
+          </h2>
+          <p className={styles.subtitle}>
+            Intake <code>{record.id}</code> · Match case <code>{comparison.matchCaseId}</code>
+          </p>
+        </div>
+        <span
+          className={styles.badge}
+          data-outcome={comparison.outcome}
+          data-testid="identity-match-badge"
+        >
+          {comparison.outcome}
         </span>
-        <span className={styles.rowId}>{record.id}</span>
       </div>
 
-      {/* Navigation tabs */}
-      <div className={styles.counts} style={{ margin: "10px 0", borderBottom: "1px solid #eef1f6", paddingBottom: "6px" }}>
-        <button
-          className={activeTab === "summary" ? styles.primaryButton : styles.secondaryButton}
-          data-testid="tab-summary-btn"
-          onClick={() => setActiveTab("summary")}
-          type="button"
-          style={{ padding: "4px 12px", fontSize: "11px" }}
-        >
-          1. 審查與授權 Summary & Auth
-        </button>
-        <button
-          className={activeTab === "compare" ? styles.primaryButton : styles.secondaryButton}
-          data-testid="tab-compare-btn"
-          onClick={() => setActiveTab("compare")}
-          type="button"
-          style={{ padding: "4px 12px", fontSize: "11px" }}
-        >
-          2. 欄位差異 Compare Table
-        </button>
-        <button
-          className={activeTab === "graph" ? styles.primaryButton : styles.secondaryButton}
-          data-testid="tab-graph-btn"
-          onClick={() => setActiveTab("graph")}
-          type="button"
-          style={{ padding: "4px 12px", fontSize: "11px" }}
-        >
-          3. 可逆圖譜計畫 Graph Plan
-        </button>
+      <div className={styles.desktopRequired} data-testid="identity-desktop-required">
+        <strong>此 identity 比對與可逆圖譜決策需要桌面版。</strong>
+        <p>
+          {draftPersistence === "SERVER"
+            ? "草稿已保存至 server，可使用同一 durable intake deep link 在桌面版繼續。"
+            : "草稿已保留在目前瀏覽器工作階段；請以同一瀏覽器的較寬視窗繼續。"}
+        </p>
+        <a data-testid="identity-desktop-link" href={durableDesktopHref}>
+          開啟桌面版 identity review
+        </a>
       </div>
 
-      {/* Screen-reader summary */}
-      <div className={styles.srSummary} data-testid="identity-sr-summary" role="region" aria-live="polite">
-        身份審查狀態：{outcome}，提案者：{proposerId}，審查者：{reviewerId}。
-        {isSelfReviewDenied ? "警告：自我審查已被拒絕 (SELF_REVIEW_DENIED)。" : "雙人授權查核正常。"}
-      </div>
-
-      {/* Receipt View upon successful decision */}
-      {receipt ? (
-        <div className={styles.sectionBox} data-testid="identity-durable-receipt" style={{ background: "#f0fdf4", borderColor: "#bbf7d0" }}>
-          <div className={styles.sectionHead} style={{ color: "#166534" }}>
-            ✓ 決策憑證已生成 DURABLE RECEIPT
-            <span className={styles.chip} data-tone="good">
-              {receipt.receiptId}
-            </span>
-          </div>
-          <div className={styles.metaGrid}>
-            <div>
-              <span className={styles.metaCaption}>憑證編號 Receipt ID</span>
-              <div className={styles.metaValue} data-testid="receipt-id-val">
-                <code>{receipt.receiptId}</code>
-              </div>
-            </div>
-            <div>
-              <span className={styles.metaCaption}>執行人員 Actor</span>
-              <div className={styles.metaValue} data-testid="receipt-actor-val">
-                {receipt.actor} ({receipt.actorRole})
-              </div>
-            </div>
-            <div>
-              <span className={styles.metaCaption}>圖譜模式 & 動作</span>
-              <div className={styles.metaValue} data-testid="receipt-action-val">
-                {receipt.graphMode} / {decisionTitle(receipt.decisionKind, record)}
-              </div>
-            </div>
-            <div>
-              <span className={styles.metaCaption}>版本演進 Version</span>
-              <div className={styles.metaValue} data-testid="receipt-version-val">
-                {receipt.beforeVersion} → {receipt.afterVersion}
-              </div>
-            </div>
-            <div>
-              <span className={styles.metaCaption}>Audit ID</span>
-              <div className={styles.metaValue} data-testid="receipt-audit-val">
-                {receipt.auditEventId}
-              </div>
-            </div>
-            <div>
-              <span className={styles.metaCaption}>時間戳記 Timestamp</span>
-              <div className={styles.metaValue} data-testid="receipt-time-val">
-                {receipt.timestamp}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginTop: "10px", textAlign: "right" }}>
-            <button
-              className={styles.secondaryButton}
-              data-testid="receipt-close-btn"
-              onClick={() => setReceipt(null)}
-              type="button"
-            >
-              關閉憑證頁面，回到審查
-            </button>
-          </div>
+      <div className={styles.desktopWorkflow} data-testid="identity-desktop-workflow">
+        <div className={styles.metaRow} data-testid="identity-actors">
+          <span className={styles.meta}>
+            提案者：{workflow.proposer.displayName} ({workflow.proposer.subjectId})
+          </span>
+          <span className={styles.meta}>
+            審查者：
+            {workflow.reviewer
+              ? `${workflow.reviewer.displayName} (${workflow.reviewer.subjectId})`
+              : "尚未指定"}
+          </span>
+          <span className={styles.meta}>
+            Current actor: {workflow.currentActor.displayName} ({workflow.currentActor.subjectId})
+          </span>
+          <span className={styles.badge}>{workflow.status}</span>
         </div>
-      ) : null}
 
-      {/* Tab 1: Summary & Auth */}
-      {activeTab === "summary" ? (
-        <>
-          <MatchEvidencePanel record={record} />
-
-          {/* Dual-actor Proposer/Reviewer Authorization Box */}
-          <div className={styles.sectionBox} data-testid="identity-auth-box" style={{ marginTop: "12px" }}>
-            <div className={styles.sectionHead}>
-              雙人授權與核准層級 DUAL-ACTOR AUTHORIZATION
-              {isSelfReviewDenied ? (
-                <span className={styles.chip} data-tone="risk" data-testid="self-review-denied">
-                  ✕ SELF_REVIEW_DENIED
-                </span>
-              ) : (
-                <span className={styles.chip} data-tone="good" data-testid="self-review-passed">
-                  ✓ 雙人角色驗證通過
-                </span>
-              )}
-            </div>
-
-            <div className={styles.metaGrid}>
-              <div>
-                <span className={styles.metaCaption}>提案者 Proposer</span>
-                <div className={styles.metaValue} data-testid="proposer-id-val">
-                  <code>{proposerId}</code>
-                </div>
-              </div>
-              <div>
-                <span className={styles.metaCaption}>當前審查者 Reviewer</span>
-                <div className={styles.metaValue} data-testid="reviewer-id-val">
-                  <code>{reviewerId}</code> ({currentOperator.role})
-                </div>
-              </div>
-              <div>
-                <span className={styles.metaCaption}>二級覆核要求</span>
-                <div className={styles.metaValue}>
-                  {requireSecondActor ? "強制要求 (Second-Actor Required)" : "單人審查許可"}
-                </div>
-              </div>
-            </div>
-
-            {isSelfReviewDenied ? (
-              <div className={styles.errorPanel} data-testid="self-review-denied-notice" style={{ marginTop: "8px" }}>
-                <span className={styles.errorSummary}>✕ 自我審查已拒絕 (SELF_REVIEW_DENIED)</span>
-                <span className={styles.errorMeta}>
-                  系統安全規範：案件提案者與最終審查者不能為同一人 ({proposerId})。請由第二位審查人員代為核准此決策。
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </>
-      ) : null}
-
-      {/* Tab 2: Compare Table */}
-      {activeTab === "compare" ? (
-        <ListingCompareTable record={record} targetListing={targetListing} />
-      ) : null}
-
-      {/* Tab 3: Reversible Graph Plan */}
-      {activeTab === "graph" || activeTab === "summary" ? (
-        <div className={styles.sectionBox} data-testid="identity-graph-plan-box" style={{ marginTop: "12px" }}>
-          <div className={styles.sectionHead}>
-            可逆圖譜變更計畫 REVERSIBLE GRAPH PLAN
-            <span className={styles.sectionHeadHint}>選擇圖譜操作模式：</span>
-          </div>
-
-          {/* Graph mode selection buttons */}
-          <div className={styles.actionRow} data-testid="graph-mode-selector" style={{ marginBottom: "12px" }}>
-            <button
-              className={graphMode === "merge" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="graph-mode-merge"
-              onClick={() => {
-                setGraphMode("merge");
-                setDecisionKind("revise");
-              }}
-              type="button"
-            >
-              1. 合併模式 (Merge / Revise)
-            </button>
-            <button
-              className={graphMode === "split" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="graph-mode-split"
-              onClick={() => {
-                setGraphMode("split");
-                setDecisionKind("create");
-              }}
-              type="button"
-            >
-              2. 拆分模式 (Split)
-            </button>
-            <button
-              className={graphMode === "unmerge" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="graph-mode-unmerge"
-              onClick={() => {
-                setGraphMode("unmerge");
-                setDecisionKind("steward");
-              }}
-              type="button"
-            >
-              3. 解除合併 (Unmerge)
-            </button>
-            <button
-              className={graphMode === "reversal" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="graph-mode-reversal"
-              onClick={() => {
-                setGraphMode("reversal");
-                setDecisionKind("steward");
-              }}
-              type="button"
-            >
-              4. 歷程回滾 (Reversal)
-            </button>
-          </div>
-
-          {/* Graph Lineage Impact Display */}
-          <div className={styles.signals} data-testid="graph-lineage-impact">
-            <div className={styles.signalCol} data-testid="graph-before-nodes">
-              <div className={styles.signalHeadCon}>變更前節點 Lineage Before</div>
-              {graphPlan.beforeNodes.map((node) => (
-                <div className={styles.signalItem} key={node.id} data-testid={`node-before-${node.id}`}>
-                  <code>[{node.type}]</code> <strong>{node.id}</strong> — {node.label}
-                </div>
-              ))}
-            </div>
-            <div className={styles.signalCol} data-testid="graph-after-nodes">
-              <div className={styles.signalHeadAgree}>變更後預期節點 Lineage After</div>
-              {graphPlan.afterNodes.map((node) => (
-                <div className={styles.signalItem} key={node.id} data-testid={`node-after-${node.id}`}>
-                  <code>[{node.type}]</code> <strong>{node.id}</strong> — {node.label}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Decision Submission Form Section */}
-      <div className={styles.sectionBox} style={{ marginTop: "12px" }}>
-        <div className={styles.sectionHead}>身份審查決策提交 IDENTITY DECISION SUBMIT</div>
-
-        {/* Possible Match Notice */}
-        {outcome === "POSSIBLE_MATCH" ? (
-          <div className={styles.warnNote} data-testid="identity-no-auto-merge-note">
-            此案為 <code>POSSIBLE_MATCH</code>（疑似重複）。系統不會自動合併，請手動勾選決策並輸入核准原因。
-          </div>
+        {comparison.outcome === "POSSIBLE_MATCH" ? (
+          <p className={styles.notice} data-testid="identity-no-auto-merge-note">
+            <code>POSSIBLE_MATCH</code> 不會自動合併。每個處置都必須提交明確原因，並依
+            workflow 進入獨立審查。
+          </p>
         ) : null}
 
-        {/* Decision Kind Selection Buttons */}
-        <div className={styles.actionRow} data-testid="identity-decision-kinds" style={{ marginBottom: "12px" }}>
-          <button
-            className={decisionKind === "create" ? styles.primaryButton : styles.secondaryButton}
-            data-testid="btn-decision-create"
-            disabled={isSelfReviewDenied || busy}
-            onClick={() => setDecisionKind("create")}
-            type="button"
-          >
-            建立新物件 (Create)
-          </button>
-          <button
-            className={decisionKind === "revise" ? styles.primaryButton : styles.secondaryButton}
-            data-testid="btn-decision-revise"
-            disabled={isSelfReviewDenied || busy}
-            onClick={() => setDecisionKind("revise")}
-            type="button"
-          >
-            加入既有物件版本 (Revise)
-          </button>
-          <button
-            className={decisionKind === "dup" ? styles.primaryButton : styles.secondaryButton}
-            data-testid="btn-decision-dup"
-            disabled={isSelfReviewDenied || busy}
-            onClick={() => setDecisionKind("dup")}
-            type="button"
-          >
-            標記重複 (Duplicate)
-          </button>
-          <button
-            className={decisionKind === "steward" ? styles.primaryButton : styles.secondaryButton}
-            data-testid="btn-decision-steward"
-            disabled={isSelfReviewDenied || busy}
-            onClick={() => setDecisionKind("steward")}
-            type="button"
-          >
-            送交治理/資料管理員 (Steward)
-          </button>
+        {selfReviewDenied ? (
+          <p className={styles.error} data-testid="self-review-denied" role="alert">
+            <strong>SELF_REVIEW_DENIED</strong>：提案者與審查者是同一 subject，不能核准或拒絕此案。
+          </p>
+        ) : null}
+
+        {workflow.denialReasonCode ? (
+          <p className={styles.error} data-testid="identity-denial-reason" role="alert">
+            {workflow.denialReasonCode}
+          </p>
+        ) : null}
+
+        <div aria-label="Identity review sections" className={styles.tabs} role="tablist">
+          {(
+            [
+              ["evidence", "比對證據"],
+              ["compare", "欄位並列比對"],
+              ["graph", "可逆圖譜計畫"],
+            ] as const
+          ).map(([tab, label]) => (
+            <button
+              aria-selected={activeTab === tab}
+              className={styles.tab}
+              data-testid={`identity-tab-${tab}`}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              role="tab"
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        {/* Reason Textarea */}
-        <div>
-          <label className={styles.fieldLabel} htmlFor="identity-decision-reason">
-            決策原因 (Reason Requirement — 必填)
+        {activeTab === "evidence" ? (
+          <MatchEvidencePanel comparison={comparison} correlationId={record.correlationId} />
+        ) : null}
+        {activeTab === "compare" ? <ListingCompareTable comparison={comparison} /> : null}
+        {activeTab === "graph" ? (
+          activePlan ? (
+            <IdentityGraphPlanView plan={activePlan} />
+          ) : (
+            <p className={styles.notice} data-testid="identity-graph-plan-empty">
+              請先選擇一個有 authoritative plan 的 graph operation。
+            </p>
+          )
+        ) : null}
+
+        {!reviewPhase ? (
+          <section aria-labelledby="identity-action-title" className={styles.section}>
+            <h3 className={styles.title} id="identity-action-title">
+              Outcome decision
+            </h3>
+            <div className={styles.actions} data-testid="identity-outcome-actions">
+              {availableActions.map((action) => (
+                <button
+                  aria-pressed={
+                    draft.commandType === "OUTCOME" && draft.outcomeAction === action
+                  }
+                  className={
+                    action === "REJECT" || action === "QUARANTINE"
+                      ? styles.buttonDanger
+                      : draft.commandType === "OUTCOME" && draft.outcomeAction === action
+                        ? styles.buttonPrimary
+                        : styles.button
+                  }
+                  data-action={action}
+                  data-testid={`identity-action-${action}`}
+                  disabled={busy || !workflow.canPropose}
+                  key={action}
+                  onClick={() => selectOutcomeAction(action)}
+                  type="button"
+                >
+                  {IDENTITY_ACTION_LABEL[action]}
+                </button>
+              ))}
+            </div>
+
+            <h3 className={styles.title}>Reversible graph operation</h3>
+            <div className={styles.actions} data-testid="identity-graph-actions">
+              {GRAPH_OPERATIONS.map((operation) => {
+                const plan = graphPlans.find((candidate) => candidate.operation === operation);
+                return (
+                  <button
+                    aria-pressed={
+                      draft.commandType === "GRAPH" && draft.graphOperation === operation
+                    }
+                    className={
+                      draft.commandType === "GRAPH" && draft.graphOperation === operation
+                        ? styles.buttonPrimary
+                        : styles.button
+                    }
+                    data-testid={`identity-graph-${operation}`}
+                    disabled={busy || !workflow.canPropose || !plan}
+                    key={operation}
+                    onClick={() => selectGraphOperation(operation)}
+                    title={plan ? `${operation} plan ${plan.planId}` : `${operation} plan unavailable`}
+                    type="button"
+                  >
+                    {operation}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        <section aria-labelledby="identity-reason-title" className={styles.section}>
+          <h3 className={styles.title} id="identity-reason-title">
+            {reviewPhase ? "Independent review" : "Decision proposal"}
+          </h3>
+          <p className={styles.subtitle}>
+            {commandNeedsIndependentReview
+              ? "此命令需要獨立審查；proposal receipt 不代表 graph 已執行。"
+              : "此命令依目前 workflow 可直接提交。"}
+          </p>
+
+          {reviewPhase && workflow.proposal ? (
+            <div className={styles.notice} data-testid="identity-authoritative-proposal">
+              <strong>待審 proposal：</strong>
+              {workflow.proposal.graphOperation ??
+                (workflow.proposal.outcomeAction
+                  ? IDENTITY_ACTION_LABEL[workflow.proposal.outcomeAction]
+                  : "未提供 action")}
+              {" · "}提案原因：{workflow.proposal.reason}
+              {" · "}提案者風險確認：
+              {workflow.proposal.riskAcknowledged ? "已確認" : "未確認"}
+            </div>
+          ) : null}
+
+          <label className={styles.label} htmlFor="identity-decision-reason">
+            {reviewPhase ? "審查原因" : "決策原因"}
           </label>
           <textarea
             className={styles.textarea}
             data-testid="identity-decision-reason"
+            disabled={busy}
             id="identity-decision-reason"
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="請詳細敘述圖譜變更與比對判讀理由（例如：門牌號碼一致但租金差異較大，核實為同物件跨平台更新）..."
-            rows={3}
-            value={reason}
+            onChange={(event) => updateDraft({ reason: event.target.value })}
+            value={draft.reason}
           />
-        </div>
 
-        {/* Risk Summary and Checkbox */}
-        <div className={styles.sectionBox} style={{ marginTop: "8px", background: "#fefce8" }}>
-          <div className={styles.sectionHead} style={{ color: "#854d0e" }}>
-            風險宣告與影響評估 RISK & LINEAGE IMPACT
-          </div>
-          <div className={styles.riskSummaryText} data-testid="identity-risk-summary">
-            {riskSummaryText}
-          </div>
-          <label className={styles.checkboxRow} htmlFor="identity-risk-ack" style={{ marginTop: "6px" }}>
+          <label className={styles.checkbox} htmlFor="identity-risk-ack">
             <input
-              checked={riskAcknowledged}
+              checked={draft.riskAcknowledged}
               data-testid="identity-risk-ack"
-              disabled={isSelfReviewDenied || busy}
+              disabled={busy}
               id="identity-risk-ack"
-              onChange={(e) => setRiskAcknowledged(e.target.checked)}
+              onChange={(event) => updateDraft({ riskAcknowledged: event.target.checked })}
               type="checkbox"
             />
-            <span>我已詳細閱讀風險評估，確認執行此圖譜變更（將連同決策原因與人員資訊寫入 Audit WORM 歷程）</span>
+            <span>
+              我已閱讀 current／submitted 差異、graph before／after、redirect、Candidate 與
+              lineage impact。
+            </span>
           </label>
-        </div>
 
-        {/* Concurrency Conflict Banner (409 OWNER_CONFLICT) */}
-        {conflictState?.hasConflict ? (
-          <div className={styles.errorPanel} data-testid="identity-conflict-banner" role="alert" style={{ marginTop: "10px" }}>
-            <span className={styles.errorSummary}>
-              ⚠ 偵測到版本與 Lock 衝突 (409 OWNER_CONFLICT)
-            </span>
-            <span className={styles.errorMeta}>
-              最新 Owner: {conflictState.currentOwner} · 最新版本: {conflictState.currentVersion}。
-              你的輸入（原因與勾選狀態）已妥善保留，請點擊下方按鈕以最新版本 If-Match 重試。
-            </span>
-            <div style={{ marginTop: "6px" }}>
+          {shownConflict ? (
+            <div className={styles.error} data-testid="identity-conflict-banner" role="alert">
+              <strong>{shownConflict.code}</strong>：{shownConflict.summary}
+              <div>
+                Current state {shownConflict.currentState} · version {shownConflict.currentVersion}
+                {shownConflict.currentOwner ? ` · owner ${shownConflict.currentOwner}` : ""}
+              </div>
+              <div>
+                Correlation {shownConflict.correlationId} · {shownConflict.occurredAt}
+              </div>
+              <div>{shownConflict.nextAction}</div>
+              {onRefreshConflict ? (
+                <button
+                  className={styles.button}
+                  data-testid="identity-conflict-refresh"
+                  onClick={refreshConflict}
+                  type="button"
+                >
+                  重新讀取 authoritative state
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {localError || errorMessage ? (
+            <p className={styles.error} data-testid="identity-decision-error" role="alert">
+              {localError ?? errorMessage}
+            </p>
+          ) : null}
+
+          <div className={styles.actions}>
+            {reviewPhase ? (
+              <>
+                <button
+                  className={styles.buttonPrimary}
+                  data-testid="identity-review-approve"
+                  disabled={!canReview || !riskValid}
+                  onClick={() => submit("REVIEW", "APPROVE")}
+                  type="button"
+                >
+                  核准 identity 決策
+                </button>
+                <button
+                  className={styles.buttonDanger}
+                  data-testid="identity-review-reject"
+                  disabled={!canReview}
+                  onClick={() => submit("REVIEW", "REJECT")}
+                  type="button"
+                >
+                  拒絕 identity 決策
+                </button>
+              </>
+            ) : (
               <button
-                className={styles.primaryButton}
-                data-testid="identity-conflict-refresh-btn"
-                onClick={handleRefreshAndRetry}
+                className={styles.buttonPrimary}
+                data-testid="identity-submit-proposal"
+                disabled={!canPropose}
+                onClick={() => submit("PROPOSE", null)}
                 type="button"
               >
-                重新整理資料並重新提交 (If-Match {conflictState.currentVersion})
+                {commandNeedsIndependentReview ? "提交獨立審查" : "提交 identity 決策"}
               </button>
-            </div>
+            )}
           </div>
-        ) : null}
+        </section>
 
-        {/* Local / Server error summary */}
-        {shownError ? (
-          <div className={styles.errorPanel} data-testid="identity-decision-error" role="alert" style={{ marginTop: "10px" }}>
-            <span className={styles.errorSummary}>{shownError}</span>
-          </div>
-        ) : null}
-
-        {/* Submit action button */}
-        <div style={{ marginTop: "12px", textAlign: "right" }}>
-          <button
-            className={styles.primaryButton}
-            data-testid="identity-submit-btn"
-            disabled={isSelfReviewDenied || busy || !riskAcknowledged || !reason.trim()}
-            onClick={handleSubmit}
-            type="button"
-          >
-            {busy ? "提交中…" : `確認執行${decisionTitle(decisionKind, record)} (${graphMode.toUpperCase()})`}
-          </button>
-        </div>
+        {shownReceipt ? <IdentityDecisionReceiptView receipt={shownReceipt} /> : null}
       </div>
-    </div>
+    </section>
   );
 }
