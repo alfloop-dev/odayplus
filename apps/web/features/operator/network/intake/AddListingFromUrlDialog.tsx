@@ -4,8 +4,11 @@ import React, { useMemo, useRef, useState } from "react";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
-import type { IntakeApiError } from "./intakeClient";
 import { existingListingHref, intakeDetailHref } from "./IntakeInboxMap";
+import type {
+  AuthoritativeInboxError,
+  IntakeInboxHeatZone,
+} from "./inboxContracts";
 
 // "Dialog 從網址新增物件" (UX-SCR-EXP-003A).
 //
@@ -17,21 +20,13 @@ import { existingListingHref, intakeDetailHref } from "./IntakeInboxMap";
 //                browser; doing that here would let the UI claim a retrieval
 //                permission the backend has not granted).
 
-const HEAT_ZONE_OPTIONS = [
-  { id: "", label: "未指定" },
-  { id: "HZ-01", label: "HZ-01 信義松仁生活圈" },
-  { id: "HZ-02", label: "HZ-02 板橋府中商圈" },
-  { id: "HZ-03", label: "HZ-03 中壢中原學區" },
-  { id: "HZ-04", label: "HZ-04 大安和平住宅圈" },
-  { id: "HZ-05", label: "HZ-05 新莊副都心" },
-];
-
 const URL_HINT = "請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）。";
 
 export function AddListingFromUrlDialog({
   busy,
   defaultHeatZoneId,
   error,
+  heatZoneOptions,
   onClose,
   onOpenExisting,
   onSubmit,
@@ -42,7 +37,8 @@ export function AddListingFromUrlDialog({
 }: {
   busy: boolean;
   defaultHeatZoneId?: string;
-  error: IntakeApiError | null;
+  error: AuthoritativeInboxError | null;
+  heatZoneOptions?: IntakeInboxHeatZone[];
   onClose: () => void;
   onOpenExisting?: (listingId: string) => void;
   onSubmit: (
@@ -65,9 +61,14 @@ export function AddListingFromUrlDialog({
 
   const sourceHost = useMemo(() => (looksValid ? detectSourceHost(trimmed) : null), [looksValid, trimmed]);
   const canonicalPreview = useMemo(() => (looksValid ? computeCanonicalUrlPreview(trimmed) : null), [looksValid, trimmed]);
+  const heatZoneContextAvailable = heatZoneOptions !== undefined;
 
   async function handleSubmit() {
     if (busy || submitLock.current) return;
+    if (!heatZoneContextAvailable) {
+      setLocalError("HeatZone 與送件 context 尚未由伺服器提供，暫時無法送件。");
+      return;
+    }
     if (!trimmed) {
       setLocalError("請輸入物件頁網址");
       return;
@@ -182,16 +183,27 @@ export function AddListingFromUrlDialog({
             <select
               className={styles.select}
               data-testid="intake-area-select"
+              disabled={!heatZoneContextAvailable}
               id="intake-area"
               onChange={(event) => setHeatZoneId(event.target.value)}
               value={heatZoneId}
             >
-              {HEAT_ZONE_OPTIONS.map((option) => (
+              <option value="">未指定</option>
+              {(heatZoneOptions ?? []).map((option) => (
                 <option key={option.id || "none"} value={option.id}>
                   {option.label}
                 </option>
               ))}
             </select>
+            {!heatZoneContextAvailable ? (
+              <span
+                className={styles.fieldHint}
+                data-testid="intake-heatzone-unavailable"
+                role="status"
+              >
+                HeatZone 清單尚未由 authoritative bootstrap 提供。
+              </span>
+            ) : null}
           </div>
           <div>
             <span className={styles.fieldLabel}>送件與權責 context</span>
@@ -284,8 +296,14 @@ export function AddListingFromUrlDialog({
               <>
                 <span className={styles.errorMeta}>
                   錯誤碼 {error.code}
-                  {error.correlationId ? ` · correlation ${error.correlationId}` : ""} · 發生於{" "}
-                  {error.occurredAt}
+                  {" · "}correlation {error.correlationId ?? "伺服器未提供"}
+                  {" · "}發生於 {error.occurredAt ?? "伺服器未提供"}
+                </span>
+                <span className={styles.errorMeta}>
+                  retryable {error.retryable ? "true" : "false"}
+                  {" · "}currentVersion{" "}
+                  {error.currentVersion ?? "伺服器未提供"}
+                  {" · "}currentState {error.currentState ?? "伺服器未提供"}
                 </span>
                 <span className={styles.errorNext}>下一步：{error.nextAction}</span>
               </>
@@ -306,7 +324,13 @@ export function AddListingFromUrlDialog({
         <button
           className={styles.primaryButton}
           data-testid="intake-submit-button"
-          disabled={busy || submitting || !trimmed || Boolean(receipt)}
+          disabled={
+            busy ||
+            submitting ||
+            !trimmed ||
+            Boolean(receipt) ||
+            !heatZoneContextAvailable
+          }
           onClick={() => void handleSubmit()}
           type="button"
         >

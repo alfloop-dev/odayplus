@@ -2,30 +2,13 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AssignmentReceipt } from "@oday-plus/openapi-client";
 import type {
-  AssistedIntake,
-  AssignmentReceipt,
-  IntakeInboxPage,
-} from "@oday-plus/openapi-client";
-
-const clientMocks = vi.hoisted(() => ({
-  assign: vi.fn(),
-  claimAssignment: vi.fn(),
-}));
-
-vi.mock("../intakeClient", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../intakeClient")>();
-  return {
-    ...actual,
-    buildIntakeClient: vi.fn(() => ({ connected: true })),
-    intakeApi: {
-      ...actual.intakeApi,
-      assign: clientMocks.assign,
-      claimAssignment: clientMocks.claimAssignment,
-    },
-    newIntakeActionIdempotencyKey: vi.fn(() => "idem-inbox-claim"),
-  };
-});
+  InboxIntakeRecord,
+  IntakeInboxBootstrapContext,
+  IntakeInboxPageContract,
+  IntakeInboxSavedView,
+} from "../inboxContracts";
 
 vi.mock("maplibre-gl", () => {
   class MockMap {
@@ -70,17 +53,11 @@ vi.mock("maplibre-gl", () => {
 
 import { ListingInboxIntakeView } from "../ListingInboxIntakeView";
 
-function intake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
+function intake(
+  overrides: Partial<InboxIntakeRecord> = {},
+): InboxIntakeRecord {
   return {
     id: "IN-000",
-    tenantId: "tenant-tw",
-    scope: {
-      tenant_id: "tenant-tw",
-      assigned_area_id: "AREA-TAIPEI-01",
-      brand_id: "ODAY",
-      heat_zone_id: "HZ-01",
-      region_id: "TW-NORTH",
-    },
     sourceId: "source-example",
     intakeMethod: "URL",
     canonicalUrl: "https://listings.example.com/property/000",
@@ -114,10 +91,9 @@ function intake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
   };
 }
 
-const records: AssistedIntake[] = [
+const records: InboxIntakeRecord[] = [
   intake({
     id: "IN-101",
-    listingId: "LISTING-201",
     sourceId: "source-591",
     canonicalUrl: "https://listings.example.com/property/101",
     matchResult: {
@@ -150,6 +126,30 @@ const records: AssistedIntake[] = [
     },
   }),
   intake({
+    id: "IN-EXACT",
+    matchResult: {
+      outcome: "EXACT_DUPLICATE",
+      outcomeLabel: "完全重複",
+      targetListingId: "LISTING-202",
+      confidence: 1,
+      agreeingSignals: [],
+      contradictingSignals: [],
+      summary: "Canonical identity matched.",
+    },
+  }),
+  intake({
+    id: "IN-REVISION",
+    matchResult: {
+      outcome: "REVISION",
+      outcomeLabel: "版本更新",
+      targetListingId: "LISTING-203",
+      confidence: 0.99,
+      agreeingSignals: [],
+      contradictingSignals: [],
+      summary: "Existing listing revision.",
+    },
+  }),
+  intake({
     id: "IN-102",
     sourceId: "source-manual",
     intakeMethod: "MANUAL",
@@ -176,25 +176,42 @@ const records: AssistedIntake[] = [
   }),
 ];
 
-const pageData: IntakeInboxPage = {
+const pageData: IntakeInboxPageContract = {
   items: records,
   total: 23,
   page: 1,
   pageSize: 10,
-  counts: {
-    needsReview: 1,
-    awaitingEntry: 1,
-    processing: 0,
-    blocked: 1,
-    ready: 0,
-  },
   evidenceState: "degraded",
   nextCursor: "cursor-next",
   previousCursor: null,
-  queryFingerprint: "query-fingerprint",
-  sortBy: "updatedAt",
-  sortOrder: "desc",
 };
+
+const bootstrapContext: IntakeInboxBootstrapContext = {
+  tenantId: "tenant-authoritative",
+  scopeLabel: "TW-NORTH / AREA-TAIPEI-01",
+  ownerLabel: "queue-expansion-north",
+  submitterLabel: "Manager Lin (actor-manager)",
+  heatZones: [
+    { id: "HZ-01", label: "HZ-01 authoritative zone" },
+    { id: "HZ-AUTH", label: "HZ-AUTH bootstrap only" },
+  ],
+};
+
+const savedViews: IntakeInboxSavedView[] = [
+  { id: "review-queue", label: "北區待覆核", count: 7 },
+  { id: "my-work", label: "我的工作" },
+];
+
+function claimReceipt(): AssignmentReceipt {
+  return {
+    assignment_id: "ASG-IN-102",
+    audit_event_id: "AUD-CLAIM-102",
+    due_at: "2026-07-28T00:00:00Z",
+    owner_subject_id: "actor-manager",
+    status: "CLAIMED",
+    version: 2,
+  };
+}
 
 function renderView(
   overrides: Partial<React.ComponentProps<typeof ListingInboxIntakeView>> = {},
@@ -203,11 +220,17 @@ function renderView(
     activeRoleId: "expansion-manager",
     activeSubjectId: "actor-manager",
     busy: false,
+    bootstrapContext,
     loadState: "ready",
+    onClaimIntake: vi.fn().mockResolvedValue({
+      ok: true,
+      value: claimReceipt(),
+    }),
     onAddSubmit: vi.fn().mockResolvedValue(undefined),
     onOpenDetail: vi.fn(),
     pageData,
     records,
+    savedViews,
     ...overrides,
   };
   return { ...render(<ListingInboxIntakeView {...props} />), props };
@@ -217,19 +240,6 @@ describe("ListingInboxIntakeView", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/w/expansion/listings");
     vi.clearAllMocks();
-    const claimReceipt: AssignmentReceipt = {
-      assignment_id: "ASG-IN-102",
-      audit_event_id: "AUD-CLAIM-102",
-      due_at: "2026-07-28T00:00:00Z",
-      owner_subject_id: "actor-manager",
-      status: "ASSIGNED",
-      version: 1,
-    };
-    clientMocks.assign.mockResolvedValue({ ok: true, value: claimReceipt });
-    clientMocks.claimAssignment.mockResolvedValue({
-      ok: true,
-      value: { ...claimReceipt, status: "CLAIMED", version: 2 },
-    });
   });
 
   afterEach(cleanup);
@@ -263,10 +273,77 @@ describe("ListingInboxIntakeView", () => {
       "descending",
     );
     expect(screen.getByTestId("intake-inbox-row-IN-101")).toHaveTextContent(
-      "Listing LISTING-201",
+      "尚無 Listing",
     );
+    expect(
+      screen.getByTestId("intake-inbox-row-IN-101").querySelector(
+        'a[href*="LISTING-201"]',
+      ),
+    ).toBeNull();
+    expect(screen.getByTestId("intake-inbox-row-IN-EXACT")).toHaveTextContent(
+      "Listing LISTING-202",
+    );
+    expect(
+      screen.getByTestId("intake-inbox-row-IN-REVISION"),
+    ).toHaveTextContent("Listing LISTING-203");
     expect(screen.getByTestId("intake-inbox-row-IN-FAIL")).toHaveTextContent(
       "可重試",
+    );
+  });
+
+  it("renders only authoritative saved views and HeatZones from bootstrap props", () => {
+    renderView();
+
+    expect(screen.getByTestId("intake-tab-review-queue")).toHaveTextContent(
+      "北區待覆核 (7)",
+    );
+    expect(screen.getByTestId("intake-tab-my-work")).toHaveTextContent(
+      "我的工作",
+    );
+    expect(screen.queryByText("全部物件")).not.toBeInTheDocument();
+    expect(screen.queryByText("隔離／失敗")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("intake-add-button"));
+    const heatZoneSelect = screen.getByTestId("intake-area-select");
+    expect(heatZoneSelect).toHaveTextContent("HZ-AUTH bootstrap only");
+    expect(heatZoneSelect).not.toHaveTextContent("信義松仁生活圈");
+    expect(screen.getByTestId("intake-submitter")).toHaveTextContent(
+      "Tenant tenant-authoritative",
+    );
+    expect(screen.getByTestId("intake-submitter")).toHaveTextContent(
+      "初始 owner queue-expansion-north",
+    );
+  });
+
+  it("fails closed when saved views or bootstrap context are unavailable", () => {
+    renderView({ bootstrapContext: undefined, savedViews: undefined });
+
+    expect(
+      screen.getByTestId("intake-saved-views-unavailable"),
+    ).toBeVisible();
+    expect(
+      screen.getByTestId("intake-bootstrap-context-unavailable"),
+    ).toBeVisible();
+    expect(screen.getByTestId("intake-add-button")).toBeDisabled();
+    expect(screen.queryByRole("navigation", { name: "收件 saved views" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("does not send an unknown URL saved view to the query adapter", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/w/expansion/listings?savedView=legacy-fake-view",
+    );
+    const onQueryChange = vi.fn();
+    renderView({ onQueryChange });
+
+    expect(
+      screen.getByTestId("intake-saved-view-selection-unavailable"),
+    ).toBeVisible();
+    await waitFor(() => expect(onQueryChange).toHaveBeenCalled());
+    expect(onQueryChange.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "savedView",
     );
   });
 
@@ -274,7 +351,7 @@ describe("ListingInboxIntakeView", () => {
     const onQueryChange = vi.fn();
     renderView({ onQueryChange });
 
-    fireEvent.click(screen.getByTestId("intake-tab-needsReview"));
+    fireEvent.click(screen.getByTestId("intake-tab-review-queue"));
     fireEvent.change(screen.getByTestId("intake-search-input"), {
       target: { value: "信義路" },
     });
@@ -312,7 +389,7 @@ describe("ListingInboxIntakeView", () => {
         pageSize: 10,
         cursor: "cursor-next",
         search: "信義路",
-        savedView: "needsReview",
+        savedView: "review-queue",
         intakeMethod: "URL",
         intakeStage: "NEEDS_REVIEW",
         matchOutcome: "POSSIBLE_MATCH",
@@ -424,7 +501,11 @@ describe("ListingInboxIntakeView", () => {
   it("provides direct open, claim, review, retry and correction actions", async () => {
     const onRetryIntake = vi.fn();
     const onOpenDetail = vi.fn();
-    renderView({ onOpenDetail, onRetryIntake });
+    const onClaimIntake = vi.fn().mockResolvedValue({
+      ok: true,
+      value: claimReceipt(),
+    });
+    renderView({ onClaimIntake, onOpenDetail, onRetryIntake });
 
     expect(screen.getByTestId("intake-open-IN-101")).toHaveAttribute(
       "href",
@@ -440,16 +521,9 @@ describe("ListingInboxIntakeView", () => {
     );
 
     fireEvent.click(screen.getByTestId("intake-claim-IN-102"));
-    await waitFor(() => expect(clientMocks.assign).toHaveBeenCalledTimes(1));
-    expect(clientMocks.assign).toHaveBeenCalledWith(
-      expect.anything(),
-      "IN-102",
-      expect.objectContaining({
-        owner_subject_id: "actor-manager",
-        reason: "Direct claim from Listing Inbox",
-      }),
-      { idempotencyKey: "idem-inbox-claim" },
-    );
+    await waitFor(() => expect(onClaimIntake).toHaveBeenCalledTimes(1));
+    expect(onClaimIntake).toHaveBeenCalledWith("IN-102");
+    expect(onClaimIntake.mock.calls[0]).toHaveLength(1);
     expect(await screen.findByTestId("intake-claim-receipt")).toHaveTextContent(
       "Assignment ASG-IN-102",
     );
@@ -489,6 +563,8 @@ describe("ListingInboxIntakeView", () => {
           correlationId: "corr-load",
           occurredAt: "2026-07-23T05:00:00Z",
           retryable: true,
+          currentVersion: 12,
+          currentState: "NEEDS_REVIEW",
         }}
         loadState="error"
         onAddSubmit={vi.fn()}
@@ -497,6 +573,27 @@ describe("ListingInboxIntakeView", () => {
     );
     expect(screen.getByTestId("intake-inbox-error")).toHaveTextContent(
       "無法載入收件列表",
+    );
+    expect(screen.getByTestId("intake-inbox-error-code")).toHaveTextContent(
+      "ODP-INTAKE-500",
+    );
+    expect(
+      screen.getByTestId("intake-inbox-error-correlation"),
+    ).toHaveTextContent("corr-load");
+    expect(
+      screen.getByTestId("intake-inbox-error-occurred-at"),
+    ).toHaveTextContent("2026-07-23T05:00:00Z");
+    expect(
+      screen.getByTestId("intake-inbox-error-retryable"),
+    ).toHaveTextContent("true");
+    expect(
+      screen.getByTestId("intake-inbox-error-current-version"),
+    ).toHaveTextContent("12");
+    expect(
+      screen.getByTestId("intake-inbox-error-current-state"),
+    ).toHaveTextContent("NEEDS_REVIEW");
+    expect(screen.getByTestId("intake-inbox-error")).toHaveTextContent(
+      "下一步：請重試",
     );
 
     rerender(

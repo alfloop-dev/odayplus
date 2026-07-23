@@ -4,15 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AssistedIntake,
   AssignmentReceipt,
-  IntakeInboxPage,
-  IntakeInboxQuery,
 } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
-import { getOperatorRole } from "../../navigation";
-import {
-  operatorSecurityHeaders,
-  operatorSubjectId,
-} from "../../operatorSecurityHeaders";
 import styles from "./intake.module.css";
 import {
   AddListingFromUrlDialog,
@@ -37,26 +30,30 @@ import {
   NO_ACCESS_NOTE,
   READ_ONLY_NOTE,
 } from "./intakePermissions";
-import {
-  buildIntakeClient,
-  intakeApi,
-  newIntakeActionIdempotencyKey,
-  type IntakeApiError,
-} from "./intakeClient";
+import type {
+  AuthoritativeInboxError,
+  ClaimIntakeCommand,
+  InboxIntakeRecord,
+  IntakeInboxBootstrapContext,
+  IntakeInboxPageContract,
+  IntakeInboxQueryContract,
+  IntakeInboxSavedView,
+} from "./inboxContracts";
 import {
   useIntakeInboxQuery,
   type IntakeInboxFilterState,
-  type SavedViewType,
 } from "./useIntakeInboxQuery";
 
 type ListingInboxIntakeViewProps = {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
-  records: AssistedIntake[];
+  records: InboxIntakeRecord[];
   loadState: "loading" | "ready" | "error";
-  loadError?: IntakeApiError | null;
-  actionError?: IntakeApiError | null;
+  loadError?: AuthoritativeInboxError | null;
+  actionError?: AuthoritativeInboxError | null;
   busy: boolean;
+  bootstrapContext?: IntakeInboxBootstrapContext;
+  savedViews?: IntakeInboxSavedView[];
   selectedHeatZoneId?: string;
   onAddSubmit: (
     input: { url: string; heatZoneId: string },
@@ -65,19 +62,11 @@ type ListingInboxIntakeViewProps = {
   onOpenDetail?: (intakeId: string) => void;
   onRetryLoad?: () => void;
   onRetryIntake?: (intakeId: string) => void | Promise<void>;
+  onClaimIntake?: ClaimIntakeCommand;
   onClaimCompleted?: (intakeId: string, receipt: AssignmentReceipt) => void;
-  pageData?: IntakeInboxPage;
-  onQueryChange?: (query: IntakeInboxQuery) => void;
+  pageData?: IntakeInboxPageContract;
+  onQueryChange?: (query: IntakeInboxQueryContract) => void;
 };
-
-const savedViewDefinition: Array<{ id: SavedViewType; label: string }> = [
-  { id: "all", label: "全部物件" },
-  { id: "needsReview", label: "需覆核" },
-  { id: "awaitingEntry", label: "待補錄" },
-  { id: "processing", label: "處理中" },
-  { id: "blocked", label: "隔離／失敗" },
-  { id: "ready", label: "可決策" },
-];
 
 const stageOptions = [
   "SUBMITTED",
@@ -96,17 +85,19 @@ const stageOptions = [
 
 export function ListingInboxIntakeView({
   activeRoleId,
-  activeSubjectId,
   records,
   loadState,
   loadError,
   actionError,
   busy,
+  bootstrapContext,
+  savedViews,
   selectedHeatZoneId,
   onAddSubmit,
   onOpenDetail,
   onRetryLoad,
   onRetryIntake,
+  onClaimIntake,
   onClaimCompleted,
   pageData,
   onQueryChange,
@@ -114,7 +105,8 @@ export function ListingInboxIntakeView({
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [claimedOwners, setClaimedOwners] = useState<Record<string, string>>({});
-  const [directActionError, setDirectActionError] = useState<IntakeApiError | null>(null);
+  const [directActionError, setDirectActionError] =
+    useState<AuthoritativeInboxError | null>(null);
   const [claimReceipt, setClaimReceipt] = useState<AssignmentReceipt | null>(null);
   const [submissionReceipt, setSubmissionReceipt] =
     useState<AssistedIntake | null>(null);
@@ -126,22 +118,33 @@ export function ListingInboxIntakeView({
   } | null>(null);
   recordsRef.current = records;
 
-  const role = getOperatorRole(activeRoleId);
   const readOnly = isReadOnly(activeRoleId);
   const permitted = canView(activeRoleId);
   const canSubmit = canPerform("submit", activeRoleId);
   const canRetry = canPerform("retry", activeRoleId);
-  const canClaim = !readOnly && canPerform("decide", activeRoleId);
-  const subjectId = operatorSubjectId(activeRoleId, activeSubjectId);
-  const client = useMemo(
-    () => buildIntakeClient(activeRoleId, activeSubjectId),
-    [activeRoleId, activeSubjectId],
+  const canClaim =
+    !readOnly && canPerform("decide", activeRoleId) && Boolean(onClaimIntake);
+  const savedViewIds = useMemo(
+    () => new Set((savedViews ?? []).map((view) => view.id)),
+    [savedViews],
   );
 
   const { filters, updateFilters, resetFilters, toggleSort } = useIntakeInboxQuery();
   useEffect(() => {
-    onQueryChange?.(buildIntakeInboxServerQuery(filters, selectedHeatZoneId));
-  }, [filters, onQueryChange, selectedHeatZoneId]);
+    onQueryChange?.(
+      buildIntakeInboxServerQuery(
+        filters,
+        selectedHeatZoneId,
+        savedViews === undefined ? undefined : savedViewIds,
+      ),
+    );
+  }, [
+    filters,
+    onQueryChange,
+    savedViewIds,
+    savedViews,
+    selectedHeatZoneId,
+  ]);
 
   useEffect(() => {
     const pending = pendingSubmissionRef.current;
@@ -173,48 +176,26 @@ export function ListingInboxIntakeView({
     1,
     Math.ceil(totalRecords / (pageData?.pageSize ?? filters.pageSize)),
   );
-  const counts = pageData?.counts ?? {
-    needsReview: 0,
-    awaitingEntry: 0,
-    processing: 0,
-    blocked: 0,
-    ready: 0,
-  };
-  const savedViewCounts: Record<SavedViewType, number> = {
-    all: totalRecords,
-    needsReview: counts.needsReview,
-    awaitingEntry: counts.awaitingEntry,
-    processing: counts.processing,
-    blocked: counts.blocked,
-    ready: counts.ready,
-  };
+  const selectedHeatZoneAvailable =
+    !selectedHeatZoneId ||
+    Boolean(
+      bootstrapContext?.heatZones.some(
+        (heatZone) => heatZone.id === selectedHeatZoneId,
+      ),
+    );
+  const addContextAvailable =
+    bootstrapContext !== undefined && selectedHeatZoneAvailable;
+  const savedViewSelectionUnavailable =
+    Boolean(filters.savedView) &&
+    (savedViews === undefined || !savedViewIds.has(filters.savedView));
 
-  async function claimIntake(record: AssistedIntake) {
-    if (!client || !canClaim || claimingId) return;
+  async function claimIntake(record: InboxIntakeRecord) {
+    if (!onClaimIntake || !canClaim || claimingId) return;
     setClaimingId(record.id);
     setClaimReceipt(null);
     setDirectActionError(null);
 
-    const key = newIntakeActionIdempotencyKey(record.id, "inbox-claim");
-    const result = record.assignmentId
-      ? await intakeApi.claimAssignment(
-          client,
-          record.assignmentId,
-          { reason: "Direct claim from Listing Inbox" },
-          { idempotencyKey: key },
-        )
-      : await intakeApi.assign(
-          client,
-          record.id,
-          {
-            owner_subject_id: subjectId,
-            owner_role: activeRoleId,
-            due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-            reason: "Direct claim from Listing Inbox",
-            handoff_note: "Claimed directly from the inbox row action",
-          },
-          { idempotencyKey: key },
-        );
+    const result = await onClaimIntake(record.id);
 
     setClaimingId(null);
     if (!result.ok) {
@@ -310,10 +291,16 @@ export function ListingInboxIntakeView({
             <button
               className={styles.addButton}
               data-testid="intake-add-button"
+              disabled={!addContextAvailable}
               onClick={() => {
                 setSubmissionReceipt(null);
                 setIsAddDialogOpen(true);
               }}
+              title={
+                addContextAvailable
+                  ? undefined
+                  : "authoritative tenant/scope/owner context unavailable"
+              }
               type="button"
             >
               從網址新增物件
@@ -322,20 +309,73 @@ export function ListingInboxIntakeView({
         </div>
       </header>
 
-      <nav aria-label="收件 saved views" className={styles.intakeTableActions}>
-        {savedViewDefinition.map((tab) => (
-          <button
-            aria-current={filters.savedView === tab.id ? "page" : undefined}
-            className={filters.savedView === tab.id ? styles.primaryButton : styles.secondaryButton}
-            data-testid={`intake-tab-${tab.id}`}
-            key={tab.id}
-            onClick={() => updateFilters({ savedView: tab.id })}
-            type="button"
-          >
-            {tab.label} ({savedViewCounts[tab.id]})
-          </button>
-        ))}
-      </nav>
+      {!addContextAvailable && canSubmit ? (
+        <div
+          className={styles.warnNote}
+          data-testid="intake-bootstrap-context-unavailable"
+          role="status"
+        >
+          Tenant、scope、submitter、owner 或目前 HeatZone context 尚未由
+          authoritative bootstrap 提供，URL 送件暫不可用。
+        </div>
+      ) : null}
+
+      {savedViews === undefined ? (
+        <div
+          className={styles.warnNote}
+          data-testid="intake-saved-views-unavailable"
+          role="status"
+        >
+          Saved views 尚未由 authoritative bootstrap/API 提供；不套用預設
+          saved-view filter。
+        </div>
+      ) : savedViews.length === 0 ? (
+        <div
+          className={styles.warnNote}
+          data-testid="intake-saved-views-empty"
+          role="status"
+        >
+          此 scope 目前沒有可用的 saved view。
+        </div>
+      ) : (
+        <nav
+          aria-label="收件 saved views"
+          className={styles.intakeTableActions}
+        >
+          {savedViews.map((view) => (
+            <button
+              aria-current={
+                filters.savedView === view.id ? "page" : undefined
+              }
+              className={
+                filters.savedView === view.id
+                  ? styles.primaryButton
+                  : styles.secondaryButton
+              }
+              data-testid={`intake-tab-${view.id}`}
+              key={view.id}
+              onClick={() => updateFilters({ savedView: view.id })}
+              type="button"
+            >
+              {view.label}
+              {view.count === undefined || view.count === null
+                ? ""
+                : ` (${view.count})`}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {savedViewSelectionUnavailable ? (
+        <div
+          className={styles.errorPanel}
+          data-testid="intake-saved-view-selection-unavailable"
+          role="alert"
+        >
+          URL 指定的 saved view 不在目前 authoritative 清單中，已 fail
+          closed 且不會送往查詢 API。
+        </div>
+      ) : null}
 
       <div className={styles.intakeFilterGrid}>
         <FilterInput
@@ -422,13 +462,10 @@ export function ListingInboxIntakeView({
       ) : null}
 
       {directActionError ?? actionError ? (
-        <div className={styles.errorPanel} data-testid="intake-direct-action-error" role="alert">
-          <span className={styles.errorSummary}>{(directActionError ?? actionError)!.summary}</span>
-          <span className={styles.errorMeta}>
-            {(directActionError ?? actionError)!.code} · {(directActionError ?? actionError)!.occurredAt}
-          </span>
-          <span className={styles.errorNext}>下一步：{(directActionError ?? actionError)!.nextAction}</span>
-        </div>
+        <InboxErrorPanel
+          error={(directActionError ?? actionError)!}
+          testId="intake-direct-action-error"
+        />
       ) : null}
 
       {loadState === "loading" ? (
@@ -437,11 +474,12 @@ export function ListingInboxIntakeView({
         </div>
       ) : null}
       {loadState === "error" ? (
-        <div className={styles.errorPanel} data-testid="intake-inbox-error" role="alert">
-          <span className={styles.errorSummary}>{loadError?.summary ?? "無法載入 Listing Inbox 收件資料。"}</span>
-          <span className={styles.errorNext}>下一步：請重試載入；此畫面不會顯示模擬資料。</span>
-          {onRetryLoad ? <button className={styles.secondaryButton} onClick={onRetryLoad} type="button">重新載入</button> : null}
-        </div>
+        <InboxErrorPanel
+          error={loadError ?? null}
+          fallbackSummary="無法載入 Listing Inbox；伺服器未提供完整 error envelope。"
+          onRetry={onRetryLoad}
+          testId="intake-inbox-error"
+        />
       ) : null}
       {loadState === "ready" && pageData && pageData.evidenceState !== "complete" ? (
         <div className={pageData.evidenceState === "degraded" ? styles.errorPanel : styles.warnNote} data-testid={`intake-evidence-${pageData.evidenceState}`} role="status">
@@ -517,21 +555,18 @@ export function ListingInboxIntakeView({
         </nav>
       ) : null}
 
-      {isAddDialogOpen ? (
+      {isAddDialogOpen && bootstrapContext ? (
         <AddListingFromUrlDialog
           busy={busy}
           defaultHeatZoneId={selectedHeatZoneId}
           error={actionError ?? null}
+          heatZoneOptions={bootstrapContext.heatZones}
           onClose={() => setIsAddDialogOpen(false)}
           onSubmit={submitUrl}
-          ownerLabel={subjectId}
-          scopeLabel={selectedHeatZoneId ? `HeatZone ${selectedHeatZoneId}` : "Tenant-wide expansion intake"}
-          submitterLabel={`${role.label} (${subjectId})`}
-          tenantLabel={
-            records[0]?.tenantId ??
-            records[0]?.scope?.tenant_id ??
-            operatorSecurityHeaders(activeRoleId, activeSubjectId)["X-Tenant-Id"]
-          }
+          ownerLabel={bootstrapContext.ownerLabel}
+          scopeLabel={bootstrapContext.scopeLabel}
+          submitterLabel={bootstrapContext.submitterLabel}
+          tenantLabel={bootstrapContext.tenantId}
         />
       ) : null}
     </section>
@@ -577,7 +612,7 @@ function SubmissionReceipt({ record }: { record: AssistedIntake }) {
 }
 
 function findSubmittedRecord(
-  records: AssistedIntake[],
+  records: InboxIntakeRecord[],
   originalUrl: string,
 ): AssistedIntake | undefined {
   return records.find(
@@ -591,15 +626,21 @@ function findSubmittedRecord(
 export function buildIntakeInboxServerQuery(
   filters: IntakeInboxFilterState,
   selectedHeatZoneId?: string,
-): IntakeInboxQuery {
-  return {
+  authoritativeSavedViewIds?: ReadonlySet<string>,
+): IntakeInboxQueryContract {
+  const savedView =
+    filters.savedView &&
+    authoritativeSavedViewIds?.has(filters.savedView)
+      ? filters.savedView
+      : undefined;
+  const query: IntakeInboxQueryContract = {
     selectedHeatZoneId:
       selectedHeatZoneId || filters.heatZoneId || undefined,
     page: filters.page,
     pageSize: filters.pageSize,
     cursor: filters.cursor || undefined,
     search: filters.search || undefined,
-    savedView: filters.savedView,
+    savedView,
     intakeMethod: filters.intakeMethod || undefined,
     intakeStage: filters.intakeStage || undefined,
     matchOutcome: filters.matchOutcome || undefined,
@@ -622,6 +663,9 @@ export function buildIntakeInboxServerQuery(
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder,
   };
+  return Object.fromEntries(
+    Object.entries(query).filter(([, value]) => value !== undefined),
+  ) as IntakeInboxQueryContract;
 }
 
 function toApiTimestamp(value: string): string | undefined {
@@ -649,10 +693,10 @@ function IntakeTable({
   claimingId: string | null;
   claimedOwners: Record<string, string>;
   filters: IntakeInboxFilterState;
-  onClaim: (record: AssistedIntake) => void;
+  onClaim: (record: InboxIntakeRecord) => void;
   onPreview?: (intakeId: string) => void;
-  onRetry: (record: AssistedIntake) => void;
-  records: AssistedIntake[];
+  onRetry: (record: InboxIntakeRecord) => void;
+  records: InboxIntakeRecord[];
   readOnly: boolean;
   toggleSort: (column: string) => void;
   updateFilters: (updates: Partial<IntakeInboxFilterState>) => void;
@@ -685,6 +729,7 @@ function IntakeTable({
             const outcome = record.matchResult?.outcome;
             const owner = claimedOwners[record.id] ?? record.owner;
             const retryable = record.stage === "FAILED" && record.failure?.retryable;
+            const relatedListingId = authoritativeRelatedListingId(record);
             return (
               <tr
                 data-selected={record.id === filters.selectedIntakeId ? "true" : undefined}
@@ -712,9 +757,9 @@ function IntakeTable({
                 <td>
                   <a href={intakeDetailHref(record.id)}>{record.id}</a>
                   <br />
-                  {record.listingId ? (
-                    <a href={`/w/expansion/listings?selected=${encodeURIComponent(record.listingId)}&drawer=listing`}>
-                      Listing {record.listingId}
+                  {relatedListingId ? (
+                    <a href={existingListingHref(relatedListingId)}>
+                      Listing {relatedListingId}
                     </a>
                   ) : (
                     <span>尚無 Listing</span>
@@ -786,6 +831,87 @@ function SortableHeader({
         {label} {active ? (filters.sortOrder === "asc" ? "▲" : "▼") : ""}
       </button>
     </th>
+  );
+}
+
+function authoritativeRelatedListingId(
+  record: InboxIntakeRecord,
+): string | null {
+  const outcome = record.matchResult?.outcome;
+  if (outcome !== "EXACT_DUPLICATE" && outcome !== "REVISION") return null;
+  return record.matchResult?.targetListingId || null;
+}
+
+function InboxErrorPanel({
+  error,
+  fallbackSummary,
+  onRetry,
+  testId,
+}: {
+  error: AuthoritativeInboxError | null;
+  fallbackSummary?: string;
+  onRetry?: () => void;
+  testId: string;
+}) {
+  const unavailable = "伺服器未提供";
+  return (
+    <div
+      className={styles.errorPanel}
+      data-testid={testId}
+      role="alert"
+    >
+      <span className={styles.errorSummary}>
+        {error?.summary ?? fallbackSummary ?? unavailable}
+      </span>
+      <dl className={styles.metaGrid}>
+        <div>
+          <dt>Code</dt>
+          <dd data-testid={`${testId}-code`}>{error?.code ?? unavailable}</dd>
+        </div>
+        <div>
+          <dt>Correlation ID</dt>
+          <dd data-testid={`${testId}-correlation`}>
+            {error?.correlationId ?? unavailable}
+          </dd>
+        </div>
+        <div>
+          <dt>Occurred at</dt>
+          <dd data-testid={`${testId}-occurred-at`}>
+            {error?.occurredAt ?? unavailable}
+          </dd>
+        </div>
+        <div>
+          <dt>Retryable</dt>
+          <dd data-testid={`${testId}-retryable`}>
+            {error ? (error.retryable ? "true" : "false") : unavailable}
+          </dd>
+        </div>
+        <div>
+          <dt>Current version</dt>
+          <dd data-testid={`${testId}-current-version`}>
+            {error?.currentVersion ?? unavailable}
+          </dd>
+        </div>
+        <div>
+          <dt>Current state</dt>
+          <dd data-testid={`${testId}-current-state`}>
+            {error?.currentState ?? unavailable}
+          </dd>
+        </div>
+      </dl>
+      <span className={styles.errorNext}>
+        下一步：{error?.nextAction ?? unavailable}
+      </span>
+      {onRetry && error?.retryable ? (
+        <button
+          className={styles.secondaryButton}
+          onClick={onRetry}
+          type="button"
+        >
+          重新載入
+        </button>
+      ) : null}
+    </div>
   );
 }
 

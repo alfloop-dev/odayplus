@@ -8,6 +8,9 @@ import { AddListingFromUrlDialog } from "../AddListingFromUrlDialog";
 const baseProps = {
   busy: false,
   error: null,
+  heatZoneOptions: [
+    { id: "HZ-01", label: "HZ-01 authoritative bootstrap zone" },
+  ],
   onClose: vi.fn(),
   ownerLabel: "actor-expansion-manager",
   scopeLabel: "HeatZone HZ-01",
@@ -92,6 +95,29 @@ describe("AddListingFromUrlDialog", () => {
     expect(screen.getByTestId("intake-canonical-preview")).not.toHaveTextContent(
       "ref=operator",
     );
+    expect(screen.getByTestId("intake-area-select")).toHaveTextContent(
+      "HZ-01 authoritative bootstrap zone",
+    );
+  });
+
+  it("fails closed when authoritative HeatZone options are missing", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AddListingFromUrlDialog
+        {...baseProps}
+        heatZoneOptions={undefined}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("intake-url-input"), {
+      target: { value: "https://listings.example.com/property/123" },
+    });
+
+    expect(screen.getByTestId("intake-heatzone-unavailable")).toBeVisible();
+    expect(screen.getByTestId("intake-area-select")).toBeDisabled();
+    expect(screen.getByTestId("intake-submit-button")).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("rejects invalid URLs before calling the server", () => {
