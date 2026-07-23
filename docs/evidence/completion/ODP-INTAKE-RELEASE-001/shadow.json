@@ -26,7 +26,7 @@
   },
   "drill": "shadow_processing",
   "environment": "staging-surrogate",
-  "finished_at": "2026-07-23T13:11:35.239910+00:00",
+  "finished_at": "2026-07-23T13:15:48.329598+00:00",
   "metrics": {
     "ambiguous_auto_merges": 0,
     "audit_outbox_loss": 0,
@@ -46,7 +46,7 @@
     }
   ],
   "outbox_rows_retained": 24,
-  "p95_pipeline_seconds": 0.0003088400699198246,
+  "p95_pipeline_seconds": 0.000261909794062376,
   "passed": true,
   "snapshot_reconciliation": {
     "corrupt": null,
@@ -54,6 +54,6 @@
     "orphans": null,
     "reconciled": null
   },
-  "started_at": "2026-07-23T13:11:35.083529+00:00",
+  "started_at": "2026-07-23T13:15:48.186464+00:00",
   "volume": 24
 }

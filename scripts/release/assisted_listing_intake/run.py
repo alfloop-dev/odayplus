@@ -121,7 +121,9 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
     }
     failed_drills = [name for name, ok in drill_gates.items() if not ok]
     canary = phase_results.get("canary") or {}
-    production_ladder_complete = canary.get("production_ladder_complete") is True
+    canary_drill_complete = canary.get("production_ladder_complete") is True
+    live_register_complete = live["production_canary_complete"] is True
+    production_ladder_complete = canary_drill_complete and live_register_complete
     canary_evidence_current = (
         canary.get("live_evidence_digest") == live["evidence_digest"]
     )
@@ -139,22 +141,32 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
             "infra/assisted-listing-intake/live_runtime_evidence.yaml "
             f"(missing targets: {live['missing_targets']})"
         )
-    if live["recorded"] and not production_ladder_complete:
+    if live["recorded"] and not live_register_complete:
         blocked_reasons.append(
-            "production canary ladder incomplete: current evidence does not prove "
-            "recorded passing live results for units 3-7"
+            "production canary register incomplete: current governed evidence does "
+            "not prove an intact error budget and recorded passing results for "
+            f"units 3-7 (missing={live['missing_canary_units']}, "
+            f"failed={live['failed_canary_units']})"
         )
-    if live["recorded"] and not canary_evidence_current:
+    if live["recorded"] and live_register_complete and not canary_drill_complete:
+        blocked_reasons.append(
+            "production canary drill incomplete: rerun --phase canary through unit 7"
+        )
+    if live["recorded"] and live_register_complete and not canary_evidence_current:
         blocked_reasons.append(
             "production canary evidence is stale: rerun --phase canary against "
             "the current live_runtime_evidence.yaml register"
         )
     # Flags may only be enabled (via dual approval) once every §12 row is
     # approved and live evidence exists; earlier than that is drift.
+    release_prerequisites_incomplete = (
+        bool(authority["pending_owners"])
+        or not live["recorded"]
+        or not production_ladder_complete
+        or not canary_evidence_current
+    )
     premature_flags = (
-        flags["enabled_production_flags"]
-        if (authority["pending_owners"] or not live["recorded"])
-        else []
+        flags["enabled_production_flags"] if release_prerequisites_incomplete else []
     )
     if premature_flags:
         blocked_reasons.append(f"production flags enabled prematurely: {premature_flags}")
@@ -191,8 +203,13 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
         },
         "production_canary": {
             "ladder_complete": production_ladder_complete,
+            "drill_complete": canary_drill_complete,
+            "register_complete": live_register_complete,
             "evidence_current": canary_evidence_current,
             "evidence_digest": canary.get("live_evidence_digest"),
+            "missing_units": live["missing_canary_units"],
+            "failed_units": live["failed_canary_units"],
+            "error_budget_intact": live["error_budget_intact"],
         },
         "production_flags_disabled": not flags["enabled_production_flags"],
         "rule": config.release_authority.get("cutover_rule"),

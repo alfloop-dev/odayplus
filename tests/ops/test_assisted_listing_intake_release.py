@@ -307,6 +307,8 @@ def test_live_evidence_default_not_recorded(config) -> None:
     assert report["recorded"] is False
     assert report["missing_targets"] == list(REQUIRED_LIVE_TARGETS)
     assert report["canary_units"] == {}
+    assert report["production_canary_complete"] is False
+    assert report["missing_canary_units"] == [3, 4, 5, 6, 7]
     assert len(report["evidence_digest"]) == 64
 
 
@@ -549,11 +551,15 @@ def test_cutover_blocks_until_all_live_canary_results_are_recorded(
         name: {"passed": True}
         for name in ("readiness", "migration", "shadow", "killswitch", "restore", "uat")
     }
-    prior["canary"] = canary
+    forged_canary = dict(canary)
+    forged_canary["production_ladder_complete"] = True
+    prior["canary"] = forged_canary
     result = run_cutover_gate(cfg, tmp_path, prior)
     assert canary["production_ladder_complete"] is False
     assert result["cutover_authorized"] is False
-    assert any("production canary ladder incomplete" in reason for reason in result["blocked_reasons"])
+    assert result["production_canary"]["drill_complete"] is True
+    assert result["production_canary"]["register_complete"] is False
+    assert any("production canary register incomplete" in reason for reason in result["blocked_reasons"])
     assert result["passed"] is True
 
 
@@ -614,11 +620,16 @@ def test_cutover_blocks_when_live_error_budget_is_exhausted(
         name: {"passed": True}
         for name in ("readiness", "migration", "shadow", "killswitch", "restore", "uat")
     }
-    prior["canary"] = canary
+    forged_canary = dict(canary)
+    forged_canary["production_ladder_complete"] = True
+    prior["canary"] = forged_canary
     result = run_cutover_gate(cfg, tmp_path, prior)
     assert canary["production_ladder_complete"] is False
     assert result["cutover_authorized"] is False
-    assert any("production canary ladder incomplete" in reason for reason in result["blocked_reasons"])
+    assert result["production_canary"]["drill_complete"] is True
+    assert result["production_canary"]["register_complete"] is False
+    assert result["production_canary"]["error_budget_intact"] is False
+    assert any("production canary register incomplete" in reason for reason in result["blocked_reasons"])
 
 
 def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:

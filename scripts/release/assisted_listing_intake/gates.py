@@ -15,6 +15,7 @@ from typing import Any
 
 from scripts.release.assisted_listing_intake.config import (
     EXPECTED_FLAG_KEYS,
+    PRODUCTION_CANARY_UNITS,
     REQUIRED_LIVE_TARGETS,
     ReleaseConfig,
 )
@@ -120,6 +121,20 @@ def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    missing_canary_units = [
+        unit for unit in PRODUCTION_CANARY_UNITS if unit not in canary_units
+    ]
+    failed_canary_units = [
+        unit
+        for unit in PRODUCTION_CANARY_UNITS
+        if canary_units.get(unit, {}).get("passed") is False
+    ]
+    production_canary_complete = (
+        recorded
+        and record.get("error_budget_intact") is True
+        and not missing_canary_units
+        and not failed_canary_units
+    )
     return {
         "checked_at": _now(),
         "register": str(config.infra_dir / "live_runtime_evidence.yaml"),
@@ -141,6 +156,9 @@ def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
             for name, entry in targets.items()
         },
         "canary_units": canary_units,
+        "production_canary_complete": production_canary_complete,
+        "missing_canary_units": missing_canary_units,
+        "failed_canary_units": failed_canary_units,
         "missing_targets": [
             t
             for t in REQUIRED_LIVE_TARGETS
