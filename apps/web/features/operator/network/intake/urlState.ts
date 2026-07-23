@@ -2,6 +2,7 @@ import type { IntakeUrlState } from "./types";
 
 export const INTAKE_DETAIL_SECTIONS = [
   "timeline",
+  "review",
   "evidence",
   "identity",
   "assignment",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type {
   AssignmentReceipt,
   AssistedIntake,
@@ -17,16 +17,15 @@ import type {
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
-import {
-  IdentityDecisionPanel,
-  type IdentityDecisionResultReceipt,
-  type IdentityGraphMode,
-} from "./IdentityDecisionPanel";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
 import type { IntakeApiError } from "./intakeClient";
 import { IntakeStageTimeline } from "./IntakeStageTimeline";
+import {
+  ParsedDataReview,
+  buildLegacyFieldReview,
+} from "./ParsedDataReview";
 import {
   PromotionReviewPanel,
   type PromotionActor,
@@ -47,6 +46,7 @@ import {
 
 export type IntakeDetailTab =
   | "timeline"
+  | "review"
   | "evidence"
   | "identity"
   | "assignment"
@@ -78,16 +78,8 @@ export type IntakeProcessingDetailProps = {
   onActiveTabChange?: (tab: IntakeDetailTab) => void;
   compareTargetId?: string | null;
   onDecide?: (kind: IntakeDecisionKind) => void;
-  onIdentityDecision?: (input: {
-    kind: IntakeDecisionKind;
-    graphMode: IdentityGraphMode;
-    reason: string;
-    riskSummary: string;
-    riskAcknowledged: boolean;
-    proposerId: string;
-    reviewerId: string;
-    ifMatchVersion?: string;
-  }) => Promise<IdentityDecisionResultReceipt | void> | void;
+  reviewSection?: ReactNode;
+  identitySection?: ReactNode;
   onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
   onReplayDlq?: (jobId?: string) => void;
@@ -143,7 +135,8 @@ export function IntakeProcessingDetail({
   onActiveTabChange,
   compareTargetId,
   onDecide,
-  onIdentityDecision,
+  reviewSection,
+  identitySection,
   onOpenFix,
   onRetry,
   onReplayDlq,
@@ -184,6 +177,13 @@ export function IntakeProcessingDetail({
 
   const options = decisionOptions(record);
   const outcome = record.matchResult?.outcome;
+  const parsedReviewFields = useMemo(
+    () =>
+      buildLegacyFieldReview(record.parsedFields ?? {}, {
+        sourceSnapshotId: record.snapshotId,
+      }),
+    [record.parsedFields, record.snapshotId],
+  );
 
   // The promotion tab exists only when the container wired the saga slice —
   // and only once the intake is READY (or a decision receipt already exists),
@@ -290,6 +290,22 @@ export function IntakeProcessingDetail({
           ⏱️ 階段與時序 (Timeline)
         </button>
 
+        <button
+          type="button"
+          onClick={() => setActiveTab("review")}
+          style={{
+            padding: "6px 12px",
+            borderRadius: "6px",
+            fontWeight: activeTab === "review" ? 700 : 500,
+            background: activeTab === "review" ? "#ffffff" : "transparent",
+            color: activeTab === "review" ? "#2e3a97" : "#64748b",
+            border: activeTab === "review" ? "1px solid #cbd5e1" : "none",
+            cursor: "pointer",
+          }}
+          data-testid="tab-review"
+        >
+          資料覆核
+        </button>
         <button
           type="button"
           onClick={() => setActiveTab("evidence")}
@@ -464,6 +480,21 @@ export function IntakeProcessingDetail({
           />
         )}
 
+        {activeTab === "review" &&
+          (reviewSection ??
+            (record.stage === "AWAITING_ASSISTED_ENTRY" ? (
+              <UnavailableContractState
+                code="AUTHORITATIVE_ASSISTED_ENTRY_UNAVAILABLE"
+                message="此收件需要人工補錄，但伺服器尚未提供可提交的 assisted-entry command contract。"
+              />
+            ) : (
+              <ParsedDataReview
+                canCorrect={canCorrect}
+                fields={parsedReviewFields}
+                onCorrect={onOpenFix ? (field) => onOpenFix(field.fieldPath) : undefined}
+              />
+            )))}
+
         {/* Tab 2: Evidence */}
         {activeTab === "evidence" && (
           <EvidencePanel
@@ -476,24 +507,13 @@ export function IntakeProcessingDetail({
         )}
 
         {/* Full desktop compare and reversible identity decision. */}
-        {activeTab === "identity" && (
-          <IdentityDecisionPanel
-            busy={busy}
-            currentOperator={currentOperator}
-            error={error}
-            onRefresh={onRefresh}
-            onSubmitDecision={
-              onIdentityDecision ??
-              (async () => {
-                throw new Error("目前無可用的身分決策命令；請重新整理或聯絡資料管理員。");
-              })
-            }
-            record={record}
-            targetListing={{
-              id: compareTargetId ?? record.matchResult?.targetListingId ?? undefined,
-            }}
-          />
-        )}
+        {activeTab === "identity" &&
+          (identitySection ?? (
+            <UnavailableContractState
+              code="AUTHORITATIVE_IDENTITY_UNAVAILABLE"
+              message="伺服器尚未提供 comparison、identity graph plan 與 review workflow；本頁不會由舊 match signals 推導決策資料。"
+            />
+          ))}
 
         {/* Assignment/SLA is part of the durable production composition. */}
         {activeTab === "assignment" && (
@@ -610,5 +630,21 @@ export function IntakeProcessingDetail({
         </div>
       )}
     </IntakeDialogShell>
+  );
+}
+
+function UnavailableContractState({
+  code,
+  message,
+}: {
+  code: string;
+  message: string;
+}) {
+  return (
+    <section className={styles.noteBox} data-testid={code.toLowerCase()} role="status">
+      <strong>資料尚未提供</strong>
+      <div>{message}</div>
+      <code>{code}</code>
+    </section>
   );
 }

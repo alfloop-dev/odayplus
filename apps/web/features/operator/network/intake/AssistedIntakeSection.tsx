@@ -33,10 +33,6 @@ import {
   type IntakeDetailTab,
 } from "./IntakeProcessingDetail";
 import type {
-  IdentityDecisionResultReceipt,
-  IdentityGraphMode,
-} from "./IdentityDecisionPanel";
-import type {
   PromotionRequestInput,
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
@@ -492,92 +488,6 @@ export function AssistedIntakeSection({
     updateUrlState({ dialog: isDurableDetailPage ? null : "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
     void refresh();
-  }
-
-  async function handleIdentityDecision(input: {
-    kind: IntakeDecisionKind;
-    graphMode: IdentityGraphMode;
-    reason: string;
-    riskSummary: string;
-    riskAcknowledged: boolean;
-    proposerId: string;
-    reviewerId: string;
-    ifMatchVersion?: string;
-  }): Promise<IdentityDecisionResultReceipt | void> {
-    if (!client || !selected || busy) return;
-
-    setBusy(true);
-    setActionError(null);
-    const beforeVersion = selected.version;
-    const key = newIntakeActionIdempotencyKey(
-      selected.id,
-      `identity-${input.graphMode}-${input.kind}`,
-    );
-
-    const result = await intakeApi.decide(
-      client,
-      selected.id,
-      {
-        action: DECISION_API_ACTION[input.kind],
-        reason: input.reason,
-        riskSummary: input.riskSummary,
-        riskAcknowledged: input.riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
-      },
-      { idempotencyKey: key },
-    );
-    setBusy(false);
-
-    if (!result.ok) {
-      setActionError(result.error);
-      throw Object.assign(new Error(result.error.summary), {
-        status: result.error.status,
-        code: result.error.code,
-      });
-    }
-
-    applyRecord(result.value);
-    const auditEvent = [...(result.value.auditEvents ?? [])]
-      .reverse()
-      .find((event) => event.action.startsWith("intake.decide"));
-    if (!auditEvent?.correlationId) {
-      const missingReceiptError: IntakeApiError = {
-        code: "ODP-INTAKE-RECEIPT-INCOMPLETE",
-        correlationId: result.value.correlationId,
-        nextAction: "決策已寫入，但伺服器未回傳完整稽核收據。請重新整理後查詢，不要重送。",
-        occurredAt: new Date().toISOString(),
-        retryable: true,
-        status: 502,
-        summary: "伺服器決策結果缺少 authoritative audit receipt。",
-      };
-      setActionError(missingReceiptError);
-      throw new Error(missingReceiptError.summary);
-    }
-
-    setToast(`身分決策已寫入 — ${auditEvent.id}`);
-    const auditTargetListingId =
-      typeof auditEvent.metadata?.targetListingId === "string"
-        ? auditEvent.metadata.targetListingId
-        : null;
-    return {
-      receiptId: auditEvent.id,
-      actor: auditEvent.actorName,
-      actorRole: auditEvent.actorRoleId,
-      timestamp: auditEvent.occurredAt,
-      intakeId: result.value.id,
-      targetListingId:
-        auditTargetListingId ??
-        result.value.matchResult?.targetListingId ??
-        selected.matchResult?.targetListingId ??
-        "",
-      decisionKind: input.kind,
-      graphMode: input.graphMode,
-      beforeVersion: `v${beforeVersion}`,
-      afterVersion: `v${result.value.version}`,
-      correlationId: auditEvent.correlationId,
-      auditEventId: auditEvent.id,
-    };
   }
 
   async function handleRetry() {
@@ -1186,7 +1096,6 @@ export function AssistedIntakeSection({
           onClaimAssignment={handleClaim}
           onClose={() => router.push(intakeInboxHref(searchParams))}
           onDecide={openDecision}
-          onIdentityDecision={handleIdentityDecision}
           onLookupPromotionDecision={
             selectedPromotion ? handleLookupPromotionDecision : undefined
           }
