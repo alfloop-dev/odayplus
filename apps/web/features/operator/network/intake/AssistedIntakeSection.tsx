@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { parseUrlState, serializeUrlState } from "./urlState";
+import {
+  intakeDetailHref,
+  intakeInboxHref,
+  normalizeIntakeDetailSection,
+  parseUrlState,
+  serializeUrlState,
+} from "./urlState";
 import type {
   AssistedIntake,
   AssignmentReceipt,
@@ -20,11 +26,19 @@ import styles from "./intake.module.css";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeDetailDialog } from "./IntakeDetailDialog";
+import { IntakeDialogDismissBoundary } from "./IntakeDialogShell";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
 import {
-  PromotionReviewPanel,
-  type PromotionRequestInput,
-  type PromotionReviewInput,
+  IntakeProcessingDetail,
+  type IntakeDetailTab,
+} from "./IntakeProcessingDetail";
+import type {
+  IdentityDecisionResultReceipt,
+  IdentityGraphMode,
+} from "./IdentityDecisionPanel";
+import type {
+  PromotionRequestInput,
+  PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import { TransferIntakeDialog } from "./TransferIntakeDialog";
@@ -55,13 +69,33 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 // place would present fabricated evidence, so an unreachable backend renders
 // an explicit error state instead.
 
+export function AssistedIntakeDetailPage({
+  activeRoleId,
+  activeSubjectId,
+  intakeId,
+}: {
+  activeRoleId: OperatorRoleId;
+  activeSubjectId?: string;
+  intakeId: string;
+}) {
+  return (
+    <AssistedIntakeSection
+      activeRoleId={activeRoleId}
+      activeSubjectId={activeSubjectId}
+      detailIntakeId={intakeId}
+    />
+  );
+}
+
 export function AssistedIntakeSection({
   activeRoleId,
   activeSubjectId,
+  detailIntakeId,
   selectedHeatZoneId,
 }: {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
+  detailIntakeId?: string;
   selectedHeatZoneId?: string;
 }) {
   const router = useRouter();
@@ -70,7 +104,8 @@ export function AssistedIntakeSection({
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
 
-  const selectedId = urlState.selectedId;
+  const isDurableDetailPage = Boolean(detailIntakeId);
+  const selectedId = detailIntakeId ?? urlState.selectedId;
   const dialog = urlState.dialog;
   const fixFieldKey = urlState.fixFieldKey;
   const decisionKind = urlState.decisionKind as any;
@@ -101,7 +136,10 @@ export function AssistedIntakeSection({
     state: "idle" | "loading" | "ready";
   }>({ intakeId: null, state: "idle" });
 
-  const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
+  const updateUrlState = useCallback((
+    updates: Partial<typeof urlState>,
+    historyMode: "replace" | "push" = "replace",
+  ) => {
     const nextState = {
       filters: urlState.filters,
       sort: urlState.sort,
@@ -116,7 +154,10 @@ export function AssistedIntakeSection({
       ...updates,
     };
     const newParams = serializeUrlState(nextState, searchParams);
-    router.replace(`${pathname}?${newParams.toString()}`);
+    const query = newParams.toString();
+    const destination = `${pathname}${query ? `?${query}` : ""}`;
+    if (historyMode === "push") router.push(destination);
+    else router.replace(destination);
   }, [urlState, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
@@ -140,25 +181,34 @@ export function AssistedIntakeSection({
       return;
     }
     setLoadState("loading");
-    const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
+    const result = detailIntakeId
+      ? await intakeApi.get(client, detailIntakeId)
+      : await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
     if (result.ok) {
-      setRecords(result.value.items);
-      setPageData(result.value);
+      if (detailIntakeId) {
+        setRecords([result.value as AssistedIntake]);
+        setPageData(undefined);
+      } else {
+        const page = result.value as IntakeInboxPage;
+        setRecords(page.items);
+        setPageData(page);
+      }
       setLoadState("ready");
       setLoadError(null);
     } else {
       setLoadState("error");
       setLoadError(result.error);
     }
-  }, [activeRoleId, client, inboxQuery, selectedHeatZoneId]);
+  }, [activeRoleId, client, detailIntakeId, inboxQuery, selectedHeatZoneId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // Durable deep link: #intake/<id> opens the detail dialog on load, so an
-  // operator can leave and come back to the record (design §4 requirement).
+  // Legacy hash compatibility remains on the Inbox. The canonical durable
+  // deep link is the App Router page and does not use this dialog state.
   useEffect(() => {
+    if (isDurableDetailPage) return undefined;
     function openFromHash() {
       const match = /^#intake\/(.+)$/.exec(window.location.hash);
       if (match) {
@@ -169,7 +219,7 @@ export function AssistedIntakeSection({
     openFromHash();
     window.addEventListener("hashchange", openFromHash);
     return () => window.removeEventListener("hashchange", openFromHash);
-  }, [updateUrlState]);
+  }, [isDurableDetailPage, updateUrlState]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -252,7 +302,13 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    updateUrlState({ dialog: null, selectedId: null, fixFieldKey: null, decisionKind: null, receiptId: null });
+    updateUrlState({
+      dialog: null,
+      selectedId: isDurableDetailPage ? urlState.selectedId : null,
+      fixFieldKey: null,
+      decisionKind: null,
+      receiptId: null,
+    });
     setActionError(null);
     submitKeyRef.current = null;
     correctionKeyRef.current = null;
@@ -265,6 +321,11 @@ export function AssistedIntakeSection({
     setActionError(null);
   }
 
+  function openFullDetail(intakeId: string) {
+    router.push(intakeDetailHref(intakeId, searchParams));
+    setActionError(null);
+  }
+
   /** Merge a server response back into the queue; the server is authoritative. */
   function applyRecord(record: AssistedIntake) {
     setRecords((current) => {
@@ -274,7 +335,7 @@ export function AssistedIntakeSection({
       next[index] = record;
       return next;
     });
-    updateUrlState({ selectedId: record.id });
+    if (!isDurableDetailPage) updateUrlState({ selectedId: record.id });
   }
 
   async function handleSubmit({ url, heatZoneId }: { url: string; heatZoneId: string }) {
@@ -301,13 +362,12 @@ export function AssistedIntakeSection({
     }
     submitKeyRef.current = null;
     applyRecord(result.value);
-    updateUrlState({ dialog: "detail", selectedId: result.value.id });
     setToast(
       result.value.matchResult?.outcome === "EXACT_DUPLICATE"
         ? `已於識別檢查攔截 — 此 URL 已存在（${result.value.matchResult.targetListingId ?? result.value.id}），未執行擷取`
         : `收件 ${result.value.id} 已建立 — ${result.value.policyLabel}`,
     );
-    void refresh();
+    router.push(intakeDetailHref(result.value.id, searchParams));
   }
 
   async function handleFix({
@@ -348,7 +408,7 @@ export function AssistedIntakeSection({
     }
     correctionKeyRef.current = null;
     applyRecord(result.value);
-    updateUrlState({ dialog: "detail", fixFieldKey: null });
+    updateUrlState({ dialog: isDurableDetailPage ? null : "detail", fixFieldKey: null });
     setToast("已記錄人工修正（前後值已寫入 Audit）");
   }
 
@@ -429,9 +489,95 @@ export function AssistedIntakeSection({
     }
     decisionKeyRef.current = null;
     applyRecord(result.value);
-    updateUrlState({ dialog: "detail", decisionKind: null });
+    updateUrlState({ dialog: isDurableDetailPage ? null : "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
     void refresh();
+  }
+
+  async function handleIdentityDecision(input: {
+    kind: IntakeDecisionKind;
+    graphMode: IdentityGraphMode;
+    reason: string;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+    proposerId: string;
+    reviewerId: string;
+    ifMatchVersion?: string;
+  }): Promise<IdentityDecisionResultReceipt | void> {
+    if (!client || !selected || busy) return;
+
+    setBusy(true);
+    setActionError(null);
+    const beforeVersion = selected.version;
+    const key = newIntakeActionIdempotencyKey(
+      selected.id,
+      `identity-${input.graphMode}-${input.kind}`,
+    );
+
+    const result = await intakeApi.decide(
+      client,
+      selected.id,
+      {
+        action: DECISION_API_ACTION[input.kind],
+        reason: input.reason,
+        riskSummary: input.riskSummary,
+        riskAcknowledged: input.riskAcknowledged,
+        actorRoleId: activeRoleId,
+        actorName: role.label,
+      },
+      { idempotencyKey: key },
+    );
+    setBusy(false);
+
+    if (!result.ok) {
+      setActionError(result.error);
+      throw Object.assign(new Error(result.error.summary), {
+        status: result.error.status,
+        code: result.error.code,
+      });
+    }
+
+    applyRecord(result.value);
+    const auditEvent = [...(result.value.auditEvents ?? [])]
+      .reverse()
+      .find((event) => event.action.startsWith("intake.decide"));
+    if (!auditEvent?.correlationId) {
+      const missingReceiptError: IntakeApiError = {
+        code: "ODP-INTAKE-RECEIPT-INCOMPLETE",
+        correlationId: result.value.correlationId,
+        nextAction: "決策已寫入，但伺服器未回傳完整稽核收據。請重新整理後查詢，不要重送。",
+        occurredAt: new Date().toISOString(),
+        retryable: true,
+        status: 502,
+        summary: "伺服器決策結果缺少 authoritative audit receipt。",
+      };
+      setActionError(missingReceiptError);
+      throw new Error(missingReceiptError.summary);
+    }
+
+    setToast(`身分決策已寫入 — ${auditEvent.id}`);
+    const auditTargetListingId =
+      typeof auditEvent.metadata?.targetListingId === "string"
+        ? auditEvent.metadata.targetListingId
+        : null;
+    return {
+      receiptId: auditEvent.id,
+      actor: auditEvent.actorName,
+      actorRole: auditEvent.actorRoleId,
+      timestamp: auditEvent.occurredAt,
+      intakeId: result.value.id,
+      targetListingId:
+        auditTargetListingId ??
+        result.value.matchResult?.targetListingId ??
+        selected.matchResult?.targetListingId ??
+        "",
+      decisionKind: input.kind,
+      graphMode: input.graphMode,
+      beforeVersion: `v${beforeVersion}`,
+      afterVersion: `v${result.value.version}`,
+      correlationId: auditEvent.correlationId,
+      auditEventId: auditEvent.id,
+    };
   }
 
   async function handleRetry() {
@@ -571,7 +717,7 @@ export function AssistedIntakeSection({
       if (getResult.ok) {
         applyRecord(getResult.value);
       }
-      updateUrlState({ dialog: "detail" });
+      updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
       void refresh();
     } catch (err: any) {
       setActionError({
@@ -637,7 +783,7 @@ export function AssistedIntakeSection({
       if (getResult.ok) {
         applyRecord(getResult.value);
       }
-      updateUrlState({ dialog: "detail" });
+      updateUrlState({ dialog: isDurableDetailPage ? null : "detail" });
       void refresh();
     } catch (err: any) {
       setActionError({
@@ -864,38 +1010,218 @@ export function AssistedIntakeSection({
     selected &&
     promotionHydration.intakeId === selected.id &&
     promotionHydration.state === "ready";
-  const promotionSection = promotionIsHydrating ? (
-    <div aria-live="polite" className={styles.noteBox} data-testid="promotion-hydration-status" role="status">
-      正在載入既有晉升決策與工作收據…
-    </div>
-  ) : selected && promotionIsHydrated &&
-    (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
-      <PromotionReviewPanel
-        busy={promotionBusy}
-        canReplayScore={canPromote}
-        canRequest={canPromote}
-        canReview={canPromote}
-        currentOperator={{
-          id: operatorSubjectId(activeRoleId, activeSubjectId),
-          name: role.label,
-          role: activeRoleId,
-        }}
-        error={promotionError}
-        gateSnapshotSha256={promotionGateHash ?? ""}
-        idempotencyReplayed={promotionReplayed}
-        onLookupDecision={selectedPromotion ? handleLookupPromotionDecision : undefined}
-        onRefresh={handleConflictRefresh}
-        onReplayScore={handleReplayScore}
-        onRequestPromotion={handleRequestPromotion}
-        onReviewPromotion={handleReviewPromotion}
-        promotion={selectedPromotion}
-        record={selected}
-        scoreJob={selectedScoreJob}
-      />
-    ) : undefined;
+
+  const detailSection = normalizeIntakeDetailSection(
+    urlState.activeSection,
+    actionError ? "error" : "timeline",
+  );
+  const compareTargetId =
+    searchParams.get("compareTarget") ?? selected?.matchResult?.targetListingId ?? null;
+  const currentOperator = {
+    id: operatorSubjectId(activeRoleId, activeSubjectId),
+    name: role.label,
+    role: activeRoleId,
+  };
+
+  function openDecision(kind: IntakeDecisionKind) {
+    decisionKeyRef.current = selected
+      ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
+      : null;
+    setActionError(null);
+    updateUrlState(
+      { dialog: "decide", decisionKind: kind },
+      isDurableDetailPage ? "push" : "replace",
+    );
+  }
+
+  function openFix(fieldKey: string) {
+    correctionKeyRef.current = selected
+      ? newIntakeActionIdempotencyKey(selected.id, "correct", fieldKey)
+      : null;
+    setActionError(null);
+    updateUrlState(
+      { dialog: "fix", fixFieldKey: fieldKey },
+      isDurableDetailPage ? "push" : "replace",
+    );
+  }
+
+  function openAssignment(kind: "transfer" | "pause") {
+    setActionError(null);
+    updateUrlState(
+      { dialog: "assignmentSla", decisionKind: kind },
+      isDurableDetailPage ? "push" : "replace",
+    );
+  }
+
+  function closeChildDialog(kind: "fix" | "decision" | "assignment") {
+    if (busy || promotionBusy) return;
+    updateUrlState({
+      dialog: isDurableDetailPage ? null : "detail",
+      fixFieldKey: kind === "fix" ? null : urlState.fixFieldKey,
+      decisionKind: kind === "decision" || kind === "assignment" ? null : urlState.decisionKind,
+    });
+    setActionError(null);
+    if (kind === "fix") correctionKeyRef.current = null;
+    if (kind === "decision") decisionKeyRef.current = null;
+  }
+
+  const actionDialogs = selected ? (
+    <>
+      {dialog === "fix" && fixField ? (
+        <IntakeFieldFixDialog
+          busy={busy}
+          error={actionError}
+          field={fixField}
+          onClose={() => closeChildDialog("fix")}
+          onSubmit={handleFix}
+        />
+      ) : null}
+
+      {dialog === "decide" && decisionKind ? (
+        <IntakeDecisionDialog
+          busy={busy}
+          error={actionError}
+          kind={decisionKind}
+          onClose={() => closeChildDialog("decision")}
+          onSubmit={handleDecide}
+          record={selected}
+        />
+      ) : null}
+
+      {dialog === "assignmentSla" && asgKind === "transfer" ? (
+        <TransferIntakeDialog
+          busy={busy}
+          error={actionError}
+          onClose={() => closeChildDialog("assignment")}
+          onConflictRefresh={handleConflictRefresh}
+          onSubmit={handleTransferSubmit}
+          record={selected}
+        />
+      ) : null}
+
+      {dialog === "assignmentSla" && asgKind === "pause" ? (
+        <PauseSlaDialog
+          busy={busy}
+          error={actionError}
+          onClose={() => closeChildDialog("assignment")}
+          onConflictRefresh={handleConflictRefresh}
+          onSubmit={handlePauseSubmit}
+          record={selected}
+        />
+      ) : null}
+    </>
+  ) : null;
+
+  if (isDurableDetailPage) {
+    if (!canView(activeRoleId)) {
+      return (
+        <DurableRouteState
+          code="ODP-INTAKE-FORBIDDEN"
+          kind="denied"
+          message="目前角色沒有查看 Assisted Listing Intake 的權限。"
+          onBack={() => router.push(intakeInboxHref(searchParams))}
+          title="無法開啟收件"
+        />
+      );
+    }
+    if (loadState === "loading") {
+      return (
+        <DurableRouteState
+          code="LOADING"
+          kind="loading"
+          message={`正在載入收件 ${detailIntakeId} 的持久化狀態…`}
+          title="載入收件"
+        />
+      );
+    }
+    if (loadState === "error" || !selected) {
+      const status = loadError?.status;
+      const isMissing = status === 404 || (loadState === "ready" && !selected);
+      const isDenied = status === 403;
+      return (
+        <DurableRouteState
+          code={loadError?.code ?? (isMissing ? "ODP-INTAKE-NOT-FOUND" : "ODP-INTAKE-LOAD-FAILED")}
+          correlationId={loadError?.correlationId}
+          kind={isMissing ? "missing" : isDenied ? "denied" : "error"}
+          message={
+            loadError?.summary ??
+            (isMissing
+              ? `找不到收件 ${detailIntakeId}，它可能已刪除或不在目前租戶範圍。`
+              : "無法載入收件。")
+          }
+          onBack={() => router.push(intakeInboxHref(searchParams))}
+          onRetry={!isMissing && !isDenied ? () => void refresh() : undefined}
+          title={isMissing ? "找不到收件" : isDenied ? "存取遭拒" : "載入失敗"}
+        />
+      );
+    }
+
+    return (
+      <IntakeDialogDismissBoundary dismissible={!busy && !promotionBusy}>
+        <IntakeProcessingDetail
+          activeTab={detailSection as IntakeDetailTab}
+          assignmentReceipt={assignmentReceipts[selected.id]}
+          busy={busy}
+          canCorrect={canPerform("correct", activeRoleId)}
+          canDecide={canPerform("decide", activeRoleId)}
+          canReplay={canPerform("retry", activeRoleId)}
+          canReplayScore={canPromote}
+          canRequestPromotion={canPromote}
+          canReviewPromotion={canPromote}
+          canRetry={canPerform("retry", activeRoleId)}
+          compareTargetId={compareTargetId}
+          currentOperator={currentOperator}
+          error={actionError}
+          gateSnapshotSha256={promotionGateHash}
+          jobs={selectedScoreJob ? [selectedScoreJob] : []}
+          onActiveTabChange={(tab) => {
+            updateUrlState(
+              {
+                activeSection: tab,
+                compareTask: tab === "identity" ? true : urlState.compareTask,
+              },
+              "push",
+            );
+          }}
+          onClaimAssignment={handleClaim}
+          onClose={() => router.push(intakeInboxHref(searchParams))}
+          onDecide={openDecision}
+          onIdentityDecision={handleIdentityDecision}
+          onLookupPromotionDecision={
+            selectedPromotion ? handleLookupPromotionDecision : undefined
+          }
+          onOpenFix={openFix}
+          onOpenPause={() => openAssignment("pause")}
+          onOpenTransfer={() => openAssignment("transfer")}
+          onRefresh={handleConflictRefresh}
+          onReplayScore={handleReplayScore}
+          onRequestPromotion={handleRequestPromotion}
+          onResumeSla={handleResumeSla}
+          onRetry={handleRetry}
+          onReviewPromotion={handleReviewPromotion}
+          presentation="page"
+          promotion={selectedPromotion}
+          promotionBusy={promotionBusy}
+          promotionError={promotionError}
+          promotionHydrated={Boolean(promotionIsHydrated && !promotionIsHydrating)}
+          promotionIdempotencyReplayed={promotionReplayed}
+          record={selected}
+          scoreJob={selectedScoreJob}
+          slaReceipt={slaReceipts[selected.id]}
+          testId="intake-processing-page"
+        />
+        {toast ? (
+          <div className={styles.noteBox} data-testid="intake-toast" role="status">
+            {toast}
+          </div>
+        ) : null}
+        {actionDialogs}
+      </IntakeDialogDismissBoundary>
+    );
+  }
 
   return (
-    <>
+    <IntakeDialogDismissBoundary dismissible={!busy && !promotionBusy}>
       <ListingInboxIntakeView
         activeRoleId={activeRoleId}
         actionError={actionError}
@@ -927,94 +1253,98 @@ export function AssistedIntakeSection({
           error={actionError}
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
-          onDecide={(kind) => {
-            decisionKeyRef.current = selected
-              ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
-              : null;
-            setActionError(null);
-            updateUrlState({ dialog: "decide", decisionKind: kind });
-          }}
-          onOpenFix={(fieldKey) => {
-            correctionKeyRef.current = selected
-              ? newIntakeActionIdempotencyKey(selected.id, "correct", fieldKey)
-              : null;
-            setActionError(null);
-            updateUrlState({ dialog: "fix", fixFieldKey: fieldKey });
-          }}
+          onDecide={openDecision}
+          onOpenFix={openFix}
+          onOpenFullPage={() => openFullDetail(selected.id)}
           onRetry={handleRetry}
+          previewOnly
           record={selected}
           assignmentReceipt={assignmentReceipts[selected.id]}
           slaReceipt={slaReceipts[selected.id]}
           onClaimAssignment={handleClaim}
-          onOpenTransfer={() => {
-            setActionError(null);
-            updateUrlState({ dialog: "assignmentSla", decisionKind: "transfer" });
-          }}
-          onOpenPause={() => {
-            setActionError(null);
-            updateUrlState({ dialog: "assignmentSla", decisionKind: "pause" });
-          }}
+          onOpenTransfer={() => openAssignment("transfer")}
+          onOpenPause={() => openAssignment("pause")}
           onResumeSla={handleResumeSla}
-          promotionSection={promotionSection}
         />
       ) : null}
 
-      {dialog === "fix" && selected && fixField ? (
-        <IntakeFieldFixDialog
-          busy={busy}
-          error={actionError}
-          field={fixField}
-          onClose={() => {
-            updateUrlState({ dialog: "detail", fixFieldKey: null });
-            setActionError(null);
-            correctionKeyRef.current = null;
-          }}
-          onSubmit={handleFix}
-        />
-      ) : null}
+      {actionDialogs}
+    </IntakeDialogDismissBoundary>
+  );
+}
 
-      {dialog === "decide" && selected && decisionKind ? (
-        <IntakeDecisionDialog
-          busy={busy}
-          error={actionError}
-          kind={decisionKind}
-          onClose={() => {
-            updateUrlState({ dialog: "detail", decisionKind: null });
-            setActionError(null);
-            decisionKeyRef.current = null;
-          }}
-          onSubmit={handleDecide}
-          record={selected}
-        />
-      ) : null}
-
-      {dialog === "assignmentSla" && selected && asgKind === "transfer" ? (
-        <TransferIntakeDialog
-          busy={busy}
-          error={actionError}
-          onClose={() => {
-            updateUrlState({ dialog: "detail", decisionKind: null });
-            setActionError(null);
-          }}
-          onSubmit={handleTransferSubmit}
-          record={selected}
-          onConflictRefresh={handleConflictRefresh}
-        />
-      ) : null}
-
-      {dialog === "assignmentSla" && selected && asgKind === "pause" ? (
-        <PauseSlaDialog
-          busy={busy}
-          error={actionError}
-          onClose={() => {
-            updateUrlState({ dialog: "detail", decisionKind: null });
-            setActionError(null);
-          }}
-          onSubmit={handlePauseSubmit}
-          record={selected}
-          onConflictRefresh={handleConflictRefresh}
-        />
-      ) : null}
-    </>
+function DurableRouteState({
+  code,
+  correlationId,
+  kind,
+  message,
+  onBack,
+  onRetry,
+  title,
+}: {
+  code: string;
+  correlationId?: string | null;
+  kind: "loading" | "missing" | "denied" | "error";
+  message: string;
+  onBack?: () => void;
+  onRetry?: () => void;
+  title: string;
+}) {
+  return (
+    <main
+      aria-live={kind === "loading" ? "polite" : undefined}
+      className="odp-content"
+      data-state={kind}
+      data-testid={`intake-route-state-${kind}`}
+      role={kind === "loading" ? "status" : "main"}
+    >
+      <section
+        style={{
+          background: "#ffffff",
+          border: "1px solid #dfe4ee",
+          borderRadius: "8px",
+          padding: "24px",
+        }}
+      >
+        <h1 style={{ fontSize: "20px", margin: "0 0 8px" }}>{title}</h1>
+        <p>{message}</p>
+        <dl>
+          <dt>狀態碼</dt>
+          <dd>
+            <code>{code}</code>
+          </dd>
+          {correlationId ? (
+            <>
+              <dt>Correlation ID</dt>
+              <dd>
+                <code>{correlationId}</code>
+              </dd>
+            </>
+          ) : null}
+        </dl>
+        <div style={{ display: "flex", gap: "8px" }}>
+          {onRetry ? (
+            <button
+              className={styles.primaryButton}
+              data-testid="intake-route-retry"
+              onClick={onRetry}
+              type="button"
+            >
+              重新載入
+            </button>
+          ) : null}
+          {onBack ? (
+            <button
+              className={styles.secondaryButton}
+              data-testid="intake-route-back"
+              onClick={onBack}
+              type="button"
+            >
+              返回 Listing 收件匣
+            </button>
+          ) : null}
+        </div>
+      </section>
+    </main>
   );
 }

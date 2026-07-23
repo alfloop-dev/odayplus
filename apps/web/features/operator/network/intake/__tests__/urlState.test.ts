@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseUrlState, serializeUrlState } from "../urlState";
+import {
+  intakeDetailHref,
+  intakeInboxHref,
+  normalizeIntakeDetailSection,
+  parseUrlState,
+  serializeUrlState,
+} from "../urlState";
 
 describe("urlState serialization and parsing", () => {
   it("should parse from URLSearchParams", () => {
@@ -151,5 +157,30 @@ describe("urlState serialization and parsing", () => {
     expect(parsed.selectedId).toBe(state.selectedId);
     expect(parsed.dialog).toBe(state.dialog);
     expect(parsed.decisionKind).toBe(state.decisionKind);
+  });
+
+  it("builds the real durable detail route and preserves task/compare context", () => {
+    const href = intakeDetailHref(
+      "INTAKE/with spaces",
+      "role=expansion-manager&selected=OLD&dialog=detail&section=identity&compare=true&compareTarget=L-88&task=TASK-4",
+    );
+
+    expect(href).toBe(
+      "/w/expansion/listings/intake/INTAKE%2Fwith%20spaces?role=expansion-manager&section=identity&compare=true&compareTarget=L-88&task=TASK-4",
+    );
+  });
+
+  it("returns to the Inbox without leaking detail-only state", () => {
+    expect(
+      intakeInboxHref(
+        "role=expansion-manager&section=evidence&compareTarget=L-88&task=TASK-4&stage=READY",
+      ),
+    ).toBe("/w/expansion/listings?role=expansion-manager&stage=READY");
+  });
+
+  it("normalizes route sections without accepting arbitrary query values", () => {
+    expect(normalizeIntakeDetailSection("identity")).toBe("identity");
+    expect(normalizeIntakeDetailSection("not-a-section")).toBe("timeline");
+    expect(normalizeIntakeDetailSection(null, "error")).toBe("error");
   });
 });
