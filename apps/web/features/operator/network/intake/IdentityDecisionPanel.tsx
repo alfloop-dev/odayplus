@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./identity.module.css";
 import { IdentityDecisionReceiptView } from "./IdentityDecisionReceipt";
@@ -15,6 +15,8 @@ import {
   type IdentityConflict,
   type IdentityDecisionCommand,
   type IdentityDecisionDraft,
+  type IdentityDraftPersistenceReceipt,
+  type IdentityDraftScope,
   type IdentityDecisionReceipt,
   type IdentityGraphOperation,
   type IdentityGraphPlan,
@@ -24,6 +26,13 @@ import {
 } from "./identityTypes";
 
 type IdentityPanelTab = "evidence" | "compare" | "graph";
+type DraftPersistenceState =
+  | { status: "IDLE" }
+  | { status: "LOADED" }
+  | { status: "PENDING" }
+  | { status: "SAVED"; draftVersion: number; persistedAt: string }
+  | { status: "CLEARED"; draftVersion: number; persistedAt: string }
+  | { status: "FAILED"; message: string };
 
 const GRAPH_OPERATIONS: readonly IdentityGraphOperation[] = [
   "MERGE",
@@ -78,6 +87,30 @@ function loadDraft(storageKey: string, fallback: IdentityDecisionDraft): Identit
   }
 }
 
+function buildDraftStorageKey(scope: IdentityDraftScope): string {
+  return [
+    "odp",
+    "intake",
+    "identity-draft",
+    "v2",
+    scope.tenantId,
+    scope.intakeId,
+    scope.matchCaseId,
+    scope.actorId,
+  ]
+    .map(encodeURIComponent)
+    .join(":");
+}
+
+function clearStoredDraft(storageKey: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+}
+
 function isIdentityConflict(error: unknown): error is IdentityConflict {
   if (!error || typeof error !== "object") return false;
   const candidate = error as Partial<IdentityConflict>;
@@ -92,24 +125,7 @@ function isIdentityConflict(error: unknown): error is IdentityConflict {
   );
 }
 
-export function IdentityDecisionPanel({
-  record,
-  comparison,
-  graphPlans,
-  workflow,
-  durableDesktopHref,
-  busy = false,
-  conflict = null,
-  receipt = null,
-  errorMessage = null,
-  draftStorageKey,
-  persistedDraft,
-  draftPersistence = "SESSION",
-  onDraftChange,
-  onSubmit,
-  onRefreshConflict,
-  className,
-}: {
+type IdentityDecisionPanelCommonProps = {
   record: Pick<
     AssistedIntake,
     "id" | "correlationId" | "snapshotId" | "parserVersion"
@@ -117,34 +133,103 @@ export function IdentityDecisionPanel({
   comparison: IdentityComparisonContract;
   graphPlans: IdentityGraphPlan[];
   workflow: IdentityReviewWorkflow;
+  draftIdentity: IdentityDraftScope;
   durableDesktopHref: string;
   busy?: boolean;
   conflict?: IdentityConflict | null;
   receipt?: IdentityDecisionReceipt | null;
   errorMessage?: string | null;
-  draftStorageKey?: string;
-  persistedDraft?: IdentityDecisionDraft | null;
-  draftPersistence?: "SESSION" | "SERVER";
-  onDraftChange?: (draft: IdentityDecisionDraft) => void;
   onSubmit: (command: IdentityDecisionCommand) => Promise<IdentityDecisionReceipt>;
   onRefreshConflict?: () => Promise<void> | void;
   className?: string;
-}) {
-  const storageKey =
-    draftStorageKey ?? `odp:intake:identity-draft:${comparison.matchCaseId}`;
-  const [draft, setDraft] = useState<IdentityDecisionDraft>(() => {
-    const authoritativeDraft = createInitialDraft(comparison, workflow);
-    if (persistedDraft) return persistedDraft;
-    return workflow.proposal ? authoritativeDraft : loadDraft(storageKey, authoritativeDraft);
+};
+
+type IdentityDecisionPanelProps =
+  | (IdentityDecisionPanelCommonProps & {
+      draftPersistence?: "SESSION";
+      persistedDraft?: never;
+      onDraftSave?: never;
+    })
+  | (IdentityDecisionPanelCommonProps & {
+      draftPersistence: "SERVER";
+      persistedDraft: IdentityDecisionDraft | null;
+      onDraftSave: (
+        draft: IdentityDecisionDraft,
+        scope: IdentityDraftScope,
+      ) => Promise<IdentityDraftPersistenceReceipt>;
+    });
+
+export function IdentityDecisionPanel(props: IdentityDecisionPanelProps) {
+  const {
+    record,
+    comparison,
+    graphPlans,
+    workflow,
+    draftIdentity,
+    durableDesktopHref,
+    busy = false,
+    conflict = null,
+    receipt = null,
+    errorMessage = null,
+    onSubmit,
+    onRefreshConflict,
+    className,
+  } = props;
+  const draftPersistence = props.draftPersistence ?? "SESSION";
+  const persistedDraft =
+    props.draftPersistence === "SERVER" ? props.persistedDraft : undefined;
+  const onDraftSave =
+    props.draftPersistence === "SERVER" ? props.onDraftSave : undefined;
+  if (
+    draftIdentity.intakeId !== record.id ||
+    draftIdentity.matchCaseId !== comparison.matchCaseId ||
+    draftIdentity.actorId !== workflow.currentActor.subjectId
+  ) {
+    throw new Error("Identity draft scope does not match the authoritative intake workflow.");
+  }
+  const storageKey = buildDraftStorageKey(draftIdentity);
+  const initialDraftRef = useRef({
+    storageKey,
+    draft: createInitialDraft(comparison, workflow),
   });
+  if (initialDraftRef.current.storageKey !== storageKey) {
+    initialDraftRef.current = {
+      storageKey,
+      draft: createInitialDraft(comparison, workflow),
+    };
+  }
+  const initialDraft = initialDraftRef.current.draft;
+  const [draft, setDraft] = useState<IdentityDecisionDraft>(() => {
+    if (draftPersistence === "SERVER") return persistedDraft ?? initialDraft;
+    return workflow.proposal ? initialDraft : loadDraft(storageKey, initialDraft);
+  });
+  const [draftPersistenceState, setDraftPersistenceState] =
+    useState<DraftPersistenceState>(() =>
+      draftPersistence === "SERVER" && persistedDraft ? { status: "LOADED" } : { status: "IDLE" },
+    );
+  const lastHydratedDraftSignature = useRef<string | undefined>(undefined);
+  const draftSaveSequence = useRef(0);
   const [activeTab, setActiveTab] = useState<IdentityPanelTab>("evidence");
   const [localError, setLocalError] = useState<string | null>(null);
   const [caughtConflict, setCaughtConflict] = useState<IdentityConflict | null>(null);
   const [serverReceipt, setServerReceipt] = useState<IdentityDecisionReceipt | null>(null);
 
   useEffect(() => {
-    if (persistedDraft) setDraft(persistedDraft);
-  }, [persistedDraft]);
+    if (draftPersistence !== "SERVER") return;
+    const authoritativeSignature =
+      persistedDraft === null ? "null" : JSON.stringify(persistedDraft);
+    if (lastHydratedDraftSignature.current === authoritativeSignature) return;
+    lastHydratedDraftSignature.current = authoritativeSignature;
+    draftSaveSequence.current += 1;
+    clearStoredDraft(storageKey);
+    if (persistedDraft) {
+      setDraft(persistedDraft);
+      setDraftPersistenceState({ status: "LOADED" });
+      return;
+    }
+    setDraft(initialDraft);
+    setDraftPersistenceState({ status: "IDLE" });
+  }, [draftPersistence, initialDraft, persistedDraft, storageKey]);
 
   useEffect(() => {
     if (draftPersistence !== "SESSION") return;
@@ -198,10 +283,45 @@ export function IdentityDecisionPanel({
     !busy &&
     !shownConflict;
 
+  async function persistServerDraft(updated: IdentityDecisionDraft) {
+    if (!onDraftSave) return;
+    const requestSequence = draftSaveSequence.current + 1;
+    draftSaveSequence.current = requestSequence;
+    setDraftPersistenceState({ status: "PENDING" });
+    try {
+      const result = await onDraftSave(updated, draftIdentity);
+      if (requestSequence !== draftSaveSequence.current) return;
+      clearStoredDraft(storageKey);
+      if (result.draft === null) {
+        setDraft(initialDraft);
+        setDraftPersistenceState({
+          status: "CLEARED",
+          draftVersion: result.draftVersion,
+          persistedAt: result.persistedAt,
+        });
+        return;
+      }
+      setDraft(result.draft);
+      setDraftPersistenceState({
+        status: "SAVED",
+        draftVersion: result.draftVersion,
+        persistedAt: result.persistedAt,
+      });
+    } catch (error: unknown) {
+      if (requestSequence !== draftSaveSequence.current) return;
+      setDraftPersistenceState({
+        status: "FAILED",
+        message: error instanceof Error ? error.message : "Server draft save failed.",
+      });
+    }
+  }
+
   function updateDraft(next: Partial<IdentityDecisionDraft>) {
     const updated = { ...draft, ...next };
     setDraft(updated);
-    onDraftChange?.(updated);
+    if (draftPersistence === "SERVER") {
+      void persistServerDraft(updated);
+    }
     setLocalError(null);
   }
 
@@ -317,11 +437,32 @@ export function IdentityDecisionPanel({
 
       <div className={styles.desktopRequired} data-testid="identity-desktop-required">
         <strong>此 identity 比對與可逆圖譜決策需要桌面版。</strong>
-        <p>
-          {draftPersistence === "SERVER"
-            ? "草稿已保存至 server，可使用同一 durable intake deep link 在桌面版繼續。"
-            : "草稿已保留在目前瀏覽器工作階段；請以同一瀏覽器的較寬視窗繼續。"}
-        </p>
+        {draftPersistence === "SERVER" ? (
+          <div
+            aria-live="polite"
+            data-status={draftPersistenceState.status}
+            data-testid="identity-server-draft-status"
+          >
+            {draftPersistenceState.status === "IDLE"
+              ? "尚未取得 server 保存回執；目前內容不可視為已保存。"
+              : null}
+            {draftPersistenceState.status === "LOADED"
+              ? "已載入 authoritative server draft；後續修改尚未保存。"
+              : null}
+            {draftPersistenceState.status === "PENDING" ? "正在等待 server 保存草稿。" : null}
+            {draftPersistenceState.status === "SAVED"
+              ? `Server 已確認保存草稿，version ${draftPersistenceState.draftVersion}，時間 ${draftPersistenceState.persistedAt}。`
+              : null}
+            {draftPersistenceState.status === "CLEARED"
+              ? `Server 已確認清除草稿，version ${draftPersistenceState.draftVersion}，時間 ${draftPersistenceState.persistedAt}。`
+              : null}
+            {draftPersistenceState.status === "FAILED"
+              ? `草稿保存失敗：${draftPersistenceState.message}。目前內容仍在畫面中，但不可視為已保存。`
+              : null}
+          </div>
+        ) : (
+          <p>草稿已保留在目前瀏覽器工作階段；請以同一瀏覽器的較寬視窗繼續。</p>
+        )}
         <a data-testid="identity-desktop-link" href={durableDesktopHref}>
           開啟桌面版 identity review
         </a>

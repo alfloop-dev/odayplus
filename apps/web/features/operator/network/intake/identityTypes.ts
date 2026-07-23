@@ -176,6 +176,19 @@ export type IdentityDecisionDraft = {
   riskAcknowledged: boolean;
 };
 
+export type IdentityDraftScope = {
+  tenantId: string;
+  intakeId: string;
+  matchCaseId: string;
+  actorId: string;
+};
+
+export type IdentityDraftPersistenceReceipt = {
+  draft: IdentityDecisionDraft | null;
+  draftVersion: number;
+  persistedAt: string;
+};
+
 export type IdentityDecisionCommand = {
   phase: "PROPOSE" | "REVIEW";
   reviewDisposition: "APPROVE" | "REJECT" | null;
