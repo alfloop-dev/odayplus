@@ -65,6 +65,23 @@ describe("IntakeFieldFixDialog durable correction proposal", () => {
     );
   });
 
+  it("locks every control while submitting and blocks duplicate submissions", () => {
+    const onSubmit = vi.fn();
+    renderDialog({ onSubmit });
+    fillMaterialCorrection();
+
+    fireEvent.click(screen.getByTestId("intake-fix-submit"));
+    fireEvent.click(screen.getByTestId("intake-fix-submit"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("intake-fix-value")).toBeDisabled();
+    expect(screen.getByTestId("intake-fix-reason")).toBeDisabled();
+    expect(screen.getByTestId("intake-fix-risk-ack")).toBeDisabled();
+    expect(screen.getByTestId("intake-fix-submit")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "關閉" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+  });
+
   it("keeps correction value, reason, acknowledgement and operation across close/reload", () => {
     const onSubmit = vi.fn();
     const first = renderDialog({ onSubmit });
@@ -90,17 +107,12 @@ describe("IntakeFieldFixDialog durable correction proposal", () => {
     expect(operationFromContext()).toBe(firstOperation);
   });
 
-  it("retains the draft on conflict and clears it only after confirmed commit", async () => {
+  it("retains the submitted draft and operation after failure", async () => {
     const onSubmit = vi.fn();
     const view = renderDialog({ onSubmit });
-
-    fireEvent.change(screen.getByTestId("intake-fix-value"), {
-      target: { value: "台北市信義區松仁路 100 號" },
-    });
-    fireEvent.change(screen.getByTestId("intake-fix-reason"), {
-      target: { value: "依謄本校正門牌" },
-    });
-    fireEvent.click(screen.getByTestId("intake-fix-risk-ack"));
+    fillMaterialCorrection();
+    const submittedOperation = operationFromContext();
+    fireEvent.click(screen.getByTestId("intake-fix-submit"));
 
     const conflict: IntakeApiError = {
       status: 409,
@@ -129,7 +141,23 @@ describe("IntakeFieldFixDialog durable correction proposal", () => {
     expect(screen.getByTestId("intake-fix-value")).toHaveValue(
       "台北市信義區松仁路 100 號",
     );
+    expect(screen.getByTestId("intake-fix-reason")).toHaveValue("依謄本校正門牌");
+    expect(screen.getByTestId("intake-fix-risk-ack")).toBeChecked();
+    expect(operationFromContext()).toBe(submittedOperation);
     expect(screen.getByTestId("intake-fix-submit")).toHaveTextContent("相同 operation");
+    expect(screen.getByTestId("intake-fix-value")).not.toBeDisabled();
+  });
+
+  it("clears only the matching submitted operation and applies authoritative readback", async () => {
+    const onSubmit = vi.fn();
+    const view = renderDialog({ onSubmit });
+    fillMaterialCorrection();
+    fireEvent.click(screen.getByTestId("intake-fix-submit"));
+
+    const submission = onSubmit.mock.calls[0]?.[0] as {
+      operationId: string;
+      ifMatchVersion: number | null;
+    };
 
     view.rerender(
       <IntakeFieldFixDialog
@@ -137,19 +165,50 @@ describe("IntakeFieldFixDialog durable correction proposal", () => {
         busy={false}
         draftIdentity={draftIdentity}
         error={null}
-        field={field}
+        field={{ ...field, correctedValue: "不應套用的舊回讀" }}
         onClose={vi.fn()}
         onSubmit={onSubmit}
-        submissionState="COMMITTED"
+        submissionState={{
+          status: "COMMITTED",
+          operationId: "different-operation",
+          submittedBaseVersion: submission.ifMatchVersion,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("intake-fix-value")).toHaveValue(
+      "台北市信義區松仁路 100 號",
+    );
+    expect(screen.getByTestId("intake-fix-value")).toBeDisabled();
+
+    view.rerender(
+      <IntakeFieldFixDialog
+        baseVersion={4}
+        busy={false}
+        draftIdentity={draftIdentity}
+        error={null}
+        field={{
+          ...field,
+          correctedValue: "台北市信義區松仁路 100 號",
+          correctionReason: "依謄本校正門牌",
+        }}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        submissionState={{
+          status: "COMMITTED",
+          operationId: submission.operationId,
+          submittedBaseVersion: submission.ifMatchVersion,
+        }}
       />,
     );
     await waitFor(() =>
       expect(screen.getByTestId("intake-fix-value")).toHaveValue(
-        "台北市信義區松仁路 10 號",
+        "台北市信義區松仁路 100 號",
       ),
     );
     expect(screen.getByTestId("intake-fix-reason")).toHaveValue("");
     expect(screen.getByTestId("intake-fix-risk-ack")).not.toBeChecked();
+    expect(screen.getByTestId("intake-fix-value")).not.toBeDisabled();
+    expect(operationFromContext()).not.toBe(submission.operationId);
   });
 });
 
@@ -174,4 +233,14 @@ function renderDialog({
 function operationFromContext(): string {
   const text = screen.getByTestId("intake-fix-context").textContent ?? "";
   return text.match(/Operation ([^ ]+)/)?.[1] ?? "";
+}
+
+function fillMaterialCorrection() {
+  fireEvent.change(screen.getByTestId("intake-fix-value"), {
+    target: { value: "台北市信義區松仁路 100 號" },
+  });
+  fireEvent.change(screen.getByTestId("intake-fix-reason"), {
+    target: { value: "依謄本校正門牌" },
+  });
+  fireEvent.click(screen.getByTestId("intake-fix-risk-ack"));
 }

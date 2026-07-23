@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { IntakeFieldCell } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
@@ -52,7 +52,13 @@ export function IntakeFieldFixDialog({
     ifMatchVersion: number | null;
     requiresIndependentReview: boolean;
   }) => void;
-  submissionState?: "IDLE" | "COMMITTED";
+  submissionState?:
+    | "IDLE"
+    | {
+        status: "COMMITTED";
+        operationId: string;
+        submittedBaseVersion: number | null;
+      };
 }) {
   const lineageField = isLineageField(field) ? field : fromLegacyIntakeField(field);
   const review = materialCorrectionRequirement(lineageField);
@@ -75,13 +81,10 @@ export function IntakeFieldFixDialog({
     baseVersion,
   });
   const [localError, setLocalError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (busy && controller.draft.dirty) controller.markSubmitting();
-    // markSubmitting only belongs to the busy transition; depending on the
-    // controller object would retrigger after its state update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy]);
+  const submittedSnapshotRef = useRef<{
+    operationId: string;
+    baseVersion: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!error) return;
@@ -95,18 +98,32 @@ export function IntakeFieldFixDialog({
       },
       error.status === 409,
     );
+    submittedSnapshotRef.current = null;
     // The error object is the server response boundary for this update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
   useEffect(() => {
-    if (submissionState === "COMMITTED") controller.clearAfterCommit();
-    // Clear only after the integrating caller confirms server commit/readback.
+    if (submissionState === "IDLE") return;
+    const submitted = submittedSnapshotRef.current;
+    if (
+      !submitted ||
+      submitted.operationId !== submissionState.operationId ||
+      submitted.baseVersion !== submissionState.submittedBaseVersion
+    ) {
+      return;
+    }
+    submittedSnapshotRef.current = null;
+    controller.clearAfterCommit();
+    // Clear only after authoritative readback identifies the exact operation
+    // and base version submitted by this mounted dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionState]);
 
   const before = formatCell(lineageField.effectiveValue);
   const value = String(controller.draft.fields.value ?? "");
+  const submitting = controller.draft.status === "SUBMITTING";
+  const controlsLocked = busy || submitting;
   const riskSummary = review.material
     ? `修正重要欄位「${lineageField.label}」：${before} → ${value.trim() || "（空白）"}。` +
       `此變更會先成為修正提案，提案者不得自行核准；前後值、理由、快照、Parser 與 supersession lineage 會寫入 Audit。`
@@ -114,7 +131,7 @@ export function IntakeFieldFixDialog({
       `修正值會取代來源正規化值作為後續評估依據。前後值會寫入 Audit。`;
 
   function handleSubmit() {
-    if (busy || controller.draft.status === "SUBMITTING") return;
+    if (controlsLocked || submittedSnapshotRef.current) return;
     if (!value.trim()) {
       setLocalError("請輸入修正後的值");
       return;
@@ -128,6 +145,10 @@ export function IntakeFieldFixDialog({
       return;
     }
     setLocalError(null);
+    submittedSnapshotRef.current = {
+      operationId: controller.draft.operationId,
+      baseVersion: controller.draft.baseVersion,
+    };
     controller.markSubmitting();
     onSubmit({
       value: value.trim(),
@@ -146,7 +167,7 @@ export function IntakeFieldFixDialog({
     <IntakeDialogShell
       ariaLabel={`修正欄位：${lineageField.label}`}
       className={styles.panelNarrow}
-      onClose={onClose}
+      onClose={controlsLocked ? () => {} : onClose}
       screenLabel="Dialog 欄位修正"
       stacked
       testId="intake-fix-dialog"
@@ -155,7 +176,13 @@ export function IntakeFieldFixDialog({
         <span className={styles.dialogTitle} data-testid="intake-fix-title">
           修正欄位：{lineageField.label}
         </span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button
+          aria-label="關閉"
+          className={styles.dialogClose}
+          disabled={controlsLocked}
+          onClick={onClose}
+          type="button"
+        >
           ×
         </button>
       </div>
@@ -195,6 +222,7 @@ export function IntakeFieldFixDialog({
             className={styles.input}
             data-autofocus
             data-testid="intake-fix-value"
+            disabled={controlsLocked}
             id="intake-fix-value"
             onChange={(event) => controller.setField("value", event.target.value)}
             value={value}
@@ -210,6 +238,7 @@ export function IntakeFieldFixDialog({
           <textarea
             className={styles.textarea}
             data-testid="intake-fix-reason"
+            disabled={controlsLocked}
             id="intake-fix-reason"
             onChange={(event) => controller.setReason(event.target.value)}
             placeholder="例：與房東電話確認門牌為 26 號"
@@ -228,6 +257,7 @@ export function IntakeFieldFixDialog({
               <input
                 checked={controller.draft.riskAcknowledged}
                 data-testid="intake-fix-risk-ack"
+                disabled={controlsLocked}
                 id="intake-fix-risk-ack"
                 onChange={(event) => controller.setRiskAcknowledged(event.target.checked)}
                 type="checkbox"
@@ -260,17 +290,22 @@ export function IntakeFieldFixDialog({
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button
+          className={styles.secondaryButton}
+          disabled={controlsLocked}
+          onClick={onClose}
+          type="button"
+        >
           取消
         </button>
         <button
           className={styles.primaryButton}
           data-testid="intake-fix-submit"
-          disabled={busy || controller.draft.status === "SUBMITTING"}
+          disabled={controlsLocked}
           onClick={handleSubmit}
           type="button"
         >
-          {busy ? "送出中…" : retryLabel(controller.draft.status)}
+          {controlsLocked ? "送出中…" : retryLabel(controller.draft.status)}
         </button>
       </div>
     </IntakeDialogShell>

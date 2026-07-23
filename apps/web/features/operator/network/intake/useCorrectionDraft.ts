@@ -98,6 +98,10 @@ export function useCorrectionDraft<TFields extends CorrectionDraftFields>({
   );
   const resolvedStorage = resolveStorage(enabled, storage);
   const initialRef = useRef(initialFields);
+  const storageContextRef = useRef({
+    storage: resolvedStorage,
+    storageKey,
+  });
   const skipNextSaveRef = useRef(false);
   const [draft, setDraft] = useState<CorrectionDraftRecord<TFields>>(() =>
     loadDraft(resolvedStorage, storageKey, initialFields, baseVersion),
@@ -108,8 +112,18 @@ export function useCorrectionDraft<TFields extends CorrectionDraftFields>({
   }, [initialFields]);
 
   useEffect(() => {
-    skipNextSaveRef.current = true;
-    setDraft(loadDraft(resolvedStorage, storageKey, initialFields, baseVersion));
+    const contextChanged =
+      storageContextRef.current.storage !== resolvedStorage ||
+      storageContextRef.current.storageKey !== storageKey;
+    storageContextRef.current = {
+      storage: resolvedStorage,
+      storageKey,
+    };
+    setDraft((current) => {
+      if (!contextChanged && current.dirty) return current;
+      skipNextSaveRef.current = true;
+      return loadDraft(resolvedStorage, storageKey, initialFields, baseVersion);
+    });
   }, [baseVersion, initialFields, resolvedStorage, storageKey]);
 
   useEffect(() => {
