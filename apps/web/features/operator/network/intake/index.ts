@@ -12,6 +12,7 @@ export type {
   AuthoritativeEvidenceReceipt,
   AuthoritativeEvidenceVerification,
   AuthoritativeExportReceipt,
+  AuthoritativeGovernedExportAccess,
   AuthoritativeHumanDecisionEvidence,
   AuthoritativeIdentityReceipt,
   AuthoritativeRecoveryContext,

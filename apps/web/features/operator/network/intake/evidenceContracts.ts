@@ -84,6 +84,19 @@ export type AuthoritativeExportReceipt = {
   worm_checksum?: string | null;
 };
 
+/**
+ * Server-issued authorization for retrieving an already-generated governed
+ * export. The UI must not construct export content or infer permission from the
+ * presence of an export receipt.
+ */
+export type AuthoritativeGovernedExportAccess = {
+  export_manifest_id: string;
+  allowed: boolean;
+  permission: string;
+  purpose: string;
+  download_url: string;
+};
+
 export type AuthoritativeIdentityReceipt = {
   identity_receipt_id: string;
   operation: string;

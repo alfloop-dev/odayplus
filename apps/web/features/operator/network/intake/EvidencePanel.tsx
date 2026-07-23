@@ -268,7 +268,11 @@ export function EvidencePanel({
               </thead>
               <tbody>
                 {fieldList.map((field) => {
-                  const masked = Boolean(maskedView || field.masked);
+                  const accessMasked = access?.masked === true;
+                  const masked = Boolean(maskedView || accessMasked || field.masked);
+                  const maskReasonCode = accessMasked
+                    ? access.mask_reason_code
+                    : field.mask_reason_code;
                   const confidence = typeof field.confidence === "number"
                     ? `${Math.round(field.confidence * 100)}%`
                     : field.low_confidence
@@ -289,7 +293,7 @@ export function EvidencePanel({
                           <span data-testid={`field-mask-${field.field_path}`}>
                             {field.classification ? " · " : ""}
                             MASKED
-                            {field.mask_reason_code ? ` · ${field.mask_reason_code}` : ""}
+                            {maskReasonCode ? ` · ${maskReasonCode}` : ""}
                           </span>
                         ) : null}
                       </td>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type {
   AssignmentReceipt,
   AssistedIntake,
@@ -16,8 +16,11 @@ import type {
   AuthoritativeEvidenceReceipt,
   AuthoritativeEvidenceVerification,
   AuthoritativeExportReceipt,
+  AuthoritativeGovernedExportAccess,
   AuthoritativeIdentityReceipt,
 } from "./evidenceContracts";
+
+const GOVERNED_EXPORT_DOWNLOAD_PERMISSION = "evidence.export.download";
 
 export type DurableReceiptPanelProps = {
   /**
@@ -35,6 +38,7 @@ export type DurableReceiptPanelProps = {
   jobReceipts?: JobReceipt[];
   evidenceReceipts?: AuthoritativeEvidenceReceipt[];
   exportReceipts?: AuthoritativeExportReceipt[];
+  governedExportAccess?: AuthoritativeGovernedExportAccess | null;
   verification?: AuthoritativeEvidenceVerification | null;
   testId?: string;
 };
@@ -146,45 +150,26 @@ export function DurableReceiptPanel(props: DurableReceiptPanelProps) {
     jobReceipts = [],
     evidenceReceipts = [],
     exportReceipts = [],
+    governedExportAccess,
     verification,
     testId = "intake-durable-receipt-panel",
   } = props;
-  const [copied, setCopied] = useState(false);
 
   const decision = decisionReceipt && !isPromotionReceipt(decisionReceipt)
     ? decisionReceipt
     : undefined;
   const promotion = promotionReceipt
     ?? (decisionReceipt && isPromotionReceipt(decisionReceipt) ? decisionReceipt : undefined);
-
-  const authoritativeBundle = useMemo(
-    () => ({
-      submission_receipt: submissionReceipt,
-      assignment_receipt: assignmentReceipt,
-      sla_receipt: slaReceipt,
-      correction_receipts: correctionReceipts,
-      decision_receipt: decision,
-      identity_receipts: identityReceipts,
-      promotion_receipt: promotion,
-      job_receipts: jobReceipts,
-      evidence_receipts: evidenceReceipts,
-      export_receipts: exportReceipts,
-      verification,
-    }),
-    [
-      assignmentReceipt,
-      correctionReceipts,
-      decision,
-      evidenceReceipts,
-      exportReceipts,
-      identityReceipts,
-      jobReceipts,
-      promotion,
-      slaReceipt,
-      submissionReceipt,
-      verification,
-    ],
-  );
+  const governedExportReceipt = governedExportAccess?.allowed
+    && governedExportAccess.permission === GOVERNED_EXPORT_DOWNLOAD_PERMISSION
+    && governedExportAccess.purpose.trim()
+    && governedExportAccess.download_url.trim()
+    ? exportReceipts.find((receipt) => (
+      receipt.export_manifest_id === governedExportAccess.export_manifest_id
+        && receipt.purpose === governedExportAccess.purpose
+        && Boolean(receipt.download_evidence_id)
+    ))
+    : undefined;
 
   const hasAuthoritativeData = Boolean(
     submissionReceipt
@@ -202,53 +187,24 @@ export function DurableReceiptPanel(props: DurableReceiptPanelProps) {
 
   if (!hasAuthoritativeData) return null;
 
-  const jsonString = JSON.stringify(authoritativeBundle, null, 2);
-
-  const handleCopy = async () => {
-    await navigator.clipboard?.writeText(jsonString);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleExport = () => {
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = submissionReceipt
-      ? `receipt-${submissionReceipt.intake_id}-v${submissionReceipt.version}.json`
-      : "authoritative-receipts.json";
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <section className={styles.sectionBox} data-testid={testId}>
       <div className={styles.receiptHeader}>
         <div>
           <div className={styles.sectionLabel}>持久化收據 DURABLE RECEIPTS</div>
           <p className={styles.help}>
-            僅顯示 API 回傳的收據與驗證資料。未回傳的收據不會在此建立。
+            僅顯示 API 回傳的收據與驗證資料。匯出內容只由治理服務產生。
           </p>
         </div>
-        <div className={styles.actionRow}>
-          <button
-            type="button"
-            onClick={handleCopy}
+        {governedExportReceipt && governedExportAccess ? (
+          <a
             className={styles.secondaryButton}
-            data-testid="receipt-copy-button"
+            data-testid="receipt-governed-export-link"
+            href={governedExportAccess.download_url}
           >
-            {copied ? "已複製 JSON" : "複製收據 JSON"}
-          </button>
-          <button
-            type="button"
-            onClick={handleExport}
-            className={styles.secondaryButton}
-            data-testid="receipt-export-button"
-          >
-            下載收據 JSON
-          </button>
-        </div>
+            從治理服務下載
+          </a>
+        ) : null}
       </div>
 
       <div className={styles.receiptGrid}>
