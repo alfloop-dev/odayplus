@@ -1,0 +1,205 @@
+{
+  "checked_at": "2026-07-23T11:51:26.612496+00:00",
+  "feature_flags": {
+    "checked_at": "2026-07-23T11:51:25.214052+00:00",
+    "dual_approval_minimum": 2,
+    "enabled_production_flags": [],
+    "flags": [
+      {
+        "active": false,
+        "enabled": false,
+        "high_risk": true,
+        "key": "assisted_intake_v1_read",
+        "owner": "Expansion Engineering"
+      },
+      {
+        "active": false,
+        "enabled": false,
+        "high_risk": true,
+        "key": "assisted_intake_v1_shadow",
+        "owner": "Product / Expansion Ops"
+      },
+      {
+        "active": false,
+        "enabled": false,
+        "high_risk": true,
+        "key": "assisted_intake_v1_write",
+        "owner": "Release authority"
+      },
+      {
+        "active": false,
+        "enabled": false,
+        "high_risk": true,
+        "key": "assisted_intake_v1_events",
+        "owner": "Platform / SRE"
+      },
+      {
+        "active": false,
+        "enabled": false,
+        "high_risk": true,
+        "key": "assisted_intake_v1_promotion",
+        "owner": "Expansion Product"
+      }
+    ],
+    "governance_engine": "shared/auth/feature_flags.py",
+    "load_time_rejection_proved": true,
+    "manifest": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/infra/assisted-listing-intake/feature_flags.yaml",
+    "passed": true,
+    "runtime_enable_rejected_without_dual_approval": {
+      "assisted_intake_v1_events": true,
+      "assisted_intake_v1_promotion": true,
+      "assisted_intake_v1_read": true,
+      "assisted_intake_v1_shadow": true,
+      "assisted_intake_v1_write": true
+    }
+  },
+  "passed": true,
+  "phase": "readiness",
+  "production_readiness": {
+    "checked_at": "2026-07-23T11:51:26.612342+00:00",
+    "passed": true,
+    "proofs": [
+      {
+        "is_durable": false,
+        "name": "memory_persistence_is_surrogate",
+        "note": "ODP_PERSISTENCE unset falls back to memory; production config must set a Cloud SQL DSN. Memory mode is CI/staging only.",
+        "observed_mode": "memory",
+        "passed": true,
+        "production_ready": false
+      },
+      {
+        "name": "unset_persistence_env_falls_back_to_memory",
+        "note": "Silent fallback exists at runtime; deployment gate must therefore verify ODP_PERSISTENCE explicitly before any production flag is enabled.",
+        "observed_mode": "memory",
+        "passed": true,
+        "production_ready": false
+      },
+      {
+        "is_durable": true,
+        "name": "sqlite_durable_mode_is_staging_surrogate",
+        "note": "Durable SQLite exercises the production adapters (queue/outbox/audit) but is not Cloud SQL PostgreSQL 16; production requires a DSN-backed deployment.",
+        "observed_mode": "durable",
+        "passed": true,
+        "production_ready": false
+      },
+      {
+        "name": "gcs_without_credentials_fails_closed",
+        "note": "GcsObjectStore raises without runtime credentials; WORM/high-risk mutations stay disabled (\u00a712 Security fail-closed effect).",
+        "passed": true,
+        "production_ready": false
+      }
+    ],
+    "surrogates_marked_not_production": true
+  },
+  "release_authority": {
+    "all_approved": false,
+    "checked_at": "2026-07-23T11:51:25.213919+00:00",
+    "cutover_blocked": true,
+    "fail_closed_effects_active": [
+      "No production write/promotion",
+      "High-risk mutations disabled",
+      "Purge/export/APAC DR disabled",
+      "Source assisted-entry-only/blocked",
+      "No authoritative migration",
+      "Production storage/async off",
+      "Handlers cannot invent contracts",
+      "No release candidate",
+      "All production flags off"
+    ],
+    "gates": [
+      {
+        "approval_scope": "States, review SLA, capacity, webhook exclusion",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "No production write/promotion",
+        "owner": "Product / Expansion Ops",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Authorization, KMS, WORM, break glass",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "High-risk mutations disabled",
+        "owner": "Security",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Retention, purge, hold, residency, restricted export",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "Purge/export/APAC DR disabled",
+        "owner": "Privacy",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Source retrieval/license/residency",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "Source assisted-entry-only/blocked",
+        "owner": "Legal / Commercial",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Schema, identity, parser/reconciliation",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "No authoritative migration",
+        "owner": "Data owner",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "HA, jobs, SLO/RPO/RTO, restores",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "Production storage/async off",
+        "owner": "Platform / SRE",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "API/state/promotion feasibility",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "Handlers cannot invent contracts",
+        "owner": "Expansion Engineering",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Validator and contract/recovery/E2E plan",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "No release candidate",
+        "owner": "QA",
+        "status": "pending"
+      },
+      {
+        "approval_scope": "Canary/cutover/rollback evidence",
+        "approved_at": null,
+        "approver": null,
+        "evidence_ref": null,
+        "fail_closed_effect": "All production flags off",
+        "owner": "Release authority",
+        "status": "pending"
+      }
+    ],
+    "pending_owners": [
+      "Product / Expansion Ops",
+      "Security",
+      "Privacy",
+      "Legal / Commercial",
+      "Data owner",
+      "Platform / SRE",
+      "Expansion Engineering",
+      "QA",
+      "Release authority"
+    ],
+    "register": "/tmp/pantheon-worker-worktrees/oday-plus/odp-intake-release-001/infra/assisted-listing-intake/release_authority.yaml"
+  }
+}

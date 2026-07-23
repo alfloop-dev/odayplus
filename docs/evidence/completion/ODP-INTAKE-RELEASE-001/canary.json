@@ -1,0 +1,101 @@
+{
+  "drill": "write_canary_ladder",
+  "finished_at": "2026-07-23T11:51:27.679925+00:00",
+  "gate_facts": {
+    "all_p0_contract_group_approvals": false,
+    "error_budget_intact": true,
+    "kill_switch_verified": true,
+    "live_staging_evidence_recorded": false,
+    "migration_blocking_findings_zero": true,
+    "release_authority_all_approved": false,
+    "shadow_acceptance_met": true,
+    "unit_1_passed": true,
+    "unit_2_passed": true
+  },
+  "note": "Production units MUST be blocked while \u00a712 approvals are pending; their blocked state is the asserted-correct outcome, not a drill failure.",
+  "passed": true,
+  "promotion_gate": {
+    "flag": "assisted_intake_v1_promotion",
+    "status": "disabled \u2014 separately gated after identity/review UAT (\u00a74 Phase 5/6)"
+  },
+  "started_at": "2026-07-23T11:51:27.678522+00:00",
+  "units": [
+    {
+      "completed": 6,
+      "environment": "staging-surrogate",
+      "executed": true,
+      "name": "internal tenant, assisted-entry-only source",
+      "passed": true,
+      "rows": 6,
+      "unit": 1
+    },
+    {
+      "completed": 6,
+      "environment": "staging-surrogate",
+      "executed": true,
+      "name": "internal tenant, one approved retrieval source",
+      "passed": true,
+      "rows": 6,
+      "unit": 2
+    },
+    {
+      "blocked": true,
+      "environment": "production",
+      "executed": false,
+      "expected_blocked": true,
+      "name": "one low-volume production tenant",
+      "unit": 3,
+      "unmet_entry_gates": [
+        "release_authority_approved missing: ['Release authority', 'Platform / SRE', 'Security', 'Product / Expansion Ops']",
+        "live_staging_evidence_recorded"
+      ]
+    },
+    {
+      "blocked": true,
+      "environment": "production",
+      "executed": false,
+      "expected_blocked": true,
+      "name": "5% eligible tenants",
+      "unit": 4,
+      "unmet_entry_gates": [
+        "unit_3_passed",
+        "release_authority_all_approved"
+      ]
+    },
+    {
+      "blocked": true,
+      "environment": "production",
+      "executed": false,
+      "expected_blocked": true,
+      "name": "25% eligible tenants",
+      "unit": 5,
+      "unmet_entry_gates": [
+        "unit_4_passed"
+      ]
+    },
+    {
+      "blocked": true,
+      "environment": "production",
+      "executed": false,
+      "expected_blocked": true,
+      "name": "50% eligible tenants",
+      "unit": 6,
+      "unmet_entry_gates": [
+        "unit_5_passed"
+      ]
+    },
+    {
+      "blocked": true,
+      "environment": "production",
+      "executed": false,
+      "expected_blocked": true,
+      "name": "100% eligible tenants (cutover)",
+      "unit": 7,
+      "unmet_entry_gates": [
+        "unit_6_passed",
+        "release_authority_all_approved",
+        "all_p0_contract_group_approvals"
+      ]
+    }
+  ]
+}

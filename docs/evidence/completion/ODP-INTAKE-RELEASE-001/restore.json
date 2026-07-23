@@ -1,0 +1,113 @@
+{
+  "drill": "restore",
+  "environment": "staging-surrogate",
+  "finished_at": "2026-07-23T11:51:27.677473+00:00",
+  "not_executed_targets": [
+    {
+      "reason": "Quarterly Cloud SQL PITR restore and semiannual regional failover need the live production project; the drill executes the full \u00a74 order against the staging surrogate.",
+      "release_gate": true,
+      "target": "cloud_sql_pitr_and_regional_failover"
+    }
+  ],
+  "owners": {
+    "approval": "Platform / SRE + Security (\u00a712, pending)",
+    "drill": "release-harness (ODP-INTAKE-RELEASE-001)"
+  },
+  "passed": true,
+  "restore_order_source": "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md \u00a74",
+  "started_at": "2026-07-23T11:51:27.627926+00:00",
+  "steps": [
+    {
+      "action": "IAM/KMS/Secret Manager and approved residency configuration",
+      "approved_buckets": [
+        "taiwan-snapshots",
+        "tw-intake-snapshots"
+      ],
+      "note": "Live IAM/KMS validation requires the production project; drill validates the residency-approved bucket register (fail-closed input to GcsObjectStore).",
+      "passed": true,
+      "restore_bucket": "taiwan-snapshots",
+      "step": 1
+    },
+    {
+      "action": "Cloud SQL isolated PITR restore; validate schema/checksums/tenant counts",
+      "passed": true,
+      "restored_file_sha256": "8219ca003f600851ca62f5b3ce177915418294d076a663bc3ae359703824f6c0",
+      "restored_from": "/tmp/intake-release-drill-5_3ataeb/migration/migration-staging.sqlite3",
+      "restored_to": "/tmp/intake-release-drill-5_3ataeb/restore/restored-migration-staging.sqlite3",
+      "step": 2,
+      "table_checksums_match": true,
+      "table_counts_match": true,
+      "tenant_counts": {
+        "00000000-0000-0000-0000-0000000000a1": 8,
+        "00000000-0000-0000-0000-0000000000b2": 8
+      },
+      "unresolved_differences": 0
+    },
+    {
+      "action": "audit chain and WORM object verification",
+      "audit_chain_valid": true,
+      "audit_rows": 3,
+      "note": "WORM GCS verification requires production credentials (fail-closed proof in readiness phase); hash-chain verification runs on the restored durable audit log.",
+      "passed": true,
+      "step": 3
+    },
+    {
+      "action": "snapshot metadata-to-GCS reconciliation",
+      "known_tampered_snapshot_quarantined": "221b2572-3eb4-5ddc-bb60-5ba0a3bda353",
+      "missing_objects": [],
+      "note": "The tampered snapshot detected by the kill-switch drill is the recorded trigger; reconciliation confirms every metadata row maps to an inventoried object.",
+      "objects_in_inventory": 4,
+      "passed": true,
+      "snapshots_in_manifest": 4,
+      "step": 4
+    },
+    {
+      "action": "identity effective-edge/redirect integrity and cycle check",
+      "passed": true,
+      "redirect_cycles": 0,
+      "redirect_edges": 0,
+      "source_identity_edges": 16,
+      "step": 5
+    },
+    {
+      "action": "listing/current revision pointers and candidate uniqueness check",
+      "duplicate_active_candidates": 0,
+      "listing_revisions": 16,
+      "listings": 16,
+      "passed": true,
+      "step": 6
+    },
+    {
+      "action": "job/idempotency/outbox reconciliation; recreate only missing Cloud Tasks",
+      "active_jobs_source_vs_restored": [
+        0,
+        0
+      ],
+      "duplicate_idempotency_keys": 0,
+      "missing_tasks_to_recreate": 0,
+      "passed": true,
+      "step": 7,
+      "unpublished_outbox_source_vs_restored": [
+        2,
+        2
+      ]
+    },
+    {
+      "action": "rebuild projections/search from outbox/audit",
+      "events_replayed": 2,
+      "passed": true,
+      "projection_rows": 2,
+      "step": 8
+    },
+    {
+      "action": "read-only product validation, then controlled write enablement",
+      "controlled_write_recorded": true,
+      "note": "Write enablement is drill-scoped on the restored staging copy; production write flags remain disabled pending \u00a712 approvals.",
+      "passed": true,
+      "post_write_chain_valid": true,
+      "read_only_rows_validated": 3,
+      "step": 9
+    }
+  ],
+  "unresolved_differences": 0
+}

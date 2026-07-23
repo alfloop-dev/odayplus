@@ -1,0 +1,59 @@
+{
+  "acceptance": {
+    "ambiguous_auto_merges": 0,
+    "audit_outbox_loss": 0,
+    "automatic_candidate_promotions": 0,
+    "blocking_findings": 0,
+    "exact_duplicate_agreement_min": 0.999,
+    "material_field_parity_min": 0.995,
+    "snapshot_checksum_reconciliation_rate": 1.0,
+    "tenant_scope_isolation_pass_rate": 1.0,
+    "unknown_blocked_sources_fail_closed_rate": 1.0
+  },
+  "ambiguous_groups_routed_to_review": 4,
+  "audit_chain_valid": true,
+  "audit_rows": 24,
+  "checks": {
+    "ambiguous_auto_merges": true,
+    "audit_outbox_loss": true,
+    "automatic_candidate_promotions": true,
+    "blocking_findings": true,
+    "exact_duplicate_agreement": true,
+    "material_field_parity": true,
+    "snapshot_checksum_reconciliation_rate": true,
+    "tenant_scope_isolation_pass_rate": true,
+    "unknown_blocked_sources_fail_closed_rate": true
+  },
+  "drill": "shadow_processing",
+  "environment": "staging-surrogate",
+  "finished_at": "2026-07-23T11:51:27.325570+00:00",
+  "metrics": {
+    "ambiguous_auto_merges": 0,
+    "audit_outbox_loss": 0,
+    "automatic_candidate_promotions": 0,
+    "blocking_findings": 0,
+    "exact_duplicate_agreement": 1.0,
+    "material_field_parity": 1.0,
+    "snapshot_checksum_reconciliation_rate": 1.0,
+    "tenant_scope_isolation_pass_rate": 1.0,
+    "unknown_blocked_sources_fail_closed_rate": 1.0
+  },
+  "not_executed_targets": [
+    {
+      "reason": "Requires the live staging/production tenant window; drill volume proves the measurement machinery and invariants only.",
+      "release_gate": true,
+      "target": "production_shadow_window_7d_or_10k_rows"
+    }
+  ],
+  "outbox_rows_retained": 24,
+  "p95_pipeline_seconds": 0.00036953017115592957,
+  "passed": true,
+  "snapshot_reconciliation": {
+    "corrupt": null,
+    "missing": null,
+    "orphans": null,
+    "reconciled": null
+  },
+  "started_at": "2026-07-23T11:51:27.145799+00:00",
+  "volume": 24
+}

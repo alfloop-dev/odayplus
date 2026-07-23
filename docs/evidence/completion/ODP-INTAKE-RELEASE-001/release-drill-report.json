@@ -1,0 +1,36 @@
+{
+  "cutover_blocked": true,
+  "design_ref": "ODP-SD-INTAKE-001 v0.2.1",
+  "failed_phases": [],
+  "generated_at": "2026-07-23T11:51:27.683570+00:00",
+  "not_executed_targets": [
+    {
+      "reason": "No live staging environment is provisioned (Human/Ops gate); production units of the canary ladder stay BLOCKED by \u00a712 pending approvals.",
+      "release_gate": true,
+      "target": "live_staging_and_production_canary"
+    }
+  ],
+  "passed": true,
+  "phase_status": {
+    "canary": true,
+    "cutover": true,
+    "killswitch": true,
+    "migration": true,
+    "readiness": true,
+    "restore": true,
+    "shadow": true,
+    "uat": true
+  },
+  "phases_run": [
+    "readiness",
+    "migration",
+    "shadow",
+    "killswitch",
+    "restore",
+    "canary",
+    "uat",
+    "cutover"
+  ],
+  "production_ready": false,
+  "task": "ODP-INTAKE-RELEASE-001"
+}

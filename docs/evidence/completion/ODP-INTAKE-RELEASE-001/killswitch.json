@@ -1,0 +1,128 @@
+{
+  "audit_chain_valid": true,
+  "drill": "killswitch_rollback",
+  "environment": "staging-surrogate",
+  "evidence_packet": {
+    "actor": "release-harness (ODP-INTAKE-RELEASE-001)",
+    "flag_versions": {
+      "disabled_after": [
+        "assisted_intake_v1_read",
+        "assisted_intake_v1_shadow",
+        "assisted_intake_v1_write",
+        "assisted_intake_v1_events",
+        "assisted_intake_v1_promotion"
+      ],
+      "enabled_before": [
+        "assisted_intake_v1_shadow",
+        "assisted_intake_v1_write"
+      ],
+      "manifest": "infra/assisted-listing-intake/feature_flags.yaml@manifest_version=1"
+    },
+    "last_committed_aggregate_versions": {
+      "5d928cbd-8440-5433-93f5-990e1e2a5db1": 4,
+      "651a4366-0530-5975-935f-26670f6dedb5": 2,
+      "881b519a-964e-5e12-aa0a-69bc2ce17cf4": 3,
+      "a13235f4-8691-5db8-90fd-617b47d2c1d9": 1
+    },
+    "outbox_range": {
+      "published": 2,
+      "total": 4,
+      "unpublished_retained": 2
+    },
+    "reconciliation_results": {
+      "audit_chain_valid": true,
+      "checksum_mismatch_detected": true
+    },
+    "release_authority_approval": "pending \u2014 drill evidence recorded for \u00a712 register; no production approval exists or is claimed",
+    "snapshot_manifest": "/tmp/intake-release-drill-5_3ataeb/killswitch/killswitch-snapshot-manifest.json",
+    "task_counts": {
+      "cancelled": 6
+    },
+    "tenant_impact": {
+      "environment": "staging-surrogate",
+      "production_tenants_impacted": 0,
+      "tenants": [
+        "00000000-0000-0000-0000-0000000000a1"
+      ]
+    },
+    "trigger": {
+      "condition": "unreconciled SQL/GCS checksum mismatch",
+      "detected": true,
+      "detected_by": "verify_snapshot_integrity",
+      "id": "TRG-CHECKSUM"
+    }
+  },
+  "evidence_packet_missing_fields": [],
+  "finished_at": "2026-07-23T11:51:27.616293+00:00",
+  "kill_switch_verified": true,
+  "mechanism_steps": [
+    {
+      "action": "disable per-tenant/source flags and stop new Cloud Tasks",
+      "active_jobs_unchanged": true,
+      "flags_disabled": [
+        "assisted_intake_v1_read",
+        "assisted_intake_v1_shadow",
+        "assisted_intake_v1_write",
+        "assisted_intake_v1_events",
+        "assisted_intake_v1_promotion"
+      ],
+      "flags_enabled_before": [
+        "assisted_intake_v1_shadow",
+        "assisted_intake_v1_write"
+      ],
+      "new_enqueue_refused": true,
+      "passed": true,
+      "step": 1
+    },
+    {
+      "action": "keep target data read-only; do not delete evidence",
+      "audit_rows_retained": true,
+      "passed": true,
+      "snapshot_rows_retained": true,
+      "step": 2
+    },
+    {
+      "action": "drain/park in-flight tasks at checkpoints using cancellation/fence version",
+      "in_flight_parked": 2,
+      "passed": true,
+      "queued_cancelled": 4,
+      "stale_fence_rejected": true,
+      "step": 3
+    },
+    {
+      "action": "disable event publication; retain outbox rows",
+      "passed": true,
+      "publisher_stopped": true,
+      "step": 4,
+      "unpublished_rows_retained": 2
+    },
+    {
+      "action": "pre-authoritative shadow/canary: resume legacy authoritative path",
+      "note": "Rollout is pre-authoritative (write flag never enabled in production); legacy path remained authoritative throughout the drill.",
+      "passed": true,
+      "step": 5
+    },
+    {
+      "action": "post-authority: last compatible application version against target schema; committed business decisions are not auto-reversed",
+      "note": "Not applicable in pre-authoritative rollout; recorded as governed manual path.",
+      "passed": true,
+      "step": 6
+    },
+    {
+      "action": "identity/promotion changes reverse only through approved reversal state machines",
+      "note": "No identity/promotion mutations existed to reverse; reversal state machines are the only sanctioned path (ODP-INTAKE-IDENTITY-001 / ODP-INTAKE-PROMOTION-001).",
+      "passed": true,
+      "step": 7
+    },
+    {
+      "action": "database restore (if required) follows reliability contract \u00a74 restore order and reconciles from WORM/outbox/snapshots",
+      "note": "Executed as the dedicated restore drill phase immediately after this drill; see restore.json.",
+      "passed": true,
+      "step": 8
+    }
+  ],
+  "passed": true,
+  "runtime_db": "/tmp/intake-release-drill-5_3ataeb/killswitch/killswitch-runtime.sqlite3",
+  "started_at": "2026-07-23T11:51:27.533183+00:00",
+  "trigger_detected": true
+}

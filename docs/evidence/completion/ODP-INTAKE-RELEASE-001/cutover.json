@@ -1,0 +1,46 @@
+{
+  "blocked_reasons": [
+    "\u00a712 approvals pending: ['Product / Expansion Ops', 'Security', 'Privacy', 'Legal / Commercial', 'Data owner', 'Platform / SRE', 'Expansion Engineering', 'QA', 'Release authority']",
+    "no live staging runtime evidence recorded (staging environment not provisioned)"
+  ],
+  "checked_at": "2026-07-23T11:51:27.681203+00:00",
+  "cutover_blocked": true,
+  "drill_gates": {
+    "canary": true,
+    "killswitch": true,
+    "migration": true,
+    "readiness": true,
+    "restore": true,
+    "shadow": true,
+    "uat": true
+  },
+  "failed_drills": [],
+  "passed": true,
+  "phase": "cutover",
+  "production_flags_disabled": true,
+  "release_authority": {
+    "fail_closed_effects_active": [
+      "No production write/promotion",
+      "High-risk mutations disabled",
+      "Purge/export/APAC DR disabled",
+      "Source assisted-entry-only/blocked",
+      "No authoritative migration",
+      "Production storage/async off",
+      "Handlers cannot invent contracts",
+      "No release candidate",
+      "All production flags off"
+    ],
+    "pending_owners": [
+      "Product / Expansion Ops",
+      "Security",
+      "Privacy",
+      "Legal / Commercial",
+      "Data owner",
+      "Platform / SRE",
+      "Expansion Engineering",
+      "QA",
+      "Release authority"
+    ]
+  },
+  "rule": "governed cutover requires every gate below approved AND live staging runtime evidence"
+}
