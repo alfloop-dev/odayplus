@@ -1759,31 +1759,13 @@ export type IntakeFailure = {
   retryable: boolean;
 };
 
-export type IntakeInboxLocation = {
-  latitude: number;
-  longitude: number;
-  confidence?: number | string | null;
-  source: string;
-};
-
 export type AssistedIntake = {
   id: string;
-  tenantId?: string | null;
-  scope?: {
-    tenant_id?: string | null;
-    assigned_area_id?: string | null;
-    brand_id?: string | null;
-    heat_zone_id?: string | null;
-    region_id?: string | null;
-  } | null;
   originalUrl: string;
   canonicalUrl: string;
   submitter: string;
   owner: string;
   heatZoneId: string | null;
-  assignedAreaId?: string | null;
-  brandId?: string | null;
-  regionId?: string | null;
   intakeMethod?: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED";
   stage: IntakeStage;
   sourceId: string;
@@ -1807,43 +1789,18 @@ export type AssistedIntake = {
   slaState?: string | null;
   slaReceipt?: string | null;
   dueAt?: string | null;
-  lastObservedAt?: string | null;
-  lastUpdatedAt?: string | null;
-  listingId?: string | null;
-  location?: IntakeInboxLocation | null;
-  maskedFields?: string[];
-  needsReview?: boolean;
-  restrictedData?: boolean;
-  retryable?: boolean;
-  issue?: string | null;
 };
 
 export type IntakeInboxQuery = {
   selectedHeatZoneId?: string;
   page?: number;
   pageSize?: number;
-  cursor?: string;
   search?: string;
   savedView?: string;
   intakeMethod?: string;
   intakeStage?: string;
   matchOutcome?: string;
-  sourceId?: string;
-  submittedBy?: string;
-  owner?: string;
-  assignmentStatus?: string;
-  needsReview?: boolean | string;
   slaState?: string;
-  heatZoneId?: string;
-  areaId?: string;
-  observedFrom?: string;
-  observedTo?: string;
-  updatedFrom?: string;
-  updatedTo?: string;
-  restrictedData?: boolean | string;
-  quarantined?: boolean | string;
-  failed?: boolean | string;
-  retryable?: boolean | string;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
@@ -1855,11 +1812,6 @@ export type IntakeInboxPage = {
   pageSize: number;
   counts: { needsReview: number; awaitingEntry: number; processing: number; blocked: number; ready: number };
   evidenceState: "complete" | "partial" | "degraded";
-  nextCursor?: string | null;
-  previousCursor?: string | null;
-  queryFingerprint?: string;
-  sortBy?: string;
-  sortOrder?: "asc" | "desc";
 };
 
 export type NetworkListingRadarSnapshot = {

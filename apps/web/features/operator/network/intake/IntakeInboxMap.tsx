@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
+import type { InboxIntakeRecord } from "./inboxContracts";
 
 const TAIWAN_CENTER: [number, number] = [121.0, 23.7];
 const mapTileUrl = process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL?.trim() ?? "";
@@ -20,7 +20,7 @@ export function existingListingHref(listingId: string): string {
   return `/w/expansion/listings?${query.toString()}`;
 }
 
-export function IntakeInboxMap({ records }: { records: AssistedIntake[] }) {
+export function IntakeInboxMap({ records }: { records: InboxIntakeRecord[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapError, setMapError] = useState("");
@@ -174,8 +174,8 @@ function inboxMapStyle(): maplibregl.StyleSpecification {
 }
 
 function hasAuthoritativeLocation(
-  record: AssistedIntake,
-): record is AssistedIntake & {
+  record: InboxIntakeRecord,
+): record is InboxIntakeRecord & {
   location: { latitude: number; longitude: number; source: string };
 } {
   return Boolean(

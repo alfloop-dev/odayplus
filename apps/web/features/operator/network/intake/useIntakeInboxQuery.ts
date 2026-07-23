@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type SavedViewType = "all" | "needsReview" | "awaitingEntry" | "blocked" | "processing" | "ready";
+export type SavedViewType = string;
 export type ViewMode = "list" | "map";
 
 export type IntakeInboxFilterState = {
@@ -57,7 +57,7 @@ const DEFAULT_FILTERS: IntakeInboxFilterState = {
   quarantined: "",
   failed: "",
   retryable: "",
-  savedView: "all",
+  savedView: "",
   viewMode: "list",
   page: 1,
   pageSize: 10,
@@ -92,7 +92,7 @@ function parseUrlQueryParams(): Partial<IntakeInboxFilterState> {
   if (params.has("quarantined")) result.quarantined = params.get("quarantined") ?? "";
   if (params.has("failed")) result.failed = params.get("failed") ?? "";
   if (params.has("retryable")) result.retryable = params.get("retryable") ?? "";
-  if (params.has("savedView")) result.savedView = (params.get("savedView") as SavedViewType) ?? "all";
+  if (params.has("savedView")) result.savedView = params.get("savedView") ?? "";
   if (params.has("viewMode")) result.viewMode = (params.get("viewMode") as ViewMode) ?? "list";
 
   const page = parseInt(params.get("page") ?? "", 10);

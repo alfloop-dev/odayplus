@@ -8,32 +8,17 @@ Owner: Codex
 ## Passed
 
 ```bash
-ruff check apps/api/app/routes/operator_modules/network_listings.py \
-  tests/contract/test_operator_assisted_listing_api.py
+npm run typecheck --workspace=@oday-plus/web
 ```
 
 Result: passed.
-
-```bash
-npm run typecheck --workspace=@oday-plus/web
-npm run typecheck --workspace=@oday-plus/openapi-client
-```
-
-Result: both passed.
 
 ```bash
 npm run test --workspace=@oday-plus/web -- \
   --run features/operator/network/intake/__tests__
 ```
 
-Result: 8 files passed, 81 tests passed.
-
-```bash
-pytest -q tests/contract/test_operator_assisted_listing_api.py
-```
-
-Result: 54 tests passed. The only output warning is the existing
-Starlette/httpx TestClient deprecation warning.
+Result: 8 files passed, 85 tests passed.
 
 ```bash
 npm run build --workspace=@oday-plus/web
@@ -44,16 +29,6 @@ unmodified `designAligned.module.css`, `governance.module.css`, and
 `networkFindAreas.module.css`.
 
 ```bash
-OPSBOARD_PORT=3112 ODP_API_PORT=8102 \
-ODP_API_BASE_URL=http://127.0.0.1:8102 \
-ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
-npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts \
-  --grep 'canonical 1' --project=chromium
-```
-
-Result: 1 browser flow passed against the task worktree API and web server.
-
-```bash
 git diff --check
 ```
 
@@ -61,17 +36,34 @@ Result: passed.
 
 ## Focused Assertions
 
-- API contract tests exercise each required filter, each saved view, stable
-  ordering, opaque next/previous cursor use, cursor/query mismatch, malformed
-  cursor, timestamp validation, field decoration, located records, and
-  unlocated records.
 - Inbox component tests assert semantic table roles/headers and `aria-sort`,
-  all server query values, URL list/map/selection restoration, browser
+  all adapter query values, URL list/map/selection restoration, browser
   back/forward restoration, direct action routing, server claim receipt, retry,
   MapLibre coordinates, and the unlocated list.
+- Ownership tests assert only authoritative saved-view and HeatZone props are
+  rendered; missing bootstrap data is unavailable; unknown URL saved views are
+  removed from the adapter query; claim receives only the intake ID; and no
+  browser due time is sent.
+- Match tests assert `POSSIBLE_MATCH` has no Listing link while
+  `EXACT_DUPLICATE` and `REVISION` require an authoritative target.
+- Error tests assert code, correlation ID, occurred time, retryability, current
+  version, current state, and next action are all visible.
 - Add URL component tests assert validation, canonical preview, submit locking,
-  operational context, server-only receipt values, durable intake navigation,
-  and exact-duplicate navigation by authoritative existing Listing ID.
+  bootstrap-only operational context, missing-context fail-closed behavior,
+  server-only receipt values, durable intake navigation, and exact-duplicate
+  navigation by authoritative existing Listing ID.
+
+## Runtime Isolation
+
+```bash
+git diff c900e906f96cb3750274c24e1a8f2922999f9048 -- \
+  apps/api/app/routes/operator_modules/network_listings.py \
+  packages/openapi-client/src/index.ts \
+  tests/contract/test_operator_assisted_listing_api.py
+```
+
+Result: empty. This task retains no legacy API, shared client, or legacy
+endpoint contract-test changes.
 
 ## Integration Proof Still Owned Elsewhere
 
@@ -89,4 +81,4 @@ Integration must add the final real-API browser proof for:
   `/w/expansion/listings/intake/:intakeId`.
 
 Those are integration handoffs, not UI-generated substitutes. This branch has
-the component and API contract assertions needed for the adapter.
+the focused UI contract assertions needed for the adapter.
