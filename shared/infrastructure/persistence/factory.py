@@ -64,6 +64,7 @@ class PersistenceBundle:
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
+    operator_intake_repository: Any = None
     engine: Any = None
 
 
@@ -90,6 +91,9 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.listing.infrastructure.repositories import InMemoryListingRepository
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from modules.notifications import InMemoryNotificationRepository
+    from modules.opsboard.application.network_listings import (
+        InMemoryAssistedIntakeRepository,
+    )
     from modules.opsboard.application.store_ops import InMemoryStoreOpsRepository
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
@@ -140,6 +144,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
         notification_repository=InMemoryNotificationRepository(),
         outbox_repository=InMemoryOutboxRepository(),
+        operator_intake_repository=InMemoryAssistedIntakeRepository(),
     )
 
 
@@ -156,6 +161,9 @@ def _durable_bundle(
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
@@ -217,6 +225,7 @@ def _durable_bundle(
         external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
         outbox_repository=DurableOutboxRepository(engine),
+        operator_intake_repository=DurableAssistedIntakeRepository(store),
         engine=engine,
     )
 

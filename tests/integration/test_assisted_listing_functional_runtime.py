@@ -215,7 +215,8 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
     tmp_path,
     monkeypatch,
 ) -> None:
-    bundle = _durable_bundle(str(tmp_path / "canonical-promotion.sqlite3"))
+    db_path = str(tmp_path / "canonical-promotion.sqlite3")
+    bundle = _durable_bundle(db_path)
     app = create_app(persistence=bundle)
     client = TestClient(app)
     raw = {
@@ -302,9 +303,17 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
     )
     assert reviewed.status_code == 200, reviewed.text
     receipt = reviewed.json()
-    assert receipt["status"] == "COMPLETED"
+    assert receipt["status"] == "SCORE_QUEUED"
     assert receipt["candidate_site_id"]
     assert receipt["site_score_job_id"]
+    queued = bundle.job_queue.get(receipt["site_score_job_id"])
+    assert queued is not None
+    assert queued.job_type == "sitescore-candidate"
+    assert queued.status == JobStatus.QUEUED
+    assert queued.payload["promotion_decision_id"] == (
+        promotion["promotion_decision_id"]
+    )
+    assert queued.payload["candidate_site_id"] == receipt["candidate_site_id"]
     detail = client.get(
         f"/api/v1/intakes/{processed['id']}",
         headers=_api_headers(REVIEWER, reviewer=True),
@@ -313,7 +322,180 @@ def test_canonical_promotion_persists_candidate_and_sitescore_job(
         receipt["candidate_site_id"]
     )
     assert detail["lifecycle"]["job"]["job_id"] == receipt["site_score_job_id"]
+    assert detail["lifecycle"]["job"]["status"] == "QUEUED"
     bundle.engine.close()
+
+    restarted_bundle = _durable_bundle(db_path)
+    restarted_client = TestClient(create_app(persistence=restarted_bundle))
+    queued_readback = restarted_client.get(
+        f"/api/v1/intakes/{processed['id']}",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert queued_readback.status_code == 200, queued_readback.text
+    assert (
+        queued_readback.json()["lifecycle"]["promotion"]["status"]
+        == "SCORE_QUEUED"
+    )
+    assert queued_readback.json()["lifecycle"]["job"]["status"] == "QUEUED"
+
+    assert ODayWorker(persistence=restarted_bundle).run_once() is True
+    completed_job = restarted_bundle.job_queue.get(
+        receipt["site_score_job_id"]
+    )
+    assert completed_job is not None
+    assert completed_job.status == JobStatus.SUCCEEDED
+    assert completed_job.payload["result"]["report_ids"]
+    assert restarted_bundle.sitescore_repository.latest(
+        receipt["candidate_site_id"]
+    )
+    restarted_bundle.engine.close()
+
+    final_bundle = _durable_bundle(db_path)
+    final_client = TestClient(create_app(persistence=final_bundle))
+    final_detail = final_client.get(
+        f"/api/v1/intakes/{processed['id']}",
+        headers=_api_headers(REVIEWER, reviewer=True),
+    )
+    assert final_detail.status_code == 200, final_detail.text
+    final_body = final_detail.json()
+    assert final_body["lifecycle"]["promotion"]["status"] == "COMPLETED"
+    assert final_body["lifecycle"]["job"]["status"] == "SUCCEEDED"
+    assert final_body["lifecycle"]["job"]["job_id"] == (
+        receipt["site_score_job_id"]
+    )
+    final_bundle.engine.close()
+
+
+def test_assisted_entry_canonical_corrections_complete_matching_after_second_review(
+    tmp_path,
+) -> None:
+    bundle = _durable_bundle(str(tmp_path / "assisted-entry-api.sqlite3"))
+    client = TestClient(create_app(persistence=bundle))
+    submitter_headers = {
+        **_api_headers(SUBMITTER),
+        "x-operator-role": "expansion-staff",
+    }
+    reviewer_headers = {
+        **_api_headers(REVIEWER, reviewer=True),
+        "x-operator-role": "expansion-manager",
+    }
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://www.591.com.tw/rent-detail-818181.html",
+            "scope": {"tenant_id": TENANT_ID},
+        },
+        headers={
+            **submitter_headers,
+            "Idempotency-Key": f"assisted-submit-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    assert ODayWorker(persistence=bundle).run_once() is True
+    intake_id = submitted.json()["intake_id"]
+
+    detail = client.get(
+        f"/api/v1/intakes/{intake_id}",
+        headers=submitter_headers,
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["state"] == "AWAITING_ASSISTED_ENTRY"
+
+    corrections = (
+        ("location.address", "高雄市左營區博愛三路 100 號 1F"),
+        ("commercial.rent", 72000),
+        ("commercial.area", 24.0),
+    )
+    for index, (field_path, value) in enumerate(corrections):
+        current = client.get(
+            f"/api/v1/intakes/{intake_id}",
+            headers=submitter_headers,
+        ).json()
+        proposed = client.post(
+            f"/api/v1/intakes/{intake_id}/corrections",
+            json={
+                "field_path": field_path,
+                "corrected_value": value,
+                "reason": (
+                    "人工依核准證據補錄必要欄位，需第二人覆核後才套用。"
+                ),
+                "risk_acknowledged": True,
+            },
+            headers={
+                **submitter_headers,
+                "Idempotency-Key": f"assisted-propose-{index}-{uuid4()}",
+                "If-Match": f'W/"{current["version"]}"',
+            },
+        )
+        assert proposed.status_code == 201, proposed.text
+        proposal = proposed.json()
+        assert proposal["status"] == "PENDING_REVIEW"
+
+        before_review = client.get(
+            f"/api/v1/intakes/{intake_id}",
+            headers=submitter_headers,
+        ).json()
+        canonical_path = ("address", "rent", "areaPing")[index]
+        pending_field = next(
+            field
+            for field in before_review["fields"]
+            if field["field_path"] == canonical_path
+        )
+        assert pending_field["corrected"] is None
+
+        reviewed = client.post(
+            (
+                f"/api/v1/identity-decisions/{proposal['correction_id']}"
+                "/actions/review"
+            ),
+            json={
+                "decision": "APPROVE",
+                "reason": "獨立覆核者確認補錄值與證據一致。",
+                "risk_acknowledged": True,
+            },
+            headers={
+                **reviewer_headers,
+                "Idempotency-Key": f"assisted-review-{index}-{uuid4()}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        assert reviewed.json()["status"] == "EXECUTED"
+
+    bundle.engine.close()
+    restarted_bundle = _durable_bundle(
+        str(tmp_path / "assisted-entry-api.sqlite3")
+    )
+    restarted_client = TestClient(create_app(persistence=restarted_bundle))
+    completed = restarted_client.get(
+        f"/api/v1/intakes/{intake_id}",
+        headers=reviewer_headers,
+    )
+    assert completed.status_code == 200, completed.text
+    completed_body = completed.json()
+    assert completed_body["state"] in {"READY", "NEEDS_REVIEW"}
+    states = [
+        transition["to_state"]
+        for transition in completed_body["processing_history"]
+    ]
+    assert "PARSING" in states
+    assert "MATCHING" in states
+    assert states.index("PARSING") < states.index("MATCHING")
+    for field_path, expected in (
+        ("address", "高雄市左營區博愛三路 100 號 1F"),
+        ("rent", 72000),
+        ("areaPing", 24.0),
+    ):
+        field = next(
+            candidate
+            for candidate in completed_body["fields"]
+            if candidate["field_path"] == field_path
+        )
+        assert field["effective"] == expected
+        assert field["correction_actor"] == REVIEWER
+        assert field["correction_reason"]
+
+    restarted_bundle.engine.close()
 
 
 def test_backend_bootstrap_and_detail_authorize_all_six_role_modes() -> None:
@@ -894,6 +1076,153 @@ def test_assignment_sla_saved_view_and_replay_survive_api_restart(tmp_path) -> N
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["state"] in {"ON_TRACK", "DUE_SOON", "OVERDUE"}
     third_bundle.engine.close()
+
+
+def test_lifecycle_cancel_idempotency_replays_original_receipt_after_restart(
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "cancel-replay-restart.sqlite3")
+    headers = {
+        **_api_headers(SUBMITTER),
+        "x-operator-role": "expansion-staff",
+    }
+    cancel_key = f"restart-cancel-{uuid4()}"
+    cancel_body = {"reason": "使用者取消尚未完成的人工補件送件。"}
+
+    first_bundle = _durable_bundle(db_path)
+    first_client = TestClient(create_app(persistence=first_bundle))
+    submitted = first_client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://www.591.com.tw/rent-detail-717171.html",
+            "scope": {"tenant_id": TENANT_ID},
+        },
+        headers={
+            **headers,
+            "Idempotency-Key": f"cancel-submit-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    assert ODayWorker(persistence=first_bundle).run_once() is True
+    intake_id = submitted.json()["intake_id"]
+    detail = first_client.get(
+        f"/api/v1/intakes/{intake_id}",
+        headers=headers,
+    ).json()
+    assert detail["state"] == "AWAITING_ASSISTED_ENTRY"
+    cancelled = first_client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json=cancel_body,
+        headers={
+            **headers,
+            "Idempotency-Key": cancel_key,
+            "If-Match": f'W/"{detail["version"]}"',
+        },
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    original_receipt = cancelled.json()
+    assert original_receipt["to_state"] == "CANCELLED"
+    first_bundle.engine.close()
+
+    second_bundle = _durable_bundle(db_path)
+    second_client = TestClient(create_app(persistence=second_bundle))
+    replayed = second_client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json=cancel_body,
+        headers={
+            **headers,
+            "Idempotency-Key": cancel_key,
+            "If-Match": f'W/"{detail["version"]}"',
+        },
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.headers["Idempotency-Replayed"] == "true"
+    assert replayed.json() == original_receipt
+
+    mismatched = second_client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json={"reason": "同一 key 不得套用到不同取消內容。"},
+        headers={
+            **headers,
+            "Idempotency-Key": cancel_key,
+            "If-Match": f'W/"{detail["version"]}"',
+        },
+    )
+    assert mismatched.status_code == 409, mismatched.text
+    assert mismatched.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+    second_bundle.engine.close()
+
+
+def test_canonical_inbox_projects_authoritative_effective_coordinates(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bundle = _durable_bundle(str(tmp_path / "inbox-map-location.sqlite3"))
+    client = TestClient(create_app(persistence=bundle))
+    raw = {
+        "source_listing_id": "synthetic-map-1001",
+        "address_raw": "台北市中山區南京東路二段 100 號 1F",
+        "rent_amount": 68000,
+        "area_ping": 22.0,
+        "floor": "1F",
+        "listing_type": "店面",
+        "listing_status": "active",
+        "latitude": 25.05234,
+        "longitude": 121.53219,
+        "geocode_confidence": 0.93,
+        "geocode_source": "provider-verified-coordinate",
+    }
+    from modules.external_data.security import assisted_listing_retrieval
+
+    monkeypatch.setattr(
+        assisted_listing_retrieval,
+        "_resolve_host",
+        lambda _host: ("93.184.216.34",),
+    )
+    monkeypatch.setattr(
+        assisted_listing_retrieval.DefaultRetrievalFetcher,
+        "__call__",
+        lambda _self, _url, *, timeout_seconds, max_response_bytes: FetchResponse(
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            body=json.dumps(raw).encode(),
+        ),
+    )
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://www.synthetic.example/detail-map-1001.html",
+            "scope": {"tenant_id": TENANT_ID},
+        },
+        headers=_api_headers(
+            SUBMITTER,
+            key=f"map-submit-{uuid4()}",
+        ),
+    )
+    assert submitted.status_code == 202, submitted.text
+    assert ODayWorker(persistence=bundle).run_once() is True
+
+    page = client.get(
+        "/api/v1/intakes",
+        headers=_api_headers(SUBMITTER),
+    )
+    assert page.status_code == 200, page.text
+    summary = next(
+        item
+        for item in page.json()["items"]
+        if item["intake_id"] == submitted.json()["intake_id"]
+    )
+    assert summary["location"] == {
+        "address": "台北市中山區南京東路二段100號",
+        "district": None,
+        "assigned_area_id": None,
+        "heat_zone_id": None,
+        "latitude": 25.05234,
+        "longitude": 121.53219,
+        "confidence": 0.93,
+        "source": "provider-verified-coordinate",
+    }
+    bundle.engine.close()
 
 
 def test_queued_http_runtime_persists_legal_history_and_revision_readback(

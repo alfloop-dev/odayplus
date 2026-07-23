@@ -639,6 +639,43 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
             normalized_value=str(raw.get("listing_status", "")).strip(),
         ),
     }
+    if raw.get("latitude") is not None or raw.get("lat") is not None:
+        latitude = raw.get("latitude", raw.get("lat"))
+        fields["latitude"] = _field(
+            key="latitude",
+            label="緯度",
+            source_value=latitude,
+            normalized_value=_as_float(latitude),
+        )
+    if (
+        raw.get("longitude") is not None
+        or raw.get("lng") is not None
+        or raw.get("lon") is not None
+    ):
+        longitude = raw.get(
+            "longitude",
+            raw.get("lng", raw.get("lon")),
+        )
+        fields["longitude"] = _field(
+            key="longitude",
+            label="經度",
+            source_value=longitude,
+            normalized_value=_as_float(longitude),
+        )
+    if raw.get("geocode_confidence") is not None:
+        fields["geocodeConfidence"] = _field(
+            key="geocodeConfidence",
+            label="地理編碼信心",
+            source_value=raw.get("geocode_confidence"),
+            normalized_value=_as_float(raw.get("geocode_confidence")),
+        )
+    if raw.get("geocode_source") is not None:
+        fields["geocodeSource"] = _field(
+            key="geocodeSource",
+            label="座標來源",
+            source_value=str(raw.get("geocode_source")),
+            normalized_value=str(raw.get("geocode_source")).strip(),
+        )
     if raw.get("contact_phone") is not None:
         fields["contactPhone"] = _field(
             key="contactPhone",

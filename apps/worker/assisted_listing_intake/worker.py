@@ -436,6 +436,27 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             intake["policy"] = policy.policy
             intake["policyLabel"] = policy.policy_label
             intake["policyReason"] = policy.policy_reason
+            required_cells = {
+                "address": "地址",
+                "rent": "租金",
+                "areaPing": "坪數",
+            }
+            for field_key, label in required_cells.items():
+                intake.setdefault("parsedFields", {}).setdefault(
+                    field_key,
+                    {
+                        "key": field_key,
+                        "label": label,
+                        "sourceValue": None,
+                        "normalizedValue": None,
+                        "correctedValue": None,
+                        "correctionReason": None,
+                        "identity": True,
+                        "lowConfidence": True,
+                        "sourceSnapshotId": None,
+                        "parserVersion": None,
+                    },
+                )
             service._append_processing_transition(
                 intake,
                 to_stage="AWAITING_ASSISTED_ENTRY",

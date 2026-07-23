@@ -3055,14 +3055,46 @@ class NetworkListingService:
                 submitted_values=effective_vals,
             )
             if match_res.outcome == "POSSIBLE_MATCH":
-                intake["stage"] = "NEEDS_REVIEW"
+                target_stage = "NEEDS_REVIEW"
             else:
-                intake["stage"] = "READY"
+                target_stage = "READY"
         else:
-            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            target_stage = "AWAITING_ASSISTED_ENTRY"
 
-        if intake["stage"] != before_stage:
-            target_stage = intake["stage"]
+        if has_all_required and before_stage == "AWAITING_ASSISTED_ENTRY":
+            intake["stage"] = before_stage
+            intake["version"] = before_version
+            self._append_processing_transition(
+                intake,
+                to_stage="PARSING",
+                actor=actor_name or actor_role_id,
+                correlation_id=correlation_id,
+                checkpoint="ASSISTED_ENTRY",
+                attempt=0,
+                timeout_seconds=120,
+                reason_code="ASSISTED_ENTRY_COMPLETE",
+            )
+            self._append_processing_transition(
+                intake,
+                to_stage="MATCHING",
+                actor=actor_name or actor_role_id,
+                correlation_id=correlation_id,
+                checkpoint="MATCHING",
+                attempt=0,
+                timeout_seconds=120,
+                reason_code="ASSISTED_ENTRY_PARSED",
+            )
+            self._append_processing_transition(
+                intake,
+                to_stage=target_stage,
+                actor=actor_name or actor_role_id,
+                correlation_id=correlation_id,
+                checkpoint="MATCHING",
+                attempt=0,
+                timeout_seconds=120,
+                reason_code="MATCHING_COMPLETED",
+            )
+        elif target_stage != before_stage:
             intake["stage"] = before_stage
             intake["version"] = before_version
             self._append_processing_transition(
@@ -3597,6 +3629,27 @@ class NetworkListingService:
             return _copy(intake)
 
         if policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
+            required_cells = {
+                "address": ("地址", True),
+                "rent": ("租金", True),
+                "areaPing": ("坪數", True),
+            }
+            for field_key, (label, identity) in required_cells.items():
+                intake.setdefault("parsedFields", {}).setdefault(
+                    field_key,
+                    {
+                        "key": field_key,
+                        "label": label,
+                        "sourceValue": None,
+                        "normalizedValue": None,
+                        "correctedValue": None,
+                        "correctionReason": None,
+                        "identity": identity,
+                        "lowConfidence": True,
+                        "sourceSnapshotId": None,
+                        "parserVersion": None,
+                    },
+                )
             self._append_processing_transition(
                 intake,
                 to_stage="AWAITING_ASSISTED_ENTRY",
