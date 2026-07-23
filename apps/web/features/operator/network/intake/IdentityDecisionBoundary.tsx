@@ -19,6 +19,8 @@ export type {
   IdentityConflict,
   IdentityDecisionCommand,
   IdentityDecisionDraft,
+  IdentityDraftPersistenceReceipt,
+  IdentityDraftScope,
   IdentityDecisionReceipt,
   IdentityDecisionStatus,
   IdentityGraphEdge,

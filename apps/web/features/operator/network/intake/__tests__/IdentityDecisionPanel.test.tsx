@@ -10,6 +10,8 @@ import {
   type IdentityComparisonContract,
   type IdentityDecisionCommand,
   type IdentityDecisionDraft,
+  type IdentityDraftPersistenceReceipt,
+  type IdentityDraftScope,
   type IdentityDecisionReceipt,
   type IdentityGraphOperation,
   type IdentityGraphPlan,
@@ -39,6 +41,28 @@ const record = {
   snapshotId: "snapshot-authoritative-3011",
   parserVersion: "parser-2.4.0",
 };
+
+const draftIdentity: IdentityDraftScope = {
+  tenantId: "tenant-tw-001",
+  intakeId: record.id,
+  matchCaseId: "match-case-3011",
+  actorId: proposer.subjectId,
+};
+
+function draftStorageKey(scope: IdentityDraftScope = draftIdentity): string {
+  return [
+    "odp",
+    "intake",
+    "identity-draft",
+    "v2",
+    scope.tenantId,
+    scope.intakeId,
+    scope.matchCaseId,
+    scope.actorId,
+  ]
+    .map(encodeURIComponent)
+    .join(":");
+}
 
 function value(displayValue: string): IdentityComparableValue {
   return { value: displayValue, displayValue };
@@ -271,6 +295,10 @@ function renderBoundary({
       <IdentityDecisionBoundary
         comparison={comparison(outcome)}
         conflict={conflict}
+        draftIdentity={{
+          ...draftIdentity,
+          actorId: reviewWorkflow.currentActor.subjectId,
+        }}
         durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
         graphPlans={graphPlans}
         onRefreshConflict={vi.fn()}
@@ -513,6 +541,7 @@ describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
       render(
         <IdentityDecisionBoundary
           comparison={comparison()}
+          draftIdentity={draftIdentity}
           durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
           graphPlans={graphPlans}
           onSubmit={vi.fn().mockResolvedValue(operationReceipt)}
@@ -563,7 +592,7 @@ describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
     fireEvent.click(screen.getByTestId("identity-risk-ack"));
 
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("odp:intake:identity-draft:match-case-3011")).toContain(
+      expect(window.sessionStorage.getItem(draftStorageKey())).toContain(
         "跨裝置前先保存",
       ),
     );
@@ -580,7 +609,7 @@ describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
     expect(screen.getByTestId("identity-desktop-required").textContent).toContain("草稿已保留");
   });
 
-  it("exposes a server-durable draft integration contract for mobile continuation", () => {
+  it("reports pending and success only after the authoritative server save receipt", async () => {
     const persistedDraft: IdentityDecisionDraft = {
       commandType: "GRAPH",
       outcomeAction: null,
@@ -589,15 +618,22 @@ describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
       reason: "這份草稿已由 server draft API 保存。",
       riskAcknowledged: true,
     };
-    const onDraftChange = vi.fn();
+    let resolveSave!: (receipt: IdentityDraftPersistenceReceipt) => void;
+    const onDraftSave = vi.fn(
+      () =>
+        new Promise<IdentityDraftPersistenceReceipt>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
 
     render(
       <IdentityDecisionBoundary
         comparison={comparison()}
         draftPersistence="SERVER"
+        draftIdentity={draftIdentity}
         durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
         graphPlans={graphPlans}
-        onDraftChange={onDraftChange}
+        onDraftSave={onDraftSave}
         onSubmit={vi.fn().mockResolvedValue(receipt())}
         persistedDraft={persistedDraft}
         record={record}
@@ -608,15 +644,159 @@ describe("ODP-INTAKE-FCL-IDENTITY-001 production integration boundary", () => {
     expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe(
       "這份草稿已由 server draft API 保存。",
     );
-    expect(screen.getByTestId("identity-desktop-required").textContent).toContain(
-      "草稿已保存至 server",
+    expect(screen.getByTestId("identity-server-draft-status").getAttribute("data-status")).toBe(
+      "LOADED",
     );
 
     fireEvent.change(screen.getByTestId("identity-decision-reason"), {
       target: { value: "更新後的 server draft。" },
     });
-    expect(onDraftChange).toHaveBeenCalledWith(
+    expect(onDraftSave).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "更新後的 server draft。" }),
+      draftIdentity,
+    );
+    expect(screen.getByTestId("identity-server-draft-status").getAttribute("data-status")).toBe(
+      "PENDING",
+    );
+    expect(screen.getByTestId("identity-server-draft-status").textContent).not.toContain(
+      "已確認保存",
+    );
+
+    resolveSave({
+      draft: {
+        ...persistedDraft,
+        reason: "Server normalized and saved draft.",
+      },
+      draftVersion: 12,
+      persistedAt: "2026-07-23T12:00:00Z",
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("identity-server-draft-status").getAttribute("data-status")).toBe(
+        "SAVED",
+      ),
+    );
+    expect(screen.getByTestId("identity-server-draft-status").textContent).toContain("version 12");
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe(
+      "Server normalized and saved draft.",
+    );
+  });
+
+  it("keeps the local draft visible and reports an authoritative server save failure", async () => {
+    const onDraftSave = vi.fn().mockRejectedValue(new Error("DRAFT_VERSION_CONFLICT"));
+    render(
+      <IdentityDecisionBoundary
+        comparison={comparison()}
+        draftPersistence="SERVER"
+        draftIdentity={draftIdentity}
+        durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+        graphPlans={graphPlans}
+        onDraftSave={onDraftSave}
+        onSubmit={vi.fn().mockResolvedValue(receipt())}
+        persistedDraft={null}
+        record={record}
+        workflow={workflow()}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "保存失敗時仍保留這段草稿。" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("identity-server-draft-status").getAttribute("data-status")).toBe(
+        "FAILED",
+      ),
+    );
+    expect(screen.getByTestId("identity-server-draft-status").textContent).toContain(
+      "DRAFT_VERSION_CONFLICT",
+    );
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe(
+      "保存失敗時仍保留這段草稿。",
+    );
+  });
+
+  it("clears a stale scoped session draft when the server returns an authoritative null", async () => {
+    window.sessionStorage.setItem(
+      draftStorageKey(),
+      JSON.stringify({
+        commandType: "OUTCOME",
+        outcomeAction: "CREATE",
+        graphOperation: null,
+        graphPlanId: null,
+        reason: "stale browser draft",
+        riskAcknowledged: false,
+      }),
+    );
+    const onDraftSave = vi.fn().mockResolvedValue({
+      draft: null,
+      draftVersion: 13,
+      persistedAt: "2026-07-23T12:05:00Z",
+    } satisfies IdentityDraftPersistenceReceipt);
+
+    render(
+      <IdentityDecisionBoundary
+        comparison={comparison()}
+        draftPersistence="SERVER"
+        draftIdentity={draftIdentity}
+        durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+        graphPlans={graphPlans}
+        onDraftSave={onDraftSave}
+        onSubmit={vi.fn().mockResolvedValue(receipt())}
+        persistedDraft={null}
+        record={record}
+        workflow={workflow()}
+      />,
+    );
+
+    expect(window.sessionStorage.getItem(draftStorageKey())).toBeNull();
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "server will clear this edit" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("identity-server-draft-status").getAttribute("data-status")).toBe(
+        "CLEARED",
+      ),
+    );
+    expect(window.sessionStorage.getItem(draftStorageKey())).toBeNull();
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("isolates session drafts by tenant, intake, match case, and actor", async () => {
+    const first = renderBoundary();
+    fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+      target: { value: "tenant A actor A only" },
+    });
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(draftStorageKey())).toContain("tenant A actor A only"),
+    );
+    first.unmount();
+
+    const isolatedScope: IdentityDraftScope = {
+      ...draftIdentity,
+      tenantId: "tenant-tw-002",
+      actorId: "subject-reviewer",
+    };
+    render(
+      <IdentityDecisionBoundary
+        comparison={comparison()}
+        draftIdentity={isolatedScope}
+        durableDesktopHref="/w/expansion/listings/intake/intake-3011?section=identity"
+        graphPlans={graphPlans}
+        onSubmit={vi.fn().mockResolvedValue(receipt())}
+        record={record}
+        workflow={workflow({
+          currentActor: reviewer,
+          proposer: reviewer,
+        })}
+      />,
+    );
+
+    expect((screen.getByTestId("identity-decision-reason") as HTMLTextAreaElement).value).toBe("");
+    expect(window.sessionStorage.getItem(draftStorageKey())).toContain("tenant A actor A only");
+    expect(window.sessionStorage.getItem(draftStorageKey(isolatedScope))).not.toContain(
+      "tenant A actor A only",
     );
   });
 });
