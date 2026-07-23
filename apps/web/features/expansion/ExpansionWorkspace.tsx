@@ -423,7 +423,12 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
 
 function isOperatorRoleId(value: string | undefined): value is OperatorRoleId {
   return value !== undefined && [
+    "expansion-staff",
     "expansion-manager",
+    "data-steward",
+    "governance-reviewer",
+    "privacy-officer",
+    "permission-limited",
     "ops-lead",
     "cs-lead",
     "field-lead",

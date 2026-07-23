@@ -3,12 +3,17 @@ const OPERATOR_SUBJECT_STORAGE_KEY = "oday.operator.subject";
 const DEFAULT_OPERATOR_ROLE_ID = "ops-lead";
 const OPERATOR_TENANT_ID = "tenant-a";
 
-const OPERATOR_API_ROLES: Record<string, string> = {
+export const OPERATOR_API_ROLES: Readonly<Record<string, string>> = {
   "cs-lead": "operations_manager",
   csLead: "operations_manager",
   supportLead: "operations_manager",
+  "expansion-staff": "expansion_user",
   "expansion-manager": "expansion_user,site_reviewer",
   expansionManager: "expansion_user,site_reviewer",
+  "data-steward": "data_owner,expansion_user",
+  "governance-reviewer": "auditor",
+  "privacy-officer": "finance_legal,auditor",
+  "permission-limited": "auditor",
   "field-lead": "regional_supervisor",
   facilitiesLead: "regional_supervisor",
   fieldLead: "regional_supervisor",
@@ -51,7 +56,7 @@ export function operatorSecurityHeaders(
 
   return {
     "X-Operator-Role": resolvedRoleId,
-    "X-Roles": OPERATOR_API_ROLES[resolvedRoleId] ?? "operations_manager",
+    "X-Roles": OPERATOR_API_ROLES[resolvedRoleId] ?? "",
     "X-Subject-Id": operatorSubjectId(resolvedRoleId, subjectId),
     "X-Tenant-Id": OPERATOR_TENANT_ID,
   };
