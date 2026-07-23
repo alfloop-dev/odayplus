@@ -33,6 +33,7 @@ import {
   type PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
+import type { IntakeLifecycleSnapshot } from "./useIntakeLifecycle";
 import {
   decisionOptions,
   matchLabel,
@@ -72,6 +73,7 @@ export type IntakeProcessingDetailProps = {
   decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
   slaReceipt?: SlaReceipt;
   correctionReceipts?: CorrectionReceipt[];
+  lifecycle?: IntakeLifecycleSnapshot | null;
   onClose: () => void;
   presentation?: "dialog" | "page";
   activeTab?: IntakeDetailTab;
@@ -129,6 +131,7 @@ export function IntakeProcessingDetail({
   decisionReceipt,
   slaReceipt,
   correctionReceipts = [],
+  lifecycle = null,
   onClose,
   presentation = "dialog",
   activeTab: controlledActiveTab,
@@ -518,13 +521,19 @@ export function IntakeProcessingDetail({
         {/* Assignment/SLA is part of the durable production composition. */}
         {activeTab === "assignment" && (
           <AssignmentSlaSummary
+            allowedActions={lifecycle?.allowed_actions}
+            assignment={lifecycle?.assignment}
             busy={busy}
             currentUserId={currentOperator?.id}
+            history={[
+              ...(lifecycle?.assignment_history ?? []),
+              ...(lifecycle?.sla_history ?? []),
+            ]}
             onClaim={onClaimAssignment}
             onOpenPause={onOpenPause}
             onOpenTransfer={onOpenTransfer}
             onResume={onResumeSla}
-            record={record}
+            sla={lifecycle?.sla}
             userRole={currentOperator?.role}
           />
         )}
