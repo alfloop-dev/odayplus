@@ -144,10 +144,15 @@ async function reopenIntakeAs(
   await page.reload();
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("intake-inbox-view")).toBeVisible({ timeout: 15_000 });
-  if (!(await page.getByTestId("intake-detail-dialog").isVisible())) {
+  const detailDialog = page.getByTestId("intake-detail-dialog");
+  const restoredFromUrl = await detailDialog
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!restoredFromUrl) {
     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();
   }
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+  await expect(detailDialog).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("intake-detail-id")).toHaveText(intakeId);
 }
 
