@@ -116,6 +116,67 @@
         "title": "ActionPayload",
         "type": "object"
       },
+      "ActorDecisionFacts": {
+        "properties": {
+          "allowed_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Actions",
+            "type": "array"
+          },
+          "denied_action_reasons": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Denied Action Reasons",
+            "type": "object"
+          },
+          "masking": {
+            "additionalProperties": true,
+            "title": "Masking",
+            "type": "object"
+          },
+          "purpose": {
+            "additionalProperties": true,
+            "title": "Purpose",
+            "type": "object"
+          },
+          "role_mode": {
+            "enum": [
+              "expansion-staff",
+              "expansion-manager",
+              "data-steward",
+              "governance-reviewer",
+              "privacy-officer",
+              "permission-limited"
+            ],
+            "title": "Role Mode",
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": true,
+            "title": "Scope",
+            "type": "object"
+          },
+          "second_actor": {
+            "additionalProperties": true,
+            "title": "Second Actor",
+            "type": "object"
+          }
+        },
+        "required": [
+          "role_mode",
+          "allowed_actions",
+          "denied_action_reasons",
+          "scope",
+          "masking",
+          "purpose",
+          "second_actor"
+        ],
+        "title": "ActorDecisionFacts",
+        "type": "object"
+      },
       "ActorPayload": {
         "properties": {
           "actor": {
@@ -425,6 +486,76 @@
         "title": "ApprovalDecisionResponse",
         "type": "object"
       },
+      "AssignmentLifecycleSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "owner_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Subject Id"
+          },
+          "queue_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "status",
+          "version"
+        ],
+        "title": "AssignmentLifecycleSnapshot",
+        "type": "object"
+      },
       "AssignmentReceipt": {
         "properties": {
           "assignment_id": {
@@ -571,15 +702,88 @@
             "title": "Action",
             "type": "string"
           },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "actor_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Role"
+          },
+          "after": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
           "audit_event_id": {
             "format": "uuid",
             "title": "Audit Event Id",
             "type": "string"
           },
+          "before": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "evidence_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence State"
+          },
           "occurred_at": {
             "format": "date-time",
             "title": "Occurred At",
             "type": "string"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
           },
           "reason_code": {
             "anyOf": [
@@ -592,8 +796,35 @@
             ],
             "title": "Reason Code"
           },
+          "related_ids": {
+            "additionalProperties": true,
+            "title": "Related Ids",
+            "type": "object"
+          },
+          "resource_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Version"
+          },
           "result": {
             "$ref": "#/components/schemas/AuditResult"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
           }
         },
         "required": [
@@ -769,6 +1000,57 @@
         ],
         "title": "CandidateDisposition",
         "type": "string"
+      },
+      "CandidateImpact": {
+        "additionalProperties": true,
+        "properties": {
+          "candidate_site_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Site Id"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "source_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Property Id"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "title": "CandidateImpact",
+        "type": "object"
       },
       "CandidateReassignment": {
         "properties": {
@@ -1284,8 +1566,224 @@
         "title": "DatasetSnapshotPayload",
         "type": "object"
       },
+      "DecisionActorReference": {
+        "properties": {
+          "role_id": {
+            "title": "Role Id",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "role_id"
+        ],
+        "title": "DecisionActorReference",
+        "type": "object"
+      },
+      "DecisionEffectReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence_state": {
+            "title": "Evidence State",
+            "type": "string"
+          },
+          "identity_edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Identity Edge Ids",
+            "type": "array"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "receipt_id": {
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "runtime_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MutationReceiptRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "decision_id",
+          "status",
+          "identity_edge_ids",
+          "audit_event_id",
+          "correlation_id",
+          "version",
+          "issued_at",
+          "evidence_state"
+        ],
+        "title": "DecisionEffectReceipt",
+        "type": "object"
+      },
+      "DecisionLifecycleSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "graph_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchGraphPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "reviewer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "DecisionLifecycleSnapshot",
+        "type": "object"
+      },
       "DecisionReceipt": {
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
           "audit_event_id": {
             "format": "uuid",
             "title": "Audit Event Id",
@@ -1296,10 +1794,42 @@
             "title": "Correlation Id",
             "type": "string"
           },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "decision_id": {
             "format": "uuid",
             "title": "Decision Id",
             "type": "string"
+          },
+          "effect_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionEffectReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "graph_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchGraphPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "job_id": {
             "anyOf": [
@@ -1313,6 +1843,29 @@
             ],
             "title": "Job Id"
           },
+          "proposer": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "resource_versions": {
             "additionalProperties": {
               "type": "integer"
@@ -1320,8 +1873,49 @@
             "title": "Resource Versions",
             "type": "object"
           },
+          "reverses_decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverses Decision Id"
+          },
+          "reviewer": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer"
+          },
           "status": {
             "$ref": "#/components/schemas/DecisionStatus"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
@@ -1329,7 +1923,8 @@
           "status",
           "resource_versions",
           "audit_event_id",
-          "correlation_id"
+          "correlation_id",
+          "version"
         ],
         "title": "DecisionReceipt",
         "type": "object"
@@ -2034,6 +2629,51 @@
             ],
             "title": "Corrected"
           },
+          "corrected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected At"
+          },
+          "correction_actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Actor"
+          },
+          "correction_actor_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Actor Role"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
           "effective": {
             "anyOf": [
               {},
@@ -2079,6 +2719,39 @@
               }
             ],
             "title": "Parsed"
+          },
+          "parser_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Run Id"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
           }
         },
         "required": [
@@ -2324,6 +2997,157 @@
         "title": "HeatZoneScoreJobPayload",
         "type": "object"
       },
+      "IdentityGraphEdge": {
+        "additionalProperties": true,
+        "properties": {
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "edge_id": {
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Id"
+          },
+          "relation": {
+            "title": "Relation",
+            "type": "string"
+          },
+          "source_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Property Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "supersedes_edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supersedes Edge Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "edge_id",
+          "relation",
+          "status"
+        ],
+        "title": "IdentityGraphEdge",
+        "type": "object"
+      },
+      "IdentityGraphNode": {
+        "additionalProperties": true,
+        "properties": {
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "node_type": {
+            "title": "Node Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "node_type",
+          "status"
+        ],
+        "title": "IdentityGraphNode",
+        "type": "object"
+      },
+      "IdentityGraphSnapshot": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityGraphEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityGraphNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "nodes",
+          "edges"
+        ],
+        "title": "IdentityGraphSnapshot",
+        "type": "object"
+      },
       "IdentityPartition": {
         "properties": {
           "source_identity_edge_ids": {
@@ -2354,6 +3178,201 @@
           "source_identity_edge_ids"
         ],
         "title": "IdentityPartition",
+        "type": "object"
+      },
+      "IdentityRedirect": {
+        "properties": {
+          "from_property_id": {
+            "title": "From Property Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "to_property_id": {
+            "title": "To Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_property_id",
+          "to_property_id",
+          "reason",
+          "status"
+        ],
+        "title": "IdentityRedirect",
+        "type": "object"
+      },
+      "InboxCommandContract": {
+        "properties": {
+          "method": {
+            "enum": [
+              "POST",
+              "PUT"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "path_template": {
+            "title": "Path Template",
+            "type": "string"
+          },
+          "requires_idempotency_key": {
+            "title": "Requires Idempotency Key",
+            "type": "boolean"
+          },
+          "requires_if_match": {
+            "title": "Requires If Match",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "path_template",
+          "requires_if_match",
+          "requires_idempotency_key"
+        ],
+        "title": "InboxCommandContract",
+        "type": "object"
+      },
+      "InboxHeatZone": {
+        "properties": {
+          "assigned_area_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Area Id"
+          },
+          "heat_zone_id": {
+            "title": "Heat Zone Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          }
+        },
+        "required": [
+          "heat_zone_id",
+          "label"
+        ],
+        "title": "InboxHeatZone",
+        "type": "object"
+      },
+      "InboxLocationSummary": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "assigned_area_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Area Id"
+          },
+          "district": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "District"
+          },
+          "heat_zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heat Zone Id"
+          }
+        },
+        "title": "InboxLocationSummary",
+        "type": "object"
+      },
+      "InboxMaskingSummary": {
+        "properties": {
+          "has_masked_fields": {
+            "title": "Has Masked Fields",
+            "type": "boolean"
+          },
+          "masked_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Masked Fields",
+            "type": "array"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "restricted_data": {
+            "title": "Restricted Data",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restricted_data",
+          "has_masked_fields"
+        ],
+        "title": "InboxMaskingSummary",
         "type": "object"
       },
       "IngestionRunPayload": {
@@ -2587,6 +3606,14 @@
             ],
             "title": "Due At"
           },
+          "evidence": {
+            "$ref": "#/components/schemas/SourceEvidenceDetail"
+          },
+          "failed": {
+            "default": false,
+            "title": "Failed",
+            "type": "boolean"
+          },
           "fields": {
             "items": {
               "$ref": "#/components/schemas/FieldValue"
@@ -2602,12 +3629,54 @@
           "intake_method": {
             "$ref": "#/components/schemas/IntakeMethod"
           },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/LifecycleAggregate"
+          },
+          "location": {
+            "$ref": "#/components/schemas/InboxLocationSummary"
+          },
           "masked_fields": {
             "items": {
               "type": "string"
             },
             "title": "Masked Fields",
             "type": "array"
+          },
+          "masking": {
+            "$ref": "#/components/schemas/InboxMaskingSummary"
+          },
+          "match_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchCaseDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "match_case_id": {
             "anyOf": [
@@ -2621,6 +3690,17 @@
             ],
             "title": "Match Case Id"
           },
+          "match_case_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Case Version"
+          },
           "match_outcome": {
             "anyOf": [
               {
@@ -2630,6 +3710,17 @@
                 "type": "null"
               }
             ]
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
           },
           "original_url": {
             "anyOf": [
@@ -2641,6 +3732,18 @@
               }
             ],
             "title": "Original Url"
+          },
+          "owner_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Subject Id"
           },
           "parser_run_id": {
             "anyOf": [
@@ -2670,6 +3773,27 @@
             },
             "title": "Processing History",
             "type": "array"
+          },
+          "quarantined": {
+            "default": false,
+            "title": "Quarantined",
+            "type": "boolean"
+          },
+          "queue_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Id"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
           },
           "scope": {
             "$ref": "#/components/schemas/ScopeContext"
@@ -2758,18 +3882,143 @@
           "intake_id",
           "state",
           "intake_method",
+          "original_url",
+          "canonical_url",
+          "policy_state",
           "submitted_at",
           "updated_at",
           "version",
           "scope",
-          "original_url",
-          "canonical_url",
-          "policy_state",
+          "location",
+          "masking",
           "processing_history",
           "fields",
-          "audit"
+          "audit",
+          "evidence",
+          "lifecycle"
         ],
         "title": "IntakeDetail",
+        "type": "object"
+      },
+      "IntakeInboxBootstrap": {
+        "properties": {
+          "assignment_states": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentStatus"
+            },
+            "title": "Assignment States",
+            "type": "array"
+          },
+          "commands": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/InboxCommandContract"
+            },
+            "title": "Commands",
+            "type": "object"
+          },
+          "heat_zones": {
+            "items": {
+              "$ref": "#/components/schemas/InboxHeatZone"
+            },
+            "title": "Heat Zones",
+            "type": "array"
+          },
+          "intake_methods": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeMethod"
+            },
+            "title": "Intake Methods",
+            "type": "array"
+          },
+          "intake_states": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeState"
+            },
+            "title": "Intake States",
+            "type": "array"
+          },
+          "match_outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/MatchOutcome"
+            },
+            "title": "Match Outcomes",
+            "type": "array"
+          },
+          "role_mode": {
+            "title": "Role Mode",
+            "type": "string"
+          },
+          "saved_views": {
+            "items": {
+              "$ref": "#/components/schemas/SavedView"
+            },
+            "title": "Saved Views",
+            "type": "array"
+          },
+          "scope": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Scope",
+            "type": "object"
+          },
+          "selected_heat_zone_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Heat Zone Id"
+          },
+          "sla_states": {
+            "items": {
+              "$ref": "#/components/schemas/SlaState"
+            },
+            "title": "Sla States",
+            "type": "array"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "subject_id",
+          "role_mode",
+          "scope",
+          "heat_zones",
+          "intake_methods",
+          "intake_states",
+          "match_outcomes",
+          "assignment_states",
+          "sla_states",
+          "saved_views",
+          "commands"
+        ],
+        "title": "IntakeInboxBootstrap",
         "type": "object"
       },
       "IntakeMethod": {
@@ -2933,18 +4182,71 @@
             ],
             "title": "Duplicate Hint"
           },
+          "existing_listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Listing Id"
+          },
+          "identity_outcome": {
+            "anyOf": [
+              {
+                "const": "EXACT_DUPLICATE",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Outcome"
+          },
           "intake_id": {
             "format": "uuid",
             "title": "Intake Id",
             "type": "string"
           },
           "job_id": {
-            "format": "uuid",
-            "title": "Job Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "navigation_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Navigation Target"
           },
           "state": {
             "$ref": "#/components/schemas/IntakeState"
+          },
+          "submission_receipt_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submission Receipt Id"
           },
           "submitted_at": {
             "format": "date-time",
@@ -2961,7 +4263,6 @@
           "intake_id",
           "state",
           "version",
-          "job_id",
           "correlation_id",
           "submitted_at"
         ],
@@ -3023,6 +4324,39 @@
             ],
             "title": "Assigned To"
           },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "assignment_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignmentStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canonical_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Url"
+          },
           "due_at": {
             "anyOf": [
               {
@@ -3035,6 +4369,11 @@
             ],
             "title": "Due At"
           },
+          "failed": {
+            "default": false,
+            "title": "Failed",
+            "type": "boolean"
+          },
           "intake_id": {
             "format": "uuid",
             "title": "Intake Id",
@@ -3043,12 +4382,41 @@
           "intake_method": {
             "$ref": "#/components/schemas/IntakeMethod"
           },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "location": {
+            "$ref": "#/components/schemas/InboxLocationSummary"
+          },
           "masked_fields": {
             "items": {
               "type": "string"
             },
             "title": "Masked Fields",
             "type": "array"
+          },
+          "masking": {
+            "$ref": "#/components/schemas/InboxMaskingSummary"
           },
           "match_outcome": {
             "anyOf": [
@@ -3060,8 +4428,95 @@
               }
             ]
           },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "owner_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Subject Id"
+          },
+          "policy_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourcePolicyState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quarantined": {
+            "default": false,
+            "title": "Quarantined",
+            "type": "boolean"
+          },
+          "queue_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Id"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
           "scope": {
             "$ref": "#/components/schemas/ScopeContext"
+          },
+          "sla_instance_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Instance Id"
+          },
+          "sla_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_id": {
             "anyOf": [
@@ -3104,7 +4559,9 @@
           "submitted_at",
           "updated_at",
           "version",
-          "scope"
+          "scope",
+          "location",
+          "masking"
         ],
         "title": "IntakeSummary",
         "type": "object"
@@ -3232,6 +4689,86 @@
         "title": "JobCreatePayload",
         "type": "object"
       },
+      "JobLifecycleSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "checkpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint"
+          },
+          "fence_token": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Token"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "next_retry_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Retry At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "JobLifecycleSnapshot",
+        "type": "object"
+      },
       "JobReceipt": {
         "properties": {
           "attempt": {
@@ -3283,6 +4820,305 @@
         ],
         "title": "JobStatus",
         "type": "string"
+      },
+      "LifecycleAggregate": {
+        "properties": {
+          "actor_facts": {
+            "$ref": "#/components/schemas/ActorDecisionFacts"
+          },
+          "assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignmentLifecycleSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignment_history": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Assignment History",
+            "type": "array"
+          },
+          "decision_history": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Decision History",
+            "type": "array"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionLifecycleSnapshot"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobLifecycleSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_history": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Job History",
+            "type": "array"
+          },
+          "latest_decision_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionLifecycleSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mutation_receipts": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Mutation Receipts",
+            "type": "array"
+          },
+          "promotion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromotionLifecycleSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "promotion_history": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Promotion History",
+            "type": "array"
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaLifecycleSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sla_history": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleReceiptRecord"
+            },
+            "title": "Sla History",
+            "type": "array"
+          },
+          "submission_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionLifecycleReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "version",
+          "etag",
+          "actor_facts",
+          "decisions",
+          "assignment_history",
+          "sla_history",
+          "decision_history",
+          "promotion_history",
+          "job_history",
+          "mutation_receipts"
+        ],
+        "title": "LifecycleAggregate",
+        "type": "object"
+      },
+      "LifecycleReceiptRecord": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "category": {
+            "enum": [
+              "assignment",
+              "sla",
+              "decision",
+              "promotion",
+              "job",
+              "intake"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MutationReceiptRecord"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Version"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "category",
+          "receipt"
+        ],
+        "title": "LifecycleReceiptRecord",
+        "type": "object"
+      },
+      "LineageImpact": {
+        "properties": {
+          "affected_decision_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Decision Ids",
+            "type": "array"
+          },
+          "append_only": {
+            "title": "Append Only",
+            "type": "boolean"
+          },
+          "source_evidence_preserved": {
+            "title": "Source Evidence Preserved",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "superseded_edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Superseded Edge Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "append_only",
+          "source_evidence_preserved",
+          "superseded_edge_ids",
+          "affected_decision_ids",
+          "summary"
+        ],
+        "title": "LineageImpact",
+        "type": "object"
       },
       "ListingImportPayload": {
         "properties": {
@@ -3390,6 +5226,154 @@
         "title": "ManualIntakeRow",
         "type": "object"
       },
+      "MatchCaseDetail": {
+        "properties": {
+          "comparison_fields": {
+            "items": {
+              "$ref": "#/components/schemas/MatchComparisonField"
+            },
+            "title": "Comparison Fields",
+            "type": "array"
+          },
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "graph_plan": {
+            "$ref": "#/components/schemas/MatchGraphPlan"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/MatchOutcome"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/MatchSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "target_listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Listing Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "version",
+          "intake_id",
+          "outcome",
+          "confidence",
+          "summary",
+          "comparison_fields",
+          "signals",
+          "graph_plan",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MatchCaseDetail",
+        "type": "object"
+      },
+      "MatchComparisonField": {
+        "properties": {
+          "agrees": {
+            "title": "Agrees",
+            "type": "boolean"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "existing_value": {
+            "title": "Existing Value"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "submitted_value": {
+            "title": "Submitted Value"
+          }
+        },
+        "required": [
+          "field_path",
+          "label",
+          "agrees"
+        ],
+        "title": "MatchComparisonField",
+        "type": "object"
+      },
       "MatchDecisionRequest": {
         "properties": {
           "decision_type": {
@@ -3450,6 +5434,122 @@
         "title": "MatchDecisionRequest",
         "type": "object"
       },
+      "MatchGraphPlan": {
+        "additionalProperties": true,
+        "properties": {
+          "after_graph": {
+            "$ref": "#/components/schemas/IdentityGraphSnapshot"
+          },
+          "before_graph": {
+            "$ref": "#/components/schemas/IdentityGraphSnapshot"
+          },
+          "candidate_impacts": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateImpact"
+            },
+            "title": "Candidate Impacts",
+            "type": "array"
+          },
+          "expected_graph_version": {
+            "minimum": 0.0,
+            "title": "Expected Graph Version",
+            "type": "integer"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "lineage_impact": {
+            "$ref": "#/components/schemas/LineageImpact"
+          },
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "original_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OriginalDecisionReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permitted_decision_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permitted Decision Types",
+            "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "plan_type": {
+            "title": "Plan Type",
+            "type": "string"
+          },
+          "proposer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionActorReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redirects": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityRedirect"
+            },
+            "title": "Redirects",
+            "type": "array"
+          },
+          "requires_human_decision": {
+            "default": true,
+            "title": "Requires Human Decision",
+            "type": "boolean"
+          },
+          "reviewer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionActorReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_id",
+          "plan_type",
+          "status",
+          "operations",
+          "before_graph",
+          "after_graph",
+          "redirects",
+          "candidate_impacts",
+          "lineage_impact",
+          "expected_graph_version",
+          "generated_at"
+        ],
+        "title": "MatchGraphPlan",
+        "type": "object"
+      },
       "MatchOutcome": {
         "enum": [
           "NEW",
@@ -3460,6 +5560,34 @@
         ],
         "title": "MatchOutcome",
         "type": "string"
+      },
+      "MatchSignal": {
+        "properties": {
+          "agrees": {
+            "title": "Agrees",
+            "type": "boolean"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "agrees",
+          "detail"
+        ],
+        "title": "MatchSignal",
+        "type": "object"
       },
       "MergeRequest": {
         "properties": {
@@ -3852,6 +5980,358 @@
           "metric_name"
         ],
         "title": "MonitorGuardrailPayload",
+        "type": "object"
+      },
+      "MutationReceiptRecord": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "audit_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Event Id"
+          },
+          "candidate_site_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Site Id"
+          },
+          "checkpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From State"
+          },
+          "identity_edge_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Edge Id"
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Revision Id"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "promotion_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Decision Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retryable"
+          },
+          "site_score_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Score Job Id"
+          },
+          "sla_instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Instance Id"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "to_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To State"
+          },
+          "transition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "version_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version After"
+          }
+        },
+        "title": "MutationReceiptRecord",
         "type": "object"
       },
       "NetPlanActorPayload": {
@@ -4373,6 +6853,52 @@
           "created_by"
         ],
         "title": "OpenDecisionPayload",
+        "type": "object"
+      },
+      "OriginalDecisionReference": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "decision_id"
+        ],
+        "title": "OriginalDecisionReference",
         "type": "object"
       },
       "PlaceHoldPayload": {
@@ -4955,6 +7481,64 @@
         ],
         "title": "PromotionDecisionType",
         "type": "string"
+      },
+      "PromotionLifecycleSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "candidate_site_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Site Id"
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "promotion_decision_id": {
+            "title": "Promotion Decision Id",
+            "type": "string"
+          },
+          "site_score_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Score Job Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "promotion_decision_id",
+          "status",
+          "version"
+        ],
+        "title": "PromotionLifecycleSnapshot",
+        "type": "object"
       },
       "PromotionRequest": {
         "properties": {
@@ -5763,6 +8347,55 @@
         "title": "SiteScoreScoreJobPayload",
         "type": "object"
       },
+      "SlaLifecycleSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "paused_duration_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused Duration Seconds"
+          },
+          "sla_instance_id": {
+            "title": "Sla Instance Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sla_instance_id",
+          "state",
+          "version"
+        ],
+        "title": "SlaLifecycleSnapshot",
+        "type": "object"
+      },
       "SlaPauseRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5868,6 +8501,117 @@
         ],
         "title": "SlaState",
         "type": "string"
+      },
+      "SourceEvidenceDetail": {
+        "properties": {
+          "canonical_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Url"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "freshness_state": {
+            "enum": [
+              "CURRENT",
+              "STALE",
+              "NOT_CAPTURED"
+            ],
+            "title": "Freshness State",
+            "type": "string"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "parser_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Run Id"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
+          },
+          "policy_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourcePolicyState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "freshness_state"
+        ],
+        "title": "SourceEvidenceDetail",
+        "type": "object"
       },
       "SourcePolicyState": {
         "enum": [
@@ -6124,6 +8868,68 @@
           }
         },
         "title": "StoreOpsTransitionPayload",
+        "type": "object"
+      },
+      "SubmissionLifecycleReceipt": {
+        "additionalProperties": true,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "existing_listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Listing Id"
+          },
+          "intake_id": {
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "navigation_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Navigation Target"
+          },
+          "receipt_id": {
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "receipt_type": {
+            "title": "Receipt Type",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "receipt_type",
+          "intake_id",
+          "state",
+          "correlation_id",
+          "issued_at"
+        ],
+        "title": "SubmissionLifecycleReceipt",
         "type": "object"
       },
       "TaskAssignRequest": {
@@ -7451,6 +10257,124 @@
           }
         },
         "summary": "Complete Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/actions/escalate": {
+      "post": {
+        "operationId": "escalateAssignment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentReceipt"
+                }
+              }
+            },
+            "description": "Assignment escalated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Escalate Assignment",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -12068,6 +14992,83 @@
         ]
       }
     },
+    "/api/v1/identity/edges": {
+      "get": {
+        "operationId": "listIdentityEdges",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "listing_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Listing Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intake_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Intake Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_superseded",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Superseded",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Listidentityedges",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "List Identity Edges",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/identity/merge": {
       "post": {
         "operationId": "mergeProperties",
@@ -12508,6 +15509,25 @@
           },
           {
             "in": "query",
+            "name": "intake_method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/IntakeMethod"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Intake Method"
+            }
+          },
+          {
+            "in": "query",
             "name": "source_id",
             "required": false,
             "schema": {
@@ -12579,6 +15599,79 @@
           },
           {
             "in": "query",
+            "name": "owner_subject_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner Subject Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignment_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/AssignmentStatus"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignment Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assigned",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assigned"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sla_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SlaState"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sla State"
+            }
+          },
+          {
+            "in": "query",
             "name": "assigned_area_id",
             "required": false,
             "schema": {
@@ -12609,6 +15702,155 @@
                 }
               ],
               "title": "Heat Zone Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observed_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observed From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observed_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observed To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "restricted_data",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Restricted Data"
+            }
+          },
+          {
+            "in": "query",
+            "name": "quarantined",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Quarantined"
+            }
+          },
+          {
+            "in": "query",
+            "name": "failed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Failed"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retryable",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retryable"
+            }
+          },
+          {
+            "in": "query",
+            "name": "saved_view_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Saved View Id"
             }
           },
           {
@@ -12662,6 +15904,37 @@
           }
         },
         "summary": "List Intakes",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/bootstrap": {
+      "get": {
+        "operationId": "getIntakeInboxBootstrap",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeInboxBootstrap"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Intake Inbox Bootstrap",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -15297,6 +18570,124 @@
         ]
       }
     },
+    "/api/v1/jobs/{job_id}/actions/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReceipt"
+                }
+              }
+            },
+            "description": "Job cancellation committed",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Cancel Job",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/jobs/{job_id}/receipt": {
       "get": {
         "operationId": "getJobReceipt",
@@ -16523,6 +19914,121 @@
         "summary": "Import Listings",
         "tags": [
           "listings"
+        ]
+      }
+    },
+    "/api/v1/listings/{listing_id}/revisions": {
+      "get": {
+        "operationId": "listListingRevisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listing_id",
+            "required": true,
+            "schema": {
+              "title": "Listing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Listlistingrevisions",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "List Listing Revisions",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}": {
+      "get": {
+        "operationId": "getMatchCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchCaseDetail"
+                }
+              }
+            },
+            "description": "Authoritative match comparison and graph plan",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "example": "W/\"7\"",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Match Case",
+        "tags": [
+          "assisted-listing-intake"
         ]
       }
     },

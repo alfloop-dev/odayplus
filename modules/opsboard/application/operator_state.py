@@ -90,6 +90,34 @@ ROLES: list[dict[str, Any]] = [
         "heroName": "林曉青",
     },
     {
+        "id": "data-steward",
+        "label": "資料管理員",
+        "subtitle": "來源、解析與身分資料治理",
+        "allowedWorkspaces": ["today", "network", "govern"],
+        "heroName": "資料管理員",
+    },
+    {
+        "id": "governance-reviewer",
+        "label": "治理審查員",
+        "subtitle": "唯讀檢查政策、決策與稽核證據",
+        "allowedWorkspaces": ["today", "network", "govern"],
+        "heroName": "治理審查員",
+    },
+    {
+        "id": "privacy-officer",
+        "label": "隱私管理員",
+        "subtitle": "目的綁定的敏感證據與隱私審查",
+        "allowedWorkspaces": ["today", "network", "govern"],
+        "heroName": "隱私管理員",
+    },
+    {
+        "id": "permission-limited",
+        "label": "受限檢視者",
+        "subtitle": "唯讀且遮罩的案件檢視",
+        "allowedWorkspaces": ["today", "network"],
+        "heroName": "受限檢視者",
+    },
+    {
         "id": "pm-audit",
         "label": "PM／稽核",
         "subtitle": "模型、決策追蹤與稽核線索",
@@ -105,7 +133,16 @@ SYSTEM_ROLE_TO_OPERATOR_ROLE: dict[str, OperatorRoleId] = {
     "marketing_manager": "marketing-manager",
     "expansion_user": "expansion-staff",
     "site_reviewer": "expansion-manager",
-    "auditor": "pm-audit",
+    "data_owner": "data-steward",
+    "auditor": "governance-reviewer",
+    "architecture_owner": "governance-reviewer",
+    "finance_legal": "privacy-officer",
+    "expansion-staff": "expansion-staff",
+    "expansion-manager": "expansion-manager",
+    "data-steward": "data-steward",
+    "governance-reviewer": "governance-reviewer",
+    "privacy-officer": "privacy-officer",
+    "permission-limited": "permission-limited",
 }
 
 

@@ -39,6 +39,12 @@ class Role(StrEnum):
     EXECUTIVE = "executive"
     FRANCHISEE = "franchisee"
     AUDITOR = "auditor"
+    INTAKE_EXPANSION_STAFF = "expansion-staff"
+    INTAKE_EXPANSION_MANAGER = "expansion-manager"
+    INTAKE_DATA_STEWARD = "data-steward"
+    INTAKE_GOVERNANCE_REVIEWER = "governance-reviewer"
+    INTAKE_PRIVACY_OFFICER = "privacy-officer"
+    INTAKE_PERMISSION_LIMITED = "permission-limited"
 
 
 class DataClassification(int, Enum):
@@ -126,7 +132,20 @@ class Principal:
     authenticated: bool = True
 
     def has_role(self, *roles: Role) -> bool:
-        return any(role in self.roles for role in roles)
+        equivalent_roles = {
+            Role.EXPANSION_USER: Role.INTAKE_EXPANSION_STAFF,
+            Role.SITE_REVIEWER: Role.INTAKE_EXPANSION_MANAGER,
+            Role.DATA_OWNER: Role.INTAKE_DATA_STEWARD,
+            Role.AUDITOR: Role.INTAKE_GOVERNANCE_REVIEWER,
+            Role.FINANCE_LEGAL: Role.INTAKE_PRIVACY_OFFICER,
+        }
+        for role in roles:
+            if role in self.roles:
+                return True
+            equivalent = equivalent_roles.get(role)
+            if equivalent is not None and equivalent in self.roles:
+                return True
+        return False
 
     @property
     def tenant_id(self) -> str | None:

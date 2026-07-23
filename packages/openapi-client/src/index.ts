@@ -61,7 +61,15 @@ import type {
   PromotionRequest,
   RetryRequest,
   ReviewDecisionRequest,
+  BatchIntakeRequest,
+  BatchIntakeReceipt,
 } from "./generated/types";
+import type {
+  ApiError as CanonicalApiError,
+  CorrectionReceipt as CanonicalCorrectionReceipt,
+  ConflictError as CanonicalConflictError,
+  IntakeSubmissionReceipt,
+} from "./generated/assisted_listing_intake";
 
 export type { ErrorEnvelope };
 
@@ -575,6 +583,461 @@ export type OperatorBootstrapResponse = {
   [key: string]: unknown;
 };
 
+export type IntakeRoleMode =
+  | "expansion-staff"
+  | "expansion-manager"
+  | "data-steward"
+  | "governance-reviewer"
+  | "privacy-officer"
+  | "permission-limited";
+
+export type CanonicalMatchComparisonField = {
+  field_path: string;
+  label: string;
+  submitted_value: unknown;
+  existing_value: unknown;
+  agrees: boolean;
+  detail: string | null;
+};
+
+export type CanonicalMatchSignal = {
+  key: string;
+  label: string;
+  agrees: boolean;
+  detail: string;
+};
+
+export type CanonicalIdentityGraphNode = {
+  node_id: string;
+  node_type: string;
+  status: string;
+};
+
+export type CanonicalIdentityGraphEdge = {
+  edge_id: string;
+  relation: string;
+  status: string;
+  source_property_id: string | null;
+  target_property_id: string | null;
+  property_id: string | null;
+  listing_id: string | null;
+  intake_id: string | null;
+  decision_id: string | null;
+  supersedes_edge_ids: string[];
+};
+
+export type CanonicalIdentityGraphSnapshot = {
+  version: number;
+  nodes: CanonicalIdentityGraphNode[];
+  edges: CanonicalIdentityGraphEdge[];
+};
+
+export type CanonicalIdentityRedirect = {
+  from_property_id: string;
+  to_property_id: string;
+  reason: string;
+  status: string;
+};
+
+export type CanonicalCandidateImpact = {
+  candidate_site_id: string | null;
+  disposition: string | null;
+  source_property_id: string | null;
+  target_property_id: string | null;
+};
+
+export type CanonicalLineageImpact = {
+  append_only: boolean;
+  source_evidence_preserved: boolean;
+  superseded_edge_ids: string[];
+  affected_decision_ids: string[];
+  summary: string;
+};
+
+export type CanonicalDecisionActorReference = {
+  subject_id: string;
+  role_id: string;
+};
+
+export type CanonicalOriginalDecisionReference = {
+  decision_id: string;
+  action: string | null;
+  status: string | null;
+  version: number | null;
+};
+
+export type CanonicalMatchGraphPlan = {
+  plan_id: string;
+  plan_type: string;
+  status: string;
+  operations: Array<Record<string, unknown>>;
+  permitted_decision_types: string[];
+  requires_human_decision: boolean;
+  before_graph: CanonicalIdentityGraphSnapshot;
+  after_graph: CanonicalIdentityGraphSnapshot;
+  redirects: CanonicalIdentityRedirect[];
+  candidate_impacts: CanonicalCandidateImpact[];
+  lineage_impact: CanonicalLineageImpact;
+  proposer: CanonicalDecisionActorReference | null;
+  reviewer: CanonicalDecisionActorReference | null;
+  expected_graph_version: number;
+  original_decision: CanonicalOriginalDecisionReference | null;
+  generated_at: string;
+};
+
+export type CanonicalMatchCaseDetail = {
+  match_case_id: string;
+  version: number;
+  intake_id: string;
+  outcome: string;
+  confidence: number;
+  target_listing_id: string | null;
+  summary: string;
+  comparison_fields: CanonicalMatchComparisonField[];
+  signals: CanonicalMatchSignal[];
+  graph_plan: CanonicalMatchGraphPlan;
+  source_snapshot_id: string | null;
+  parser_version: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CanonicalActorDecisionFacts = {
+  role_mode: IntakeRoleMode;
+  allowed_actions: string[];
+  denied_action_reasons: Record<string, string>;
+  scope: {
+    principal_tenant_id: string;
+    resource: {
+      tenant_id: string;
+      assigned_area_id?: string | null;
+      brand_id?: string | null;
+      heat_zone_id?: string | null;
+      region_id?: string | null;
+    };
+    in_scope: boolean;
+  };
+  masking: {
+    masked_fields: string[];
+    reason_codes: string[];
+    has_masked_fields: boolean;
+    clearance: string | null;
+  };
+  purpose: {
+    value: string | null;
+    required: boolean;
+    bound: boolean;
+    reason_code: string | null;
+  };
+  second_actor: {
+    required: boolean;
+    pending_decision_ids: string[];
+    proposer_subject_ids: string[];
+    self_review_denied: boolean;
+    reason_code: string | null;
+  };
+};
+
+export type CanonicalLifecycleReceipt = {
+  receipt_id: string | null;
+  category: "assignment" | "sla" | "decision" | "promotion" | "job" | "intake";
+  action: string | null;
+  resource_id: string | null;
+  resource_version: number | null;
+  status: string | null;
+  actor: string | null;
+  correlation_id: string | null;
+  occurred_at: string | null;
+  receipt: CanonicalMutationReceipt;
+};
+
+export type CanonicalMutationReceipt = {
+  receipt_id?: string | null;
+  transition_id?: string | null;
+  assignment_id?: string | null;
+  sla_instance_id?: string | null;
+  job_id?: string | null;
+  promotion_decision_id?: string | null;
+  decision_id?: string | null;
+  intake_id?: string | null;
+  listing_id?: string | null;
+  listing_revision_id?: string | null;
+  identity_edge_id?: string | null;
+  candidate_site_id?: string | null;
+  site_score_job_id?: string | null;
+  status?: string | null;
+  state?: string | null;
+  from_state?: string | null;
+  to_state?: string | null;
+  action?: string | null;
+  version?: number | null;
+  version_after?: number | null;
+  audit_event_id?: string | null;
+  correlation_id?: string | null;
+  actor?: string | null;
+  reason?: string | null;
+  checkpoint?: string | null;
+  attempt?: number | null;
+  retryable?: boolean | null;
+  occurred_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  issued_at?: string | null;
+};
+
+export type CanonicalTransitionReceipt = {
+  transition_id: string;
+  from_state: string | null;
+  to_state: string;
+  occurred_at: string;
+  actor: string;
+  reason_code?: string | null;
+  version_after: number;
+};
+
+export type CanonicalFieldValue = {
+  field_path: string;
+  classification: string;
+  masked: boolean;
+  parsed: unknown;
+  normalized: unknown;
+  corrected: unknown;
+  effective: unknown;
+  confidence: number | null;
+  mask_reason_code: string | null;
+  correction_actor: string | null;
+  correction_actor_role: string | null;
+  correction_reason: string | null;
+  corrected_at: string | null;
+  source_snapshot_id: string | null;
+  parser_run_id: string | null;
+  parser_version: string | null;
+};
+
+export type CanonicalAuditReference = {
+  audit_event_id: string;
+  action: string;
+  occurred_at: string;
+  result: "SUCCEEDED" | "DENIED" | "FAILED";
+  reason_code: string | null;
+  actor: string | null;
+  actor_role: string | null;
+  before: unknown;
+  after: unknown;
+  source_snapshot_id: string | null;
+  parser_version: string | null;
+  related_ids: Record<string, unknown>;
+  correlation_id: string | null;
+  resource_version: number | null;
+  evidence_state: string | null;
+};
+
+export type CanonicalSourceEvidence = {
+  original_url: string | null;
+  canonical_url: string | null;
+  source_id: string | null;
+  policy_state: string | null;
+  source_snapshot_id: string | null;
+  captured_at: string | null;
+  parser_run_id: string | null;
+  parser_version: string | null;
+  correlation_id: string;
+  freshness_state: "CURRENT" | "STALE" | "NOT_CAPTURED";
+};
+
+export type CanonicalDecisionEffectReceipt = {
+  receipt_id: string;
+  decision_id: string;
+  status: string;
+  identity_edge_ids: string[];
+  runtime_receipt: CanonicalMutationReceipt | null;
+  audit_event_id: string;
+  correlation_id: string;
+  version: number;
+  issued_at: string;
+  evidence_state: string;
+};
+
+export type CanonicalAssignmentLifecycle = {
+  assignment_id: string;
+  intake_id: string | null;
+  status: string;
+  owner_subject_id: string | null;
+  queue_id: string | null;
+  due_at: string | null;
+  version: number;
+};
+
+export type CanonicalSlaLifecycle = {
+  sla_instance_id: string;
+  state: string;
+  due_at: string | null;
+  paused_duration_seconds: number | null;
+  version: number;
+};
+
+export type CanonicalPromotionLifecycle = {
+  promotion_decision_id: string;
+  intake_id: string | null;
+  status: string;
+  candidate_site_id: string | null;
+  site_score_job_id: string | null;
+  version: number;
+};
+
+export type CanonicalJobLifecycle = {
+  job_id: string;
+  status: string;
+  attempt: number | null;
+  checkpoint: string | null;
+  next_retry_at: string | null;
+  fence_token: number | string | null;
+  version: number | null;
+};
+
+export type CanonicalDecisionLifecycle = {
+  decision_id: string | null;
+  receipt_id: string | null;
+  status: string;
+  action: string | null;
+  version: number;
+  proposer: string | null;
+  reviewer: string | null;
+  graph_plan: CanonicalMatchGraphPlan | null;
+  correlation_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type CanonicalSubmissionLifecycleReceipt = {
+  receipt_id: string;
+  receipt_type: string;
+  intake_id: string;
+  state: string;
+  existing_listing_id: string | null;
+  navigation_target: string | null;
+  correlation_id: string;
+  issued_at: string;
+};
+
+export type CanonicalLifecycleAggregate = {
+  intake_id: string;
+  version: number;
+  etag: string;
+  actor_facts: CanonicalActorDecisionFacts;
+  assignment: CanonicalAssignmentLifecycle | null;
+  sla: CanonicalSlaLifecycle | null;
+  decisions: CanonicalDecisionLifecycle[];
+  promotion: CanonicalPromotionLifecycle | null;
+  job: CanonicalJobLifecycle | null;
+  assignment_history: CanonicalLifecycleReceipt[];
+  sla_history: CanonicalLifecycleReceipt[];
+  decision_history: CanonicalLifecycleReceipt[];
+  promotion_history: CanonicalLifecycleReceipt[];
+  job_history: CanonicalLifecycleReceipt[];
+  mutation_receipts: CanonicalLifecycleReceipt[];
+  latest_decision_receipt: CanonicalDecisionLifecycle | null;
+  submission_receipt: CanonicalSubmissionLifecycleReceipt | null;
+};
+
+export type CanonicalIntakeRuntimeDetail = {
+  intake_id: string;
+  state: string;
+  intake_method: string;
+  source_id: string | null;
+  match_outcome: string | null;
+  submitted_by: string;
+  assigned_to: string | null;
+  due_at: string | null;
+  submitted_at: string;
+  updated_at: string;
+  version: number;
+  scope: Record<string, unknown>;
+  masked_fields: string[];
+  original_url: string | null;
+  canonical_url: string | null;
+  policy_state: string | null;
+  source_snapshot_id: string | null;
+  parser_run_id: string | null;
+  match_case_id: string | null;
+  match_case_version: number | null;
+  match_case: CanonicalMatchCaseDetail | null;
+  processing_history: CanonicalTransitionReceipt[];
+  fields: CanonicalFieldValue[];
+  audit: CanonicalAuditReference[];
+  evidence: CanonicalSourceEvidence;
+  lifecycle: CanonicalLifecycleAggregate;
+};
+
+export type CanonicalIdentityDecisionReceipt = {
+  decision_id: string;
+  status: string;
+  resource_versions: Record<string, number>;
+  job_id: string | null;
+  audit_event_id: string;
+  correlation_id: string;
+  version: number;
+  action: string | null;
+  proposer: string | null;
+  reviewer: string | null;
+  reason: string | null;
+  graph_plan: CanonicalMatchGraphPlan | null;
+  effect_receipt: CanonicalDecisionEffectReceipt | null;
+  reverses_decision_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type CanonicalMatchDecisionCommand = {
+  decision_type: "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT";
+  reason: string;
+  requested_second_reviewer_id?: string | null;
+  risk_acknowledged: boolean;
+  target_listing_id?: string | null;
+  target_property_id?: string | null;
+};
+
+export type CanonicalMergeCommand = {
+  source_property_ids: string[];
+  target_property_id: string;
+  reason: string;
+  risk_acknowledged: true;
+  candidate_reassignment_plan?: Array<Record<string, unknown>>;
+  expected_property_versions?: Record<string, number>;
+};
+
+export type CanonicalIdentityPartition = {
+  target_property_id: string | null;
+  source_identity_edge_ids: string[];
+};
+
+export type CanonicalSplitCommand = {
+  source_property_id: string;
+  partitions: CanonicalIdentityPartition[];
+  reason: string;
+  risk_acknowledged: true;
+  source_property_version?: number | null;
+};
+
+export type CanonicalUnmergeCommand = {
+  original_decision_id: string;
+  replacement_edges: CanonicalIdentityPartition[];
+  reason: string;
+  risk_acknowledged: true;
+};
+
+export type CanonicalIdentityReviewCommand = {
+  decision: "APPROVE" | "REJECT";
+  reason: string;
+  requested_changes?: string[];
+  risk_acknowledged: boolean;
+};
+
+export type CanonicalRiskReasonCommand = {
+  reason: string;
+  risk_acknowledged: boolean;
+};
+
 /** Valid action types for issue lifecycle transitions. */
 export type OperatorIssueActionType = "triage" | "assign" | "actions" | "outcome";
 
@@ -642,6 +1105,9 @@ export const API_BASE_URL_ENV_KEYS = [
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const CORRELATION_ID_HEADER = "x-correlation-id";
+declare const process:
+  | { env?: Record<string, string | undefined> }
+  | undefined;
 
 function readProcessEnv(): Record<string, string | undefined> {
   if (typeof process !== "undefined" && process.env) {
@@ -679,7 +1145,7 @@ export type ApiValidationIssue = {
   type?: string;
 };
 
-export type ApiErrorBody = {
+export type ApiErrorBody = Partial<CanonicalApiError & CanonicalConflictError> & {
   /**
    * Legacy detail, exactly as the route produced it. Retained indefinitely:
    * some routes return an object whose fields callers branch on (the
@@ -711,7 +1177,19 @@ export class OdpApiError extends Error {
   /** Stable machine-readable code, e.g. "forbidden", "idempotency_conflict". */
   readonly code?: string;
   /** What the server says the caller should do next; safe to surface as-is. */
-  readonly nextAction?: string;
+  readonly nextAction?: string | null;
+  /** Server decision about whether retrying this operation is permitted. */
+  readonly retryable?: boolean;
+  /** Server timestamp. Never replace this with the browser's current time. */
+  readonly occurredAt?: string;
+  /** Server state at the point of conflict, when the operation has one. */
+  readonly currentState?: string | null;
+  /** Server version at the point of conflict, when the operation has one. */
+  readonly currentVersion?: number | null;
+  /** Stable backend denial/policy reason, when more specific than `code`. */
+  readonly reasonCode?: string | null;
+  /** Backend-directed delay for a retryable response. */
+  readonly retryAfterSeconds?: number | null;
 
   constructor(
     message: string,
@@ -728,15 +1206,31 @@ export class OdpApiError extends Error {
     this.url = options.url;
     this.body = options.body;
     this.envelope = options.body?.error;
-    this.code = this.envelope?.code;
-    this.nextAction = this.envelope?.next_action;
-    // Envelope first, then the header, then the caller's own id: the envelope
-    // is the value the server recorded against the audit event.
-    this.correlationId = this.envelope?.correlation_id ?? options.correlationId ?? undefined;
+    // Assisted-intake v1 errors are the canonical ApiError directly at the
+    // response root. Other APIs use the compatibility {detail,error} shape.
+    // Read both without deriving domain facts from the HTTP status.
+    this.code = options.body?.code ?? this.envelope?.code;
+    this.nextAction = options.body?.next_action ?? this.envelope?.next_action;
+    this.retryable = options.body?.retryable;
+    this.occurredAt = options.body?.occurred_at ?? this.envelope?.occurred_at;
+    this.currentState = options.body?.current_state;
+    this.currentVersion = options.body?.current_version;
+    this.reasonCode = options.body?.reason_code;
+    this.retryAfterSeconds = options.body?.retry_after_seconds;
+    // The body is the value the server recorded. A response header is only the
+    // compatibility fallback, followed by the caller-provided correlation ID.
+    this.correlationId =
+      options.body?.correlation_id ??
+      this.envelope?.correlation_id ??
+      options.correlationId ??
+      undefined;
     // The envelope's message is already the flattened text, so prefer it and
     // fall back to flattening `detail` for any endpoint not yet behind the
     // handlers (and for older servers during a rollout).
-    this.detail = this.envelope?.message ?? flattenApiDetail(options.body?.detail);
+    this.detail =
+      options.body?.message ??
+      this.envelope?.message ??
+      flattenApiDetail(options.body?.detail);
   }
 }
 
@@ -781,7 +1275,7 @@ type RequestOptions = {
   correlationId?: string;
   idempotencyKey?: string;
   ifMatch?: string;
-  query?: Record<string, string | undefined>;
+  query?: Record<string, string | readonly string[] | undefined>;
 };
 
 export class OdpApiClient {
@@ -804,6 +1298,26 @@ export class OdpApiClient {
     }
   }
 
+  private canonicalTenantId(): string {
+    const tenant = Object.entries(this.defaultHeaders).find(
+      ([name]) => name.toLowerCase() === "x-tenant-id",
+    )?.[1];
+    if (!tenant) {
+      throw new Error(
+        "Canonical assisted-intake commands require an x-tenant-id default header",
+      );
+    }
+    return tenant;
+  }
+
+  private commandIdempotencyKey(explicit?: string, suffix?: string): string {
+    if (explicit) return suffix ? `${explicit}:${suffix}` : explicit;
+    const random =
+      globalThis.crypto?.randomUUID?.() ??
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `odp-intake-${random}${suffix ? `:${suffix}` : ""}`;
+  }
+
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { value } = await this.requestWithMeta<T>(path, options);
     return value;
@@ -822,7 +1336,12 @@ export class OdpApiClient {
     const query = options.query
       ? Object.entries(options.query)
           .filter(([, value]) => value !== undefined && value !== "")
-          .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+          .flatMap(([key, value]) =>
+            (Array.isArray(value) ? value : [value]).map(
+              (item) =>
+                `${encodeURIComponent(key)}=${encodeURIComponent(String(item))}`,
+            ),
+          )
           .join("&")
       : "";
     const url = `${this.baseUrl}${path}${query ? `?${query}` : ""}`;
@@ -1294,70 +1813,297 @@ export class OdpApiClient {
     });
   }
 
-  submitIntake(
+  async submitIntake(
     payload: IntakeSubmitPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
-  ): Promise<AssistedIntake> {
-    return this.request<AssistedIntake>("/api/v1/operator/network-listings/intake/submit", {
+  ): Promise<CanonicalIntakeRuntimeDetail> {
+    const heatZoneId =
+      payload.heatZoneId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        payload.heatZoneId,
+      )
+        ? payload.heatZoneId
+        : undefined;
+    const receipt = await this.request<IntakeSubmissionReceipt>("/api/v1/intakes/url", {
+      method: "POST",
+      body: {
+        original_url: payload.url,
+        scope: {
+          tenant_id: this.canonicalTenantId(),
+          heat_zone_id: heatZoneId,
+        },
+      },
+      correlationId: options.correlationId,
+      idempotencyKey: this.commandIdempotencyKey(options.idempotencyKey),
+    });
+    return this.getIntake(receipt.intake_id);
+  }
+
+  submitIntakeBatch(
+    payload: BatchIntakeRequest,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<BatchIntakeReceipt> {
+    return this.request<BatchIntakeReceipt>("/api/v1/intake-batches", {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
-      idempotencyKey: options.idempotencyKey,
+      idempotencyKey: this.commandIdempotencyKey(options.idempotencyKey),
     });
   }
 
   listIntakes(options: IntakeInboxQuery = {}): Promise<IntakeInboxPage> {
-    const query: Record<string, string> = {};
-    for (const [key, value] of Object.entries(options)) {
-      if (value !== undefined && value !== null && value !== "") query[key] = String(value);
-    }
-    return this.request<IntakeInboxPage>("/api/v1/operator/network-listings/intake", {
+    const sort =
+      options.sort ??
+      (options.sortBy
+        ? (`${options.sortBy}_${options.sortOrder ?? "desc"}` as IntakeInboxQuery["sort"])
+        : undefined);
+    const query: RequestOptions["query"] = {
+      cursor: options.cursor,
+      page_size: String(options.page_size ?? options.pageSize ?? 50),
+      sort,
+      status: options.status ?? (options.intakeStage ? [options.intakeStage] : undefined),
+      intake_method:
+        options.intake_method ?? (options.intakeMethod ? [options.intakeMethod] : undefined),
+      source_id: options.source_id,
+      match_outcome:
+        options.match_outcome ?? (options.matchOutcome ? [options.matchOutcome] : undefined),
+      submitted_by: options.submitted_by,
+      needs_review:
+        options.needs_review === undefined ? undefined : String(options.needs_review),
+      owner_subject_id: options.owner_subject_id,
+      assignment_status: options.assignment_status,
+      assigned: options.assigned === undefined ? undefined : String(options.assigned),
+      sla_state: options.sla_state ?? (options.slaState ? [options.slaState] : undefined),
+      assigned_area_id: options.assigned_area_id,
+      heat_zone_id: options.heat_zone_id ?? options.selectedHeatZoneId,
+      observed_from: options.observed_from,
+      observed_to: options.observed_to,
+      updated_from: options.updated_from,
+      updated_to: options.updated_to,
+      restricted_data:
+        options.restricted_data === undefined ? undefined : String(options.restricted_data),
+      quarantined:
+        options.quarantined === undefined ? undefined : String(options.quarantined),
+      failed: options.failed === undefined ? undefined : String(options.failed),
+      retryable: options.retryable === undefined ? undefined : String(options.retryable),
+      saved_view_id: options.saved_view_id ?? options.savedView,
+      q: options.q ?? options.search,
+    };
+    return this.request<IntakeInboxPage>("/api/v1/intakes", {
       query,
     });
   }
 
-  getIntake(intakeId: string): Promise<AssistedIntake> {
-    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}`);
+  getIntake(intakeId: string): Promise<CanonicalIntakeRuntimeDetail> {
+    return this.request<CanonicalIntakeRuntimeDetail>(`/api/v1/intakes/${intakeId}`);
   }
 
-  correctIntake(
+  /** Authoritative route-loader readback; never composed from the legacy radar projection. */
+  getIntakeRuntimeDetail(intakeId: string): Promise<CanonicalIntakeRuntimeDetail> {
+    return this.getIntake(intakeId);
+  }
+
+  getIntakeInboxBootstrap(): Promise<CanonicalIntakeInboxBootstrap> {
+    return this.request<CanonicalIntakeInboxBootstrap>("/api/v1/intakes/bootstrap");
+  }
+
+  listSavedViews(): Promise<CanonicalSavedView[]> {
+    return this.request<CanonicalSavedView[]>("/api/v1/saved-views");
+  }
+
+  createSavedView(
+    payload: CanonicalSavedViewRequest,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<CanonicalSavedView> {
+    return this.request<CanonicalSavedView>("/api/v1/saved-views", {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: this.commandIdempotencyKey(options.idempotencyKey),
+    });
+  }
+
+  /** Authoritative comparison, signals and backend-produced identity graph plan. */
+  getMatchCase(matchCaseId: string): Promise<CanonicalMatchCaseDetail> {
+    return this.request<CanonicalMatchCaseDetail>(`/api/v1/match-cases/${matchCaseId}`);
+  }
+
+  proposeMatchDecision(
+    matchCaseId: string,
+    payload: CanonicalMatchDecisionCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>(
+      `/api/v1/match-cases/${matchCaseId}/decisions`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+  }
+
+  getIdentityDecision(decisionId: string): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>(
+      `/api/v1/identity-decisions/${decisionId}`,
+    );
+  }
+
+  reviewIdentityDecision(
+    decisionId: string,
+    payload: CanonicalIdentityReviewCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>(
+      `/api/v1/identity-decisions/${decisionId}/actions/review`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+  }
+
+  proposeIdentityMerge(
+    payload: CanonicalMergeCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>("/api/v1/identity/merge", {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  proposeIdentitySplit(
+    payload: CanonicalSplitCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>("/api/v1/identity/split", {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  proposeIdentityUnmerge(
+    payload: CanonicalUnmergeCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>("/api/v1/identity/unmerge", {
+      method: "POST",
+      body: payload,
+      correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  requestIdentityDecisionReversal(
+    decisionId: string,
+    payload: CanonicalRiskReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalIdentityDecisionReceipt> {
+    return this.request<CanonicalIdentityDecisionReceipt>(
+      `/api/v1/identity-decisions/${decisionId}/actions/reverse`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+  }
+
+  async correctIntake(
     intakeId: string,
     payload: IntakeCorrectPayload,
     options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
-  ): Promise<AssistedIntake> {
-    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/correct`, {
-      method: "POST",
-      body: payload,
-      correlationId: options.correlationId,
-      idempotencyKey: options.idempotencyKey,
-      ifMatch: options.ifMatch,
-    });
+  ): Promise<CanonicalIntakeRuntimeDetail> {
+    let version = Number(
+      options.ifMatch?.match(/[1-9][0-9]*/)?.[0] ??
+        (await this.getIntakeRuntimeDetail(intakeId)).version,
+    );
+    for (const [fieldPath, correctedValue] of Object.entries(payload.fields)) {
+      if (correctedValue === undefined) continue;
+      const correction = await this.request<CanonicalCorrectionReceipt>(
+        `/api/v1/intakes/${intakeId}/corrections`,
+        {
+          method: "POST",
+          body: {
+            field_path: fieldPath,
+            corrected_value: correctedValue,
+            reason: payload.reason || payload.riskSummary,
+            risk_acknowledged: payload.riskAcknowledged,
+          },
+          correlationId: options.correlationId,
+          idempotencyKey: this.commandIdempotencyKey(
+            options.idempotencyKey,
+            fieldPath,
+          ),
+          ifMatch: `W/"${version}"`,
+        },
+      );
+      version = correction.version;
+    }
+    return this.getIntake(intakeId);
   }
 
-  decideIntake(
+  async decideIntake(
     intakeId: string,
     payload: IntakeDecidePayload,
     options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string } = {},
-  ): Promise<AssistedIntake> {
-    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/decide`, {
-      method: "POST",
-      body: payload,
-      correlationId: options.correlationId,
-      idempotencyKey: options.idempotencyKey,
-      ifMatch: options.ifMatch,
-    });
+  ): Promise<CanonicalIntakeRuntimeDetail> {
+    const intake = await this.getIntakeRuntimeDetail(intakeId);
+    if (!intake.match_case_id || !intake.match_case) {
+      throw new Error(`Intake ${intakeId} has no canonical matchCaseId`);
+    }
+    await this.proposeMatchDecision(
+      intake.match_case_id,
+      {
+        decision_type: payload.action.toUpperCase() as CanonicalMatchDecisionCommand["decision_type"],
+        reason: payload.reason || payload.riskSummary,
+        risk_acknowledged: payload.riskAcknowledged,
+        target_listing_id: intake.match_case.target_listing_id,
+      },
+      {
+        correlationId: options.correlationId,
+        idempotencyKey: this.commandIdempotencyKey(options.idempotencyKey),
+        ifMatch: options.ifMatch ?? `W/"${intake.match_case_version}"`,
+      },
+    );
+    return this.getIntake(intakeId);
   }
 
-  retryIntake(
+  async retryIntake(
     intakeId: string,
     payload: NetworkListingActorPayload,
-    options: { correlationId?: string } = {},
-  ): Promise<AssistedIntake> {
-    return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
-      method: "POST",
-      body: payload,
-      correlationId: options.correlationId,
-    });
+    options: { correlationId?: string; idempotencyKey?: string } = {},
+  ): Promise<CanonicalIntakeRuntimeDetail> {
+    const intake = await this.getIntakeRuntimeDetail(intakeId);
+    await this.request<CanonicalTransitionReceipt>(
+      `/api/v1/intakes/${intakeId}/actions/reopen`,
+      {
+        method: "POST",
+        body: {
+          reason: payload.reason || "Operator requested retry",
+          risk_acknowledged: true,
+        },
+        correlationId: options.correlationId,
+        idempotencyKey: this.commandIdempotencyKey(options.idempotencyKey),
+        ifMatch: `W/"${intake.version}"`,
+      },
+    );
+    return this.getIntake(intakeId);
   }
 
   promoteIntake(
@@ -1427,6 +2173,57 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
       ifMatch: options.ifMatch,
     });
+  }
+
+  escalateAssignment(
+    assignmentId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<AssignmentReceipt> {
+    return this.request<AssignmentReceipt>(
+      `/api/v1/assignments/${assignmentId}/actions/escalate`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+  }
+
+  cancelIntakeRuntime(
+    intakeId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalTransitionReceipt> {
+    return this.request<CanonicalTransitionReceipt>(
+      `/api/v1/intakes/${intakeId}/actions/cancel`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+  }
+
+  reopenIntakeRuntime(
+    intakeId: string,
+    payload: CanonicalRiskReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<CanonicalTransitionReceipt> {
+    return this.request<CanonicalTransitionReceipt>(
+      `/api/v1/intakes/${intakeId}/actions/reopen`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
   }
 
   pauseSla(
@@ -1543,6 +2340,36 @@ export class OdpApiClient {
       },
     );
     return { receipt: value, idempotencyReplayed: headers.get("Idempotency-Replayed") === "true" };
+  }
+
+  /** Canonical replay command; alias retains the existing /retry contract path. */
+  replayJob(
+    jobId: string,
+    payload: RetryRequest,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<{ receipt: JobReceipt; idempotencyReplayed: boolean }> {
+    return this.retryJob(jobId, payload, options);
+  }
+
+  async cancelJob(
+    jobId: string,
+    payload: ReasonCommand,
+    options: { correlationId?: string; idempotencyKey: string; ifMatch: string },
+  ): Promise<{ receipt: JobReceipt; idempotencyReplayed: boolean }> {
+    const { value, headers } = await this.requestWithMeta<JobReceipt>(
+      `/api/v1/jobs/${jobId}/actions/cancel`,
+      {
+        method: "POST",
+        body: payload,
+        correlationId: options.correlationId,
+        idempotencyKey: options.idempotencyKey,
+        ifMatch: options.ifMatch,
+      },
+    );
+    return {
+      receipt: value,
+      idempotencyReplayed: headers.get("Idempotency-Replayed") === "true",
+    };
   }
 
   /** GET /api/v1/jobs/{job_id}/receipt — authoritative durable job receipt. */
@@ -1777,6 +2604,8 @@ export type AssistedIntake = {
   capturedAt: string | null;
   parserVersion: string;
   correlationId: string | null;
+  matchCaseId?: string | null;
+  jobId?: string | null;
   parsedFields: Record<string, IntakeFieldCell>;
   matchResult: MatchResultDto | null;
   auditEvents: IntakeAuditEvent[];
@@ -1792,8 +2621,38 @@ export type AssistedIntake = {
 };
 
 export type IntakeInboxQuery = {
+  cursor?: string;
+  page_size?: number;
+  sort?: "submitted_at_desc" | "updated_at_desc" | "due_at_asc" | "status_asc";
+  status?: string[];
+  intake_method?: Array<"URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT">;
+  source_id?: string[];
+  match_outcome?: string[];
+  submitted_by?: string;
+  needs_review?: boolean;
+  owner_subject_id?: string[];
+  assignment_status?: Array<
+    "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED"
+  >;
+  assigned?: boolean;
+  sla_state?: Array<
+    "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "COMPLETED"
+  >;
+  assigned_area_id?: string;
+  heat_zone_id?: string;
+  observed_from?: string;
+  observed_to?: string;
+  updated_from?: string;
+  updated_to?: string;
+  restricted_data?: boolean;
+  quarantined?: boolean;
+  failed?: boolean;
+  retryable?: boolean;
+  saved_view_id?: string;
+  q?: string;
+  // Temporary aliases for the existing Inbox caller. They are translated to
+  // canonical query names and never routed through the legacy endpoint.
   selectedHeatZoneId?: string;
-  page?: number;
   pageSize?: number;
   search?: string;
   savedView?: string;
@@ -1805,13 +2664,143 @@ export type IntakeInboxQuery = {
   sortOrder?: "asc" | "desc";
 };
 
+export type CanonicalInboxLocationSummary = {
+  address: string | null;
+  district: string | null;
+  assigned_area_id: string | null;
+  heat_zone_id: string | null;
+};
+
+export type CanonicalInboxMaskingSummary = {
+  restricted_data: boolean;
+  has_masked_fields: boolean;
+  masked_fields: string[];
+  reason_codes: string[];
+};
+
+export type CanonicalIntakeSummary = {
+  intake_id: string;
+  state: string;
+  intake_method: string;
+  source_id: string | null;
+  original_url: string | null;
+  canonical_url: string | null;
+  policy_state: string | null;
+  match_outcome: string | null;
+  submitted_by: string;
+  assigned_to: string | null;
+  assignment_id: string | null;
+  assignment_status:
+    | "ASSIGNED"
+    | "CLAIMED"
+    | "TRANSFERRED"
+    | "ESCALATED"
+    | "COMPLETED"
+    | null;
+  owner_subject_id: string | null;
+  queue_id: string | null;
+  sla_instance_id: string | null;
+  sla_state:
+    | "ON_TRACK"
+    | "DUE_SOON"
+    | "OVERDUE"
+    | "BREACHED"
+    | "PAUSED"
+    | "COMPLETED"
+    | null;
+  due_at: string | null;
+  last_observed_at: string | null;
+  submitted_at: string;
+  updated_at: string;
+  version: number;
+  scope: {
+    tenant_id: string;
+    assigned_area_id?: string | null;
+    brand_id?: string | null;
+    heat_zone_id?: string | null;
+    region_id?: string | null;
+  };
+  issue: string | null;
+  next_action: string | null;
+  retryable: boolean;
+  quarantined: boolean;
+  failed: boolean;
+  location: CanonicalInboxLocationSummary;
+  masking: CanonicalInboxMaskingSummary;
+  masked_fields: string[];
+};
+
 export type IntakeInboxPage = {
-  items: AssistedIntake[];
-  total: number;
-  page: number;
-  pageSize: number;
-  counts: { needsReview: number; awaitingEntry: number; processing: number; blocked: number; ready: number };
-  evidenceState: "complete" | "partial" | "degraded";
+  items: CanonicalIntakeSummary[];
+  next_cursor: string | null;
+  page_size: number;
+  total_count: number;
+  total_count_accuracy: "EXACT" | "ESTIMATED";
+  snapshot_time: string;
+  query_fingerprint: string;
+};
+
+export type CanonicalSavedViewRequest = {
+  name: string;
+  query: IntakeInboxQuery;
+  resource: "intake";
+  shared_role?: IntakeRoleMode | null;
+  visibility: "PRIVATE" | "ROLE" | "TENANT";
+};
+
+export type CanonicalSavedView = CanonicalSavedViewRequest & {
+  saved_view_id: string;
+  owner_subject_id: string;
+  created_at: string;
+  version: number;
+};
+
+export type CanonicalInboxHeatZone = {
+  heat_zone_id: string;
+  label: string;
+  assigned_area_id: string | null;
+  region_id: string | null;
+  rank: number | null;
+};
+
+export type CanonicalInboxCommandContract = {
+  method: "POST" | "PUT";
+  path_template: string;
+  requires_if_match: boolean;
+  requires_idempotency_key: boolean;
+};
+
+export type CanonicalIntakeInboxBootstrap = {
+  tenant_id: string;
+  subject_id: string;
+  role_mode: IntakeRoleMode;
+  scope: {
+    tenant_id: string;
+    brand_ids: string[];
+    region_ids: string[];
+    assigned_area_ids: string[];
+    heat_zone_ids: string[];
+  };
+  heat_zones: CanonicalInboxHeatZone[];
+  selected_heat_zone_id: string | null;
+  intake_methods: Array<"URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT">;
+  intake_states: string[];
+  match_outcomes: Array<
+    "NEW" | "EXACT_DUPLICATE" | "REVISION" | "POSSIBLE_MATCH" | "QUARANTINED"
+  >;
+  assignment_states: Array<
+    "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED"
+  >;
+  sla_states: Array<
+    "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "COMPLETED"
+  >;
+  saved_views: CanonicalSavedView[];
+  commands: {
+    assign: CanonicalInboxCommandContract;
+    claim: CanonicalInboxCommandContract;
+    transfer: CanonicalInboxCommandContract;
+    complete: CanonicalInboxCommandContract;
+  };
 };
 
 export type NetworkListingRadarSnapshot = {

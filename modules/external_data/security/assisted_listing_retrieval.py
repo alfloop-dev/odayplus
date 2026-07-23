@@ -228,6 +228,8 @@ def redact_sensitive_snapshot(value: Any) -> Any:
 
 
 class DefaultRetrievalFetcher:
+    """Single-page HTTP adapter used only after policy and SSRF preflight."""
+
     def __call__(
         self,
         url: str,
@@ -235,36 +237,35 @@ class DefaultRetrievalFetcher:
         timeout_seconds: float,
         max_response_bytes: int,
     ) -> FetchResponse:
-        from modules.external_data.application.assisted_intake import (
-            resolve_source_policy,
-            retrieve,
+        from urllib.error import HTTPError
+        from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+        class NoAutomaticRedirects(HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json, text/html, application/xhtml+xml",
+                "User-Agent": "ODayPlus-AssistedIntake/1.0",
+            },
+            method="GET",
         )
-        policy = resolve_source_policy(url)
-        retrieval = retrieve(url, policy=policy)
-        if not retrieval.ok:
-            status_code = 500
-            if retrieval.failure and "404" in retrieval.failure.summary:
-                status_code = 404
-            headers = {"Content-Type": "text/html"}
-            if retrieval.failure:
-                headers.update({
-                    "x-failure-code": retrieval.failure.code,
-                    "x-failure-summary": retrieval.failure.summary,
-                    "x-failure-next-action": retrieval.failure.next_action,
-                    "x-failure-retryable": "true" if retrieval.failure.retryable else "false",
-                })
+        opener = build_opener(NoAutomaticRedirects())
+        try:
+            response = opener.open(request, timeout=timeout_seconds)
+        except HTTPError as exc:
+            response = exc
+
+        with response:
+            body = response.read(max_response_bytes + 1)
+            headers = {key: value for key, value in response.headers.items()}
             return FetchResponse(
-                status_code=status_code,
+                status_code=int(response.status),
                 headers=headers,
-                body=b"",
+                body=body,
             )
-        import json
-        body = json.dumps(retrieval.raw).encode("utf-8")
-        return FetchResponse(
-            status_code=200,
-            headers={"Content-Type": "text/html"},
-            body=body,
-        )
 
 
 class RetrievalSecurityGate:

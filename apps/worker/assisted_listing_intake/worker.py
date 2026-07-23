@@ -221,6 +221,17 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
 
             while True:
                 local_att += 1
+                stage_intake = service.get_intake(intake_id)
+                service._append_processing_transition(
+                    stage_intake,
+                    to_stage=stage_name,
+                    actor=payload.get("actor_name", "Assisted Intake Worker"),
+                    correlation_id=job.correlation_id,
+                    checkpoint=stage_name,
+                    attempt=current_att + local_att,
+                    timeout_seconds=hard_to,
+                )
+                intake_repo.save_intake(stage_intake)
                 start_t = time.monotonic()
                 result_container = []
                 exception_container = []
@@ -338,13 +349,26 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         outcome, existing = run_stage("CHECKING_IDENTITY", do_identity_check)
         if outcome == "READY":
             intake = service.get_intake(intake_id)
-            intake["stage"] = "READY"
             intake["matchResult"] = {
                 "outcome": "EXACT_DUPLICATE",
                 "outcomeLabel": "完全重複",
                 "confidence": 1.0,
                 "targetListingId": existing.get("id"),
             }
+            service._record_match_case(
+                intake=intake,
+                match_result=intake["matchResult"],
+            )
+            service._append_processing_transition(
+                intake,
+                to_stage="READY",
+                actor=payload.get("actor_name", "Assisted Intake Worker"),
+                correlation_id=job.correlation_id,
+                checkpoint="CHECKING_IDENTITY",
+                attempt=job.attempts,
+                timeout_seconds=30,
+                reason_code="EXACT_SOURCE_IDENTITY",
+            )
             intake_repo.save_intake(intake)
             return
 
@@ -362,13 +386,30 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         # Apply policy
         intake = service.get_intake(intake_id)
         if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:
-            intake["stage"] = "QUARANTINED"
+            intake["sourceId"] = policy.source_id
+            intake["policy"] = policy.policy
+            intake["policyLabel"] = policy.policy_label
+            intake["policyReason"] = policy.policy_reason
             intake["matchResult"] = {
                 "outcome": "QUARANTINED",
                 "outcomeLabel": "已隔離",
                 "confidence": 0.0,
                 "summary": f"依來源政策 {policy.policy} 予以隔離：{policy.policy_reason}",
             }
+            service._record_match_case(
+                intake=intake,
+                match_result=intake["matchResult"],
+            )
+            service._append_processing_transition(
+                intake,
+                to_stage="QUARANTINED",
+                actor=payload.get("actor_name", "Assisted Intake Worker"),
+                correlation_id=job.correlation_id,
+                checkpoint="CHECKING_SOURCE_POLICY",
+                attempt=job.attempts,
+                timeout_seconds=15,
+                reason_code=policy.policy,
+            )
             intake_repo.save_intake(intake)
 
             try:
@@ -391,7 +432,20 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 logger.exception("Failed to record quarantine audit event: %s", audit_exc)
             return
         elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
-            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            intake["sourceId"] = policy.source_id
+            intake["policy"] = policy.policy
+            intake["policyLabel"] = policy.policy_label
+            intake["policyReason"] = policy.policy_reason
+            service._append_processing_transition(
+                intake,
+                to_stage="AWAITING_ASSISTED_ENTRY",
+                actor=payload.get("actor_name", "Assisted Intake Worker"),
+                correlation_id=job.correlation_id,
+                checkpoint="CHECKING_SOURCE_POLICY",
+                attempt=job.attempts,
+                timeout_seconds=15,
+                reason_code=policy.policy,
+            )
             intake_repo.save_intake(intake)
             return
 
@@ -421,7 +475,9 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             retrieval_res = gate.fetch(
                 canon_url,
                 tenant_id=resolved_tenant_id,
-                retrieval_method="fixture_replay",
+                source_id=policy.source_id,
+                policy=policy.policy,
+                retrieval_method="server_http",
             )
             if not retrieval_res.ok:
                 raise RuntimeError(
@@ -501,11 +557,27 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         intake["snapshotId"] = snapshot_id
         intake["capturedAt"] = captured_at
         intake["parsedFields"] = parsed_fields
+        intake["sourceId"] = policy.source_id
+        intake["policy"] = policy.policy
+        intake["policyLabel"] = policy.policy_label
+        intake["policyReason"] = policy.policy_reason
+        from modules.external_data.application.assisted_intake import PARSER_VERSION
+        intake["parserVersion"] = PARSER_VERSION
 
         if not has_all_required:
-            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            service._append_processing_transition(
+                intake,
+                to_stage="AWAITING_ASSISTED_ENTRY",
+                actor=payload.get("actor_name", "Assisted Intake Worker"),
+                correlation_id=job.correlation_id,
+                checkpoint="PARSING",
+                attempt=job.attempts,
+                timeout_seconds=300,
+                reason_code="PARSER_PARTIAL",
+            )
             intake_repo.save_intake(intake)
             return
+        intake_repo.save_intake(intake)
 
         # -------------------------------------------------------------
         # 5. Matching
@@ -532,10 +604,24 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
 
         match_res = run_stage("MATCHING", do_matching)
 
+        intake = service.get_intake(intake_id)
         intake["matchResult"] = match_res.to_dict()
-        if match_res.outcome == "POSSIBLE_MATCH":
-            intake["stage"] = "NEEDS_REVIEW"
-        else:
-            intake["stage"] = "READY"
+        service._record_match_case(
+            intake=intake,
+            match_result=intake["matchResult"],
+            submitted_values=effective_vals,
+        )
+        final_stage = (
+            "NEEDS_REVIEW" if match_res.outcome == "POSSIBLE_MATCH" else "READY"
+        )
+        service._append_processing_transition(
+            intake,
+            to_stage=final_stage,
+            actor=payload.get("actor_name", "Assisted Intake Worker"),
+            correlation_id=job.correlation_id,
+            checkpoint="MATCHING",
+            attempt=job.attempts,
+            timeout_seconds=120,
+        )
 
         intake_repo.save_intake(intake)
