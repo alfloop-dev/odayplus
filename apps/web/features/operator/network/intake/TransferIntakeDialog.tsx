@@ -69,6 +69,10 @@ export function TransferIntakeDialog({
     `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
     `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
 
+  function safeClose() {
+    if (!busy) onClose();
+  }
+
   function handleSubmit() {
     if (busy) return;
     setLocalError(null);
@@ -99,7 +103,7 @@ export function TransferIntakeDialog({
     <IntakeDialogShell
       ariaLabel={title}
       className={styles.panelNarrow}
-      onClose={onClose}
+      onClose={safeClose}
       screenLabel="Dialog 轉交收件"
       stacked
       testId="transfer-intake-dialog"
@@ -108,7 +112,13 @@ export function TransferIntakeDialog({
         <span className={styles.dialogTitle} data-testid="transfer-dialog-title">
           {title}
         </span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button
+          aria-label="關閉"
+          className={styles.dialogClose}
+          disabled={busy}
+          onClick={safeClose}
+          type="button"
+        >
           ×
         </button>
       </div>
@@ -221,7 +231,12 @@ export function TransferIntakeDialog({
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button
+          className={styles.secondaryButton}
+          disabled={busy}
+          onClick={safeClose}
+          type="button"
+        >
           取消
         </button>
         <button

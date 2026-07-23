@@ -2,280 +2,350 @@
 
 import type {
   AssistedIntake,
-  IntakeStage,
   JobReceipt,
   SlaReceipt,
   TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
-import { stageLabel, stageSteps, stageTone } from "./intakeTypes";
+import { stageTone } from "./intakeTypes";
+import type {
+  JobLifecycleReceipt,
+  PersistedLifecycleTransition,
+  SlaLifecycleReceipt,
+} from "./useIntakeLifecycle";
+
+const INTAKE_LABELS: Record<string, string> = {
+  SUBMITTED: "已送出",
+  CHECKING_IDENTITY: "識別檢查",
+  CHECKING_SOURCE_POLICY: "來源政策",
+  AWAITING_ASSISTED_ENTRY: "待人工補錄",
+  RETRIEVING: "擷取中",
+  PARSING: "解析中",
+  MATCHING: "比對中",
+  NEEDS_REVIEW: "待人工覆核",
+  READY: "可決策",
+  QUARANTINED: "已隔離",
+  FAILED: "處理失敗",
+  CANCELLED: "已取消",
+};
+
+const ACTIVE_JOB_STATES = new Set(["QUEUED", "RUNNING", "RETRYING"]);
+const REPLAYABLE_JOB_STATES = new Set(["FAILED", "DEAD_LETTER"]);
+
+function labelForState(state: string): string {
+  return INTAKE_LABELS[state] ?? state;
+}
+
+function toneForState(state: string) {
+  if (state === "CANCELLED") return "neutral";
+  return stageTone(state as Parameters<typeof stageTone>[0]);
+}
+
+function formatTime(value?: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-TW", { timeZoneName: "short" });
+}
+
+function sortedHistory(
+  history: Array<TransitionReceipt | PersistedLifecycleTransition>,
+): PersistedLifecycleTransition[] {
+  return [...history].sort(
+    (left, right) =>
+      new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
+  ) as PersistedLifecycleTransition[];
+}
 
 export type IntakeStageTimelineProps = {
   record: AssistedIntake;
-  history?: TransitionReceipt[];
-  jobs?: JobReceipt[];
-  sla?: SlaReceipt;
+  history?: Array<TransitionReceipt | PersistedLifecycleTransition>;
+  jobs?: Array<JobReceipt | JobLifecycleReceipt>;
+  jobHistory?: PersistedLifecycleTransition[];
+  sla?: SlaReceipt | SlaLifecycleReceipt;
+  busyAction?: string | null;
+  canCancel?: boolean;
+  canRetry?: boolean;
+  canReopen?: boolean;
   canReplay?: boolean;
-  onReplayJob?: (jobId: string) => void;
+  canCancelJob?: boolean;
   onCancel?: () => void;
+  onRetry?: (checkpoint: string | null) => void;
+  onReopen?: () => void;
+  onReplayJob?: (jobId: string) => void;
+  onCancelJob?: (jobId: string) => void;
   testId?: string;
 };
 
+/**
+ * Renders only persisted server transitions. When history is absent, the UI
+ * shows the current state and an explicit missing-history notice rather than
+ * inferring a path from the final state.
+ */
 export function IntakeStageTimeline({
   record,
   history = [],
   jobs = [],
+  jobHistory = [],
   sla,
+  busyAction = null,
+  canCancel,
+  canRetry,
+  canReopen,
   canReplay = false,
-  onReplayJob,
+  canCancelJob = false,
   onCancel,
+  onRetry,
+  onReopen,
+  onReplayJob,
+  onCancelJob,
   testId = "intake-stage-timeline",
 }: IntakeStageTimelineProps) {
-  const steps = stageSteps(record);
-  const activeJob = jobs.find((j) => j.status === "RUNNING" || j.status === "RETRYING" || j.status === "DEAD_LETTER") ?? jobs[0];
-  const isDlq = activeJob?.status === "DEAD_LETTER" || record.stage === "FAILED";
-  const isCancelled = (record.stage as string) === "CANCELLED";
+  const stage = String(record.stage);
+  const cancelAllowed = canCancel ?? Boolean(onCancel);
+  const retryAllowed = canRetry ?? Boolean(onRetry);
+  const reopenAllowed = canReopen ?? Boolean(onReopen);
+  const transitions = sortedHistory(history);
+  const persistedJobs = jobs as JobLifecycleReceipt[];
+  const isCancelled = stage === "CANCELLED";
+  const isControlledReopen = stage === "FAILED" || stage === "QUARANTINED";
+  const activeJob =
+    [...persistedJobs].reverse().find((job) => ACTIVE_JOB_STATES.has(job.status)) ??
+    persistedJobs[persistedJobs.length - 1] ??
+    null;
+  const retryCheckpoint = activeJob?.checkpoint ?? null;
 
   return (
-    <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-        <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
-          <span>階段時序與執行歷程 STAGE TIMELINE</span>
-          <span className={styles.chip} data-tone={stageTone(record.stage)}>
-            {stageLabel(record.stage)}
-          </span>
-        </h4>
-        {onCancel && !isCancelled && record.stage !== "READY" && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className={styles.secondaryButton}
-            style={{ padding: "3px 8px", fontSize: "10.5px", color: "#b3261e" }}
-            data-testid="timeline-cancel-button"
-          >
-            取消流程 (Cancel Intake)
-          </button>
-        )}
+    <section
+      aria-label="收件生命週期與背景工作"
+      className={styles.sectionBox}
+      data-testid={testId}
+    >
+      <div className={styles.sectionHead}>
+        階段時序與執行歷程 STAGE TIMELINE
+        <span
+          className={styles.chip}
+          data-testid="timeline-current-stage"
+          data-tone={toneForState(stage)}
+        >
+          {stage} · {labelForState(stage)}
+        </span>
       </div>
 
-      {/* 1. Stepper without fake percentages */}
-      <div
-        data-testid="timeline-stepper"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          overflowX: "auto",
-          paddingBottom: "10px",
-          marginBottom: "14px",
-          borderBottom: "1px solid #f1f5f9",
-        }}
-      >
-        {steps.map((step, idx) => {
-          const isCurrent = step.state === "current";
-          const isDone = step.state === "done";
-          const isFailed = step.state === "failed";
+      <div aria-live="polite" className={styles.srSummary}>
+        收件目前狀態 {stage}。伺服器已回傳 {transitions.length} 筆持久化狀態轉換。
+      </div>
 
-          let bg = "#f1f5f9";
-          let fg = "#64748b";
-          let borderColor = "#cbd5e1";
+      {transitions.length ? (
+        <ol className={styles.timeline} data-testid="timeline-stepper">
+          {transitions.map((transition) => (
+            <li
+              className={styles.timelineItem}
+              data-testid={`timeline-transition-${transition.transition_id}`}
+              key={transition.transition_id}
+            >
+              <span className={styles.timelineMark} aria-hidden="true">
+                {transition.to_state === "FAILED" || transition.to_state === "QUARANTINED"
+                  ? "!"
+                  : transition.to_state === "CANCELLED"
+                    ? "×"
+                    : "✓"}
+              </span>
+              <div className={styles.timelineContent}>
+                <div className={styles.timelineTitle}>
+                  {transition.from_state ? `${transition.from_state} → ` : ""}
+                  {transition.to_state}
+                </div>
+                <div className={styles.timelineMeta}>
+                  {formatTime(transition.occurred_at)} · {transition.actor}
+                  {transition.actor_role ? ` (${transition.actor_role})` : ""} · v
+                  {transition.version_after}
+                </div>
+                <div className={styles.timelineMeta}>
+                  {transition.reason_code ? `Reason ${transition.reason_code}` : ""}
+                  {transition.attempt != null ? ` · Attempt ${transition.attempt}` : ""}
+                  {transition.checkpoint ? ` · Checkpoint ${transition.checkpoint}` : ""}
+                  {transition.correlation_id
+                    ? ` · Correlation ${transition.correlation_id}`
+                    : ""}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className={styles.noteBox} data-testid="timeline-history-unavailable">
+          伺服器尚未回傳 persisted processing history；僅顯示目前狀態，不推算中間階段。
+        </div>
+      )}
 
-          if (isDone) {
-            bg = "#e5f3ea";
-            fg = "#1e7f4f";
-            borderColor = "#a7f3d0";
-          } else if (isFailed) {
-            bg = "#fbe9e7";
-            fg = "#b3261e";
-            borderColor = "#fca5a5";
-          } else if (isCurrent) {
-            bg = "#eceffb";
-            fg = "#2e3a97";
-            borderColor = "#2e3a97";
-          }
+      {sla ? (
+        <div className={styles.metaGrid} data-testid="timeline-sla-panel">
+          <div>
+            <span className={styles.metaCaption}>SLA 狀態</span>
+            <div className={styles.metaValue}>{sla.state}</div>
+          </div>
+          <div>
+            <span className={styles.metaCaption}>到期時間</span>
+            <div className={styles.metaValue}>{formatTime(sla.due_at)}</div>
+          </div>
+          <div>
+            <span className={styles.metaCaption}>暫停累計</span>
+            <div className={styles.metaValue}>{sla.paused_duration_seconds} 秒</div>
+          </div>
+          {"expected_resume_at" in sla ? (
+            <div>
+              <span className={styles.metaCaption}>預計恢復</span>
+              <div className={styles.metaValue}>
+                {formatTime((sla as SlaLifecycleReceipt).expected_resume_at)}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div data-testid="timeline-job-list">
+        {persistedJobs.map((job) => {
+          const replayable = REPLAYABLE_JOB_STATES.has(job.status);
+          const cancellable = ACTIVE_JOB_STATES.has(job.status);
+          const transitionsForJob = jobHistory.filter(
+            (entry) =>
+              entry.stream === "JOB" &&
+              (entry.reason === job.job_id || entry.correlation_id === job.correlation_id),
+          );
 
           return (
-            <div
-              key={step.code}
-              data-testid={`timeline-step-${step.code}`}
-              data-state={step.state}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                flexShrink: 0,
-              }}
+            <article
+              className={styles.sectionBox}
+              data-testid={`timeline-job-${job.job_id}`}
+              key={job.job_id}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "5px 10px",
-                  borderRadius: "6px",
-                  background: bg,
-                  border: `1px solid ${borderColor}`,
-                  fontSize: "11px",
-                  fontWeight: isCurrent ? 700 : 500,
-                  color: fg,
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "50%",
-                    background: fg,
-                    color: "#ffffff",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                  }}
-                >
-                  {step.mark}
+              <div className={styles.sectionHead}>
+                Job <code>{job.job_id}</code>
+                <span className={styles.chip} data-tone={replayable ? "risk" : "info"}>
+                  {job.status}
                 </span>
-                <span>{step.label}</span>
               </div>
-              {idx < steps.length - 1 && (
-                <span style={{ color: "#cbd5e1", fontSize: "12px", padding: "0 2px" }}>→</span>
-              )}
-            </div>
+              <div className={styles.metaGrid}>
+                <div>
+                  <span className={styles.metaCaption}>Attempt</span>
+                  <div className={styles.metaValue}>
+                    {job.attempt}
+                    {job.max_attempts ? ` / ${job.max_attempts}` : ""}
+                  </div>
+                </div>
+                <div>
+                  <span className={styles.metaCaption}>Checkpoint</span>
+                  <div className={styles.metaValue}>{job.checkpoint || "—"}</div>
+                </div>
+                <div>
+                  <span className={styles.metaCaption}>Timeout</span>
+                  <div className={styles.metaValue}>{formatTime(job.timeout_at)}</div>
+                </div>
+                <div>
+                  <span className={styles.metaCaption}>Next retry</span>
+                  <div className={styles.metaValue}>{formatTime(job.next_retry_at)}</div>
+                </div>
+                <div>
+                  <span className={styles.metaCaption}>Queue</span>
+                  <div className={styles.metaValue}>{job.queue_name ?? "伺服器未提供"}</div>
+                </div>
+                <div>
+                  <span className={styles.metaCaption}>Correlation</span>
+                  <div className={styles.metaValue}>
+                    <code>{job.correlation_id}</code>
+                  </div>
+                </div>
+              </div>
+              {job.status === "DEAD_LETTER" ? (
+                <div className={styles.warnNote} role="status">
+                  DEAD_LETTER · {formatTime(job.dead_lettered_at)}。只有具 replay
+                  權限的操作者可從 persisted checkpoint 重播。
+                </div>
+              ) : null}
+              {job.status === "CANCELLED" ? (
+                <div className={styles.noteBox} role="status">
+                  Job 已取消於 {formatTime(job.cancelled_at)}；此 job 不可再執行。
+                </div>
+              ) : null}
+              {transitionsForJob.length ? (
+                <ul data-testid={`timeline-job-history-${job.job_id}`}>
+                  {transitionsForJob.map((entry) => (
+                    <li key={entry.transition_id}>
+                      {formatTime(entry.occurred_at)} · {entry.from_state ?? "—"} →{" "}
+                      {entry.to_state}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className={styles.actionRow}>
+                {cancellable && canCancelJob && onCancelJob ? (
+                  <button
+                    className={styles.secondaryButton}
+                    data-testid={`timeline-cancel-job-${job.job_id}`}
+                    disabled={Boolean(busyAction)}
+                    onClick={() => onCancelJob(job.job_id)}
+                    type="button"
+                  >
+                    取消 Job
+                  </button>
+                ) : null}
+                {replayable && canReplay && onReplayJob ? (
+                  <button
+                    className={styles.primaryButton}
+                    data-testid={`timeline-replay-job-${job.job_id}`}
+                    disabled={Boolean(busyAction)}
+                    onClick={() => onReplayJob(job.job_id)}
+                    type="button"
+                  >
+                    從 {job.checkpoint || "persisted checkpoint"} 重播
+                  </button>
+                ) : null}
+              </div>
+            </article>
           );
         })}
       </div>
 
-      {/* 2. SLA & Assignment Metadata */}
-      {sla && (
-        <div
-          data-testid="timeline-sla-panel"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: "10px",
-            background: "#f8fafc",
-            padding: "10px 12px",
-            borderRadius: "8px",
-            marginBottom: "12px",
-            fontSize: "11px",
-          }}
-        >
-          <div>
-            <span style={{ color: "#64748b" }}>SLA 狀態: </span>
-            <span
-              style={{
-                fontWeight: 700,
-                color: sla.state === "BREACHED" || sla.state === "OVERDUE" ? "#b3261e" : "#1e7f4f",
-              }}
+      {isCancelled ? (
+        <div className={styles.noteBox} data-testid="timeline-cancelled-terminal">
+          CANCELLED 是 terminal state；此收件不可 retry 或 reopen。
+        </div>
+      ) : (
+        <div className={styles.actionRow} data-testid="timeline-direct-actions">
+          {cancelAllowed && onCancel && !isControlledReopen && stage !== "READY" ? (
+            <button
+              className={styles.secondaryButton}
+              data-testid="timeline-cancel-button"
+              disabled={Boolean(busyAction)}
+              onClick={onCancel}
+              type="button"
             >
-              {sla.state}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: "#64748b" }}>SLA 到期時間: </span>
-            <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{sla.due_at ?? "—"}</span>
-          </div>
-          <div>
-            <span style={{ color: "#64748b" }}>暫停時長: </span>
-            <span>{sla.paused_duration_seconds ? `${Math.round(sla.paused_duration_seconds / 60)} 分鐘` : "無"}</span>
-          </div>
-        </div>
-      )}
-
-      {/* 3. Job Execution & DLQ Status */}
-      {activeJob && (
-        <div
-          data-testid="timeline-job-panel"
-          style={{
-            padding: "10px 12px",
-            borderRadius: "8px",
-            background: isDlq ? "#fff5f5" : "#f8fafc",
-            border: `1px solid ${isDlq ? "#fecaca" : "#e2e8f0"}`,
-            marginBottom: "12px",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
-            <span style={{ fontSize: "11px", fontWeight: 700, color: isDlq ? "#991b1b" : "#334155" }}>
-              {isDlq ? "⚠️ 任務死信佇列 DEAD LETTER QUEUE" : "⚡ 背景執行 Job Execution"}
-            </span>
-            <span
-              style={{
-                fontSize: "10px",
-                fontWeight: 700,
-                padding: "2px 6px",
-                borderRadius: "4px",
-                background: isDlq ? "#f87171" : "#cbd5e1",
-                color: "#ffffff",
-              }}
+              取消收件
+            </button>
+          ) : null}
+          {stage === "FAILED" && retryAllowed && onRetry ? (
+            <button
+              className={styles.primaryButton}
+              data-testid="timeline-retry-button"
+              disabled={Boolean(busyAction)}
+              onClick={() => onRetry(retryCheckpoint)}
+              type="button"
             >
-              {activeJob.status}
-            </span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px", fontSize: "11px", color: "#475569" }}>
-            <div>Job ID: <span style={{ fontFamily: "monospace" }}>{activeJob.job_id}</span></div>
-            <div>Checkpoint: <span style={{ fontWeight: 600 }}>{activeJob.checkpoint}</span></div>
-            <div>Attempt: <span style={{ fontWeight: 600 }}>#{activeJob.attempt}</span></div>
-            <div>Correlation ID: <span style={{ fontFamily: "monospace" }}>{activeJob.correlation_id}</span></div>
-          </div>
-
-          {isDlq && canReplay && onReplayJob && (
-            <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #fee2e2", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => onReplayJob(activeJob.job_id)}
-                className={styles.primaryButton}
-                style={{ padding: "4px 12px", fontSize: "11px", background: "#dc2626", borderColor: "#dc2626" }}
-                data-testid="timeline-replay-dlq-button"
-              >
-                重播 Replay DLQ Job
-              </button>
-            </div>
-          )}
+              從 {retryCheckpoint || "伺服器指定 checkpoint"} 重試
+            </button>
+          ) : null}
+          {isControlledReopen && reopenAllowed && onReopen ? (
+            <button
+              className={styles.primaryButton}
+              data-testid="timeline-reopen-button"
+              disabled={Boolean(busyAction)}
+              onClick={onReopen}
+              type="button"
+            >
+              受控重新開啟 {stage}
+            </button>
+          ) : null}
         </div>
       )}
-
-      {/* 4. History Transition Audit Nodes */}
-      {history.length > 0 && (
-        <div data-testid="timeline-history-nodes" style={{ marginTop: "12px" }}>
-          <div style={{ fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "8px" }}>
-            歷史變更日誌 HISTORY TRANSITIONS ({history.length})
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
-            {history.map((tx, idx) => (
-              <div
-                key={tx.transition_id ?? idx}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "6px 10px",
-                  background: "#f8fafc",
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  borderLeft: "3px solid #2e3a97",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ color: "#64748b", fontFamily: "monospace", fontSize: "10px" }}>
-                    {tx.occurred_at ? new Date(tx.occurred_at).toLocaleTimeString() : "—"}
-                  </span>
-                  <span style={{ fontWeight: 600, color: "#1e293b" }}>
-                    {tx.from_state ? `${tx.from_state} → ` : ""}{tx.to_state}
-                  </span>
-                  {tx.reason_code && (
-                    <span style={{ color: "#64748b", fontStyle: "italic" }}>({tx.reason_code})</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "10px", color: "#64748b" }}>
-                  <span>Actor: {tx.actor}</span>
-                  <span>v{tx.version_after}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    </section>
   );
 }

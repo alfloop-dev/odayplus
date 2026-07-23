@@ -51,6 +51,10 @@ export function PauseSlaDialog({
     `將收件 ${record.id} 的 SLA 暫停，預計恢復時間：${formattedResumeText}。` +
     `此操作會暫停處理時效計時。前後狀態與暫停原因將寫入 Audit 歷程。`;
 
+  function safeClose() {
+    if (!busy) onClose();
+  }
+
   function handleSubmit() {
     if (busy) return;
     setLocalError(null);
@@ -94,7 +98,7 @@ export function PauseSlaDialog({
     <IntakeDialogShell
       ariaLabel={title}
       className={styles.panelNarrow}
-      onClose={onClose}
+      onClose={safeClose}
       screenLabel="Dialog 暫停 SLA"
       stacked
       testId="pause-sla-dialog"
@@ -103,7 +107,13 @@ export function PauseSlaDialog({
         <span className={styles.dialogTitle} data-testid="pause-dialog-title">
           {title}
         </span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button
+          aria-label="關閉"
+          className={styles.dialogClose}
+          disabled={busy}
+          onClick={safeClose}
+          type="button"
+        >
           ×
         </button>
       </div>
@@ -211,7 +221,12 @@ export function PauseSlaDialog({
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button
+          className={styles.secondaryButton}
+          disabled={busy}
+          onClick={safeClose}
+          type="button"
+        >
           取消
         </button>
         <button

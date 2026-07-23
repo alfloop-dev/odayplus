@@ -17,6 +17,10 @@ import { useRef, useState } from "react";
 import type { JobReceipt, JobStatus, PromotionStatus } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import type { IntakeTone } from "./intakeTypes";
+import type {
+  JobLifecycleReceipt,
+  PersistedLifecycleTransition,
+} from "./useIntakeLifecycle";
 
 /** Wire payload for the authorized replay of a failed score job. */
 export type ScoreReplayInput = {
@@ -69,25 +73,32 @@ export type SiteScoreJobStatusProps = {
    * one. The job ID is rendered ONLY from this receipt — the UI never invents
    * or predicts an ID (§8.8: display after transaction commit only).
    */
-  job?: JobReceipt | null;
+  job?: JobReceipt | JobLifecycleReceipt | null;
+  /** Persisted server transitions for this job. */
+  history?: PersistedLifecycleTransition[];
   /** Saga status, so SCORE_FAILED keeps the candidate visibly alive. */
   promotionStatus?: PromotionStatus | null;
   /** Committed candidate ID; retained (and shown) through SCORE_FAILED. */
   candidateSiteId?: string | null;
   /** Authorization gate for replay — absent permission removes the control. */
   canReplay?: boolean;
+  canCancel?: boolean;
   busy?: boolean;
   onReplay?: (input: ScoreReplayInput) => Promise<JobReceipt | void> | void;
+  onCancel?: (input: { jobId: string; ifMatch: string }) => Promise<JobReceipt | void> | void;
   testId?: string;
 };
 
 export function SiteScoreJobStatus({
   job = null,
+  history = [],
   promotionStatus = null,
   candidateSiteId = null,
   canReplay = false,
+  canCancel = false,
   busy = false,
   onReplay,
+  onCancel,
   testId = "sitescore-job-status",
 }: SiteScoreJobStatusProps) {
   const [replayReason, setReplayReason] = useState("");
@@ -113,6 +124,13 @@ export function SiteScoreJobStatus({
   const scoreFailed = promotionStatus === "SCORE_FAILED";
   const replayable = Boolean(job && (REPLAYABLE.includes(job.status) || scoreFailed));
   const showReplayControls = replayable && canReplay && Boolean(onReplay);
+  const lifecycleJob = job as JobLifecycleReceipt | null;
+  const cancellable = Boolean(
+    job &&
+      (job.status === "QUEUED" || job.status === "RUNNING" || job.status === "RETRYING") &&
+      canCancel &&
+      onCancel,
+  );
 
   async function handleReplay() {
     if (!job || !onReplay || !replayKey || busy) return;
@@ -204,8 +222,70 @@ export function SiteScoreJobStatus({
               <code>{job.correlation_id}</code>
             </div>
           </div>
+          <div>
+            <span className={styles.metaCaption}>Queue</span>
+            <div className={styles.metaValue} data-testid="sitescore-job-queue">
+              {lifecycleJob?.queue_name ?? "伺服器未提供"}
+            </div>
+          </div>
+          <div>
+            <span className={styles.metaCaption}>Timeout</span>
+            <div className={styles.metaValue} data-testid="sitescore-job-timeout">
+              {lifecycleJob?.timeout_at
+                ? new Date(lifecycleJob.timeout_at).toLocaleString("zh-TW", {
+                    timeZoneName: "short",
+                  })
+                : "伺服器未提供"}
+            </div>
+          </div>
+          <div>
+            <span className={styles.metaCaption}>Next retry</span>
+            <div className={styles.metaValue} data-testid="sitescore-job-next-retry">
+              {lifecycleJob?.next_retry_at
+                ? new Date(lifecycleJob.next_retry_at).toLocaleString("zh-TW", {
+                    timeZoneName: "short",
+                  })
+                : "無"}
+            </div>
+          </div>
         </div>
       )}
+
+      {history.length ? (
+        <ol className={styles.timeline} data-testid="sitescore-job-history">
+          {[...history]
+            .sort(
+              (left, right) =>
+                new Date(left.occurred_at).getTime() -
+                new Date(right.occurred_at).getTime(),
+            )
+            .map((entry) => (
+              <li className={styles.timelineItem} key={entry.transition_id}>
+                <span className={styles.timelineMark} aria-hidden="true">
+                  {entry.to_state === "FAILED" || entry.to_state === "DEAD_LETTER"
+                    ? "!"
+                    : "✓"}
+                </span>
+                <div className={styles.timelineContent}>
+                  <div className={styles.timelineTitle}>
+                    {entry.from_state ?? "—"} → {entry.to_state}
+                  </div>
+                  <div className={styles.timelineMeta}>
+                    {new Date(entry.occurred_at).toLocaleString("zh-TW", {
+                      timeZoneName: "short",
+                    })}{" "}
+                    · Attempt {entry.attempt ?? job?.attempt ?? "—"} ·{" "}
+                    {entry.checkpoint ?? job?.checkpoint ?? "—"}
+                  </div>
+                </div>
+              </li>
+            ))}
+        </ol>
+      ) : job ? (
+        <div className={styles.noteBox} data-testid="sitescore-job-history-unavailable">
+          伺服器尚未回傳 job history；不從目前 job 狀態推算先前步驟。
+        </div>
+      ) : null}
 
       {/* SCORE_FAILED keeps the candidate — say so, and keep showing its ID. */}
       {scoreFailed ? (
@@ -227,6 +307,20 @@ export function SiteScoreJobStatus({
       {replayable && !canReplay ? (
         <div className={styles.noteBox} data-testid="sitescore-replay-denied">
           重放評分需要展店主管或資料管理員授權（403 ROLE_DENIED 會被拒絕）。
+        </div>
+      ) : null}
+
+      {cancellable && job && onCancel ? (
+        <div className={styles.actionRow}>
+          <button
+            className={styles.secondaryButton}
+            data-testid="sitescore-cancel-btn"
+            disabled={busy}
+            onClick={() => onCancel({ jobId: job.job_id, ifMatch: `W/"${job.version}"` })}
+            type="button"
+          >
+            {busy ? "取消請求送出中…" : "取消 SiteScore job"}
+          </button>
         </div>
       ) : null}
 
