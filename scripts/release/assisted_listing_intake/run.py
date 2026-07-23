@@ -14,13 +14,14 @@ evidence per phase plus a summary report:
                 pass; passed only via recorded live results)
     uat         role-based operator UAT (Playwright report ingestion)
     cutover     governed cutover gate — BLOCKED while any §12 row is
-                pending or live runtime evidence is unrecorded; AUTHORIZED
-                once every approval and the live-evidence register pass
+                pending, live runtime evidence is unrecorded, or production
+                canary units 3-7 lack current passing evidence; AUTHORIZED
+                only after every approval and the complete live ladder pass
 
 The harness fails closed: any pending approval, enabled production flag,
-governance-config drift, or missing live runtime evidence blocks the
-cutover phase and exits nonzero on drift. Live evidence is supplied only
-through the governed, schema-validated register
+governance-config drift, missing live runtime evidence, or an incomplete
+production canary ladder blocks the cutover phase and exits nonzero on
+drift. Live evidence is supplied only through the governed, schema-validated register
 infra/assisted-listing-intake/live_runtime_evidence.yaml (human-recorded
 via task PR — there is no CLI override).
 
@@ -119,9 +120,15 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
         if name not in ("cutover",)
     }
     failed_drills = [name for name, ok in drill_gates.items() if not ok]
+    canary = phase_results.get("canary") or {}
+    production_ladder_complete = canary.get("production_ladder_complete") is True
+    canary_evidence_current = (
+        canary.get("live_evidence_digest") == live["evidence_digest"]
+    )
 
     # Runbook §4: cutover unblocks only when every §12 row is approved AND
-    # live staging runtime evidence is recorded in the governed register.
+    # live staging runtime evidence is recorded in the governed register AND
+    # the current evidence proves every production canary unit through unit 7.
     # Each blocker below is a real unmet gate — none is unconditional.
     blocked_reasons = []
     if authority["pending_owners"]:
@@ -131,6 +138,16 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
             "no live staging runtime evidence recorded in "
             "infra/assisted-listing-intake/live_runtime_evidence.yaml "
             f"(missing targets: {live['missing_targets']})"
+        )
+    if live["recorded"] and not production_ladder_complete:
+        blocked_reasons.append(
+            "production canary ladder incomplete: current evidence does not prove "
+            "recorded passing live results for units 3-7"
+        )
+    if live["recorded"] and not canary_evidence_current:
+        blocked_reasons.append(
+            "production canary evidence is stale: rerun --phase canary against "
+            "the current live_runtime_evidence.yaml register"
         )
     # Flags may only be enabled (via dual approval) once every §12 row is
     # approved and live evidence exists; earlier than that is drift.
@@ -171,6 +188,11 @@ def run_cutover_gate(config, output_dir: Path, phase_results: dict[str, dict[str
             "recorded_by": live["recorded_by"],
             "evidence_ref": live["evidence_ref"],
             "missing_targets": live["missing_targets"],
+        },
+        "production_canary": {
+            "ladder_complete": production_ladder_complete,
+            "evidence_current": canary_evidence_current,
+            "evidence_digest": canary.get("live_evidence_digest"),
         },
         "production_flags_disabled": not flags["enabled_production_flags"],
         "rule": config.release_authority.get("cutover_rule"),

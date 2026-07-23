@@ -307,6 +307,7 @@ def test_live_evidence_default_not_recorded(config) -> None:
     assert report["recorded"] is False
     assert report["missing_targets"] == list(REQUIRED_LIVE_TARGETS)
     assert report["canary_units"] == {}
+    assert len(report["evidence_digest"]) == 64
 
 
 def test_live_evidence_recorded_without_attestation_is_drift(infra_copy: Path) -> None:
@@ -427,6 +428,7 @@ def test_canary_unit3_cleared_when_exact_gates_pass(infra_copy: Path, tmp_path: 
     assert unit3["awaiting_live_execution"] is True
     unit4 = next(u for u in result["units"] if u["unit"] == 4)
     assert unit4["blocked"] is True
+    assert result["production_ladder_complete"] is False
     assert result["passed"] is True
 
 
@@ -451,6 +453,7 @@ def test_canary_full_ladder_transitions_on_recorded_live_results(infra_copy: Pat
     assert all(u["executed"] is False for u in production)
     assert result["gate_facts"]["unit_7_passed"] is True
     assert result["live_unit_failures"] == []
+    assert result["production_ladder_complete"] is True
     assert result["passed"] is True
 
 
@@ -476,6 +479,7 @@ def test_canary_recorded_live_failure_fails_ladder(infra_copy: Path, tmp_path: P
     unit5 = next(u for u in result["units"] if u["unit"] == 5)
     assert unit5["blocked"] is True
     assert result["live_unit_failures"] == [4]
+    assert result["production_ladder_complete"] is False
     assert result["passed"] is False
 
 
@@ -494,13 +498,22 @@ def test_cutover_blocked_without_live_evidence_even_when_approved(infra_copy: Pa
 
 
 def test_cutover_authorized_when_approvals_and_live_evidence_recorded(infra_copy: Path, tmp_path: Path) -> None:
-    """Runbook §4: cutover unblocks after all approvals plus live evidence."""
+    """Cutover unblocks only after approvals and the full live ladder."""
     from scripts.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
     cfg = load_release_config(infra_copy)
     prior = {name: {"passed": True} for name in ("readiness", "migration", "shadow", "killswitch", "restore", "canary", "uat")}
+    prior["canary"] = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
     result = run_cutover_gate(cfg, tmp_path, prior)
     assert result["cutover_blocked"] is False
     assert result["cutover_authorized"] is True
@@ -513,6 +526,99 @@ def test_cutover_authorized_when_approvals_and_live_evidence_recorded(infra_copy
     assert result["cutover_blocked"] is True
     assert result["cutover_authorized"] is False
     assert result["passed"] is False
+
+
+def test_cutover_blocks_until_all_live_canary_results_are_recorded(
+    infra_copy: Path, tmp_path: Path
+) -> None:
+    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy)
+    cfg = load_release_config(infra_copy)
+    canary = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    prior = {
+        name: {"passed": True}
+        for name in ("readiness", "migration", "shadow", "killswitch", "restore", "uat")
+    }
+    prior["canary"] = canary
+    result = run_cutover_gate(cfg, tmp_path, prior)
+    assert canary["production_ladder_complete"] is False
+    assert result["cutover_authorized"] is False
+    assert any("production canary ladder incomplete" in reason for reason in result["blocked_reasons"])
+    assert result["passed"] is True
+
+
+def test_cutover_rejects_stale_canary_evidence(infra_copy: Path, tmp_path: Path) -> None:
+    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
+    original_cfg = load_release_config(infra_copy)
+    stale_canary = drills.run_write_canary(
+        original_cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(original_cfg),
+        live_evidence_report=check_live_runtime_evidence(original_cfg),
+    )
+
+    evidence_path = infra_copy / "live_runtime_evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text())
+    evidence["evidence_ref"] = "gs://odp-release-evidence/intake-v1/live/re-attested/"
+    evidence_path.write_text(yaml.safe_dump(evidence))
+    current_cfg = load_release_config(infra_copy)
+    prior = {
+        name: {"passed": True}
+        for name in ("readiness", "migration", "shadow", "killswitch", "restore", "uat")
+    }
+    prior["canary"] = stale_canary
+    result = run_cutover_gate(current_cfg, tmp_path, prior)
+    assert stale_canary["production_ladder_complete"] is True
+    assert result["cutover_authorized"] is False
+    assert any("evidence is stale" in reason for reason in result["blocked_reasons"])
+
+
+def test_cutover_blocks_when_live_error_budget_is_exhausted(
+    infra_copy: Path, tmp_path: Path
+) -> None:
+    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(
+        infra_copy,
+        canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)],
+        error_budget=False,
+    )
+    cfg = load_release_config(infra_copy)
+    canary = drills.run_write_canary(
+        cfg,
+        tmp_path / "canary",
+        shadow_result={"passed": True},
+        migration_result={"blocking_findings": 0},
+        killswitch_result={"kill_switch_verified": True},
+        authority_report=check_release_authority(cfg),
+        live_evidence_report=check_live_runtime_evidence(cfg),
+    )
+    prior = {
+        name: {"passed": True}
+        for name in ("readiness", "migration", "shadow", "killswitch", "restore", "uat")
+    }
+    prior["canary"] = canary
+    result = run_cutover_gate(cfg, tmp_path, prior)
+    assert canary["production_ladder_complete"] is False
+    assert result["cutover_authorized"] is False
+    assert any("production canary ladder incomplete" in reason for reason in result["blocked_reasons"])
 
 
 def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:

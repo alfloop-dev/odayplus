@@ -2,9 +2,9 @@
 #
 # Machine-readable record of the LIVE (staging/production) runtime evidence
 # that runbook §4 requires before governed cutover can unblock: cutover
-# unblocks only when every §12 row is approved AND this register records
-# live staging runtime evidence. While `recorded: false`, the canary
-# ladder's production units and the cutover gate stay BLOCKED.
+# unblocks only when every §12 row is approved, this register records live
+# staging runtime evidence, and canary units 3-7 each have a current passing
+# result. While any condition is unmet, the cutover gate stays BLOCKED.
 #
 # DO NOT flip `recorded` from automation. Recording live evidence is a
 # human release-authority action, committed via a task PR exactly like a

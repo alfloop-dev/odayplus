@@ -96,9 +96,11 @@ Phases run in this fixed order; each emits `<phase>.json` evidence:
    - **BLOCKED** (today's expected state): any §12 row pending or live
      runtime evidence unrecorded, with every production flag off and every
      drill green;
-   - **AUTHORIZED** (`cutover_authorized: true`): every §12 row approved
-     **and** live staging runtime evidence recorded **and** every drill
-     green (runbook §4 rule).
+   - **AUTHORIZED** (`cutover_authorized: true`): every §12 row approved,
+     live staging runtime evidence recorded, production canary units 3–7
+     each backed by a current passing live result, and every drill green.
+     The cutover gate compares the canary evidence digest with the current
+     register, so a stale `canary.json` cannot authorize release.
    Any prematurely enabled flag, drifted approval/evidence row, or failed
    drill fails this phase in either state.
 
@@ -133,8 +135,9 @@ as production-ready; the readiness phase proves each rejection at runtime.
    `evidence_ref` (link to the exact evidence file/commit).
 3. Commit via a task PR. Automation must never flip a row; the harness
    treats an approved row without those fields as drift and blocks.
-4. Re-run `--phase cutover`. Cutover unblocks only when **all** rows are
-   approved **and** live staging runtime evidence is recorded.
+4. Re-run `--phase canary`, then `--phase cutover`. Cutover unblocks only
+   when **all** rows are approved, live staging runtime evidence is recorded,
+   and the current register proves passing results through canary unit 7.
 
 ### Recording live staging runtime evidence (human release authority only)
 
@@ -153,7 +156,9 @@ CLI override. To record it:
    `canary_units` (`unit`, `passed`, `completed_at`, `evidence_ref`).
    The harness accepts a production unit as passed **only** from this
    record — never from a surrogate execution.
-4. Commit via a task PR and re-run `--phase canary` / `--phase cutover`.
+4. Commit via a task PR and re-run `--phase canary` after each unit result.
+   Re-run `--phase cutover` only after units 3–7 all pass. Cutover rejects
+   incomplete ladders and canary evidence generated from an older register.
 
 The register is schema-validated fail-closed at load: `recorded: true`
 missing any attestation field or required target, a completed target or

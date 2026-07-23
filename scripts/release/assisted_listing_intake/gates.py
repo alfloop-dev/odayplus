@@ -7,6 +7,8 @@ blocked, surrogates rejected as production) or reports drift and fails.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from datetime import UTC, date, datetime
 from typing import Any
@@ -103,9 +105,25 @@ def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
         }
         for u in (record.get("canary_units") or [])
     }
+    evidence_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "recorded": recorded,
+                "recorded_by": record.get("recorded_by"),
+                "recorded_at": record.get("recorded_at"),
+                "evidence_ref": record.get("evidence_ref"),
+                "error_budget_intact": record.get("error_budget_intact"),
+                "targets": targets,
+                "canary_units": canary_units,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     return {
         "checked_at": _now(),
         "register": str(config.infra_dir / "live_runtime_evidence.yaml"),
+        "evidence_digest": evidence_digest,
         "recorded": recorded,
         "recorded_by": record.get("recorded_by"),
         "recorded_at": record.get("recorded_at"),

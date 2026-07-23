@@ -1439,6 +1439,14 @@ def run_write_canary(
         or (u.get("transition_allowed") and not u.get("executed"))
         for u in production_units
     )
+    production_ladder_complete = (
+        len(production_units) == 5
+        and all(
+            u.get("live_result_recorded") is True and u.get("passed") is True
+            for u in production_units
+        )
+        and gate_facts.get("unit_7_passed") is True
+    )
     live_failures = [
         u["unit"] for u in units_report if u.get("live_result_recorded") and not u.get("passed")
     ]
@@ -1455,7 +1463,9 @@ def run_write_canary(
         "gate_facts": gate_facts,
         "units": units_report,
         "live_evidence_recorded": live_recorded,
+        "live_evidence_digest": live.get("evidence_digest"),
         "live_unit_failures": live_failures,
+        "production_ladder_complete": production_ladder_complete,
         "promotion_gate": {
             "flag": config.canary_plan["promotion_gate"]["flag"],
             "status": "disabled — separately gated after identity/review UAT (§4 Phase 5/6)",

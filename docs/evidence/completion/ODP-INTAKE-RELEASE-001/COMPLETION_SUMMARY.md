@@ -15,9 +15,10 @@ Owner: Claude · Reviewer: Codex2 · Date: 2026-07-23
 2. **Release drill harness** — `scripts/release/assisted_listing_intake/`
    (`config.py` fail-closed config loader, `gates.py` §12/flag/production
    gates, `drills.py` runtime drills, `run.py` phase orchestrator). Covered by
-   `tests/ops/test_assisted_listing_intake_release.py` (31 tests), including
+   `tests/ops/test_assisted_listing_intake_release.py` (34 tests), including
    blocked, malformed, fully approved/live, full canary ladder, and live-failure
-   transition cases.
+   transition cases. Cutover also rejects incomplete, stale, or
+   error-budget-exhausted production canary evidence.
 3. **Release runbook** — `docs/runbooks/assisted-listing-intake-release.md`.
 4. **Runtime drill evidence** — the JSON files in this directory, emitted by an
    actual harness execution (not hand-written).
@@ -55,7 +56,7 @@ CI=1 npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts
   → latest verification: 8 passed
   → CI=1 is required: the score-failure fault control in
     apps/api/app/routes/listings.py is gated on CI=1 and 403s otherwise.
-uv run pytest tests/ops/test_assisted_listing_intake_release.py -q   → 31 passed
+uv run pytest tests/ops/test_assisted_listing_intake_release.py -q   → 34 passed
 python3 scripts/e2e/check_product_release_gate.py                    → PASS
 python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report → PASS (37 labels, GO)
 git diff --check origin/dev...HEAD                                   → clean

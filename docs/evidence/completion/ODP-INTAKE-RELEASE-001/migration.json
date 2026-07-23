@@ -2,7 +2,7 @@
   "blocking_findings": 0,
   "drill": "migration_reconciliation",
   "environment": "staging-surrogate",
-  "finished_at": "2026-07-23T13:03:34.976207+00:00",
+  "finished_at": "2026-07-23T13:11:34.890621+00:00",
   "passed": true,
   "rollback_proof": {
     "other_tenant_rows_untouched": 8,
@@ -12,9 +12,9 @@
     "scoped_to_tenant": "00000000-0000-0000-0000-0000000000b2",
     "staging_record_untouched": 8
   },
-  "staging_db": "/tmp/intake-release-drill-qn34fgpv/migration/migration-staging.sqlite3",
-  "staging_db_sha256": "74e49effa3c47f11dcf117521cb8e9ab9158bea965594a169184412364d00fe4",
-  "started_at": "2026-07-23T13:03:34.688251+00:00",
+  "staging_db": "/tmp/intake-release-drill-khd099qg/migration/migration-staging.sqlite3",
+  "staging_db_sha256": "f2672c7ecfb8daeabe54013e0d63e86d80bdec7db749219170c6f2acccca694d",
+  "started_at": "2026-07-23T13:11:34.572412+00:00",
   "tenant_isolation": {
     "cross_tenant_id_overlap": 0,
     "distinct_tenants": [
