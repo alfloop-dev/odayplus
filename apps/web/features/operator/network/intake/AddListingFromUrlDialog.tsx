@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
+import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
+import { existingListingHref, intakeDetailHref } from "./IntakeInboxMap";
 
 // "Dialog 從網址新增物件" (UX-SCR-EXP-003A).
 //
@@ -33,19 +35,28 @@ export function AddListingFromUrlDialog({
   onClose,
   onOpenExisting,
   onSubmit,
+  ownerLabel,
+  scopeLabel,
   submitterLabel,
+  tenantLabel,
 }: {
   busy: boolean;
   defaultHeatZoneId?: string;
   error: IntakeApiError | null;
   onClose: () => void;
-  onOpenExisting?: (intakeId: string) => void;
-  onSubmit: (input: { url: string; heatZoneId: string }) => void | Promise<void>;
+  onOpenExisting?: (listingId: string) => void;
+  onSubmit: (
+    input: { url: string; heatZoneId: string },
+  ) => AssistedIntake | void | Promise<AssistedIntake | void>;
+  ownerLabel: string;
+  scopeLabel: string;
   submitterLabel: string;
+  tenantLabel: string;
 }) {
   const [url, setUrl] = useState("");
   const [heatZoneId, setHeatZoneId] = useState(defaultHeatZoneId ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<AssistedIntake | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submitLock = useRef(false);
 
@@ -66,10 +77,12 @@ export function AddListingFromUrlDialog({
       return;
     }
     setLocalError(null);
+    setReceipt(null);
     submitLock.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({ url: trimmed, heatZoneId });
+      const result = await onSubmit({ url: trimmed, heatZoneId });
+      if (result) setReceipt(result);
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -77,10 +90,13 @@ export function AddListingFromUrlDialog({
   }
 
   const shownError = localError ?? error?.summary ?? null;
-  const isExactDuplicate = error?.code === "ODP-INTAKE-CONFLICT" || (error?.summary ?? "").includes("已存在");
-  const existingIntakeId = isExactDuplicate
-    ? /\b(IN-[A-Za-z0-9-]+)\b/.exec(error?.summary ?? "")?.[1] ?? null
-    : null;
+  const exactDuplicateListingId =
+    receipt?.matchResult?.outcome === "EXACT_DUPLICATE"
+      ? receipt.matchResult.targetListingId
+      : null;
+  const isProcessingConflict =
+    error?.code === "ODP-INTAKE-CONFLICT" ||
+    (error?.summary ?? "").includes("already being processed");
 
   return (
     <IntakeDialogShell
@@ -92,7 +108,13 @@ export function AddListingFromUrlDialog({
       <div className={styles.dialogHead}>
         <span className={styles.dialogTitle}>從網址新增物件</span>
         <span className={styles.screenBadge}>UX-SCR-EXP-003A</span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button
+          aria-label="關閉"
+          className={styles.dialogClose}
+          disabled={busy || submitting}
+          onClick={onClose}
+          type="button"
+        >
           ×
         </button>
       </div>
@@ -107,11 +129,14 @@ export function AddListingFromUrlDialog({
             data-autofocus
             data-testid="intake-url-input"
             id="intake-url"
-            onChange={(event) => setUrl(event.target.value)}
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setReceipt(null);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") void handleSubmit();
             }}
-            placeholder="https://www.591.com.tw/rent-detail-XXXXXXXX.html"
+            placeholder="https://listings.example.com/property/12345"
             type="url"
             value={url}
           />
@@ -136,6 +161,19 @@ export function AddListingFromUrlDialog({
           </div>
         ) : null}
 
+        {looksValid ? (
+          <dl className={styles.metaGrid} data-testid="intake-url-evidence-preview">
+            <div>
+              <dt>原始 URL</dt>
+              <dd className={styles.mono}>{trimmed}</dd>
+            </div>
+            <div>
+              <dt>Canonical URL 預覽</dt>
+              <dd className={styles.mono}>{canonicalPreview ?? trimmed}</dd>
+            </div>
+          </dl>
+        ) : null}
+
         <div className={styles.grid2}>
           <div>
             <label className={styles.fieldLabel} htmlFor="intake-area">
@@ -156,9 +194,13 @@ export function AddListingFromUrlDialog({
             </select>
           </div>
           <div>
-            <span className={styles.fieldLabel}>送件人</span>
+            <span className={styles.fieldLabel}>送件與權責 context</span>
             <div className={styles.readOnlyBox} data-testid="intake-submitter">
-              {submitterLabel} · 送出後由你擁有此收件紀錄
+              送件人 {submitterLabel}
+              <br />
+              Tenant {tenantLabel} · Scope {scopeLabel}
+              <br />
+              初始 owner {ownerLabel}
             </div>
           </div>
         </div>
@@ -170,19 +212,68 @@ export function AddListingFromUrlDialog({
           系統僅進行使用者提交之單頁擷取或已核准推送，絕不進行定期爬取或要求提供 credentials。
         </div>
 
-        {isExactDuplicate ? (
+        {exactDuplicateListingId ? (
           <div className={styles.warnNote} data-testid="intake-exact-duplicate-intercept" role="alert">
-            ⚡ 識別檢查攔截：此網址已被收錄。系統已提供短路徑可直接導向既有物件紀錄。
-            {existingIntakeId && onOpenExisting ? (
+            識別檢查攔截：此網址對應既有 Listing {exactDuplicateListingId}，未啟動新的 retrieval。
+            {onOpenExisting ? (
               <button
                 className={styles.secondaryButton}
                 data-testid="intake-open-existing"
-                onClick={() => onOpenExisting(existingIntakeId)}
+                onClick={() => onOpenExisting(exactDuplicateListingId)}
                 type="button"
               >
-                開啟既有收件 {existingIntakeId}
+                開啟既有 Listing {exactDuplicateListingId}
               </button>
+            ) : (
+              <a
+                className={styles.secondaryButton}
+                data-testid="intake-open-existing"
+                href={existingListingHref(exactDuplicateListingId)}
+              >
+                開啟既有 Listing {exactDuplicateListingId}
+              </a>
+            )}
+          </div>
+        ) : null}
+
+        {receipt ? (
+          <section
+            aria-label="URL 送件收據"
+            className={styles.intakeActionReceipt}
+            data-testid="intake-submission-receipt"
+          >
+            <strong>伺服器已接受送件</strong>
+            <span>
+              Intake {receipt.id} · version {receipt.version} · {receipt.stage}
+            </span>
+            <span>
+              Source {receipt.sourceId} · Policy {receipt.policy}
+            </span>
+            <span>{receipt.policyReason}</span>
+            <span>
+              Correlation {receipt.correlationId ?? "伺服器未提供"}
+              {receipt.auditEvents?.[0]?.occurredAt
+                ? ` · submitted ${receipt.auditEvents[0].occurredAt}`
+                : ""}
+            </span>
+            <span className={styles.mono}>Original {receipt.originalUrl}</span>
+            <span className={styles.mono}>Canonical {receipt.canonicalUrl}</span>
+            {!exactDuplicateListingId ? (
+              <a
+                className={styles.primaryButton}
+                data-testid="intake-open-created"
+                href={intakeDetailHref(receipt.id)}
+              >
+                開啟收件 {receipt.id}
+              </a>
             ) : null}
+          </section>
+        ) : null}
+
+        {isProcessingConflict ? (
+          <div className={styles.warnNote} data-testid="intake-processing-conflict" role="alert">
+            此 URL 已在處理中。請依錯誤資訊重新整理既有收件；系統不會將 Intake ID
+            誤當成既有 Listing ID。
           </div>
         ) : null}
 
@@ -204,17 +295,26 @@ export function AddListingFromUrlDialog({
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button
+          className={styles.secondaryButton}
+          disabled={busy || submitting}
+          onClick={onClose}
+          type="button"
+        >
           取消
         </button>
         <button
           className={styles.primaryButton}
           data-testid="intake-submit-button"
-          disabled={busy || submitting || !trimmed}
+          disabled={busy || submitting || !trimmed || Boolean(receipt)}
           onClick={() => void handleSubmit()}
           type="button"
         >
-          {busy || submitting ? "送出中…（防止重複送出）" : "送出 URL"}
+          {busy || submitting
+            ? "送出中…（防止重複送出）"
+            : receipt
+              ? "已收到伺服器收據"
+              : "送出 URL"}
         </button>
       </div>
     </IntakeDialogShell>
@@ -238,11 +338,29 @@ function detectSourceHost(url: string): string {
   }
 }
 
-function computeCanonicalUrlPreview(url: string): string {
+export function computeCanonicalUrlPreview(url: string): string {
   try {
     const parsed = new URL(url);
     const searchParams = new URLSearchParams(parsed.search);
-    const trackingKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"];
+    const trackingKeys = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "utm_id",
+      "fbclid",
+      "gclid",
+      "msclkid",
+      "yclid",
+      "ref",
+      "referrer",
+      "from",
+      "source",
+      "share_from",
+      "tracking_id",
+      "_gl",
+    ];
     let changed = false;
     for (const key of trackingKeys) {
       if (searchParams.has(key)) {

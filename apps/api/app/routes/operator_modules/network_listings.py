@@ -12,7 +12,12 @@ the HTTP boundary. They compose through apps.api.app.routes.operator.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import json
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -32,6 +37,202 @@ from modules.opsboard.application.network_listings import (
 )
 from shared.audit import InMemoryAuditLog
 from shared.auth import Principal, Role
+
+_INTAKE_CURSOR_TTL = timedelta(hours=1)
+_INTAKE_SAVED_VIEWS = {
+    "all",
+    "needsReview",
+    "awaitingEntry",
+    "blocked",
+    "processing",
+    "ready",
+}
+_INTAKE_SORT_FIELDS = {
+    "id",
+    "sourceId",
+    "intakeMethod",
+    "stage",
+    "matchOutcome",
+    "owner",
+    "submitter",
+    "assignmentStatus",
+    "slaState",
+    "dueAt",
+    "observedAt",
+    "updatedAt",
+}
+
+
+def _latest_intake_timestamp(item: dict[str, Any]) -> str:
+    events = item.get("auditEvents") or []
+    return (
+        (events[-1].get("occurredAt") if events else None)
+        or item.get("updatedAt")
+        or item.get("capturedAt")
+        or ""
+    )
+
+
+def _intake_effective_field(item: dict[str, Any], *keys: str) -> Any:
+    fields = item.get("parsedFields") or {}
+    for key in keys:
+        cell = fields.get(key)
+        if not isinstance(cell, dict) or cell.get("masked"):
+            continue
+        for value_key in ("correctedValue", "normalizedValue", "sourceValue"):
+            value = cell.get(value_key)
+            if value is not None and value != "":
+                return value
+    return None
+
+
+def _intake_location(item: dict[str, Any]) -> dict[str, Any] | None:
+    latitude = _intake_effective_field(item, "latitude", "lat")
+    longitude = _intake_effective_field(item, "longitude", "lng", "lon")
+    if latitude is None or longitude is None:
+        raw_snapshot = item.get("rawSnapshot")
+        if isinstance(raw_snapshot, dict):
+            latitude = latitude if latitude is not None else raw_snapshot.get("latitude", raw_snapshot.get("lat"))
+            longitude = longitude if longitude is not None else raw_snapshot.get(
+                "longitude", raw_snapshot.get("lng", raw_snapshot.get("lon"))
+            )
+    try:
+        latitude_value = float(latitude)
+        longitude_value = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= latitude_value <= 90 and -180 <= longitude_value <= 180):
+        return None
+    return {
+        "latitude": latitude_value,
+        "longitude": longitude_value,
+        "confidence": _intake_effective_field(
+            item, "geocodeConfidence", "geocode_confidence"
+        ),
+        "source": "parsed-field-or-source-snapshot",
+    }
+
+
+def _decorate_intake_for_inbox(item: dict[str, Any]) -> dict[str, Any]:
+    decorated = dict(item)
+    parsed_fields = decorated.get("parsedFields") or {}
+    masked_fields = [
+        key
+        for key, cell in parsed_fields.items()
+        if isinstance(cell, dict) and cell.get("masked")
+    ]
+    match_result = decorated.get("matchResult") or {}
+    scope = decorated.get("scope") or {}
+    failure = decorated.get("failure") or {}
+    decorated.update(
+        {
+            "assignedAreaId": decorated.get("assignedAreaId")
+            or scope.get("assigned_area_id"),
+            "brandId": decorated.get("brandId") or scope.get("brand_id"),
+            "lastObservedAt": decorated.get("capturedAt"),
+            "lastUpdatedAt": _latest_intake_timestamp(decorated),
+            "listingId": match_result.get("targetListingId"),
+            "location": _intake_location(decorated),
+            "maskedFields": masked_fields,
+            "needsReview": decorated.get("stage") == "NEEDS_REVIEW",
+            "regionId": decorated.get("regionId") or scope.get("region_id"),
+            "tenantId": decorated.get("tenantId") or scope.get("tenant_id"),
+            "restrictedData": bool(masked_fields)
+            or bool(decorated.get("restrictedData")),
+            "retryable": bool(failure.get("retryable")),
+            "issue": failure.get("summary")
+            or match_result.get("summary")
+            or decorated.get("policyReason"),
+        }
+    )
+    return decorated
+
+
+def _intake_query_fingerprint(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _encode_intake_cursor(*, offset: int, fingerprint: str) -> str:
+    payload = {
+        "version": 1,
+        "offset": offset,
+        "fingerprint": fingerprint,
+        "expiresAt": (datetime.now(UTC) + _INTAKE_CURSOR_TTL).isoformat(),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_intake_cursor(cursor: str, *, fingerprint: str) -> int:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if payload.get("version") != 1 or payload.get("fingerprint") != fingerprint:
+            raise ValueError("cursor query mismatch")
+        if datetime.fromisoformat(payload["expiresAt"]) <= datetime.now(UTC):
+            raise ValueError("cursor expired")
+        offset = int(payload["offset"])
+        if offset < 0:
+            raise ValueError("cursor offset invalid")
+        return offset
+    except (
+        AttributeError,
+        binascii.Error,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CURSOR_INVALID: cursor is invalid, expired, or belongs to another query",
+        ) from exc
+
+
+def _intake_bool_matches(actual: bool, expected: bool | None) -> bool:
+    return expected is None or actual is expected
+
+
+def _timestamp_in_range(
+    value: str | None,
+    *,
+    start: datetime | None,
+    end: datetime | None,
+) -> bool:
+    if not start and not end:
+        return True
+    if not value:
+        return False
+    try:
+        current = _parse_intake_timestamp(value, field_name="record timestamp")
+    except HTTPException:
+        return False
+    return current is not None and (not start or current >= start) and (
+        not end or current <= end
+    )
+
+
+def _parse_intake_timestamp(
+    value: str,
+    *,
+    field_name: str,
+) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"VALIDATION_FAILED: {field_name} must be an ISO-8601 timestamp",
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -441,15 +642,61 @@ def create_network_listings_sub_router(
         selected_heat_zone_id: str | None = Query(default=None, alias="selectedHeatZoneId"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=10, alias="pageSize", ge=1, le=100),
+        cursor: str = Query(default="", max_length=4096),
         search: str = Query(default="", max_length=200),
         saved_view: str = Query(default="all", alias="savedView"),
         intake_method: str = Query(default="", alias="intakeMethod"),
         intake_stage: str = Query(default="", alias="intakeStage"),
         match_outcome: str = Query(default="", alias="matchOutcome"),
+        source_id: str = Query(default="", alias="sourceId"),
+        submitted_by: str = Query(default="", alias="submittedBy"),
+        owner: str = Query(default=""),
+        assignment_status: str = Query(default="", alias="assignmentStatus"),
+        needs_review: bool | None = Query(default=None, alias="needsReview"),
         sla_state: str = Query(default="", alias="slaState"),
+        heat_zone_id: str = Query(default="", alias="heatZoneId"),
+        area_id: str = Query(default="", alias="areaId"),
+        observed_from: str = Query(default="", alias="observedFrom"),
+        observed_to: str = Query(default="", alias="observedTo"),
+        updated_from: str = Query(default="", alias="updatedFrom"),
+        updated_to: str = Query(default="", alias="updatedTo"),
+        restricted_data: bool | None = Query(default=None, alias="restrictedData"),
+        quarantined: bool | None = Query(default=None),
+        failed: bool | None = Query(default=None),
+        retryable: bool | None = Query(default=None),
         sort_by: str = Query(default="updatedAt", alias="sortBy"),
         sort_order: str = Query(default="desc", alias="sortOrder", pattern="^(asc|desc)$"),
     ) -> dict[str, Any]:
+        if saved_view not in _INTAKE_SAVED_VIEWS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"VALIDATION_FAILED: unsupported savedView {saved_view!r}",
+            )
+        if sort_by not in _INTAKE_SORT_FIELDS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"VALIDATION_FAILED: unsupported sortBy {sort_by!r}",
+            )
+        observed_start = _parse_intake_timestamp(
+            observed_from, field_name="observedFrom"
+        )
+        observed_end = _parse_intake_timestamp(
+            observed_to, field_name="observedTo"
+        )
+        updated_start = _parse_intake_timestamp(
+            updated_from, field_name="updatedFrom"
+        )
+        updated_end = _parse_intake_timestamp(updated_to, field_name="updatedTo")
+        if observed_start and observed_end and observed_start > observed_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="VALIDATION_FAILED: observedFrom must not be after observedTo",
+            )
+        if updated_start and updated_end and updated_start > updated_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="VALIDATION_FAILED: updatedFrom must not be after updatedTo",
+            )
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
         correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -485,7 +732,10 @@ def create_network_listings_sub_router(
                 intake for intake in intakes
                 if is_record_owner(principal, intake)
             ]
-        visible = [mask_intake(principal, intake) for intake in intakes]
+        visible = [
+            _decorate_intake_for_inbox(mask_intake(principal, intake))
+            for intake in intakes
+        ]
         processing_stages = {
             "SUBMITTED",
             "CHECKING_IDENTITY",
@@ -501,10 +751,6 @@ def create_network_listings_sub_router(
             "blocked": sum(item.get("stage") in {"QUARANTINED", "FAILED"} for item in visible),
             "ready": sum(item.get("stage") == "READY" for item in visible),
         }
-
-        def latest(item: dict[str, Any]) -> str:
-            events = item.get("auditEvents") or []
-            return (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
 
         if saved_view == "needsReview":
             visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
@@ -532,16 +778,157 @@ def create_network_listings_sub_router(
             ]
         if sla_state:
             visible = [i for i in visible if i.get("slaState") == sla_state]
+        if source_id:
+            visible = [i for i in visible if i.get("sourceId") == source_id]
+        if submitted_by:
+            visible = [i for i in visible if i.get("submitter") == submitted_by]
+        if owner:
+            visible = [i for i in visible if i.get("owner") == owner]
+        if assignment_status:
+            visible = [
+                i for i in visible if i.get("assignmentStatus") == assignment_status
+            ]
+        if needs_review is not None:
+            visible = [
+                i for i in visible if bool(i.get("needsReview")) is needs_review
+            ]
+        effective_heat_zone_id = heat_zone_id or selected_heat_zone_id or ""
+        if effective_heat_zone_id:
+            visible = [
+                i
+                for i in visible
+                if i.get("heatZoneId") == effective_heat_zone_id
+            ]
+        if area_id:
+            visible = [i for i in visible if i.get("assignedAreaId") == area_id]
+        visible = [
+            i
+            for i in visible
+            if _timestamp_in_range(
+                i.get("lastObservedAt"), start=observed_start, end=observed_end
+            )
+            and _timestamp_in_range(
+                i.get("lastUpdatedAt"), start=updated_start, end=updated_end
+            )
+            and _intake_bool_matches(
+                bool(i.get("restrictedData")), restricted_data
+            )
+            and _intake_bool_matches(i.get("stage") == "QUARANTINED", quarantined)
+            and _intake_bool_matches(i.get("stage") == "FAILED", failed)
+            and _intake_bool_matches(bool(i.get("retryable")), retryable)
+        ]
         if search:
             needle = search.casefold()
-            visible = [i for i in visible if any(needle in str(i.get(k) or "").casefold() for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner"))]
-        keys = {"id": lambda i: i.get("id", ""), "stage": lambda i: i.get("stage", ""), "sourceId": lambda i: i.get("sourceId", ""), "updatedAt": latest}
-        visible.sort(key=lambda i: (keys.get(sort_by, latest)(i), i.get("id", "")), reverse=sort_order == "desc")
+            visible = [
+                i
+                for i in visible
+                if any(
+                    needle in str(i.get(key) or "").casefold()
+                    for key in (
+                        "id",
+                        "listingId",
+                        "originalUrl",
+                        "canonicalUrl",
+                        "sourceId",
+                        "submitter",
+                        "owner",
+                        "heatZoneId",
+                        "assignedAreaId",
+                        "issue",
+                    )
+                )
+            ]
+        sort_keys: dict[str, Callable[[dict[str, Any]], str]] = {
+            "id": lambda i: str(i.get("id") or ""),
+            "sourceId": lambda i: str(i.get("sourceId") or ""),
+            "intakeMethod": lambda i: str(i.get("intakeMethod") or ""),
+            "stage": lambda i: str(i.get("stage") or ""),
+            "matchOutcome": lambda i: str(
+                (i.get("matchResult") or {}).get("outcome") or ""
+            ),
+            "owner": lambda i: str(i.get("owner") or ""),
+            "submitter": lambda i: str(i.get("submitter") or ""),
+            "assignmentStatus": lambda i: str(i.get("assignmentStatus") or ""),
+            "slaState": lambda i: str(i.get("slaState") or ""),
+            "dueAt": lambda i: str(
+                i.get("dueAt")
+                or ("9999-12-31T23:59:59Z" if sort_order == "asc" else "")
+            ),
+            "observedAt": lambda i: str(i.get("lastObservedAt") or ""),
+            "updatedAt": lambda i: str(i.get("lastUpdatedAt") or ""),
+        }
+        visible.sort(
+            key=lambda i: (sort_keys[sort_by](i).casefold(), str(i.get("id") or "")),
+            reverse=sort_order == "desc",
+        )
         total = len(visible)
-        start = (page - 1) * page_size
+        fingerprint = _intake_query_fingerprint(
+            {
+                "areaId": area_id,
+                "assignmentStatus": assignment_status,
+                "failed": failed,
+                "heatZoneId": effective_heat_zone_id,
+                "intakeMethod": intake_method,
+                "intakeStage": intake_stage,
+                "matchOutcome": match_outcome,
+                "needsReview": needs_review,
+                "observedFrom": observed_from,
+                "observedTo": observed_to,
+                "owner": owner,
+                "quarantined": quarantined,
+                "restrictedData": restricted_data,
+                "retryable": retryable,
+                "savedView": saved_view,
+                "search": search,
+                "slaState": sla_state,
+                "sortBy": sort_by,
+                "sortOrder": sort_order,
+                "sourceId": source_id,
+                "submittedBy": submitted_by,
+                "updatedFrom": updated_from,
+                "updatedTo": updated_to,
+            }
+        )
+        start = (
+            _decode_intake_cursor(cursor, fingerprint=fingerprint)
+            if cursor
+            else (page - 1) * page_size
+        )
         page_items = visible[start:start + page_size]
-        evidence_state = "degraded" if any(i.get("failure") for i in page_items) else ("partial" if any(not i.get("rawSnapshot") for i in page_items) else "complete")
-        return {"items": page_items, "total": total, "page": page, "pageSize": page_size, "counts": counts, "evidenceState": evidence_state}
+        evidence_state = (
+            "degraded"
+            if any(i.get("failure") for i in page_items)
+            else (
+                "partial"
+                if any(not i.get("rawSnapshot") for i in page_items)
+                else "complete"
+            )
+        )
+        next_offset = start + len(page_items)
+        previous_offset = max(0, start - page_size)
+        return {
+            "items": page_items,
+            "total": total,
+            "page": (start // page_size) + 1,
+            "pageSize": page_size,
+            "counts": counts,
+            "evidenceState": evidence_state,
+            "nextCursor": (
+                _encode_intake_cursor(offset=next_offset, fingerprint=fingerprint)
+                if next_offset < total
+                else None
+            ),
+            "previousCursor": (
+                _encode_intake_cursor(
+                    offset=previous_offset, fingerprint=fingerprint
+                )
+                if start > 0
+                else None
+            ),
+            "queryFingerprint": fingerprint,
+            "sortBy": sort_by,
+            "sortOrder": sort_order,
+        }
 
     @router.get(
         "/intake/{intake_id}",
