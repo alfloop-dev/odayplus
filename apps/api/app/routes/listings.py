@@ -1459,6 +1459,65 @@ else:
                 intake_repository=getattr(request.app.state, "operator_intake_repository", None),
             )
 
+        def auxiliary_repository(request: Request) -> Any:
+            return getattr(request.app.state, "operator_intake_repository", None)
+
+        def hydrate_auxiliary_state(request: Request) -> None:
+            repository = auxiliary_repository(request)
+            if repository is None:
+                return
+            if hasattr(repository, "list_assignments"):
+                for assignment in repository.list_assignments():
+                    active.assignments[assignment["assignment_id"]] = assignment
+            if hasattr(repository, "list_slas"):
+                for sla in repository.list_slas():
+                    active.slas[sla["sla_instance_id"]] = sla
+            if hasattr(repository, "list_saved_views"):
+                persisted_views = {
+                    view["saved_view_id"]: view
+                    for view in repository.list_saved_views()
+                }
+                active.saved_views = [
+                    view
+                    for view in active.saved_views
+                    if view.get("saved_view_id") not in persisted_views
+                ]
+                active.saved_views.extend(persisted_views.values())
+
+        def save_assignment(request: Request, assignment: dict[str, Any]) -> None:
+            active.assignments[assignment["assignment_id"]] = assignment
+            repository = auxiliary_repository(request)
+            if repository is not None and hasattr(repository, "save_assignment"):
+                repository.save_assignment(assignment)
+
+        def save_sla(request: Request, sla: dict[str, Any]) -> None:
+            active.slas[sla["sla_instance_id"]] = sla
+            repository = auxiliary_repository(request)
+            if repository is not None and hasattr(repository, "save_sla"):
+                repository.save_sla(sla)
+
+        def save_saved_view(request: Request, saved_view: dict[str, Any]) -> None:
+            active.saved_views = [
+                view
+                for view in active.saved_views
+                if view.get("saved_view_id") != saved_view["saved_view_id"]
+            ]
+            active.saved_views.append(saved_view)
+            repository = auxiliary_repository(request)
+            if repository is not None and hasattr(repository, "save_saved_view"):
+                repository.save_saved_view(saved_view)
+
+        def initial_sla_state(due_at: str | None) -> str:
+            due = datetime_value(due_at)
+            if due is None:
+                return "ON_TRACK"
+            current = datetime.now(UTC)
+            if due <= current:
+                return "OVERDUE"
+            if (due - current).total_seconds() <= 4 * 60 * 60:
+                return "DUE_SOON"
+            return "ON_TRACK"
+
         def runtime_field_values(
             parsed_fields: dict[str, dict[str, Any]],
         ) -> list[dict[str, Any]]:
@@ -2458,9 +2517,29 @@ else:
             if not intake_resource_in_scope(principal, value):
                 raise HTTPException(403, "SCOPE_DENIED")
 
-        def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
+        def linked_intake(
+            request: Request,
+            value: dict[str, Any],
+        ) -> dict[str, Any] | None:
             intake_id = value.get("intake_id")
-            return active.intakes.get(intake_id) if intake_id else None
+            if not intake_id:
+                return None
+            cached = active.intakes.get(intake_id)
+            if cached is not None:
+                return cached
+            persisted = V1IntakeRepositoryAdapter(
+                active,
+                request.app.state,
+            ).get_listing_intake(intake_id)
+            if persisted is None:
+                return None
+            resolved = (
+                canonicalize_runtime_intake(persisted)
+                if persisted.get("stage") is not None
+                else persisted
+            )
+            active.intakes[intake_id] = resolved
+            return resolved
 
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
@@ -2489,6 +2568,7 @@ else:
             return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
         def load_replay(
+            request: Request,
             key: str | None,
             body: Any,
             tenant_id: str,
@@ -2506,12 +2586,28 @@ else:
             )
             prior = active.replays.get(composite_key)
             if prior is None:
+                repository = auxiliary_repository(request)
+                persisted = (
+                    repository.get_api_replay(composite_key)
+                    if repository is not None
+                    and hasattr(repository, "get_api_replay")
+                    else None
+                )
+                if persisted is not None:
+                    prior = (
+                        persisted["digest"],
+                        persisted["result"],
+                        int(persisted["status_code"]),
+                    )
+                    active.replays[composite_key] = copy.deepcopy(prior)
+            if prior is None:
                 return None
             if prior[0] != digest:
                 raise HTTPException(409, "idempotency key was used with another payload")
             return copy.deepcopy(prior[1]), prior[2]
 
         def replay(
+            request: Request,
             key: str | None,
             body: Any,
             tenant_id: str,
@@ -2522,6 +2618,7 @@ else:
             resource_id: str | None = None,
         ) -> tuple[dict[str, Any], int, bool]:
             prior = load_replay(
+                request,
                 key,
                 body,
                 tenant_id,
@@ -2538,6 +2635,17 @@ else:
                 f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
             )
             active.replays[composite_key] = (digest, copy.deepcopy(result), code)
+            repository = auxiliary_repository(request)
+            if repository is not None and hasattr(repository, "save_api_replay"):
+                repository.save_api_replay(
+                    composite_key,
+                    {
+                        "replay_key": composite_key,
+                        "digest": digest,
+                        "result": copy.deepcopy(result),
+                        "status_code": code,
+                    },
+                )
             return result, code, False
 
         def require_version(if_match: str | None, current: int = 1) -> None:
@@ -2880,6 +2988,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> IntakeInboxBootstrap:
+            hydrate_auxiliary_state(request)
             principal = get_principal(request)
             authorize_intake_action(
                 principal,
@@ -2991,6 +3100,7 @@ else:
             q: str | None = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
+            hydrate_auxiliary_state(request)
             principal = get_principal(request)
             saved_query = parse_saved_view_values(
                 principal=principal,
@@ -3453,7 +3563,7 @@ else:
                 }
                 return receipt_val, (200 if existing_listing_id else 202)
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
@@ -3564,7 +3674,7 @@ else:
                 code = 202 if accepted == len(body.rows) else 207
                 return result, code
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitIntakeBatch", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "submitIntakeBatch", make)
             response.status_code = code
             return BatchIntakeReceipt(**val)
 
@@ -3587,6 +3697,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> IntakeDetail:
+            hydrate_auxiliary_state(request)
             persisted = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
                 intake_id
             )
@@ -3930,6 +4041,7 @@ else:
                 return receipt_val, 201
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -3972,9 +4084,19 @@ else:
             ),
         ) -> AssignmentReceipt:
             validate_idempotency_key(key)
-            current = active.intakes.get(intake_id)
-            if current is None:
+            hydrate_auxiliary_state(request)
+            persisted = V1IntakeRepositoryAdapter(
+                active,
+                request.app.state,
+            ).get_listing_intake(intake_id)
+            if persisted is None:
                 raise HTTPException(404, "intake not found")
+            current = (
+                canonicalize_runtime_intake(persisted)
+                if persisted.get("stage") is not None
+                else persisted
+            )
+            active.intakes[intake_id] = current
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -4036,16 +4158,34 @@ else:
                     "assignment_id": aid,
                     "status": "ASSIGNED",
                     "owner_subject_id": body.owner_subject_id,
+                    "owner_role": body.owner_role,
+                    "queue_id": body.owner_role,
                     "due_at": body.due_at,
                     "version": current["version"],
                     "audit_event_id": audit_event_id,
                     "tenant_id": tenant_id,
                     "intake_id": intake_id,
+                    "assigned_at": ts,
+                    "updated_at": ts,
                 }
-                active.assignments[aid] = value
+                save_assignment(request, value)
+                sla = {
+                    "sla_instance_id": str(uuid4()),
+                    "intake_id": intake_id,
+                    "tenant_id": tenant_id,
+                    "state": initial_sla_state(body.due_at),
+                    "due_at": body.due_at,
+                    "paused_duration_seconds": 0,
+                    "version": 1,
+                    "created_at": ts,
+                    "updated_at": ts,
+                }
+                save_sla(request, sla)
+                value["sla_instance_id"] = sla["sla_instance_id"]
                 return value, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -4056,19 +4196,35 @@ else:
             )
             response.status_code = code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="assignment",
-                action="ASSIGN",
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "handoff_note": body.handoff_note,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="assignment",
+                    action="ASSIGN",
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "handoff_note": body.handoff_note,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
+                sla = active.slas.get(val.get("sla_instance_id"))
+                if sla is not None:
+                    persist_lifecycle_receipt(
+                        request=request,
+                        intake_id=intake_id,
+                        category="sla",
+                        action="START",
+                        receipt_value={
+                            **sla,
+                            "reason": body.reason,
+                        },
+                        actor=actor_id,
+                        correlation_id=request_correlation_id(request),
+                    )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -4113,6 +4269,7 @@ else:
             # authorization that depends on mutable intake ownership/state, or
             # a lost successful response can turn into a later 403.
             prior = load_replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -4181,6 +4338,7 @@ else:
                 return receipt_val, 202
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -4192,19 +4350,20 @@ else:
             response.status_code = code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="job",
-                action="RETRY",
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "override_retry_budget": body.override_retry_budget,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="job",
+                    action="RETRY",
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "override_retry_budget": body.override_retry_budget,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return JobReceipt(**val)
 
         @router.post(
@@ -4280,6 +4439,7 @@ else:
                 return value, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -4288,15 +4448,16 @@ else:
                 make,
                 resource_id=job_id,
             )
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="job",
-                action="CANCEL",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="job",
+                    action="CANCEL",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
@@ -4352,6 +4513,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> list[SavedView]:
+            hydrate_auxiliary_state(request)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             authorize_intake_action(
@@ -4417,10 +4579,10 @@ else:
                     "version": 1,
                     "tenant_id": tenant_id,
                 }
-                active.saved_views.append(value)
+                save_saved_view(request, value)
                 return value, 201
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "createSavedView", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "createSavedView", make)
             response.status_code = code
             return SavedView(**val)
 
@@ -4562,6 +4724,7 @@ else:
                 return promo_record, 202
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -4573,15 +4736,16 @@ else:
             response.status_code = code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="promotion",
-                action="REQUEST",
-                receipt_value=val,
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="promotion",
+                    action="REQUEST",
+                    receipt_value=val,
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return PromotionDecisionReceipt(**val)
 
         @router.get(
@@ -4779,7 +4943,7 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            intake = linked_intake(val)
+            intake = linked_intake(request, val)
             resource = (
                 intake_auth_resource(intake)
                 if intake is not None
@@ -4949,6 +5113,7 @@ else:
                 return value, 201
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5021,7 +5186,7 @@ else:
                 active.decisions[value["decision_id"]] = value
                 return value, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "mergeProperties", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "mergeProperties", make)
             response.status_code = code
             return DecisionReceipt(**val)
 
@@ -5093,7 +5258,7 @@ else:
                 active.decisions[value["decision_id"]] = value
                 return value, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "splitProperty", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "splitProperty", make)
             response.status_code = code
             return DecisionReceipt(**val)
 
@@ -5158,7 +5323,7 @@ else:
                 active.decisions[value["decision_id"]] = value
                 return value, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "unmergeProperty", make)
+            val, code, was_replayed = replay(request, key, body.model_dump(), tenant_id, actor_id, "unmergeProperty", make)
             response.status_code = code
             return DecisionReceipt(**val)
 
@@ -5285,6 +5450,7 @@ else:
                 return tr, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5295,15 +5461,16 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="intake",
-                action="CANCEL",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="intake",
+                    action="CANCEL",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -5369,6 +5536,7 @@ else:
                 return tr, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5379,19 +5547,20 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="intake",
-                action="QUARANTINE",
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "risk_acknowledged": body.risk_acknowledged,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="intake",
+                    action="QUARANTINE",
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "risk_acknowledged": body.risk_acknowledged,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -5563,6 +5732,7 @@ else:
                 return tr, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5573,19 +5743,20 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=intake_id,
-                category="intake",
-                action=("RETRY" if current.get("state") == "FAILED" else "REOPEN"),
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "risk_acknowledged": body.risk_acknowledged,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=intake_id,
+                    category="intake",
+                    action=("RETRY" if current.get("state") == "FAILED" else "REOPEN"),
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "risk_acknowledged": body.risk_acknowledged,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return TransitionReceipt(**val)
 
         @router.post(
@@ -5612,6 +5783,7 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -5626,7 +5798,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is not None:
                 require_intake_scope(principal, intake)
 
@@ -5642,6 +5814,7 @@ else:
                 raise HTTPException(403, "ROLE_DENIED")
 
             prior = load_replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5667,9 +5840,11 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
+                save_assignment(request, updated)
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5680,15 +5855,16 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="assignment",
-                action="CLAIM",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="assignment",
+                    action="CLAIM",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -5715,6 +5891,7 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -5729,7 +5906,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is not None:
                 require_intake_scope(principal, intake)
 
@@ -5745,6 +5922,7 @@ else:
                 raise HTTPException(403, "ROLE_DENIED")
 
             prior = load_replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5770,6 +5948,7 @@ else:
                     current["due_at"] = body.due_at
                 updated = generic_mutate(active.assignments, assignment_id, "TRANSFERRED", actor_id)
                 updated["audit_event_id"] = str(uuid4())
+                save_assignment(request, updated)
 
                 # Update parent intake
                 intake = active.intakes.get(updated.get("intake_id", ""))
@@ -5780,6 +5959,7 @@ else:
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5790,19 +5970,20 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="assignment",
-                action="TRANSFER",
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "handoff_note": body.handoff_note,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="assignment",
+                    action="TRANSFER",
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "handoff_note": body.handoff_note,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -5829,13 +6010,14 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is None:
                 raise HTTPException(409, "DEPENDENCY_CONFLICT")
             require_intake_scope(principal, intake)
@@ -5862,9 +6044,11 @@ else:
                 )
                 updated["audit_event_id"] = str(uuid4())
                 updated["escalation_reason"] = body.reason
+                save_assignment(request, updated)
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5873,15 +6057,16 @@ else:
                 make,
                 resource_id=assignment_id,
             )
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="assignment",
-                action="ESCALATE",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="assignment",
+                    action="ESCALATE",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
@@ -5911,6 +6096,7 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -5925,7 +6111,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is not None:
                 require_intake_scope(principal, intake)
 
@@ -5948,9 +6134,18 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
+                save_assignment(request, updated)
+                for sla in active.slas.values():
+                    if sla.get("intake_id") != current["intake_id"]:
+                        continue
+                    sla["state"] = "COMPLETED"
+                    sla["version"] = int(sla.get("version") or 1) + 1
+                    sla["updated_at"] = now()
+                    save_sla(request, sla)
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -5961,15 +6156,16 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="assignment",
-                action="COMPLETE",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="assignment",
+                    action="COMPLETE",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return AssignmentReceipt(**val)
 
         @router.post(
@@ -5996,6 +6192,7 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
@@ -6023,11 +6220,11 @@ else:
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
                 updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
-
-
+                save_sla(request, updated)
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -6038,19 +6235,20 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="sla",
-                action="PAUSE",
-                receipt_value={
-                    **val,
-                    "reason": body.reason,
-                    "expected_resume_at": body.expected_resume_at,
-                },
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="sla",
+                    action="PAUSE",
+                    receipt_value={
+                        **val,
+                        "reason": body.reason,
+                        "expected_resume_at": body.expected_resume_at,
+                    },
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return SlaReceipt(**val)
 
         @router.post(
@@ -6077,6 +6275,7 @@ else:
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
             validate_idempotency_key(key)
+            hydrate_auxiliary_state(request)
             current = active.slas.get(sla_instance_id)
             if current is None:
                 raise HTTPException(404, "SLA instance not found")
@@ -6103,11 +6302,11 @@ else:
                 updated["active_pause_interval_id"] = None
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
-
-
+                save_sla(request, updated)
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -6118,15 +6317,16 @@ else:
             )
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="sla",
-                action="RESUME",
-                receipt_value={**val, "reason": body.reason},
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="sla",
+                    action="RESUME",
+                    receipt_value={**val, "reason": body.reason},
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return SlaReceipt(**val)
 
         @router.post(
@@ -6265,6 +6465,7 @@ else:
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -6276,15 +6477,16 @@ else:
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
-            persist_lifecycle_receipt(
-                request=request,
-                intake_id=current["intake_id"],
-                category="promotion",
-                action=body.decision.value,
-                receipt_value=val,
-                actor=actor_id,
-                correlation_id=request_correlation_id(request),
-            )
+            if not was_replayed:
+                persist_lifecycle_receipt(
+                    request=request,
+                    intake_id=current["intake_id"],
+                    category="promotion",
+                    action=body.decision.value,
+                    receipt_value=val,
+                    actor=actor_id,
+                    correlation_id=request_correlation_id(request),
+                )
             return PromotionDecisionReceipt(**val)
 
         @router.post(
@@ -6332,7 +6534,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is not None:
                 require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
@@ -6384,7 +6586,7 @@ else:
                 correction_intake = None
                 if current.get("action") == "identity_correction":
                     correction = active.corrections.get(current.get("correction_id", ""))
-                    correction_intake = linked_intake(current)
+                    correction_intake = linked_intake(request, current)
                     if correction is None or correction_intake is None:
                         raise HTTPException(409, "DEPENDENCY_CONFLICT")
                     if correction.get("status") != "PENDING_REVIEW":
@@ -6409,6 +6611,7 @@ else:
                 return updated, 200
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,
@@ -6461,7 +6664,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
-            intake = linked_intake(current)
+            intake = linked_intake(request, current)
             if intake is not None:
                 require_intake_scope(principal, intake)
             operator_role_id = get_operator_role_id(request)
@@ -6505,6 +6708,7 @@ else:
                 return updated, 202
 
             val, code, was_replayed = replay(
+                request,
                 key,
                 body.model_dump(),
                 tenant_id,

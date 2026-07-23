@@ -75,6 +75,26 @@ class AssistedIntakeRepository(Protocol):
 
     def list_promotions(self) -> list[dict[str, Any]]: ...
 
+    def get_assignment(self, assignment_id: str) -> dict[str, Any] | None: ...
+
+    def save_assignment(self, assignment: dict[str, Any]) -> None: ...
+
+    def list_assignments(self) -> list[dict[str, Any]]: ...
+
+    def get_sla(self, sla_instance_id: str) -> dict[str, Any] | None: ...
+
+    def save_sla(self, sla: dict[str, Any]) -> None: ...
+
+    def list_slas(self) -> list[dict[str, Any]]: ...
+
+    def save_saved_view(self, saved_view: dict[str, Any]) -> None: ...
+
+    def list_saved_views(self) -> list[dict[str, Any]]: ...
+
+    def get_api_replay(self, replay_key: str) -> dict[str, Any] | None: ...
+
+    def save_api_replay(self, replay_key: str, replay: dict[str, Any]) -> None: ...
+
     def clear(self) -> None: ...
 
 
@@ -91,6 +111,10 @@ class InMemoryAssistedIntakeRepository:
     listing_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     candidate_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     promotions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    assignments: dict[str, dict[str, Any]] = field(default_factory=dict)
+    slas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    saved_views: dict[str, dict[str, Any]] = field(default_factory=dict)
+    api_replays: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def list_intakes(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.intakes.values()]
@@ -125,12 +149,46 @@ class InMemoryAssistedIntakeRepository:
     def list_promotions(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.promotions.values()]
 
+    def get_assignment(self, assignment_id: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self.assignments.get(assignment_id))
+
+    def save_assignment(self, assignment: dict[str, Any]) -> None:
+        self.assignments[assignment["assignment_id"]] = copy.deepcopy(assignment)
+
+    def list_assignments(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.assignments.values()]
+
+    def get_sla(self, sla_instance_id: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self.slas.get(sla_instance_id))
+
+    def save_sla(self, sla: dict[str, Any]) -> None:
+        self.slas[sla["sla_instance_id"]] = copy.deepcopy(sla)
+
+    def list_slas(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.slas.values()]
+
+    def save_saved_view(self, saved_view: dict[str, Any]) -> None:
+        self.saved_views[saved_view["saved_view_id"]] = copy.deepcopy(saved_view)
+
+    def list_saved_views(self) -> list[dict[str, Any]]:
+        return [copy.deepcopy(item) for item in self.saved_views.values()]
+
+    def get_api_replay(self, replay_key: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self.api_replays.get(replay_key))
+
+    def save_api_replay(self, replay_key: str, replay: dict[str, Any]) -> None:
+        self.api_replays[replay_key] = copy.deepcopy(replay)
+
     def clear(self) -> None:
         self.intakes.clear()
         self.idempotency.clear()
         self.listing_metadata.clear()
         self.candidate_metadata.clear()
         self.promotions.clear()
+        self.assignments.clear()
+        self.slas.clear()
+        self.saved_views.clear()
+        self.api_replays.clear()
 
 
 class NetworkListingNotFound(RuntimeError):

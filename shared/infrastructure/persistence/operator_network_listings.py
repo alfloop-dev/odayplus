@@ -27,6 +27,10 @@ class DurableAssistedIntakeRepository:
     _LISTING_META = "operator.listing_metadata"
     _CANDIDATE_META = "operator.candidate_metadata"
     _PROMOTIONS = "operator.promotions"
+    _ASSIGNMENTS = "operator.intake_assignments"
+    _SLAS = "operator.intake_slas"
+    _SAVED_VIEWS = "operator.intake_saved_views"
+    _API_REPLAYS = "operator.intake_api_replays"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -64,6 +68,44 @@ class DurableAssistedIntakeRepository:
     def list_promotions(self) -> list[dict[str, Any]]:
         return self._store.list_all(self._PROMOTIONS)
 
+    def get_assignment(self, assignment_id: str) -> dict[str, Any] | None:
+        return self._store.get(self._ASSIGNMENTS, assignment_id)
+
+    def save_assignment(self, assignment: dict[str, Any]) -> None:
+        self._store.put(
+            self._ASSIGNMENTS,
+            assignment["assignment_id"],
+            assignment,
+        )
+
+    def list_assignments(self) -> list[dict[str, Any]]:
+        return self._store.list_all(self._ASSIGNMENTS)
+
+    def get_sla(self, sla_instance_id: str) -> dict[str, Any] | None:
+        return self._store.get(self._SLAS, sla_instance_id)
+
+    def save_sla(self, sla: dict[str, Any]) -> None:
+        self._store.put(self._SLAS, sla["sla_instance_id"], sla)
+
+    def list_slas(self) -> list[dict[str, Any]]:
+        return self._store.list_all(self._SLAS)
+
+    def save_saved_view(self, saved_view: dict[str, Any]) -> None:
+        self._store.put(
+            self._SAVED_VIEWS,
+            saved_view["saved_view_id"],
+            saved_view,
+        )
+
+    def list_saved_views(self) -> list[dict[str, Any]]:
+        return self._store.list_all(self._SAVED_VIEWS)
+
+    def get_api_replay(self, replay_key: str) -> dict[str, Any] | None:
+        return self._store.get(self._API_REPLAYS, replay_key)
+
+    def save_api_replay(self, replay_key: str, replay: dict[str, Any]) -> None:
+        self._store.put(self._API_REPLAYS, replay_key, replay)
+
     def clear(self) -> None:
         for collection in (
             self._INTAKES,
@@ -71,5 +113,9 @@ class DurableAssistedIntakeRepository:
             self._LISTING_META,
             self._CANDIDATE_META,
             self._PROMOTIONS,
+            self._ASSIGNMENTS,
+            self._SLAS,
+            self._SAVED_VIEWS,
+            self._API_REPLAYS,
         ):
             self._store.delete_collection(collection)

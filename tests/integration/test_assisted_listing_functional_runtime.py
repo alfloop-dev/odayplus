@@ -741,6 +741,152 @@ def test_canonical_inbox_filters_saved_views_bootstrap_and_claim_contract() -> N
     assert detail.json()["lifecycle"]["assignment_history"][-1]["action"] == "CLAIM"
 
 
+def test_assignment_sla_saved_view_and_replay_survive_api_restart(tmp_path) -> None:
+    db_path = str(tmp_path / "lifecycle-restart.sqlite3")
+    headers = {
+        **_api_headers(REVIEWER, reviewer=True),
+        "x-operator-role": "expansion-manager",
+    }
+    assignment_key = f"restart-assign-{uuid4()}"
+    assignment_request = {
+        "owner_subject_id": REVIEWER,
+        "owner_role": "expansion-manager",
+        "queue_id": "intake-review",
+        "due_at": "2026-07-24T16:00:00Z",
+        "reason": "Persist assignment and SLA across an API restart.",
+    }
+
+    first_bundle = _durable_bundle(db_path)
+    first_client = TestClient(create_app(persistence=first_bundle))
+    submitted = first_client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://unregistered.example/listing/restart-contract",
+            "scope": {"tenant_id": TENANT_ID},
+        },
+        headers={
+            **headers,
+            "Idempotency-Key": f"restart-submit-{uuid4()}",
+        },
+    ).json()
+    assigned = first_client.put(
+        f"/api/v1/intakes/{submitted['intake_id']}/assignment",
+        json=assignment_request,
+        headers={
+            **headers,
+            "Idempotency-Key": assignment_key,
+            "If-Match": f'W/"{submitted["version"]}"',
+        },
+    )
+    assert assigned.status_code == 200, assigned.text
+    assignment = assigned.json()
+    saved = first_client.post(
+        "/api/v1/saved-views",
+        json={
+            "name": "跨重啟待審",
+            "query": {"assignment_status": "ASSIGNED"},
+            "resource": "intake",
+            "visibility": "PRIVATE",
+        },
+        headers={
+            **headers,
+            "Idempotency-Key": f"restart-view-{uuid4()}",
+        },
+    )
+    assert saved.status_code == 201, saved.text
+    saved_view_id = saved.json()["saved_view_id"]
+    first_detail = first_client.get(
+        f"/api/v1/intakes/{submitted['intake_id']}",
+        headers=headers,
+    ).json()
+    sla_instance_id = first_detail["lifecycle"]["sla"]["sla_instance_id"]
+    first_history_size = len(first_detail["lifecycle"]["assignment_history"])
+    first_bundle.engine.close()
+
+    second_bundle = _durable_bundle(db_path)
+    second_client = TestClient(create_app(persistence=second_bundle))
+    replayed = second_client.put(
+        f"/api/v1/intakes/{submitted['intake_id']}/assignment",
+        json=assignment_request,
+        headers={
+            **headers,
+            "Idempotency-Key": assignment_key,
+            "If-Match": f'W/"{submitted["version"]}"',
+        },
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.headers["Idempotency-Replayed"] == "true"
+    assert replayed.json() == assignment
+
+    listed_views = second_client.get("/api/v1/saved-views", headers=headers)
+    assert listed_views.status_code == 200
+    assert saved_view_id in {
+        view["saved_view_id"] for view in listed_views.json()
+    }
+    restarted_detail = second_client.get(
+        f"/api/v1/intakes/{submitted['intake_id']}",
+        headers=headers,
+    ).json()
+    assert restarted_detail["lifecycle"]["assignment"]["status"] == "ASSIGNED"
+    assert restarted_detail["lifecycle"]["sla"]["state"] in {
+        "ON_TRACK",
+        "DUE_SOON",
+        "OVERDUE",
+    }
+    assert (
+        len(restarted_detail["lifecycle"]["assignment_history"])
+        == first_history_size
+    )
+
+    claimed = second_client.post(
+        f"/api/v1/assignments/{assignment['assignment_id']}/actions/claim",
+        json={"reason": "Claim after restart."},
+        headers={
+            **headers,
+            "Idempotency-Key": f"restart-claim-{uuid4()}",
+            "If-Match": f'W/"{assignment["version"]}"',
+        },
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["status"] == "CLAIMED"
+    paused = second_client.post(
+        f"/api/v1/sla-instances/{sla_instance_id}/actions/pause",
+        json={
+            "reason": "Pause while waiting for corrected source evidence.",
+            "expected_resume_at": "2026-07-24T10:00:00Z",
+        },
+        headers={
+            **headers,
+            "Idempotency-Key": f"restart-pause-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["state"] == "PAUSED"
+    second_bundle.engine.close()
+
+    third_bundle = _durable_bundle(db_path)
+    third_client = TestClient(create_app(persistence=third_bundle))
+    final_detail = third_client.get(
+        f"/api/v1/intakes/{submitted['intake_id']}",
+        headers=headers,
+    ).json()
+    assert final_detail["lifecycle"]["assignment"]["status"] == "CLAIMED"
+    assert final_detail["lifecycle"]["sla"]["state"] == "PAUSED"
+    resumed = third_client.post(
+        f"/api/v1/sla-instances/{sla_instance_id}/actions/resume",
+        json={"reason": "Corrected evidence is available."},
+        headers={
+            **headers,
+            "Idempotency-Key": f"restart-resume-{uuid4()}",
+            "If-Match": f'W/"{paused.json()["version"]}"',
+        },
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["state"] in {"ON_TRACK", "DUE_SOON", "OVERDUE"}
+    third_bundle.engine.close()
+
+
 def test_queued_http_runtime_persists_legal_history_and_revision_readback(
     tmp_path,
 ) -> None:
