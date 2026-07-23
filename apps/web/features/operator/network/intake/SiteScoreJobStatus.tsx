@@ -83,6 +83,7 @@ export type SiteScoreJobStatusProps = {
   /** Authorization gate for replay — absent permission removes the control. */
   canReplay?: boolean;
   canCancel?: boolean;
+  deniedReason?: string | null;
   busy?: boolean;
   onReplay?: (input: ScoreReplayInput) => Promise<JobReceipt | void> | void;
   onCancel?: (input: { jobId: string; ifMatch: string }) => Promise<JobReceipt | void> | void;
@@ -96,6 +97,7 @@ export function SiteScoreJobStatus({
   candidateSiteId = null,
   canReplay = false,
   canCancel = false,
+  deniedReason = null,
   busy = false,
   onReplay,
   onCancel,
@@ -307,6 +309,7 @@ export function SiteScoreJobStatus({
       {replayable && !canReplay ? (
         <div className={styles.noteBox} data-testid="sitescore-replay-denied">
           重放評分需要展店主管或資料管理員授權（403 ROLE_DENIED 會被拒絕）。
+          {deniedReason ? <> 後端拒絕代碼：<code>{deniedReason}</code></> : null}
         </div>
       ) : null}
 

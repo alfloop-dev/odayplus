@@ -48,9 +48,14 @@ import {
   newCorrelationId,
   type IntakeApiError,
 } from "./intakeClient";
-import { canPerform, canView } from "./intakePermissions";
+import {
+  evaluateIntakePermission,
+  type IntakePermissionAction,
+  type IntakePermissionContext,
+} from "./intakePermissions";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
+import type { IntakeOperatorSession } from "./intakeOperatorSession";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
 //
@@ -84,14 +89,83 @@ export function AssistedIntakeDetailPage({
 }
 
 export function AssistedIntakeSection({
+  operatorSession,
   activeRoleId,
   activeSubjectId,
   detailIntakeId,
   selectedHeatZoneId,
 }: {
-  activeRoleId: OperatorRoleId;
+  operatorSession?: IntakeOperatorSession;
+  activeRoleId?: OperatorRoleId;
   activeSubjectId?: string;
   detailIntakeId?: string;
+  selectedHeatZoneId?: string;
+}) {
+  if (operatorSession && operatorSession.status !== "ready") {
+    const reason =
+      operatorSession.denialReasonCode ?? "AUTHORIZATION_CONTEXT_UNAVAILABLE";
+    return (
+      <section
+        aria-label="Assisted Listing Intake 權限狀態"
+        className={styles.queue}
+        data-testid="intake-authoritative-session-denied"
+      >
+        <div className={styles.warnNote} role="status">
+          無法取得可驗證的操作權限，收件功能已切換為唯讀並停止載入。
+          <br />
+          後端拒絕代碼：<code>{reason}</code>
+          {operatorSession.maskingReasonCode ? (
+            <>
+              <br />
+              欄位遮罩代碼：<code>{operatorSession.maskingReasonCode}</code>
+            </>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
+  const resolvedRoleId = operatorSession?.roleId ?? activeRoleId ?? null;
+  const resolvedSubjectId = operatorSession?.subjectId ?? activeSubjectId ?? null;
+  if (!resolvedRoleId || !resolvedSubjectId) {
+    return (
+      <section
+        aria-label="Assisted Listing Intake 權限狀態"
+        className={styles.queue}
+        data-testid="intake-authoritative-session-unavailable"
+      >
+        <div className={styles.warnNote} role="status">
+          尚未載入 authoritative operator session；所有 Assisted Listing Intake
+          寫入動作均已停用。
+          <br />
+          後端拒絕代碼：<code>AUTHORIZATION_CONTEXT_UNAVAILABLE</code>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <AuthorizedAssistedIntakeSection
+      activeRoleId={resolvedRoleId}
+      activeSubjectId={resolvedSubjectId}
+      detailIntakeId={detailIntakeId}
+      operatorSession={operatorSession}
+      selectedHeatZoneId={selectedHeatZoneId}
+    />
+  );
+}
+
+function AuthorizedAssistedIntakeSection({
+  activeRoleId,
+  activeSubjectId,
+  detailIntakeId,
+  operatorSession,
+  selectedHeatZoneId,
+}: {
+  activeRoleId: OperatorRoleId;
+  activeSubjectId: string;
+  detailIntakeId?: string;
+  operatorSession?: IntakeOperatorSession;
   selectedHeatZoneId?: string;
 }) {
   const router = useRouter();
@@ -158,8 +232,108 @@ export function AssistedIntakeSection({
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
-    () => buildIntakeClient(activeRoleId, activeSubjectId),
-    [activeRoleId, activeSubjectId],
+    () =>
+      buildIntakeClient(activeRoleId, activeSubjectId, {
+        authoritative: Boolean(operatorSession),
+        tenantId: operatorSession?.tenantId,
+        systemRoles: operatorSession?.systemRoles,
+      }),
+    [
+      activeRoleId,
+      activeSubjectId,
+      operatorSession,
+    ],
+  );
+  const subjectId = operatorSubjectId(activeRoleId, activeSubjectId);
+  const rootViewPermissionContext = useMemo<IntakePermissionContext>(
+    () => ({
+      resourceInScope: operatorSession
+        ? operatorSession.scope?.resourceInScope
+        : true,
+      serverAllowed: operatorSession
+        ? operatorSession.allowedActions.includes("view")
+        : undefined,
+      serverReasonCode: operatorSession
+        ? (
+            operatorSession.denialReasonByAction.view ??
+            operatorSession.denialReasonCode ??
+            (operatorSession.allowedActions.includes("view")
+              ? null
+              : "ROLE_DENIED")
+          ) as IntakePermissionContext["serverReasonCode"]
+        : undefined,
+    }),
+    [operatorSession],
+  );
+
+  const permissionContextFor = useCallback(
+    (
+      record: AssistedIntake | null | undefined,
+      action: IntakePermissionAction,
+      overrides: Partial<IntakePermissionContext> = {},
+    ): IntakePermissionContext => {
+      const authoritative = Boolean(operatorSession);
+      const recordMasked = Object.values(record?.parsedFields ?? {}).some(
+        (field) => field.masked === true,
+      );
+      const sourceIds = operatorSession?.scope?.sourceIds ?? [];
+      const sourceInScope = record
+        ? sourceIds.length > 0
+          ? sourceIds.includes(record.sourceId)
+          : operatorSession?.scope?.ownershipMode !== "SOURCE_DATA"
+            ? operatorSession?.scope?.resourceInScope
+            : undefined
+        : operatorSession?.scope?.resourceInScope;
+
+      return {
+        resourceInScope: authoritative
+          ? operatorSession?.scope?.resourceInScope
+          : true,
+        isOwner: record
+          ? record.owner === subjectId || record.submitter === subjectId
+          : authoritative
+            ? undefined
+            : true,
+        isAssigned: record
+          ? assignmentReceipts[record.id]?.owner_subject_id === subjectId
+          : authoritative
+            ? undefined
+            : true,
+        sourceInScope: authoritative ? sourceInScope : true,
+        purposeDeclared: authoritative
+          ? operatorSession?.purposeDeclared
+          : true,
+        fieldMasked: recordMasked || Boolean(operatorSession?.maskingReasonCode),
+        fieldClassification: record ? "INTERNAL" : undefined,
+        workflowState: record?.stage ?? null,
+        proposerSubjectId:
+          record && promotionReceipts[record.id]
+            ? promotionReceipts[record.id].proposer_subject_id
+            : record?.submitter,
+        reviewerSubjectId: subjectId,
+        serverAllowed: authoritative
+          ? operatorSession?.allowedActions.includes(action)
+          : undefined,
+        serverReasonCode: authoritative
+          ? (
+              operatorSession?.denialReasonByAction[action] ??
+              operatorSession?.denialReasonCode ??
+              (operatorSession?.allowedActions.includes(action)
+                ? null
+                : "ROLE_DENIED")
+            ) as IntakePermissionContext["serverReasonCode"]
+          : undefined,
+        maskingReasonCode: operatorSession?.maskingReasonCode,
+        ...overrides,
+      };
+    },
+    [
+      activeRoleId,
+      assignmentReceipts,
+      operatorSession,
+      promotionReceipts,
+      subjectId,
+    ],
   );
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
@@ -170,7 +344,15 @@ export function AssistedIntakeSection({
   const refresh = useCallback(async () => {
     // A role without listing:VIEW would get a guaranteed 403. That is a
     // permission state, not a failure, so don't issue the request at all.
-    if (!canView(activeRoleId)) return;
+    if (
+      !evaluateIntakePermission(
+        "view",
+        activeRoleId,
+        rootViewPermissionContext,
+      ).allowed
+    ) {
+      return;
+    }
     if (!client) {
       setLoadState("error");
       setLoadError(missingClientError());
@@ -195,7 +377,14 @@ export function AssistedIntakeSection({
       setLoadState("error");
       setLoadError(result.error);
     }
-  }, [activeRoleId, client, detailIntakeId, inboxQuery, selectedHeatZoneId]);
+  }, [
+    activeRoleId,
+    client,
+    detailIntakeId,
+    inboxQuery,
+    rootViewPermissionContext,
+    selectedHeatZoneId,
+  ]);
 
   useEffect(() => {
     void refresh();
@@ -908,7 +1097,67 @@ export function AssistedIntakeSection({
     : null;
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
-  const canPromote = canPerform("promote", activeRoleId);
+  const requestPromotionDecision = evaluateIntakePermission(
+    "requestPromotion",
+    activeRoleId,
+    permissionContextFor(selected, "requestPromotion", {
+      riskLevel: "HIGH",
+    }),
+  );
+  const reviewPromotionDecision = evaluateIntakePermission(
+    "reviewPromotion",
+    activeRoleId,
+    {
+      ...permissionContextFor(selected, "reviewPromotion", {
+        riskLevel: "CRITICAL",
+      }),
+      riskLevel: "CRITICAL",
+      proposerSubjectId:
+        selectedPromotion?.proposer_subject_id ?? selected?.submitter ?? null,
+      reviewerSubjectId: subjectId,
+    },
+  );
+  const replayScoreDecision = evaluateIntakePermission(
+    "replayScore",
+    activeRoleId,
+    {
+      ...permissionContextFor(selected, "replayScore", {
+        riskLevel: "HIGH",
+      }),
+    },
+  );
+  const executePromotionDecision = evaluateIntakePermission(
+    "executePromotion",
+    activeRoleId,
+    permissionContextFor(selected, "executePromotion", {
+      riskLevel: "CRITICAL",
+      proposerSubjectId:
+        selectedPromotion?.proposer_subject_id ?? selected?.submitter ?? null,
+      reviewerSubjectId: subjectId,
+    }),
+  );
+  const correctionDecision = evaluateIntakePermission(
+    "correct",
+    activeRoleId,
+    permissionContextFor(selected, "correct", {
+      fieldClassification: "INTERNAL",
+    }),
+  );
+  const intakeDecision = evaluateIntakePermission(
+    "decide",
+    activeRoleId,
+    permissionContextFor(selected, "decide", {
+      fieldClassification: "INTERNAL",
+      riskLevel: "HIGH",
+    }),
+  );
+  const retryDecision = evaluateIntakePermission(
+    "retry",
+    activeRoleId,
+    permissionContextFor(selected, "retry", {
+      fieldClassification: "INTERNAL",
+    }),
+  );
   // The promotion section renders on the READY branch of the real detail
   // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
   // every later saga state so the receipt and score job remain reachable.
@@ -920,7 +1169,6 @@ export function AssistedIntakeSection({
     selected &&
     promotionHydration.intakeId === selected.id &&
     promotionHydration.state === "ready";
-
   const detailSection = normalizeIntakeDetailSection(
     urlState.activeSection,
     actionError ? "error" : "timeline",
@@ -1023,7 +1271,13 @@ export function AssistedIntakeSection({
   ) : null;
 
   if (isDurableDetailPage) {
-    if (!canView(activeRoleId)) {
+    if (
+      !evaluateIntakePermission(
+        "view",
+        activeRoleId,
+        permissionContextFor(selected, "view"),
+      ).allowed
+    ) {
       return (
         <DurableRouteState
           code="ODP-INTAKE-FORBIDDEN"
@@ -1072,13 +1326,14 @@ export function AssistedIntakeSection({
           activeTab={detailSection as IntakeDetailTab}
           assignmentReceipt={assignmentReceipts[selected.id]}
           busy={busy}
-          canCorrect={canPerform("correct", activeRoleId)}
-          canDecide={canPerform("decide", activeRoleId)}
-          canReplay={canPerform("retry", activeRoleId)}
-          canReplayScore={canPromote}
-          canRequestPromotion={canPromote}
-          canReviewPromotion={canPromote}
-          canRetry={canPerform("retry", activeRoleId)}
+          canCorrect={correctionDecision.allowed}
+          canDecide={intakeDecision.allowed}
+          canReplay={retryDecision.allowed}
+          canReplayScore={replayScoreDecision.allowed}
+          canRequestPromotion={requestPromotionDecision.allowed}
+          canReviewPromotion={reviewPromotionDecision.allowed}
+          canExecutePromotion={executePromotionDecision.allowed}
+          canRetry={retryDecision.allowed}
           compareTargetId={compareTargetId}
           currentOperator={currentOperator}
           error={actionError}
@@ -1112,8 +1367,12 @@ export function AssistedIntakeSection({
           promotion={selectedPromotion}
           promotionBusy={promotionBusy}
           promotionError={promotionError}
+          promotionExecuteDeniedReason={executePromotionDecision.reasonCode}
           promotionHydrated={Boolean(promotionIsHydrated && !promotionIsHydrating)}
           promotionIdempotencyReplayed={promotionReplayed}
+          promotionReplayDeniedReason={replayScoreDecision.reasonCode}
+          promotionRequestDeniedReason={requestPromotionDecision.reasonCode}
+          promotionReviewDeniedReason={reviewPromotionDecision.reasonCode}
           record={selected}
           scoreJob={selectedScoreJob}
           slaReceipt={slaReceipts[selected.id]}
@@ -1143,6 +1402,25 @@ export function AssistedIntakeSection({
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
         onQueryChange={setInboxQuery}
         pageData={pageData}
+        permissionContext={permissionContextFor(null, "view", {
+          fieldClassification: "INTERNAL",
+          workflowState: "SUBMITTED",
+        })}
+        submitPermissionContext={permissionContextFor(null, "submit", {
+          fieldClassification: "INTERNAL",
+          workflowState: "SUBMITTED",
+        })}
+        permissionContextForRecord={(record, action) =>
+          permissionContextFor(record, action, {
+            fieldClassification: "INTERNAL",
+            riskLevel:
+              action === "decide" ||
+              action === "reviewIdentity" ||
+              action === "reviewPromotion"
+                ? "HIGH"
+                : undefined,
+          })
+        }
         records={records}
         selectedHeatZoneId={selectedHeatZoneId}
       />
@@ -1156,9 +1434,9 @@ export function AssistedIntakeSection({
       {dialog === "detail" && selected ? (
         <IntakeDetailDialog
           busy={busy}
-          canCorrect={canPerform("correct", activeRoleId)}
-          canDecide={canPerform("decide", activeRoleId)}
-          canRetry={canPerform("retry", activeRoleId)}
+          canCorrect={correctionDecision.allowed}
+          canDecide={intakeDecision.allowed}
+          canRetry={retryDecision.allowed}
           error={actionError}
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
@@ -1167,6 +1445,11 @@ export function AssistedIntakeSection({
           onOpenFullPage={() => openFullDetail(selected.id)}
           onRetry={handleRetry}
           previewOnly
+          permissionDenials={{
+            correct: correctionDecision.reasonCode,
+            decide: intakeDecision.reasonCode,
+            retry: retryDecision.reasonCode,
+          }}
           record={selected}
           assignmentReceipt={assignmentReceipts[selected.id]}
           slaReceipt={slaReceipts[selected.id]}

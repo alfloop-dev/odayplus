@@ -24,11 +24,13 @@ import {
   stageTone,
 } from "./intakeTypes";
 import {
-  canPerform,
-  canView,
+  evaluateIntakePermission,
   isReadOnly,
   NO_ACCESS_NOTE,
   READ_ONLY_NOTE,
+  type IntakePermissionAction,
+  type IntakePermissionContext,
+  type IntakePermissionDecision,
 } from "./intakePermissions";
 import type {
   AuthoritativeInboxError,
@@ -66,6 +68,12 @@ type ListingInboxIntakeViewProps = {
   onClaimCompleted?: (intakeId: string, receipt: AssignmentReceipt) => void;
   pageData?: IntakeInboxPageContract;
   onQueryChange?: (query: IntakeInboxQueryContract) => void;
+  permissionContext: IntakePermissionContext;
+  submitPermissionContext: IntakePermissionContext;
+  permissionContextForRecord: (
+    record: InboxIntakeRecord,
+    action: IntakePermissionAction,
+  ) => IntakePermissionContext;
 };
 
 const stageOptions = [
@@ -101,6 +109,9 @@ export function ListingInboxIntakeView({
   onClaimCompleted,
   pageData,
   onQueryChange,
+  permissionContext,
+  submitPermissionContext,
+  permissionContextForRecord,
 }: ListingInboxIntakeViewProps) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
@@ -119,11 +130,18 @@ export function ListingInboxIntakeView({
   recordsRef.current = records;
 
   const readOnly = isReadOnly(activeRoleId);
-  const permitted = canView(activeRoleId);
-  const canSubmit = canPerform("submit", activeRoleId);
-  const canRetry = canPerform("retry", activeRoleId);
-  const canClaim =
-    !readOnly && canPerform("decide", activeRoleId) && Boolean(onClaimIntake);
+  const viewDecision = evaluateIntakePermission(
+    "view",
+    activeRoleId,
+    permissionContext,
+  );
+  const submitDecision = evaluateIntakePermission(
+    "submit",
+    activeRoleId,
+    submitPermissionContext,
+  );
+  const permitted = viewDecision.allowed;
+  const canSubmit = submitDecision.allowed;
   const savedViewIds = useMemo(
     () => new Set((savedViews ?? []).map((view) => view.id)),
     [savedViews],
@@ -190,7 +208,12 @@ export function ListingInboxIntakeView({
     (savedViews === undefined || !savedViewIds.has(filters.savedView));
 
   async function claimIntake(record: InboxIntakeRecord) {
-    if (!onClaimIntake || !canClaim || claimingId) return;
+    const claimDecision = evaluateIntakePermission(
+      "assign",
+      activeRoleId,
+      permissionContextForRecord(record, "assign"),
+    );
+    if (!onClaimIntake || !claimDecision.allowed || readOnly || claimingId) return;
     setClaimingId(record.id);
     setClaimReceipt(null);
     setDirectActionError(null);
@@ -260,6 +283,12 @@ export function ListingInboxIntakeView({
           {READ_ONLY_NOTE}
         </div>
       ) : null}
+      {permissionContext.maskingReasonCode ? (
+        <div className={styles.warnNote} data-testid="intake-masking-reason" role="status">
+          部分欄位依 authoritative field policy 遮罩。後端遮罩代碼：
+          <code>{permissionContext.maskingReasonCode}</code>
+        </div>
+      ) : null}
 
       <header className={styles.queueHeader}>
         <div>
@@ -287,27 +316,37 @@ export function ListingInboxIntakeView({
               地圖
             </button>
           </div>
-          {canSubmit ? (
-            <button
-              className={styles.addButton}
-              data-testid="intake-add-button"
-              disabled={!addContextAvailable}
-              onClick={() => {
-                setSubmissionReceipt(null);
-                setIsAddDialogOpen(true);
-              }}
-              title={
-                addContextAvailable
-                  ? undefined
-                  : "authoritative tenant/scope/owner context unavailable"
-              }
-              type="button"
-            >
-              從網址新增物件
-            </button>
-          ) : null}
+          <button
+            aria-describedby={!canSubmit ? "intake-submit-denial" : undefined}
+            className={styles.addButton}
+            data-testid="intake-add-button"
+            disabled={!canSubmit || !addContextAvailable}
+            onClick={() => {
+              setSubmissionReceipt(null);
+              setIsAddDialogOpen(true);
+            }}
+            title={
+              canSubmit && !addContextAvailable
+                ? "authoritative tenant/scope/owner context unavailable"
+                : undefined
+            }
+            type="button"
+          >
+            從網址新增物件
+          </button>
         </div>
       </header>
+      {!canSubmit && submitDecision.reasonCode ? (
+        <div
+          className={styles.warnNote}
+          data-testid="intake-submit-denial"
+          id="intake-submit-denial"
+          role="status"
+        >
+          新增收件已停用。後端拒絕代碼：
+          <code>{submitDecision.reasonCode}</code>
+        </div>
+      ) : null}
 
       {!addContextAvailable && canSubmit ? (
         <div
@@ -498,11 +537,16 @@ export function ListingInboxIntakeView({
           <div className={styles.emptyState} data-testid="intake-inbox-empty">目前無符合條件的收件紀錄。</div>
         ) : (
           <IntakeTable
-            canClaim={canClaim}
-            canRetry={canRetry}
             claimingId={claimingId}
             claimedOwners={claimedOwners}
             filters={filters}
+            permissionFor={(record, action) =>
+              evaluateIntakePermission(
+                action,
+                activeRoleId,
+                permissionContextForRecord(record, action),
+              )
+            }
             onClaim={(record) => void claimIntake(record)}
             onPreview={onOpenDetail}
             onRetry={(record) => {
@@ -675,11 +719,10 @@ function toApiTimestamp(value: string): string | undefined {
 }
 
 function IntakeTable({
-  canClaim,
-  canRetry,
   claimingId,
   claimedOwners,
   filters,
+  permissionFor,
   onClaim,
   onPreview,
   onRetry,
@@ -688,11 +731,13 @@ function IntakeTable({
   toggleSort,
   updateFilters,
 }: {
-  canClaim: boolean;
-  canRetry: boolean;
   claimingId: string | null;
   claimedOwners: Record<string, string>;
   filters: IntakeInboxFilterState;
+  permissionFor: (
+    record: InboxIntakeRecord,
+    action: IntakePermissionAction,
+  ) => IntakePermissionDecision;
   onClaim: (record: InboxIntakeRecord) => void;
   onPreview?: (intakeId: string) => void;
   onRetry: (record: InboxIntakeRecord) => void;
@@ -730,6 +775,10 @@ function IntakeTable({
             const owner = claimedOwners[record.id] ?? record.owner;
             const retryable = record.stage === "FAILED" && record.failure?.retryable;
             const relatedListingId = authoritativeRelatedListingId(record);
+            const claimDecision = permissionFor(record, "assign");
+            const reviewDecision = permissionFor(record, "decide");
+            const retryDecision = permissionFor(record, "retry");
+            const correctionDecision = permissionFor(record, "correct");
             return (
               <tr
                 data-selected={record.id === filters.selectedIntakeId ? "true" : undefined}
@@ -788,19 +837,29 @@ function IntakeTable({
                 <td>
                   <div className={styles.intakeTableActions}>
                     <a className={styles.secondaryButton} data-testid={`intake-open-${record.id}`} href={intakeDetailHref(record.id)}>開啟</a>
-                    {canClaim && !owner ? (
+                    {claimDecision.allowed && !readOnly && !owner ? (
                       <button className={styles.secondaryButton} data-testid={`intake-claim-${record.id}`} disabled={Boolean(claimingId)} onClick={() => onClaim(record)} type="button">
                         {claimingId === record.id ? "認領中…" : "認領"}
                       </button>
                     ) : null}
-                    {!readOnly && record.stage === "NEEDS_REVIEW" ? (
+                    {reviewDecision.allowed && !readOnly && record.stage === "NEEDS_REVIEW" ? (
                       <a className={styles.primaryButton} data-testid={`intake-review-${record.id}`} href={intakeDetailHref(record.id, "section=identity&compare=true")}>覆核</a>
                     ) : null}
-                    {retryable && canRetry ? (
+                    {retryable && retryDecision.allowed ? (
                       <button className={styles.secondaryButton} data-testid={`intake-retry-${record.id}`} onClick={() => onRetry(record)} type="button">重試</button>
                     ) : null}
-                    {!readOnly && (record.stage === "AWAITING_ASSISTED_ENTRY" || record.stage === "NEEDS_REVIEW") ? (
+                    {correctionDecision.allowed && !readOnly && (record.stage === "AWAITING_ASSISTED_ENTRY" || record.stage === "NEEDS_REVIEW") ? (
                       <a className={styles.secondaryButton} data-testid={`intake-correction-${record.id}`} href={intakeDetailHref(record.id, "section=fields&action=correction")}>要求補正</a>
+                    ) : null}
+                    {!claimDecision.allowed && !owner && claimDecision.reasonCode ? (
+                      <span className={styles.rowMeta}>
+                        <code>{claimDecision.reasonCode}</code>
+                      </span>
+                    ) : null}
+                    {retryable && !retryDecision.allowed && retryDecision.reasonCode ? (
+                      <span className={styles.rowMeta}>
+                        <code>{retryDecision.reasonCode}</code>
+                      </span>
                     ) : null}
                   </div>
                 </td>

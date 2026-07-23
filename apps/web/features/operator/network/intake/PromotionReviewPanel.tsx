@@ -148,8 +148,13 @@ export type PromotionReviewPanelProps = {
   /** Role gates. Absent permission removes/disables the control (§8.7). */
   canRequest?: boolean;
   canReview?: boolean;
+  canExecute?: boolean;
   canReplayScore?: boolean;
   canCancelScore?: boolean;
+  requestDeniedReason?: string | null;
+  reviewDeniedReason?: string | null;
+  executeDeniedReason?: string | null;
+  replayDeniedReason?: string | null;
   busy?: boolean;
   error?: IntakeApiError | null;
   /** True when the server answered from a prior durable receipt. */
@@ -183,8 +188,13 @@ export function PromotionReviewPanel({
   targetFormatOptions = ["FMT-STANDARD-STORE", "FMT-MICRO-STORE", "FMT-SMART-VENDING"],
   canRequest = true,
   canReview = true,
+  canExecute = false,
   canReplayScore = false,
   canCancelScore = false,
+  requestDeniedReason = null,
+  reviewDeniedReason = null,
+  executeDeniedReason = null,
+  replayDeniedReason = null,
   busy = false,
   error = null,
   idempotencyReplayed = false,
@@ -284,6 +294,12 @@ export function PromotionReviewPanel({
     if (busy || !onReviewPromotion || !promotion || !reviewKey) return;
     if (isSelfReview) {
       setLocalError("提案者不得審查自己的晉升申請（SELF_REVIEW_DENIED）。");
+      return;
+    }
+    if (decision === "APPROVE" && !canExecute) {
+      setLocalError(
+        `審查者可駁回，但沒有執行 Candidate promotion 的權限（${executeDeniedReason ?? "ROLE_DENIED"}）。`,
+      );
       return;
     }
     if (reviewReason.trim().length < 3) {
@@ -664,6 +680,9 @@ export function PromotionReviewPanel({
           <div className={styles.noteBox} data-testid="promotion-request-denied">
             你目前的角色（{currentOperator.role}）無權提出晉升申請 — 需由負責此收件的
             展店人員提出。
+            {requestDeniedReason ? (
+              <> 後端拒絕代碼：<code>{requestDeniedReason}</code></>
+            ) : null}
           </div>
         )
       ) : null}
@@ -723,6 +742,9 @@ export function PromotionReviewPanel({
             <div className={styles.noteBox} data-testid="promotion-review-denied">
               你目前的角色（{currentOperator.role}）無審查權限 — 需要展店主管或選址審核
               角色（403 ROLE_DENIED 會被拒絕）。
+              {reviewDeniedReason ? (
+                <> 後端拒絕代碼：<code>{reviewDeniedReason}</code></>
+              ) : null}
             </div>
           ) : (
             <>
@@ -767,15 +789,26 @@ export function PromotionReviewPanel({
                   駁回申請（REJECT）
                 </button>
                 <button
+                  aria-describedby={!canExecute ? "promotion-execute-denied" : undefined}
                   className={styles.primaryButton}
                   data-testid="promotion-approve-btn"
-                  disabled={busy || !reviewAck || reviewReason.trim().length < 3}
+                  disabled={busy || !canExecute || !reviewAck || reviewReason.trim().length < 3}
                   onClick={() => handleReview("APPROVE")}
                   type="button"
                 >
                   {busy ? "提交中…（不做樂觀更新）" : "核准晉升（APPROVE）"}
                 </button>
               </div>
+              {!canExecute ? (
+                <div
+                  className={styles.noteBox}
+                  data-testid="promotion-execute-denied"
+                  id="promotion-execute-denied"
+                >
+                  審查與執行權限分離：你可以駁回，但不可執行 Candidate promotion。
+                  後端拒絕代碼：<code>{executeDeniedReason ?? "ROLE_DENIED"}</code>
+                </div>
+              ) : null}
             </>
           )}
         </div>
@@ -858,6 +891,7 @@ export function PromotionReviewPanel({
             candidateSiteId={candidateId}
             canCancel={canCancelScore}
             canReplay={canReplayScore}
+            deniedReason={replayDeniedReason}
             history={scoreJobHistory}
             job={scoreJob as JobLifecycleReceipt | null}
             onCancel={onCancelScore}

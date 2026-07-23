@@ -3,6 +3,12 @@ const OPERATOR_SUBJECT_STORAGE_KEY = "oday.operator.subject";
 const DEFAULT_OPERATOR_ROLE_ID = "ops-lead";
 const OPERATOR_TENANT_ID = "tenant-a";
 
+export type OperatorSecurityContext = {
+  authoritative?: boolean;
+  tenantId?: string | null;
+  systemRoles?: readonly string[] | null;
+};
+
 export const OPERATOR_API_ROLES: Readonly<Record<string, string>> = {
   "cs-lead": "operations_manager",
   csLead: "operations_manager",
@@ -51,13 +57,23 @@ export function operatorSubjectId(
 export function operatorSecurityHeaders(
   roleId?: string | null,
   subjectId?: string | null,
+  context: OperatorSecurityContext = {},
 ): Record<string, string> {
   const resolvedRoleId = currentOperatorRoleId(roleId);
+  const mappedRoles = OPERATOR_API_ROLES[resolvedRoleId] ?? "";
+  const resolvedRoles = context.authoritative
+    ? context.systemRoles?.join(",") ?? ""
+    : context.systemRoles
+      ? context.systemRoles.join(",")
+      : mappedRoles;
+  const resolvedTenantId = context.authoritative
+    ? context.tenantId?.trim() ?? ""
+    : context.tenantId?.trim() || OPERATOR_TENANT_ID;
 
   return {
     "X-Operator-Role": resolvedRoleId,
-    "X-Roles": OPERATOR_API_ROLES[resolvedRoleId] ?? "",
+    "X-Roles": resolvedRoles,
     "X-Subject-Id": operatorSubjectId(resolvedRoleId, subjectId),
-    "X-Tenant-Id": OPERATOR_TENANT_ID,
+    "X-Tenant-Id": resolvedTenantId,
   };
 }

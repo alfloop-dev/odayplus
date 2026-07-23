@@ -186,6 +186,26 @@ const pageData: IntakeInboxPageContract = {
   previousCursor: null,
 };
 
+const managerPermissionContext = {
+  resourceInScope: true,
+  isOwner: true,
+  isAssigned: true,
+  sourceInScope: true,
+  purposeDeclared: true,
+  fieldClassification: "INTERNAL" as const,
+  workflowState: "NEEDS_REVIEW",
+  riskLevel: "HIGH" as const,
+};
+
+const managerPermissionProps = {
+  permissionContext: managerPermissionContext,
+  submitPermissionContext: managerPermissionContext,
+  permissionContextForRecord: (record: InboxIntakeRecord) => ({
+    ...managerPermissionContext,
+    workflowState: record.stage,
+  }),
+};
+
 const bootstrapContext: IntakeInboxBootstrapContext = {
   tenantId: "tenant-authoritative",
   scopeLabel: "TW-NORTH / AREA-TAIPEI-01",
@@ -229,6 +249,7 @@ function renderView(
     onAddSubmit: vi.fn().mockResolvedValue(undefined),
     onOpenDetail: vi.fn(),
     pageData,
+    ...managerPermissionProps,
     records,
     savedViews,
     ...overrides,
@@ -542,6 +563,7 @@ describe("ListingInboxIntakeView", () => {
 
     rerender(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="loading"
@@ -553,6 +575,7 @@ describe("ListingInboxIntakeView", () => {
 
     rerender(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadError={{
@@ -598,6 +621,7 @@ describe("ListingInboxIntakeView", () => {
 
     rerender(
       <ListingInboxIntakeView
+        {...managerPermissionProps}
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"

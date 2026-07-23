@@ -96,12 +96,63 @@ async function selectRole(page: Page, role: (typeof ROLE_MATRIX)[number]) {
     request.url().includes("/api/v1/operator/bootstrap") &&
     request.headers()["x-operator-role"] === role.id,
   );
+  const bootstrapResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/v1/operator/bootstrap") &&
+    response.request().headers()["x-operator-role"] === role.id,
+  );
   await menu.getByRole("button", { name: new RegExp(role.label) }).click();
-  const request = await bootstrapRequest;
+  const [request, response] = await Promise.all([
+    bootstrapRequest,
+    bootstrapResponse,
+  ]);
 
   expect(request.headers()["x-roles"]).toBe(role.apiRoles);
   expect(request.headers()["x-subject-id"]).toBe("role-matrix-human");
+  expect(response.ok()).toBe(true);
+  const bootstrap = await response.json() as {
+    meta?: {
+      role?: { id?: string };
+      session?: {
+        subject_id?: string;
+        tenant_id?: string;
+        system_roles?: string[];
+        authorization_context?: {
+          allowed_actions?: string[];
+          resource_scope?: {
+            resource_in_scope?: boolean;
+            ownership_mode?: string;
+          };
+        };
+      };
+    };
+  };
+  expect(bootstrap.meta?.role?.id).toBe(role.id);
+  expect(bootstrap.meta?.session?.subject_id).toBe("role-matrix-human");
+  expect(bootstrap.meta?.session?.tenant_id).toBe("tenant-a");
+  expect(bootstrap.meta?.session?.system_roles).toEqual(
+    role.apiRoles.split(","),
+  );
+  expect(bootstrap.meta?.session?.authorization_context?.allowed_actions).toContain(
+    "view",
+  );
+  expect(
+    bootstrap.meta?.session?.authorization_context?.resource_scope
+      ?.resource_in_scope,
+  ).toBe(true);
 }
+
+test("durable route ignores role query and fails closed without authoritative session", async ({
+  page,
+}) => {
+  await page.goto("/w/expansion/listings?role=expansion-manager");
+
+  const denied = page.getByTestId("intake-authoritative-session-denied");
+  await expect(denied).toBeVisible();
+  await expect(denied).toContainText(
+    /AUTHORIZATION_CONTEXT_UNAVAILABLE|OPERATOR_BOOTSTRAP_UNAVAILABLE/,
+  );
+  await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
+});
 
 test("all six intake roles are selectable and preserve the current deep link", async ({ page }) => {
   await page.addInitScript(() => {

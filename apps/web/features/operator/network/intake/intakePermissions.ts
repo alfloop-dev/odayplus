@@ -17,6 +17,8 @@ export type IntakePermissionAction =
   | "reviewIdentity"
   | "requestPromotion"
   | "reviewPromotion"
+  | "executePromotion"
+  | "replayScore"
   | "reopenQuarantine"
   | "exportEvidence";
 
@@ -29,16 +31,26 @@ export type IntakeDenialReasonCode =
   | "DATA_CLASSIFICATION_DENIED"
   | "PURPOSE_REQUIRED"
   | "SECOND_ACTOR_REQUIRED"
-  | "SELF_REVIEW_DENIED";
+  | "SELF_REVIEW_DENIED"
+  | "AUTHORIZATION_CONTEXT_REQUIRED"
+  | "RESOURCE_SCOPE_DENIED"
+  | "WORKFLOW_STATE_DENIED";
 
 export type IntakePermissionContext = {
+  resourceInScope?: boolean;
   isOwner?: boolean;
   isAssigned?: boolean;
   sourceInScope?: boolean;
   purposeDeclared?: boolean;
   fieldMasked?: boolean;
+  fieldClassification?: "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "RESTRICTED";
+  workflowState?: string | null;
+  riskLevel?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   proposerSubjectId?: string | null;
   reviewerSubjectId?: string | null;
+  serverAllowed?: boolean;
+  serverReasonCode?: IntakeDenialReasonCode | null;
+  maskingReasonCode?: string | null;
 };
 
 export type IntakePermissionDecision = {
@@ -104,6 +116,8 @@ export const INTAKE_ROLE_PROFILES: Partial<Record<OperatorRoleId, IntakeRoleProf
       "reviewIdentity",
       "requestPromotion",
       "reviewPromotion",
+      "executePromotion",
+      "replayScore",
       "reopenQuarantine",
       "exportEvidence",
     ),
@@ -180,6 +194,34 @@ const NO_ACCESS_PROFILE = {
   purposeBound: false,
 };
 
+const MUTATION_ACTIONS = new Set<IntakePermissionAction>([
+  "submit",
+  "correct",
+  "decide",
+  "retry",
+  "promote",
+  "assign",
+  "proposeIdentity",
+  "reviewIdentity",
+  "requestPromotion",
+  "reviewPromotion",
+  "executePromotion",
+  "replayScore",
+  "reopenQuarantine",
+  "exportEvidence",
+]);
+
+const HIGH_RISK_ACTIONS = new Set<IntakePermissionAction>([
+  "decide",
+  "promote",
+  "reviewIdentity",
+  "reviewPromotion",
+  "executePromotion",
+  "replayScore",
+  "reopenQuarantine",
+  "exportEvidence",
+]);
+
 export function getIntakeRoleProfile(roleId: OperatorRoleId): IntakeRoleProfile | null {
   return INTAKE_ROLE_PROFILES[roleId] ?? null;
 }
@@ -207,21 +249,71 @@ export function evaluateIntakePermission(
   const profile = getIntakeRoleProfile(roleId);
   if (!profile || !profile.actions.has(action)) return denied(profile, "ROLE_DENIED");
 
+  if (context.serverAllowed === false) {
+    return denied(profile, context.serverReasonCode ?? "ROLE_DENIED");
+  }
+
+  if (context.resourceInScope === false) {
+    return denied(profile, "RESOURCE_SCOPE_DENIED");
+  }
+
+  if (MUTATION_ACTIONS.has(action) && context.resourceInScope !== true) {
+    return denied(profile, "AUTHORIZATION_CONTEXT_REQUIRED");
+  }
+
+  if (
+    MUTATION_ACTIONS.has(action) &&
+    action !== "submit" &&
+    !context.workflowState
+  ) {
+    return denied(profile, "AUTHORIZATION_CONTEXT_REQUIRED");
+  }
+
+  if (context.workflowState === "CANCELLED" && MUTATION_ACTIONS.has(action)) {
+    return denied(profile, "WORKFLOW_STATE_DENIED");
+  }
+
   if (
     profile.mode === "own-assigned" &&
-    (context.isOwner !== undefined || context.isAssigned !== undefined) &&
+    MUTATION_ACTIONS.has(action) &&
     context.isOwner !== true &&
     context.isAssigned !== true
   ) {
     return denied(profile, "OWNERSHIP_REQUIRED");
   }
 
-  if (profile.mode === "source-data" && context.sourceInScope === false) {
-    return denied(profile, "SOURCE_SCOPE_DENIED");
+  if (
+    profile.mode === "source-data" &&
+    MUTATION_ACTIONS.has(action) &&
+    context.sourceInScope !== true
+  ) {
+    return denied(
+      profile,
+      context.sourceInScope === false
+        ? "SOURCE_SCOPE_DENIED"
+        : "AUTHORIZATION_CONTEXT_REQUIRED",
+    );
   }
 
-  if (context.fieldMasked && action !== "view" && action !== "viewEvidence") {
-    return denied(profile, "DATA_CLASSIFICATION_DENIED");
+  if (context.fieldMasked) {
+    return denied(
+      profile,
+      (context.maskingReasonCode as IntakeDenialReasonCode | null) ?? "FIELD_MASKED",
+    );
+  }
+
+  if (
+    (action === "correct" || action === "viewRestrictedEvidence" || action === "exportEvidence") &&
+    !context.fieldClassification
+  ) {
+    return denied(profile, "AUTHORIZATION_CONTEXT_REQUIRED");
+  }
+
+  if (
+    context.fieldClassification === "RESTRICTED" &&
+    context.purposeDeclared !== true
+  ) {
+    return denied(profile, "PURPOSE_REQUIRED");
   }
 
   if (
@@ -242,6 +334,10 @@ export function evaluateIntakePermission(
     }
   }
 
+  if (HIGH_RISK_ACTIONS.has(action) && !context.riskLevel) {
+    return denied(profile, "AUTHORIZATION_CONTEXT_REQUIRED");
+  }
+
   return {
     allowed: true,
     reasonCode: null,
@@ -253,43 +349,57 @@ export function evaluateIntakePermission(
   };
 }
 
-export function canPerform(action: IntakeAction, roleId: OperatorRoleId): boolean {
-  return evaluateIntakePermission(action, roleId).allowed;
+export function canPerform(
+  action: IntakeAction,
+  roleId: OperatorRoleId,
+  context: IntakePermissionContext,
+): boolean {
+  return evaluateIntakePermission(action, roleId, context).allowed;
 }
 
 export function canView(roleId: OperatorRoleId): boolean {
-  return canPerform("view", roleId);
+  return evaluateIntakePermission("view", roleId).allowed;
 }
 
 export function isReadOnly(roleId: OperatorRoleId): boolean {
   return getIntakeRoleProfile(roleId)?.readOnly ?? false;
 }
 
-export function canProposeIdentity(roleId: OperatorRoleId): boolean {
-  return evaluateIntakePermission("proposeIdentity", roleId).allowed;
+export function canProposeIdentity(
+  roleId: OperatorRoleId,
+  context: IntakePermissionContext,
+): boolean {
+  return evaluateIntakePermission("proposeIdentity", roleId, context).allowed;
 }
 
 export function canReviewIdentity(
   roleId: OperatorRoleId,
   proposerSubjectId: string | null | undefined,
   reviewerSubjectId: string | null | undefined,
+  context: IntakePermissionContext,
 ): IntakePermissionDecision {
   return evaluateIntakePermission("reviewIdentity", roleId, {
+    ...context,
     proposerSubjectId,
     reviewerSubjectId,
   });
 }
 
-export function canRequestPromotion(roleId: OperatorRoleId): boolean {
-  return evaluateIntakePermission("requestPromotion", roleId).allowed;
+export function canRequestPromotion(
+  roleId: OperatorRoleId,
+  context: IntakePermissionContext,
+): boolean {
+  return evaluateIntakePermission("requestPromotion", roleId, context).allowed;
 }
 
 export function canReviewPromotion(
   roleId: OperatorRoleId,
   proposerSubjectId: string | null | undefined,
   reviewerSubjectId: string | null | undefined,
+  context: IntakePermissionContext,
 ): IntakePermissionDecision {
   return evaluateIntakePermission("reviewPromotion", roleId, {
+    ...context,
     proposerSubjectId,
     reviewerSubjectId,
   });

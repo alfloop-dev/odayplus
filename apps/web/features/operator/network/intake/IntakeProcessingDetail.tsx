@@ -106,7 +106,12 @@ export type IntakeProcessingDetailProps = {
   promotionIdempotencyReplayed?: boolean;
   canRequestPromotion?: boolean;
   canReviewPromotion?: boolean;
+  canExecutePromotion?: boolean;
   canReplayScore?: boolean;
+  promotionRequestDeniedReason?: string | null;
+  promotionReviewDeniedReason?: string | null;
+  promotionExecuteDeniedReason?: string | null;
+  promotionReplayDeniedReason?: string | null;
   onRequestPromotion?: (input: PromotionRequestInput) => Promise<PromotionDecisionReceipt | void> | void;
   onReviewPromotion?: (input: PromotionReviewInput) => Promise<PromotionDecisionReceipt | void> | void;
   onReplayScore?: (input: ScoreReplayInput) => Promise<JobReceipt | void> | void;
@@ -161,7 +166,12 @@ export function IntakeProcessingDetail({
   promotionIdempotencyReplayed = false,
   canRequestPromotion = false,
   canReviewPromotion = false,
+  canExecutePromotion = false,
   canReplayScore = false,
+  promotionRequestDeniedReason = null,
+  promotionReviewDeniedReason = null,
+  promotionExecuteDeniedReason = null,
+  promotionReplayDeniedReason = null,
   onRequestPromotion,
   onReviewPromotion,
   onReplayScore,
@@ -574,6 +584,7 @@ export function IntakeProcessingDetail({
             canReplayScore={canReplayScore}
             canRequest={canRequestPromotion}
             canReview={canReviewPromotion}
+            canExecute={canExecutePromotion}
             currentOperator={currentOperator}
             error={promotionError}
             gateSnapshotSha256={gateSnapshotSha256 ?? ""}
@@ -585,6 +596,10 @@ export function IntakeProcessingDetail({
             onReviewPromotion={onReviewPromotion}
             promotion={promotion}
             record={record}
+            replayDeniedReason={promotionReplayDeniedReason}
+            requestDeniedReason={promotionRequestDeniedReason}
+            reviewDeniedReason={promotionReviewDeniedReason}
+            executeDeniedReason={promotionExecuteDeniedReason}
             scoreJob={scoreJob}
           />
         )}
