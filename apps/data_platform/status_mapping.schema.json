@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oday.plus/contracts/data-platform/status-mapping.schema.json",
+  "title": "ODay Plus owner-approved source mapping contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "approved_by", "approved_at", "mappings"],
+  "properties": {
+    "version": {"type": "string", "minLength": 1},
+    "approved_by": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "trade_paid_amount_rule": {
+      "type": ["string", "null"],
+      "enum": [null, "gross_when_succeeded_zero_otherwise"]
+    },
+    "mappings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transaction": {"$ref": "#/$defs/transactionStatusMap"},
+        "trade": {"$ref": "#/$defs/transactionStatusMap"},
+        "merchant_operation": {"$ref": "#/$defs/merchantOperationMap"},
+        "place_operation": {"$ref": "#/$defs/placeOperationMap"},
+        "place_type": {"$ref": "#/$defs/nonEmptyStringMap"},
+        "device_connection": {"$ref": "#/$defs/deviceConnectionMap"}
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyStringMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "transactionStatusMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "enum": ["succeeded", "failed", "refunded", "voided", "partial"]
+      }
+    },
+    "merchantOperationMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"enum": ["active", "inactive"]}
+    },
+    "placeOperationMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "enum": ["planned", "open", "suspended", "closed", "transferred"]
+      }
+    },
+    "deviceConnectionMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "enum": [
+          "online",
+          "offline",
+          "error",
+          "available",
+          "occupied",
+          "maintenance"
+        ]
+      }
+    }
+  }
+}
