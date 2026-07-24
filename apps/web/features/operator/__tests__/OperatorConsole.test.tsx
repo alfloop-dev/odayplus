@@ -121,7 +121,9 @@ describe("OperatorConsole production data gate", () => {
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "seed");
+    await waitFor(() => {
+      expect(gate).toHaveAttribute("data-status", "seed");
+    });
     expect(screen.queryByText("Seed KPI")).not.toBeInTheDocument();
   });
 
@@ -174,7 +176,9 @@ describe("OperatorConsole production data gate", () => {
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "empty");
+    await waitFor(() => {
+      expect(gate).toHaveAttribute("data-status", "empty");
+    });
     expect(screen.queryByText("Partial live KPI")).not.toBeInTheDocument();
     expect(screen.queryByText(/林承翰/)).not.toBeInTheDocument();
   });
