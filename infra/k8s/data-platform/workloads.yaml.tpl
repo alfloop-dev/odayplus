@@ -54,8 +54,8 @@ spec:
             runAsNonRoot: true
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 25m
+              memory: 64Mi
             limits:
               cpu: 500m
               memory: 512Mi
@@ -102,7 +102,7 @@ spec:
               value: /var/run/oday/termination.log
           resources:
             requests:
-              cpu: 500m
+              cpu: 100m
               memory: 1Gi
             limits:
               cpu: "2"
@@ -196,8 +196,8 @@ spec:
                 runAsNonRoot: true
               resources:
                 requests:
-                  cpu: 100m
-                  memory: 128Mi
+                  cpu: 25m
+                  memory: 64Mi
                 limits:
                   cpu: 500m
                   memory: 512Mi
@@ -261,7 +261,7 @@ spec:
                   value: /var/run/oday/termination.log
               resources:
                 requests:
-                  cpu: 500m
+                  cpu: 100m
                   memory: 1Gi
                 limits:
                   cpu: "2"
@@ -357,7 +357,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
+            requests: {cpu: 25m, memory: 64Mi}
             limits: {cpu: 500m, memory: 512Mi}
           startupProbe:
             tcpSocket: {port: 5432}
@@ -397,7 +397,7 @@ spec:
             - {name: ODP_MANUAL_END, value: "__MANUAL_END__"}
             - {name: ODP_TERMINATION_RECEIPT_PATH, value: /var/run/oday/termination.log}
           resources:
-            requests: {cpu: 500m, memory: 1Gi}
+            requests: {cpu: 100m, memory: 1Gi}
             limits: {cpu: "2", memory: 4Gi}
           securityContext:
             allowPrivilegeEscalation: false
@@ -482,7 +482,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
+            requests: {cpu: 25m, memory: 64Mi}
             limits: {cpu: 500m, memory: 512Mi}
           startupProbe:
             tcpSocket: {port: 5432}
@@ -522,7 +522,7 @@ spec:
             - {name: ODP_MANUAL_END, value: "__MANUAL_END__"}
             - {name: ODP_TERMINATION_RECEIPT_PATH, value: /var/run/oday/termination.log}
           resources:
-            requests: {cpu: 500m, memory: 1Gi}
+            requests: {cpu: 100m, memory: 1Gi}
             limits: {cpu: "2", memory: 4Gi}
           securityContext:
             allowPrivilegeEscalation: false

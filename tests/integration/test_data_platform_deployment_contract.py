@@ -100,6 +100,17 @@ def test_all_workloads_share_immutable_release_image_and_cloud_sql_sidecar() -> 
         assert proxy["resources"]["limits"]
 
 
+def test_workloads_fit_the_observed_gke_scheduling_budget() -> None:
+    for document in _documents():
+        pod = _pod_spec(document)
+        main_request = _main_container(document)["resources"]["requests"]
+        proxy_request = pod["initContainers"][0]["resources"]["requests"]
+        assert main_request["cpu"] == "100m"
+        assert proxy_request["cpu"] == "25m"
+        assert main_request["memory"] == "1Gi"
+        assert proxy_request["memory"] == "64Mi"
+
+
 def test_migration_job_is_independent_and_produces_verified_receipt() -> None:
     migration = _documents()[0]
     container = _main_container(migration)
