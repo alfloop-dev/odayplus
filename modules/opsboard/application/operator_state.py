@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modules.opsboard.domain.r4_dtos import (
     ISSUE_STATUS_BY_ACTION,
@@ -35,6 +35,11 @@ from modules.opsboard.domain.r4_dtos import (
     IssueTransitionResponse,
 )
 from modules.opsboard.infrastructure.seed_data import load_r4_seed
+
+if TYPE_CHECKING:
+    from modules.opsboard.application.operator_live_repository import (
+        OperatorLiveRepositoryProtocol,
+    )
 
 WorkspaceId = str
 OperatorRoleId = str
@@ -233,13 +238,22 @@ class OperatorStateService:
         require_live_data: bool = False,
         persistence_mode: str = "memory",
         provider_mode: str = "fixture",
+        live_repository: OperatorLiveRepositoryProtocol | None = None,
     ) -> None:
-        self._require_live_data = require_live_data
+        self._require_live_data = require_live_data or live_repository is not None
         self._persistence_mode = persistence_mode
         self._provider_mode = provider_mode
+        self._live_repository = live_repository
         self._live_ready = False
-        self._state: dict[str, Any] = {} if require_live_data else load_r4_seed()
+        self._live_error: str | None = None
+        self._state: dict[str, Any] = (
+            {} if self._require_live_data else load_r4_seed()
+        )
         self._idempotency_cache: dict[str, Any] = {}
+
+    @property
+    def live_repository(self) -> OperatorLiveRepositoryProtocol | None:
+        return self._live_repository
 
     @property
     def live_ready(self) -> bool:
@@ -249,6 +263,8 @@ class OperatorStateService:
     @property
     def data_origin(self) -> dict[str, Any]:
         """Return machine-verifiable provenance for the operator read model."""
+        if self._live_repository is not None:
+            return deepcopy(self._live_repository.data_origin)
         if self._require_live_data:
             return {
                 "kind": "unavailable",
@@ -266,21 +282,40 @@ class OperatorStateService:
     @property
     def live_readiness(self) -> dict[str, Any]:
         """Return the live-data gate state without implying connector support."""
-        return {
+        reason_code = "LIVE_DATA_NOT_REQUIRED"
+        if self._require_live_data and self._live_ready:
+            reason_code = "OPERATOR_LIVE_REPOSITORY_READY"
+        elif self._require_live_data:
+            reason_code = "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
+        payload = {
             "required": self._require_live_data,
             "ready": self._live_ready,
-            "reasonCode": (
-                "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
-                if self._require_live_data
-                else "LIVE_DATA_NOT_REQUIRED"
-            ),
+            "reasonCode": reason_code,
         }
+        if self._live_error:
+            payload["error"] = self._live_error
+        return payload
 
     def _require_writable_data(self) -> None:
-        if self._require_live_data and not self._live_ready:
+        if self._require_live_data:
             raise RuntimeError(
-                "Operator live data is required, but no live operator repository is configured."
+                "Operator live read model is not a mutable seed store; use the "
+                "owning domain service for this operation."
             )
+
+    def _load_state(self) -> dict[str, Any]:
+        if self._live_repository is None:
+            return self._state
+        try:
+            self._state = self._live_repository.load_state()
+        except Exception as exc:
+            self._state = {}
+            self._live_ready = False
+            self._live_error = f"{type(exc).__name__}: {exc}"
+        else:
+            self._live_ready = True
+            self._live_error = None
+        return self._state
 
     # ------------------------------------------------------------------
     # Read paths
@@ -326,7 +361,11 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
         )
-        return self._build_envelope(role=role, correlation_id=correlation_id)
+        return self._build_envelope(
+            role=role,
+            correlation_id=correlation_id,
+            state=self._load_state(),
+        )
 
     def get_work_queue(
         self,
@@ -341,7 +380,10 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
         )
-        return self._filtered_queue(role_id=role["id"])
+        return self._filtered_queue(
+            role_id=role["id"],
+            state=self._load_state(),
+        )
 
     def get_approvals(
         self,
@@ -356,7 +398,10 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
         )
-        return self._filtered_approvals(role_id=role["id"])
+        return self._filtered_approvals(
+            role_id=role["id"],
+            state=self._load_state(),
+        )
 
     def search(
         self,
@@ -561,12 +606,30 @@ class OperatorStateService:
     # Envelope builders
     # ------------------------------------------------------------------
 
-    def _filtered_queue(self, *, role_id: OperatorRoleId) -> list[dict[str, Any]]:
-        rows = [self._enrich_queue_item(item) for item in self._state.get("workQueue", [])]
+    def _filtered_queue(
+        self,
+        *,
+        role_id: OperatorRoleId,
+        state: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        active_state = self._state if state is None else state
+        rows = [
+            self._enrich_queue_item(item)
+            for item in active_state.get("workQueue", [])
+        ]
         return [_strip_roles(item) for item in rows if _has_role(item, role_id)]
 
-    def _filtered_approvals(self, *, role_id: OperatorRoleId) -> list[dict[str, Any]]:
-        rows = [self._enrich_approval_item(item) for item in self._state.get("decisions", [])]
+    def _filtered_approvals(
+        self,
+        *,
+        role_id: OperatorRoleId,
+        state: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        active_state = self._state if state is None else state
+        rows = [
+            self._enrich_approval_item(item)
+            for item in active_state.get("decisions", [])
+        ]
         return [
             _strip_roles(item)
             for item in rows
@@ -574,14 +637,18 @@ class OperatorStateService:
         ]
 
     def _build_envelope(
-        self, *, role: dict[str, Any], correlation_id: str | None
+        self,
+        *,
+        role: dict[str, Any],
+        correlation_id: str | None,
+        state: dict[str, Any],
     ) -> dict[str, Any]:
         role_id = role["id"]
-        queue = self._filtered_queue(role_id=role_id)
-        approvals = self._filtered_approvals(role_id=role_id)
-        risk_rows = self._filtered_risk_rows(role_id=role_id)
-        notifications = self._filtered_notifications(role_id=role_id)
-        audit_feed = self._filtered_audit_feed(role_id=role_id)
+        queue = self._filtered_queue(role_id=role_id, state=state)
+        approvals = self._filtered_approvals(role_id=role_id, state=state)
+        risk_rows = self._filtered_risk_rows(role_id=role_id, state=state)
+        notifications = self._filtered_notifications(role_id=role_id, state=state)
+        audit_feed = self._filtered_audit_feed(role_id=role_id, state=state)
         search_items = self._build_search_items(role=role, queue=queue, approvals=approvals)
         counts = {
             "notifications": len(notifications),
@@ -591,9 +658,9 @@ class OperatorStateService:
             "search": len(search_items),
         }
         kpis = (
-            self._build_kpis(role=role, counts=counts, queue=queue)
-            if not self._require_live_data
-            else []
+            deepcopy(state.get("kpis", []))
+            if self._require_live_data
+            else self._build_kpis(role=role, counts=counts, queue=queue)
         )
         response_role = deepcopy(role)
         response_roles = deepcopy(ROLES)
@@ -604,16 +671,26 @@ class OperatorStateService:
 
         envelope = {
             "meta": {
-                "generatedAt": datetime.now(UTC).isoformat(),
+                "generatedAt": state.get("_meta", {}).get(
+                    "generatedAt",
+                    datetime.now(UTC).isoformat(),
+                ),
                 "correlationId": correlation_id,
                 "role": response_role,
                 "counts": counts,
                 "source": "operator-shell-api-envelope",
                 "dataMode": (
-                    "unavailable" if self._require_live_data else "fixture"
+                    "live"
+                    if self._require_live_data and self._live_ready
+                    else "unavailable"
+                    if self._require_live_data
+                    else "fixture"
                 ),
                 "dataOrigin": self.data_origin,
                 "liveReadiness": self.live_readiness,
+                "recordCounts": deepcopy(
+                    state.get("_meta", {}).get("recordCounts", {})
+                ),
             },
             "navigation": {
                 "roles": response_roles,
@@ -639,7 +716,10 @@ class OperatorStateService:
                     ),
                     "roleLabel": role["label"],
                     "scope": (
-                        "Live operator data unavailable"
+                        state.get("_meta", {}).get(
+                            "scopeLabel",
+                            "Live operator data unavailable",
+                        )
                         if self._require_live_data
                         else self._scope_label(role_id)
                     ),
@@ -669,16 +749,21 @@ class OperatorStateService:
     def _enrich_queue_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)
         metadata = QUEUE_METADATA.get(str(enriched.get("id")), {})
-        enriched["roles"] = list(metadata.get("roles", ALL_ROLE_IDS))
-        enriched["tags"] = list(metadata.get("tags", []))
+        enriched["roles"] = list(
+            enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
+        )
+        enriched["tags"] = list(enriched.get("tags", metadata.get("tags", [])))
         enriched["target"] = deepcopy(
-            metadata.get(
+            enriched.get(
                 "target",
-                {
-                    "workspace": enriched.get("workspace", "today"),
-                    "entityId": enriched.get("id"),
-                    "tab": "overview",
-                },
+                metadata.get(
+                    "target",
+                    {
+                        "workspace": enriched.get("workspace", "today"),
+                        "entityId": enriched.get("id"),
+                        "tab": "overview",
+                    },
+                ),
             )
         )
         return enriched
@@ -686,43 +771,86 @@ class OperatorStateService:
     def _enrich_approval_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)
         metadata = APPROVAL_METADATA.get(str(enriched.get("id")), {})
-        enriched["roles"] = list(metadata.get("roles", ALL_ROLE_IDS))
+        enriched["roles"] = list(
+            enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
+        )
         enriched["target"] = deepcopy(
-            metadata.get(
+            enriched.get(
                 "target",
-                {"workspace": "govern", "entityId": enriched.get("id"), "tab": "approvals"},
+                metadata.get(
+                    "target",
+                    {
+                        "workspace": "govern",
+                        "entityId": enriched.get("id"),
+                        "tab": "approvals",
+                    },
+                ),
             )
         )
         return enriched
 
-    def _filtered_risk_rows(self, *, role_id: OperatorRoleId) -> list[dict[str, Any]]:
+    def _filtered_risk_rows(
+        self,
+        *,
+        role_id: OperatorRoleId,
+        state: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        active_state = self._state if state is None else state
         rows: list[dict[str, Any]] = []
-        for item in self._state.get("riskRows", []):
+        for item in active_state.get("riskRows", []):
             enriched = deepcopy(item)
-            enriched["roles"] = list(RISK_ROLES.get(str(enriched.get("label")), ALL_ROLE_IDS))
+            enriched["roles"] = list(
+                enriched.get(
+                    "roles",
+                    RISK_ROLES.get(str(enriched.get("label")), ALL_ROLE_IDS),
+                )
+            )
             if _has_role(enriched, role_id):
                 rows.append(_strip_roles(enriched))
         return rows
 
-    def _filtered_notifications(self, *, role_id: OperatorRoleId) -> list[dict[str, Any]]:
+    def _filtered_notifications(
+        self,
+        *,
+        role_id: OperatorRoleId,
+        state: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        active_state = self._state if state is None else state
         rows: list[dict[str, Any]] = []
-        for item in self._state.get("notifications", []):
+        for item in active_state.get("notifications", []):
             enriched = deepcopy(item)
             metadata = NOTIFICATION_METADATA.get(str(enriched.get("title")), {})
-            enriched["id"] = metadata.get("id", enriched.get("title"))
-            enriched["roles"] = list(metadata.get("roles", ALL_ROLE_IDS))
-            if "target" in metadata:
+            enriched["id"] = enriched.get(
+                "id",
+                metadata.get("id", enriched.get("title")),
+            )
+            enriched["roles"] = list(
+                enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
+            )
+            if "target" not in enriched and "target" in metadata:
                 enriched["target"] = deepcopy(metadata["target"])
             if _has_role(enriched, role_id):
                 rows.append(_strip_roles(enriched))
         return rows
 
-    def _filtered_audit_feed(self, *, role_id: OperatorRoleId) -> list[dict[str, Any]]:
+    def _filtered_audit_feed(
+        self,
+        *,
+        role_id: OperatorRoleId,
+        state: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        active_state = self._state if state is None else state
         rows: list[dict[str, Any]] = []
-        for item in self._state.get("auditFeed", []):
+        for item in active_state.get("auditFeed", []):
             enriched = deepcopy(item)
             enriched["roles"] = list(
-                AUDIT_ROLES_BY_CATEGORY.get(str(enriched.get("category")), ALL_ROLE_IDS)
+                enriched.get(
+                    "roles",
+                    AUDIT_ROLES_BY_CATEGORY.get(
+                        str(enriched.get("category")),
+                        ALL_ROLE_IDS,
+                    ),
+                )
             )
             if _has_role(enriched, role_id):
                 rows.append(_strip_roles(enriched))

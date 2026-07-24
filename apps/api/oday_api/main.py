@@ -133,6 +133,17 @@ else:
             "ODP_PERSISTENCE", persistence_mode
         ).strip().lower()
         provider_mode = _provider_mode_label(provider_validation)
+        production_persistence_supported = (
+            persistence_mode in {"postgres", "postgresql"}
+            and bool(bundle.is_durable)
+        )
+        operator_live_repository: Any | None = None
+        if require_live_data and production_persistence_supported:
+            from modules.opsboard.application.operator_live_repository import (
+                OperatorLiveRepository,
+            )
+
+            operator_live_repository = OperatorLiveRepository(bundle)
         production_model_bindings_ready = False
         model_binding_mode = (
             "approved-registry-unverified"
@@ -185,18 +196,15 @@ else:
             provider_ok: bool,
             persistence_reachable: bool,
         ) -> dict[str, Any]:
-            # The current factory supports memory and SQLite only. SQLite is a
-            # durable local/test backend, not a supported production
-            # persistence runtime. Unknown values such as "postgres" currently
-            # fall back to memory in the factory, so both requested and actual
-            # modes are exposed and neither can pass this gate.
-            production_persistence_supported = False
             provider_live_ready = provider_ok and provider_mode == "live"
-            # No production operator-state repository/connector is wired in
-            # this composition root. Keep this false until one is explicitly
-            # injected and verified; durable SQLite alone is not a live data
-            # source and must not be presented as Cloud SQL support.
-            operator_repository_ready = False
+            operator_probe = (
+                operator_live_repository.probe()
+                if operator_live_repository is not None
+                else None
+            )
+            operator_repository_ready = bool(
+                operator_probe is not None and operator_probe.ready
+            )
             live_ready = (
                 production_persistence_supported
                 and provider_live_ready
@@ -252,8 +260,26 @@ else:
                     ),
                 },
                 "data": {
-                    "mode": "unavailable" if require_live_data else "fixture",
-                    "origin": None if require_live_data else "r4-seed",
+                    "mode": (
+                        "live"
+                        if require_live_data and operator_repository_ready
+                        else "unavailable"
+                        if require_live_data
+                        else "fixture"
+                    ),
+                    "origin": (
+                        operator_live_repository.data_origin
+                        if operator_live_repository is not None
+                        else None
+                        if require_live_data
+                        else "r4-seed"
+                    ),
+                    "operatorRepositoryReady": operator_repository_ready,
+                    "operatorRepositoryProbe": (
+                        operator_probe.to_dict()
+                        if operator_probe is not None
+                        else None
+                    ),
                     "liveReady": live_ready,
                     "blockingReasons": blocking_reasons,
                 },
@@ -655,6 +681,7 @@ else:
                 listing_repository=listing_repository,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
+                live_repository=operator_live_repository,
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
@@ -683,6 +710,7 @@ else:
         api.state.intervention_repository = intervention_repo
         api.state.intervention_label_registry = label_registry
         api.state.operator_document_store = operator_document_store
+        api.state.operator_live_repository = operator_live_repository
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data

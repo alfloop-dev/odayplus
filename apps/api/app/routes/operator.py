@@ -34,12 +34,16 @@ Backward-compat note:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
 
 from modules.opsboard.application.growth import GrowthService
+from modules.opsboard.application.operator_live_repository import (
+    OperatorLiveRepositoryProtocol,
+)
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import InMemoryAuditLog
 
@@ -87,6 +91,7 @@ def create_operator_router(
     listing_repository: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    live_repository: OperatorLiveRepositoryProtocol | None = None,
     require_live_data: bool = False,
     persistence_mode: str = "memory",
     provider_mode: str = "fixture",
@@ -123,22 +128,26 @@ def create_operator_router(
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
 
-    # Shared state service — one instance per router lifetime. There is no live
-    # operator-state repository in this composition root yet, so the
-    # require-live branch must not reuse an injected fixture service.
-    svc = (
-        OperatorStateService(
-            require_live_data=True,
+    # Shared state service — one instance per router lifetime. A live-required
+    # router accepts only a state service backed by the injected live
+    # repository; fixture services can never cross this composition boundary.
+    if require_live_data:
+        svc = (
+            state_service
+            if state_service is not None
+            and state_service.live_repository is not None
+            else OperatorStateService(
+                require_live_data=True,
+                persistence_mode=persistence_mode,
+                provider_mode=provider_mode,
+                live_repository=live_repository,
+            )
+        )
+    else:
+        svc = state_service or OperatorStateService(
             persistence_mode=persistence_mode,
             provider_mode=provider_mode,
         )
-        if require_live_data
-        else state_service
-        or OperatorStateService(
-            persistence_mode=persistence_mode,
-            provider_mode=provider_mode,
-        )
-    )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -183,10 +192,9 @@ def create_operator_router(
     )
 
     if require_live_data:
-        # A live operator repository is not implemented in this codebase. Keep
-        # the read envelope available so clients can inspect provenance and
-        # readiness, but never mount fixture-backed product modules or seed
-        # mutation routes. Any other operator operation fails closed.
+        # Production exposes only read surfaces backed by the live repository.
+        # Seed reset and modules whose services still own process-local state
+        # are not mounted at all.
         def _context(
             request: Request,
             *,
@@ -208,7 +216,7 @@ def create_operator_router(
 
         @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
         @router.get("/today", dependencies=[Depends(operator_view_guard)])
-        def unavailable_envelope(
+        def live_envelope(
             request: Request,
             x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
             x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
@@ -226,7 +234,7 @@ def create_operator_router(
             )
 
         @router.get("/search", dependencies=[Depends(operator_view_guard)])
-        def unavailable_search(
+        def live_search(
             request: Request,
             q: str = Query(default=""),
             x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
@@ -245,18 +253,322 @@ def create_operator_router(
                 ),
             )
 
-        @router.post(
-            "/seed/reset",
-            dependencies=[Depends(operator_view_guard)],
-            include_in_schema=False,
-        )
-        def seed_reset_disabled() -> None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    "Operator seed/reset is disabled because live data is required."
+        def _task_row(item: dict[str, Any]) -> dict[str, Any]:
+            target = item.get("target") or {}
+            task_id = str(item.get("id", ""))
+            tone = str(item.get("tone", "info"))
+            return {
+                **item,
+                "taskId": task_id,
+                "assigneeId": None,
+                "assigneeName": None,
+                "assignedAt": None,
+                "assignedToMe": False,
+                "slaDueAt": None,
+                "slaState": "none",
+                "severity": {
+                    "danger": "critical",
+                    "warning": "warning",
+                }.get(tone, "info"),
+                "deepLink": {
+                    "workspace": target.get(
+                        "workspace",
+                        item.get("workspace", "today"),
+                    ),
+                    "entityId": target.get("entityId", task_id),
+                    "tab": target.get("tab", "overview"),
+                },
+                "sourceHref": (
+                    f"/tasks?taskId={target.get('entityId', task_id)}"
+                    f"&workspace={target.get('workspace', item.get('workspace', 'today'))}"
                 ),
+            }
+
+        def _notification_row(item: dict[str, Any]) -> dict[str, Any]:
+            target = item.get("target") or {}
+            notification_id = str(item.get("id") or item.get("title", ""))
+            return {
+                **item,
+                "notificationId": notification_id,
+                "severity": {
+                    "danger": "critical",
+                    "warning": "warning",
+                }.get(str(item.get("tone", "info")), "info"),
+                "acknowledged": False,
+                "acknowledgedAt": None,
+                "acknowledgedBy": None,
+                "sourceHref": (
+                    f"/tasks?taskId={target.get('entityId')}"
+                    f"&workspace={target.get('workspace', 'today')}"
+                    if target.get("entityId")
+                    else "/notifications"
+                ),
+            }
+
+        @router.get(
+            "/shell/home",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_home(
+            request: Request,
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            envelope = svc.get_today(
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                )
             )
+            tasks = [_task_row(item) for item in envelope["workQueue"]]
+            notifications = [
+                _notification_row(item) for item in envelope["notifications"]
+            ]
+            role = envelope["meta"]["role"]
+            from modules.opsboard.application.shell import ENTRY_POINTS
+
+            allowed_workspaces = set(role["allowedWorkspaces"])
+            entry_points = [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key != "requiresAdmin"
+                }
+                for entry in ENTRY_POINTS
+                if entry["workspace"] in allowed_workspaces
+                and (
+                    not entry.get("requiresAdmin")
+                    or role["id"] == "ops-lead"
+                )
+            ]
+            return {
+                "meta": {
+                    **envelope["meta"],
+                    "source": "operator-live-shell-home",
+                    "allowedWorkspaces": role["allowedWorkspaces"],
+                    "isAdmin": role["id"] == "ops-lead",
+                },
+                "status": {
+                    "headline": f"{role['label']}・{len(tasks)} 件待處理",
+                    "openTasks": len(tasks),
+                    "slaBreached": 0,
+                    "slaAtRisk": 0,
+                    "pendingApprovals": len(envelope["approvals"]),
+                    "unacknowledgedNotifications": len(notifications),
+                    "tone": "warning" if tasks else "success",
+                },
+                "tasks": tasks[:5],
+                "approvals": envelope["approvals"][:5],
+                "decisions": envelope["decisions"][:5],
+                "freshness": [
+                    {
+                        "source": "operator-live-repository",
+                        "label": "Operator live repositories",
+                        "generatedAt": envelope["meta"]["generatedAt"],
+                        "records": sum(
+                            int(value)
+                            for value in envelope["meta"]
+                            .get("recordCounts", {})
+                            .values()
+                        ),
+                        "state": (
+                            "live"
+                            if envelope["meta"]["liveReadiness"]["ready"]
+                            else "unavailable"
+                        ),
+                    }
+                ],
+                "entryPoints": entry_points,
+                "notifications": notifications[:5],
+                "kpis": envelope["kpis"],
+            }
+
+        @router.get(
+            "/shell/tasks",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_tasks(
+            request: Request,
+            sla: str | None = Query(default=None),
+            assignee: str | None = Query(default=None),
+            task_status: str | None = Query(default=None, alias="status"),
+            task_id: str | None = Query(default=None, alias="taskId"),
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            context = _context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
+            queue_context = {
+                key: value
+                for key, value in context.items()
+                if key != "correlation_id"
+            }
+            tasks = [
+                _task_row(item)
+                for item in svc.get_work_queue(**queue_context)
+            ]
+            filtered = tasks
+            if sla:
+                filtered = [
+                    item for item in filtered if item["slaState"] == sla
+                ]
+            if assignee == "me":
+                filtered = [
+                    item for item in filtered if item["assignedToMe"]
+                ]
+            elif assignee == "unassigned":
+                filtered = [
+                    item for item in filtered if not item["assigneeId"]
+                ]
+            elif assignee:
+                filtered = [
+                    item
+                    for item in filtered
+                    if item["assigneeId"] == assignee
+                ]
+            if task_status:
+                filtered = [
+                    item
+                    for item in filtered
+                    if str(item.get("status")) == task_status
+                ]
+            if task_id:
+                filtered = [
+                    item for item in filtered if item["taskId"] == task_id
+                ]
+            return {
+                "meta": {
+                    "generatedAt": datetime.now(UTC).isoformat(),
+                    "correlationId": context["correlation_id"],
+                    "source": "operator-live-shell-tasks",
+                    "dataOrigin": svc.data_origin,
+                    "filters": {
+                        "sla": sla,
+                        "assignee": assignee,
+                        "status": task_status,
+                        "taskId": task_id,
+                    },
+                },
+                "items": filtered,
+                "count": len(filtered),
+                "total": len(tasks),
+                "facets": {
+                    "sla": {
+                        "breached": 0,
+                        "at-risk": 0,
+                        "on-track": 0,
+                        "none": len(tasks),
+                    },
+                    "status": {
+                        status_value: sum(
+                            1
+                            for item in tasks
+                            if str(item.get("status")) == status_value
+                        )
+                        for status_value in {
+                            str(item.get("status")) for item in tasks
+                        }
+                    },
+                    "assignee": {"me": 0},
+                },
+                "actions": [
+                    {
+                        "key": "task.open",
+                        "label": "開啟來源",
+                        "allowed": True,
+                        "reason": None,
+                    }
+                ],
+                "assignableRoles": [],
+            }
+
+        @router.get(
+            "/shell/notifications",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_notifications(
+            request: Request,
+            severity: str | None = Query(default=None),
+            acknowledged: bool | None = Query(default=None),
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            context = _context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
+            envelope = svc.get_today(**context)
+            rows = [
+                _notification_row(item) for item in envelope["notifications"]
+            ]
+            filtered = rows
+            if severity:
+                filtered = [
+                    item
+                    for item in filtered
+                    if item["severity"] == severity
+                ]
+            if acknowledged is not None:
+                filtered = [
+                    item
+                    for item in filtered
+                    if item["acknowledged"] is acknowledged
+                ]
+            return {
+                "meta": {
+                    "generatedAt": envelope["meta"]["generatedAt"],
+                    "correlationId": context["correlation_id"],
+                    "source": "operator-live-shell-notifications",
+                    "dataOrigin": envelope["meta"]["dataOrigin"],
+                },
+                "items": filtered,
+                "count": len(filtered),
+                "unacknowledged": len(rows),
+                "facets": {
+                    "severity": {
+                        level: sum(
+                            1 for item in rows if item["severity"] == level
+                        )
+                        for level in ("critical", "warning", "info")
+                    }
+                },
+                "preferences": None,
+            }
 
         return router
 

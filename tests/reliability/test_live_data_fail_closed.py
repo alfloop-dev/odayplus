@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import uvicorn
-from fastapi import HTTPException, Request, Response
+from fastapi import Request, Response
 
 from apps.api import server
 from apps.api.oday_api.main import create_app
@@ -144,9 +144,8 @@ def test_explicit_live_gate_fails_closed_for_memory_and_fixtures(
     assert bootstrap["workQueue"] == []
     assert bootstrap["meta"]["dataOrigin"]["kind"] == "unavailable"
 
-    with pytest.raises(HTTPException) as seed_error:
-        route_for(app, "/api/v1/operator/seed/reset").endpoint()
-    assert seed_error.value.status_code == 503
+    with pytest.raises(AssertionError, match="route not found"):
+        route_for(app, "/api/v1/operator/seed/reset")
     assert "/api/v1/operator/seed/reset" not in app.openapi()["paths"]
 
 
@@ -216,9 +215,8 @@ def test_production_deployment_implies_live_data_gate(monkeypatch: Any) -> None:
 
     app = create_app(persistence=_memory_bundle())
     assert app.state.require_live_data is True
-    with pytest.raises(HTTPException) as seed_error:
-        route_for(app, "/api/v1/operator/seed/reset").endpoint()
-    assert seed_error.value.status_code == 503
+    with pytest.raises(AssertionError, match="route not found"):
+        route_for(app, "/api/v1/operator/seed/reset")
 
 
 def test_local_runtime_keeps_fixture_and_seed_reset(monkeypatch: Any) -> None:
