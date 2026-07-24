@@ -8,8 +8,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from modules.external_data.providers import ListingPartnerFeedProvider
-from modules.external_data.providers.live import assert_listing_provider_selected
+from modules.external_data.connectors.provider_registry import (
+    PRODUCTION_PROVIDER_IDS_ENV_VAR,
+    ExternalProviderMode,
+    ProviderCategory,
+    external_provider_mode,
+    provider_registry,
+)
+from modules.external_data.providers import (
+    AdminBoundaryDatasetProvider,
+    ListingPartnerFeedProvider,
+    PoiCommercialApiProvider,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.observability import new_correlation_id
 
@@ -25,6 +35,39 @@ class FetchProvider(Protocol):
 
 
 ProviderFactory = Callable[[], FetchProvider]
+_SCHEDULABLE_CATEGORIES = {
+    ProviderCategory.LISTING,
+    ProviderCategory.POI,
+    ProviderCategory.ADMIN_BOUNDARY,
+}
+
+
+class ExternalFetchProviderConfigurationError(RuntimeError):
+    """Fail-closed scheduler registration/selection error."""
+
+    def __init__(self, provider_id: str, code: str, message: str) -> None:
+        self.provider_id = provider_id
+        self.code = code
+        super().__init__(f"{message} (provider_id={provider_id}, code={code})")
+
+
+def default_external_fetch_provider_factories(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, ProviderFactory]:
+    """Factories for registry-backed snapshot providers.
+
+    Geocode is deliberately absent: it is an address lookup/enrichment
+    dependency rather than a snapshot schedule.
+    """
+
+    source_env = os.environ if env is None else env
+    return {
+        "listing.partner_feed": lambda: ListingPartnerFeedProvider(env=source_env),
+        "poi.commercial_api": lambda: PoiCommercialApiProvider(env=source_env),
+        "admin_boundary.official_dataset": lambda: AdminBoundaryDatasetProvider(
+            env=source_env
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -271,9 +314,13 @@ class ExternalFetchScheduler:
         env: Mapping[str, str] | None = None,
     ) -> None:
         self.state_store = state_store or InMemoryExternalFetchStateStore()
-        self.provider_factories = dict(provider_factories or {})
-        self.resilience_policy = resilience_policy or ExternalFetchResiliencePolicy()
         self.env = os.environ if env is None else env
+        self.provider_factories = dict(
+            default_external_fetch_provider_factories(self.env)
+            if provider_factories is None
+            else provider_factories
+        )
+        self.resilience_policy = resilience_policy or ExternalFetchResiliencePolicy()
 
     def run_once(
         self,
@@ -320,16 +367,16 @@ class ExternalFetchScheduler:
             )
 
         try:
-            if spec.provider_id == "listing.partner_feed":
-                assert_listing_provider_selected(
-                    env=self.env,
-                    correlation_id=corr,
-                )
+            self._assert_provider_schedulable_and_selected(spec.provider_id)
             provider = self._provider_for(spec.provider_id)
             result = provider.fetch_and_ingest(ingestion_time=effective_end, correlation_id=corr)
             raw_snapshot_id = str(result.raw_snapshot.snapshot_id)
             canonical_snapshot_id = str(result.canonical_snapshot.snapshot_id)
-            observed_at = _latest_observed_at(result.raw_snapshot.records) or result.raw_snapshot.fetched_at
+            observed_at = (
+                getattr(result.raw_snapshot, "observed_at", None)
+                or _latest_observed_at(result.raw_snapshot.records)
+                or result.raw_snapshot.fetched_at
+            )
             data_status = "FRESH" if effective_end - observed_at <= spec.freshness_sla else "STALE"
             run = ExternalFetchRun(
                 job_id=f"external-fetch:{spec.provider_id}:{raw_snapshot_id}:{effective_end.strftime('%Y%m%d%H%M%S')}",
@@ -462,9 +509,54 @@ class ExternalFetchScheduler:
         factory = self.provider_factories.get(provider_id)
         if factory is not None:
             return factory()
-        if provider_id == "listing.partner_feed":
-            return ListingPartnerFeedProvider()
-        raise ValueError(f"scheduled fetch provider {provider_id} is not configured")
+        raise ExternalFetchProviderConfigurationError(
+            provider_id,
+            "provider_factory_missing",
+            "Scheduled fetch provider has no registered runtime factory.",
+        )
+
+    def _assert_provider_schedulable_and_selected(self, provider_id: str) -> None:
+        definitions = {
+            provider.provider_id: provider for provider in provider_registry()
+        }
+        definition = definitions.get(provider_id)
+        if definition is None:
+            raise ExternalFetchProviderConfigurationError(
+                provider_id,
+                "provider_not_registered",
+                "Scheduled fetch provider is absent from the external provider registry.",
+            )
+        if definition.category not in _SCHEDULABLE_CATEGORIES:
+            raise ExternalFetchProviderConfigurationError(
+                provider_id,
+                "provider_not_schedulable",
+                "Provider is an enrichment/manual source and cannot run as a snapshot schedule.",
+            )
+
+        mode = external_provider_mode(self.env)
+        if mode is not ExternalProviderMode.LIVE:
+            return
+        deploy_env = self.env.get(
+            "ODP_DEPLOY_ENV",
+            self.env.get("APP_ENV", "development"),
+        ).strip().lower()
+        selected = {
+            item.strip()
+            for item in self.env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "").split(",")
+            if item.strip()
+        }
+        if deploy_env in {"prod", "production"} and not selected:
+            raise ExternalFetchProviderConfigurationError(
+                provider_id,
+                "provider_allowlist_required",
+                "Production live schedules require an explicit provider allowlist.",
+            )
+        if selected and provider_id not in selected:
+            raise ExternalFetchProviderConfigurationError(
+                provider_id,
+                "provider_not_selected",
+                "Provider is not selected by the production provider allowlist.",
+            )
 
 
 def run_external_fetch_backfill(
@@ -535,6 +627,15 @@ def _provider_failure_code(exc: Exception) -> str:
         return "server_error"
     if code in {"provider_allowlist_required", "provider_not_selected"}:
         return code
+    if code in {
+        "provider_not_registered",
+        "provider_not_schedulable",
+        "provider_factory_missing",
+        "live_mode_required",
+        "missing_endpoint",
+        "missing_credential",
+    }:
+        return code
     return "provider_failure"
 
 
@@ -591,12 +692,14 @@ def _ensure_utc(value: datetime) -> datetime:
 __all__ = [
     "ExternalFetchJobSpec",
     "ExternalFetchAlert",
+    "ExternalFetchProviderConfigurationError",
     "ExternalFetchResiliencePolicy",
     "ExternalFetchRun",
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
     "DurableExternalFetchStateStore",
     "SourceFreshnessEvidence",
+    "default_external_fetch_provider_factories",
     "freshness_evidence_from_run",
     "run_external_fetch_backfill",
     "write_external_fetch_lineage_evidence",

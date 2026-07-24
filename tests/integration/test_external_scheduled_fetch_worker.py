@@ -200,7 +200,71 @@ def test_unconfigured_provider_fails_closed_as_blocked() -> None:
 
     assert run.status == "FAILED"
     assert run.data_status == "BLOCKED"
-    assert "not configured" in run.message
+    assert run.alerts[0].reason_code == "provider_factory_missing"
+    assert "no registered runtime factory" in run.message
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "reason_code"),
+    [
+        ("unknown.provider", "provider_not_registered"),
+        ("geocode.primary_api", "provider_not_schedulable"),
+    ],
+)
+def test_registry_rejects_unknown_and_lookup_only_schedules(
+    provider_id: str,
+    reason_code: str,
+) -> None:
+    scheduler = ExternalFetchScheduler(provider_factories={})
+    run = scheduler.run_once(
+        ExternalFetchJobSpec(
+            provider_id=provider_id,
+            schedule_id="invalid-schedule",
+        ),
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+    )
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.alerts[0].reason_code == reason_code
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    [
+        "poi.commercial_api",
+        "admin_boundary.official_dataset",
+    ],
+)
+def test_worker_blocks_unselected_snapshot_provider_before_factory_execution(
+    provider_id: str,
+) -> None:
+    factory_calls = 0
+
+    def provider_factory() -> CountingProvider:
+        nonlocal factory_calls
+        factory_calls += 1
+        return CountingProvider()
+
+    scheduler = ExternalFetchScheduler(
+        provider_factories={provider_id: provider_factory},
+        env={
+            "ODP_EXTERNAL_PROVIDER_MODE": "live",
+            "ODP_DEPLOY_ENV": "production",
+            "ODP_PRODUCTION_PROVIDER_IDS": "listing.partner_feed",
+        },
+    )
+    run = scheduler.run_once(
+        ExternalFetchJobSpec(
+            provider_id=provider_id,
+            schedule_id="unselected-snapshot",
+        ),
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+    )
+
+    assert run.status == "FAILED"
+    assert run.alerts[0].reason_code == "provider_not_selected"
+    assert factory_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -267,3 +331,28 @@ def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixtu
     output = capsys.readouterr().out
     assert '"provider_id": "listing.partner_feed"' in output
     assert '"source_snapshot_ids"' in output
+
+
+def test_backfill_command_returns_failure_for_unregistered_provider(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts.external_data_backfill import main
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "external_data_backfill.py",
+                "--provider-id",
+                "unknown.provider",
+                "--start",
+                "2026-06-28T08:00:00Z",
+                "--end",
+                "2026-06-28T09:00:00Z",
+            ],
+        )
+        assert main() == 10
+
+    output = capsys.readouterr().out
+    assert '"reason_code": "provider_not_registered"' in output
+    assert '"status": "FAILED"' in output
