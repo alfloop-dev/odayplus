@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from alembic.config import Config
 
 ROOT = Path(__file__).resolve().parents[2]
 K8S = ROOT / "infra/k8s/data-platform"
@@ -68,6 +69,15 @@ def test_image_build_requires_immutable_base_and_full_release_sha() -> None:
     assert 'org.opencontainers.image.revision="${ODP_RELEASE_SHA}"' in dockerfile
     assert "USER 65532:65532" in dockerfile
     assert "data-platform.Dockerfile" not in dockerfile
+
+
+def test_alembic_database_url_accepts_encoded_production_passwords() -> None:
+    url = "postgresql://oday_app:encoded%3D@127.0.0.1:5432/oday_plus"
+    config = Config()
+    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    assert config.get_main_option("sqlalchemy.url") == url
+    migration_env = (ROOT / "infra/db/migrations/env.py").read_text(encoding="utf-8")
+    assert 'url.replace("%", "%%")' in migration_env
 
 
 def test_manifest_has_migration_then_bounded_and_manual_workloads() -> None:
