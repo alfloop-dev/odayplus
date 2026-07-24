@@ -167,3 +167,27 @@ def test_device_log_non_object_payload_is_never_landed_verbatim() -> None:
     assert envelope.source_document["logData"] == {
         "_redacted_non_object": True
     }
+
+
+def test_device_log_snapshot_fingerprint_precedes_redaction() -> None:
+    base = {
+        "_id": "log-3",
+        "device": {"_id": "device-1"},
+        "logType": "error",
+        "createdAt": "2026-07-23T00:00:00Z",
+    }
+    first = envelope_for_document(
+        SourceKind.DEVICE_LOG,
+        {**base, "logData": {"errCode": "E-42", "payload": {"secret": "one"}}},
+        run_id="00000000-0000-4000-8000-000000000001",
+        observed_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+    second = envelope_for_document(
+        SourceKind.DEVICE_LOG,
+        {**base, "logData": {"errCode": "E-42", "payload": {"secret": "two"}}},
+        run_id="00000000-0000-4000-8000-000000000001",
+        observed_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+    assert first.source_document == second.source_document
+    assert first.content_sha256 != second.content_sha256
+    assert first.source_snapshot_id != second.source_snapshot_id

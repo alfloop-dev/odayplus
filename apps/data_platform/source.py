@@ -296,10 +296,10 @@ def envelope_for_document(
     observed_at: datetime,
 ) -> SourceEnvelope:
     safe_document = json_safe(document)
+    content_sha256 = sha256_json(safe_document)
     if kind is SourceKind.DEVICE_LOG:
         safe_document = _minimize_device_log(safe_document)
     source_id = source_id_for_document(kind, safe_document)
-    content_sha256 = sha256_json(safe_document)
     source_timestamp = safe_document.get("updatedAt")
     for field_name in SOURCE_TIME_FIELDS.get(kind, ("createdAt",)):
         source_timestamp = source_timestamp or safe_document.get(field_name)

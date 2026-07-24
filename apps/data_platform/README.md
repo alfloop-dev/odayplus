@@ -174,7 +174,9 @@ represent newly registered MLflow training runs.
 Other log types remain raw-only and are accounted for as
 `NON_CANONICAL_LOG_TYPE`. Free-form `info`, `payload`, `orders`,
 `refundOrders`, and `result` are removed before raw landing; the snapshot
-records which fields were redacted.
+records which fields were redacted. The content checksum and deterministic
+snapshot ID are computed before redaction, preserving distinct source evidence
+without retaining the sensitive free-form value.
 
 Reconciliation is successful only when:
 
