@@ -17,6 +17,18 @@ describe("operator data mode", () => {
   it("allows fixtures only outside production", () => {
     expect(operatorFixturesAllowed({ nodeEnv: "test" })).toBe(true);
     expect(operatorFixturesAllowed({ nodeEnv: "production" })).toBe(false);
+    expect(
+      operatorFixturesAllowed({
+        nodeEnv: "production",
+        productMode: "poc",
+      }),
+    ).toBe(true);
+    expect(
+      operatorFixturesAllowed({
+        nodeEnv: "development",
+        productMode: "production",
+      }),
+    ).toBe(false);
     expect(operatorFixturesAllowed({ nodeEnv: "development", productionMode: "true" })).toBe(false);
     expect(isOperatorProductionMode({ nodeEnv: "production" })).toBe(true);
   });

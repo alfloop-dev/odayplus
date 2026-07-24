@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@oday-plus/ui";
 import type { StatusTone } from "@oday-plus/domain-types";
 import type { ApiBinding, BindingState } from "../../src/lib/api/binding.ts";
+import { isProductionMode } from "../shell/mode.ts";
 import styles from "./productionDataState.module.css";
 
 const STATE_LABEL: Record<BindingState, string> = {
@@ -20,11 +21,8 @@ const STATE_TONE: Record<BindingState, StatusTone> = {
 
 export function resolveProductionMode(explicit?: boolean): boolean {
   if (explicit !== undefined) return explicit;
-  return (
-    process.env.NODE_ENV === "production" ||
-    process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true" ||
-    process.env.ODP_REQUIRE_LIVE_DATA === "true"
-  );
+  if (process.env.ODP_REQUIRE_LIVE_DATA === "true") return true;
+  return isProductionMode();
 }
 
 export function productionBindingState(

@@ -26,12 +26,18 @@ services:
       dockerfile: infra/docker/web.Dockerfile
       args:
         ODP_API_BASE_URL: http://api:8000
+        ODP_DATA_BINDING_MODE: fixture
+        ODP_PRODUCT_MODE: poc
     image: odayplus/web:e2e
     environment:
       NODE_ENV: production
       PORT: 3000
       HOSTNAME: 0.0.0.0
       ODP_API_BASE_URL: http://api:8000
+      ODP_DATA_BINDING_MODE: fixture
+      ODP_PRODUCT_MODE: poc
+      NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+      NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
       NEXT_PUBLIC_API_URL: http://localhost:${ODP_E2E_API_PORT:-8099}
     ports:
       - "${ODP_E2E_WEB_PORT:-3100}:3000"

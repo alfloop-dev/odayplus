@@ -21,12 +21,16 @@ import { LearningHubWorkspace } from "../../learninghub/LearningHubWorkspace.tsx
 import { HeatZoneMap } from "../../map/HeatZoneMap.tsx";
 import { NetPlanWorkspace } from "../../netplan/NetPlanWorkspace.tsx";
 import { OperationsWorkspace } from "../OperationsWorkspace.tsx";
+import { resolveProductionMode } from "../ProductionDataState.tsx";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 function binding<T>(items: T[], state: BindingState = items.length ? "ready" : "empty", error?: string): ApiBinding<T> {
   return {
@@ -40,6 +44,15 @@ function binding<T>(items: T[], state: BindingState = items.length ? "ready" : "
 }
 
 describe("non-Operator production data removal", () => {
+  it("honors the explicit product mode before the production build default", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ODP_PRODUCT_MODE", "poc");
+    expect(resolveProductionMode()).toBe(false);
+
+    vi.stubEnv("ODP_PRODUCT_MODE", "production");
+    expect(resolveProductionMode()).toBe(true);
+  });
+
   it("renders only live Operations API rows in production", () => {
     const alert: ForecastAlert = {
       alert_id: "live-alert-901",

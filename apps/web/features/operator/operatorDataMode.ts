@@ -8,6 +8,7 @@ export type OperatorDataAvailability =
 
 type RuntimeEnvironment = {
   nodeEnv?: string;
+  productMode?: string;
   productionMode?: string;
 };
 
@@ -35,9 +36,15 @@ function asArray(value: unknown): unknown[] {
 export function isOperatorProductionMode(
   environment: RuntimeEnvironment = {
     nodeEnv: process.env.NODE_ENV,
+    productMode:
+      process.env.ODP_PRODUCT_MODE ??
+      process.env.NEXT_PUBLIC_ODP_PRODUCT_MODE,
     productionMode: process.env.NEXT_PUBLIC_PRODUCTION_MODE,
   },
 ): boolean {
+  const productMode = environment.productMode?.trim().toLowerCase();
+  if (productMode === "production") return true;
+  if (productMode === "poc") return false;
   return environment.nodeEnv === "production" || environment.productionMode === "true";
 }
 

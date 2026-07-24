@@ -27,11 +27,12 @@ mkdir -p "$DIAGNOSTICS_DIR"
 
 cleanup() {
   if [[ "${ODP_E2E_KEEP_STACK:-0}" != "1" ]]; then
-    "${COMPOSE[@]}" down --remove-orphans
+    "${COMPOSE[@]}" down --remove-orphans --volumes
   fi
 }
 trap cleanup EXIT
 
+"${COMPOSE[@]}" down --remove-orphans --volumes
 "${COMPOSE[@]}" up -d --build
 
 python3 scripts/e2e/seed_product_e2e_data.py \
