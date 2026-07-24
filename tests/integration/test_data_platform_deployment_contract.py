@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 K8S = ROOT / "infra/k8s/data-platform"
 DOCKERFILE = ROOT / "infra/docker/data-platform.Dockerfile"
 RUNTIME = K8S / "runtime/deployment_runtime.py"
+STATUS_MAPPING = K8S / "status_mapping.prod.json"
 RELEASE_SHA = "a" * 40
 DATA_IMAGE = "asia-east1-docker.pkg.dev/project/repo/data@sha256:" + "b" * 64
 PROXY_IMAGE = "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:" + "c" * 64
@@ -158,6 +159,34 @@ def test_backfill_is_receipt_gated_and_uses_real_secret_inputs() -> None:
         "ai_consumer_kmeans_v1",
     ):
         assert f'"{kind}"' in source
+
+
+def test_committed_status_mapping_covers_observed_scheduled_dimension_codes() -> None:
+    import json
+
+    payload = json.loads(STATUS_MAPPING.read_text(encoding="utf-8"))
+    assert payload["version"] == "fongniao-prod-observed-v1"
+    assert payload["trade_paid_amount_rule"] is None
+    assert payload["mappings"]["merchant_operation"] == {
+        "0": "inactive",
+        "1": "active",
+    }
+    assert payload["mappings"]["place_operation"] == {
+        "1": "open",
+        "99": "closed",
+    }
+    assert set(payload["mappings"]["place_type"]) == {
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "99",
+    }
+    assert "2" not in payload["mappings"]["merchant_operation"]
+    assert "transaction" not in payload["mappings"]
+    assert "trade" not in payload["mappings"]
 
 
 def test_trade_and_device_log_are_manual_one_day_hard_limited_jobs() -> None:

@@ -19,6 +19,18 @@ The Mongo and PostgreSQL runtime Secret keys are present in `oday-dev`. The gove
 authored; it remains a deployment prerequisite and is never synthesized from a
 default mapping.
 
+The committed `status_mapping.prod.json` records the source values observed on
+2026-07-24. It intentionally omits unverified merchant operation `2`,
+transaction/trade numeric statuses, and device-log connection codes. Those rows
+remain quarantined until a data owner publishes a new reviewed mapping version.
+Install the exact committed document before running migration/backfill:
+
+```bash
+kubectl -n oday-dev create secret generic oday-data-platform-status-mapping \
+  --from-file=status_mapping.json=infra/k8s/data-platform/status_mapping.prod.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
 ## Immutable image
 
 Both the Python base and the pushed data-platform image must be digest-pinned.

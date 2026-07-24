@@ -1,0 +1,25 @@
+{
+  "version": "fongniao-prod-observed-v1",
+  "approved_by": "Product Platform Engineering",
+  "approved_at": "2026-07-24T16:45:00Z",
+  "trade_paid_amount_rule": null,
+  "mappings": {
+    "merchant_operation": {
+      "0": "inactive",
+      "1": "active"
+    },
+    "place_operation": {
+      "1": "open",
+      "99": "closed"
+    },
+    "place_type": {
+      "1": "source_type_1",
+      "2": "source_type_2",
+      "3": "source_type_3",
+      "4": "source_type_4",
+      "5": "source_type_5",
+      "6": "source_type_6",
+      "99": "source_type_99"
+    }
+  }
+}
