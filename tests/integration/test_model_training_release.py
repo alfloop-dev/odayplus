@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -240,6 +241,16 @@ def test_production_database_url_accepts_only_a_named_cloud_sql_socket() -> None
         require_production_database_url(
             "postgresql://oday_app:secret@/oday_app?host=/tmp/postgres.sock"
         )
+
+
+def test_api_runtime_declares_the_production_gcs_client() -> None:
+    dependencies = tomllib.loads(
+        Path("pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["dependencies"]
+    assert any(
+        dependency.startswith("google-cloud-storage")
+        for dependency in dependencies
+    )
 
 
 def _approval(**changes: str) -> dict[str, object]:
