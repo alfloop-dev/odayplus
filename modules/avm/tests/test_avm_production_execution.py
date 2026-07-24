@@ -163,7 +163,10 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    # Build the isolated registry fixture before enabling production mode.
+    # The execution below still presents an HTTPS registry contract and loads
+    # the real estimator artifact through the production runtime.
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
     training_rows = [
         {
             "normalized_gm": float(300_000 + index * 10_000),
@@ -213,6 +216,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             approved_at=datetime(2026, 7, 23, tzinfo=UTC),
         )
     )
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     liquidity = LifelinesLiquiditySurvivalAdapter().fit(
         [
             LiquidityTrainingRecord(
@@ -245,7 +249,11 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
         liquidity_spy,
     )
     executor = AVMProductionExecutor(
-        model_runtime=MlflowProductionModelRuntime(tracking_uri=tracking_uri),
+        model_runtime=MlflowProductionModelRuntime(
+            tracking_uri="https://mlflow.internal.example",
+            client=registry.client,
+            artifact_loader=lambda _uri, _tracking_uri: artifact_path.read_bytes(),
+        ),
         liquidity_runtime=liquidity,
         liquidity_evidence=LiquidityArtifactEvidence(
             artifact_uri="gs://models/avm-liquidity.json",
