@@ -38,6 +38,7 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     latencies = []
     success_count = 0
     failure_count = 0
+    error_messages: list[str] = []
 
     # Task executor for load generation
     concurrency_levels = [10, 20, 50]
@@ -70,26 +71,30 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
 
             # Ratified P95 target check (<= 3.0s)
             latency = time.perf_counter() - t0
-            return latency, True
-        except Exception:
+            return latency, True, None
+        except Exception as exc:
             latency = time.perf_counter() - t0
-            return latency, False
+            return latency, False, f"{type(exc).__name__}: {exc}"
 
     # Execute under concurrency
     t_start = time.perf_counter()
-    for concurrency in concurrency_levels:
+    batch_size = total_volume // len(concurrency_levels)
+    for wave_index, concurrency in enumerate(concurrency_levels):
+        task_offset = wave_index * batch_size
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
-                executor.submit(run_worker_task, i)
-                for i in range(total_volume // len(concurrency_levels))
+                executor.submit(run_worker_task, task_offset + index)
+                for index in range(batch_size)
             ]
             for fut in concurrent.futures.as_completed(futures):
-                lat, success = fut.result()
+                lat, success, error = fut.result()
                 latencies.append(lat)
                 if success:
                     success_count += 1
                 else:
                     failure_count += 1
+                    if error:
+                        error_messages.append(error)
 
     total_duration = time.perf_counter() - t_start
 
@@ -110,6 +115,7 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
         "total_volume": total_volume,
         "success_count": success_count,
         "failure_count": failure_count,
+        "errors": error_messages,
         "total_duration_seconds": total_duration,
         "throughput_req_per_sec": throughput,
         "latency_p50_seconds": p50,
@@ -124,7 +130,9 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
         json.dump(report_data, f, indent=2)
 
     # Assertions for the performance budget
-    assert failure_count == 0, f"Encountered {failure_count} failures during load test."
+    assert failure_count == 0, (
+        f"Encountered {failure_count} failures during load test: {error_messages}"
+    )
     assert p95 <= 3.0, f"P95 latency {p95:.3f}s exceeded budget of 3.0s"
 
     # 2. Soak phase: run continuously for a short duration to ensure DB stability and no locks
@@ -138,8 +146,8 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
                 executor.submit(run_worker_task, 9999 + soak_tasks_run + idx) for idx in range(10)
             ]
             for fut in concurrent.futures.as_completed(futures):
-                lat, success = fut.result()
-                assert success is True, "Soak task failed!"
+                lat, success, error = fut.result()
+                assert success is True, f"Soak task failed: {error}"
                 soak_tasks_run += 1
 
     bundle.engine.close()

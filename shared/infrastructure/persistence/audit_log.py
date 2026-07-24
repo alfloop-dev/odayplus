@@ -19,8 +19,10 @@ from shared.audit.integrity import (
     CHAIN_GENESIS_HASH,
     AuditChainVerification,
     AuditImmutabilityError,
+    AuditIntegrityError,
     attach_audit_event_integrity,
     verify_audit_chain,
+    verify_audit_event_integrity,
 )
 from shared.audit.worm import AuditWormSink
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -102,11 +104,24 @@ class DurableAuditLog:
             return event
 
     def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
-        events = self._read_events()
-        verify_audit_chain(events).raise_for_tamper()
         if correlation_id is None:
+            events = self._read_events()
+            verify_audit_chain(events).raise_for_tamper()
             return events
-        return [event for event in events if event.correlation_id == correlation_id]
+
+        # Operational lookups use the correlation index and validate each
+        # returned record; verify_chain() remains the full-chain evidence check.
+        rows = self._engine.query(
+            "SELECT * FROM durable_audit_events "
+            "WHERE correlation_id = ? ORDER BY seq",
+            (correlation_id,),
+        )
+        events = [self._row_to_event(row) for row in rows]
+        if any(not verify_audit_event_integrity(event) for event in events):
+            raise AuditIntegrityError(
+                "audit event integrity verification failed for correlation query"
+            )
+        return events
 
     def verify_chain(self) -> AuditChainVerification:
         return verify_audit_chain(self._read_events())
