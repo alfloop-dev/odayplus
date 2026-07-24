@@ -8,6 +8,11 @@ from modules.forecastops.domain import (
     Alert,
     AlertLevel,
     ForecastBand,
+    ForecastEngine,
+    ForecastEngineError,
+    ForecastEngineInputError,
+    ForecastEngineResult,
+    ForecastEngineUnavailableError,
     ForecastInput,
     ForecastOpsError,
     ForecastOpsNotFoundError,
@@ -18,7 +23,12 @@ from modules.forecastops.domain import (
     build_store_timeseries,
     forecast_stores,
 )
-from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
+from modules.forecastops.infrastructure import (
+    InMemoryForecastOpsRepository,
+    MLForecastSklearnAdapter,
+    StatsForecastAdapter,
+    create_forecast_engine,
+)
 from modules.forecastops.workers import (
     ForecastOpsBatchResult,
     ForecastOpsForecastWorker,
@@ -32,6 +42,11 @@ __all__ = [
     "Alert",
     "AlertLevel",
     "ForecastBand",
+    "ForecastEngine",
+    "ForecastEngineError",
+    "ForecastEngineInputError",
+    "ForecastEngineResult",
+    "ForecastEngineUnavailableError",
     "ForecastInput",
     "ForecastOpsBatchResult",
     "ForecastOpsError",
@@ -43,8 +58,11 @@ __all__ = [
     "ForecastSeries",
     "InMemoryForecastOpsRepository",
     "InterventionHandoff",
+    "MLForecastSklearnAdapter",
+    "StatsForecastAdapter",
     "StoreDayObservation",
     "build_store_timeseries",
+    "create_forecast_engine",
     "forecast_stores",
     "run_forecastops_batch_forecast",
 ]

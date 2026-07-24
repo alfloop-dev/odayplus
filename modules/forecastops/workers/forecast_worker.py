@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from modules.forecastops.application.forecasting import ForecastOpsService
-from modules.forecastops.domain.forecasting import ForecastInput
+from modules.forecastops.domain.forecasting import ForecastEngine, ForecastInput
 from modules.forecastops.infrastructure.repositories import InMemoryForecastOpsRepository
 
 
@@ -28,8 +28,20 @@ class ForecastOpsBatchResult:
 
 
 class ForecastOpsForecastWorker:
-    def __init__(self, *, repository: InMemoryForecastOpsRepository | None = None) -> None:
-        self.service = ForecastOpsService(repository=repository)
+    def __init__(
+        self,
+        *,
+        repository: InMemoryForecastOpsRepository | None = None,
+        engine: str | ForecastEngine = "baseline",
+        model_name: str | None = None,
+        engine_options: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.service = ForecastOpsService(
+            repository=repository,
+            engine=engine,
+            model_name=model_name,
+            engine_options=engine_options,
+        )
 
     def run(
         self,
@@ -37,6 +49,9 @@ class ForecastOpsForecastWorker:
         inputs: Iterable[ForecastInput | Mapping[str, Any]],
         job_id: str | None = None,
         prediction_origin_time: datetime | str | None = None,
+        engine: str | ForecastEngine | None = None,
+        model_name: str | None = None,
+        engine_options: Mapping[str, Any] | None = None,
     ) -> ForecastOpsBatchResult:
         completed_at = datetime.now(UTC)
         result = self.service.forecast(
@@ -45,6 +60,9 @@ class ForecastOpsForecastWorker:
             if prediction_origin_time is not None
             else None,
             scored_at=completed_at,
+            engine=engine,
+            model_name=model_name,
+            engine_options=engine_options,
         )
         return ForecastOpsBatchResult(
             job_id=job_id or f"forecastops-forecast-{uuid4()}",
@@ -60,8 +78,16 @@ def run_forecastops_batch_forecast(
     job_id: str | None = None,
     prediction_origin_time: datetime | str | None = None,
     repository: InMemoryForecastOpsRepository | None = None,
+    engine: str | ForecastEngine = "baseline",
+    model_name: str | None = None,
+    engine_options: Mapping[str, Any] | None = None,
 ) -> ForecastOpsBatchResult:
-    return ForecastOpsForecastWorker(repository=repository).run(
+    return ForecastOpsForecastWorker(
+        repository=repository,
+        engine=engine,
+        model_name=model_name,
+        engine_options=engine_options,
+    ).run(
         inputs=inputs,
         job_id=job_id,
         prediction_origin_time=prediction_origin_time,

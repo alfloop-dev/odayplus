@@ -7,6 +7,7 @@ from typing import Any
 
 from modules.forecastops.domain.forecasting import (
     Alert,
+    ForecastEngine,
     ForecastInput,
     ForecastOpsNotFoundError,
     ForecastOutput,
@@ -16,6 +17,7 @@ from modules.forecastops.domain.forecasting import (
     build_store_timeseries,
     forecast_stores,
 )
+from modules.forecastops.infrastructure.forecast_engines import create_forecast_engine
 from modules.forecastops.infrastructure.repositories import InMemoryForecastOpsRepository
 
 
@@ -34,8 +36,20 @@ class ForecastOpsResult:
 
 
 class ForecastOpsService:
-    def __init__(self, *, repository: InMemoryForecastOpsRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: InMemoryForecastOpsRepository | None = None,
+        engine: str | ForecastEngine = "baseline",
+        model_name: str | None = None,
+        engine_options: Mapping[str, Any] | None = None,
+    ) -> None:
         self.repository = repository or InMemoryForecastOpsRepository()
+        self.engine = _resolve_engine(
+            engine,
+            model_name=model_name,
+            engine_options=engine_options,
+        )
 
     def ingest_timeseries(
         self, observations: Iterable[StoreDayObservation | Mapping[str, Any]]
@@ -49,20 +63,32 @@ class ForecastOpsService:
         *,
         prediction_origin_time: datetime | None = None,
         scored_at: datetime | None = None,
+        engine: str | ForecastEngine | None = None,
+        model_name: str | None = None,
+        engine_options: Mapping[str, Any] | None = None,
     ) -> ForecastOpsResult:
         from datetime import UTC
         from uuid import uuid4
 
-        from modules.forecastops.domain.forecasting import FORECASTOPS_MODEL_VERSION
         from shared.domain import ForecastOutput as CanonicalForecastOutput
         from shared.domain import Prediction, PredictionRun
 
+        selected_engine = (
+            self.engine
+            if engine is None
+            else _resolve_engine(
+                engine,
+                model_name=model_name,
+                engine_options=engine_options,
+            )
+        )
         run_id = f"pred-run-forecast-{uuid4()}"
         forecasts, alerts, handoffs = forecast_stores(
             inputs,
             prediction_origin_time=prediction_origin_time,
             scored_at=scored_at,
             prediction_run_id=run_id,
+            engine=selected_engine,
         )
         saved_forecasts = tuple(self.repository.save_forecast(forecast) for forecast in forecasts)
 
@@ -70,7 +96,7 @@ class ForecastOpsService:
             origin = prediction_origin_time or datetime.now(UTC)
             run = PredictionRun(
                 prediction_run_id=run_id,
-                model_version_id=FORECASTOPS_MODEL_VERSION,
+                model_version_id=saved_forecasts[0].model_version,
                 feature_snapshot_time=origin,
                 prediction_origin_time=origin,
                 prediction_horizon="w24",
@@ -103,6 +129,12 @@ class ForecastOpsService:
                     p50_value=f.p50,
                     p90_value=f.p90,
                     unit="TWD",
+                    explanation_json={
+                        "engine_name": f.engine_name,
+                        "model_name": f.model_name,
+                        "model_version": f.model_version,
+                        "model_metadata": dict(f.model_metadata),
+                    },
                 )
                 self.repository.save_prediction(pred)
 
@@ -145,6 +177,25 @@ class ForecastOpsService:
             actor=actor, intervention_id=intervention_id, now=now or datetime.now(UTC)
         )
         return self.repository.save_handoff(executed)
+
+
+def _resolve_engine(
+    engine: str | ForecastEngine,
+    *,
+    model_name: str | None,
+    engine_options: Mapping[str, Any] | None,
+) -> ForecastEngine | None:
+    if isinstance(engine, str):
+        return create_forecast_engine(
+            engine,
+            model_name=model_name,
+            options=dict(engine_options or {}),
+        )
+    if model_name is not None or engine_options:
+        raise ValueError(
+            "model_name and engine_options are only valid when engine is selected by name"
+        )
+    return engine
 
 
 __all__ = ["ForecastOpsResult", "ForecastOpsService"]
