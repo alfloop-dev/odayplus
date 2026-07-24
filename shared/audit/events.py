@@ -88,10 +88,24 @@ class InMemoryAuditLog:
         self._events.append(event)
         return event
 
-    def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
-        if correlation_id is None:
-            return list(self._events)
-        return [event for event in self._events if event.correlation_id == correlation_id]
+    def list_events(
+        self,
+        *,
+        correlation_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[AuditEvent]:
+        events = list(self._events)
+        if tenant_id is not None:
+            events = [
+                event
+                for event in events
+                if str(event.metadata.get("tenant_id") or "") == tenant_id
+            ]
+        if correlation_id is not None:
+            events = [
+                event for event in events if event.correlation_id == correlation_id
+            ]
+        return events
 
     def verify_chain(self) -> AuditChainVerification:
         return verify_audit_chain(self._events)

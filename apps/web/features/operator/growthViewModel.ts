@@ -1,13 +1,13 @@
 /**
  * Growth workspace (營收成長) view model.
  *
- * Dual-mode: runtime API client + embedded fixture fallback.
+ * Dual-mode: runtime API client + local/test fixture fallback.
  *
  * Read path  — fetchGrowthViewModel({ segmentId, itemId, draftId })
  *   1. Calls /api/v1/operator/growth/{freshness,segments,recommendations,actions}
  *      with Idempotency-Key and X-Correlation-Id.
- *   2. On any network/parse error, silently falls back to embedded fixtures so
- *      the workspace never breaks.
+ *   2. POC/local callers may fall back to embedded fixtures after an API error.
+ *      Production callers fail closed and never expose those fixtures.
  *
  * Write path — apiClient.createGrowthDraft() / apiClient.writeGrowthOutcome()
  *   • POST /api/v1/operator/growth/actions           (create draft)
@@ -33,6 +33,10 @@ import type {
   StatusTone,
 } from "@oday-plus/domain-types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import {
+  operatorFixturesAllowed,
+  payloadContainsSeedData,
+} from "./operatorDataMode";
 
 export type ConfidenceLevel = Confidence["level"];
 
@@ -692,28 +696,35 @@ export const conflictLevelTone: Record<ConflictCheck["level"], StatusTone> = {
 };
 
 // ---------------------------------------------------------------------------
-// Runtime data fetch with fixture fallback
+// Runtime data fetch with local/test fixture support
 // ---------------------------------------------------------------------------
 
 export type GrowthApiData = {
-  freshness: GrowthFreshness;
+  freshness: GrowthFreshness | null;
   segments: GrowthSegment[];
   recommendations: PriceOpsRecommendation[];
   items: GrowthItem[];
   /** true when data came from the live API; false when falling back to fixtures */
   fromApi: boolean;
+  availability: "ready" | "fixture" | "seed" | "empty" | "error";
+  error?: string;
 };
 
 /**
  * Fetch all Growth workspace data from /api/v1/operator/growth/*.
- * Falls back to embedded fixtures on any error so the workspace never breaks.
+ * Production returns an explicit error result on incomplete reads. Local and
+ * test callers may retain the embedded fixture fallback.
  *
  * Called from server components (Next.js server-side fetch) or from
  * client-side hooks when live refresh is needed.
  */
 export async function fetchGrowthApiData(params: {
   segmentId?: string;
+} = {}, options: {
+  allowFixtureFallback?: boolean;
 } = {}): Promise<GrowthApiData> {
+  const allowFixtureFallback =
+    options.allowFixtureFallback ?? operatorFixturesAllowed();
   const correlationId = newCorrelationId();
   const baseHeaders = { "X-Correlation-Id": correlationId };
 
@@ -735,20 +746,66 @@ export async function fetchGrowthApiData(params: {
       ),
     ]);
 
-    if (segmentsRes && recommendationsRes && actionsRes) {
-      return {
-        freshness: freshnessRes ?? FIXTURE_FRESHNESS,
-        segments: segmentsRes.items,
-        recommendations: recommendationsRes.items,
-        items: actionsRes.items,
-        fromApi: true,
-      };
+    if (freshnessRes && segmentsRes && recommendationsRes && actionsRes) {
+      const containsSeedData = payloadContainsSeedData([
+        freshnessRes,
+        segmentsRes,
+        recommendationsRes,
+        actionsRes,
+      ]);
+      const hasCompleteWorkspaceData =
+        segmentsRes.items.length > 0 &&
+        recommendationsRes.items.length > 0 &&
+        actionsRes.items.length > 0;
+      if (containsSeedData && !allowFixtureFallback) {
+        return {
+          freshness: null,
+          segments: [],
+          recommendations: [],
+          items: [],
+          fromApi: false,
+          availability: "seed",
+          error: "Growth API returned seed, fixture, or mock data.",
+        };
+      }
+      if (!hasCompleteWorkspaceData && !allowFixtureFallback) {
+        return {
+          freshness: null,
+          segments: [],
+          recommendations: [],
+          items: [],
+          fromApi: false,
+          availability: "empty",
+          error: "Growth API returned an incomplete or empty workspace payload.",
+        };
+      }
+      if (!containsSeedData && hasCompleteWorkspaceData) {
+        return {
+          freshness: freshnessRes,
+          segments: segmentsRes.items,
+          recommendations: recommendationsRes.items,
+          items: actionsRes.items,
+          fromApi: true,
+          availability: "ready",
+        };
+      }
     }
   } catch {
-    // fall through to fixture fallback
+    // Classified below; production callers fail closed.
   }
 
-  // Fixture fallback
+  if (!allowFixtureFallback) {
+    return {
+      freshness: null,
+      segments: [],
+      recommendations: [],
+      items: [],
+      fromApi: false,
+      availability: "error",
+      error: "Growth API did not return a complete response.",
+    };
+  }
+
   const recommendations = params.segmentId
     ? PRICEOPS_RECOMMENDATIONS.filter((r) => r.segmentId === params.segmentId)
     : PRICEOPS_RECOMMENDATIONS;
@@ -762,6 +819,7 @@ export async function fetchGrowthApiData(params: {
     recommendations,
     items,
     fromApi: false,
+    availability: "fixture",
   };
 }
 

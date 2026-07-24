@@ -21,11 +21,14 @@ Flows exercised on a single migrated durable database:
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from apps.api.server import SERVICE_BOUNDARIES, bootstrap_runtime, build_server, build_worker
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
+from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobStatus
 
@@ -45,6 +48,19 @@ def _drain(worker: ODayWorker, limit: int = 25) -> int:
             break
         executed += 1
     return executed
+
+
+def _seed_forecast_series(bundle, store_id: str) -> None:
+    start = date(2026, 4, 1)
+    ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
+        StoreDayObservation(
+            store_id=store_id,
+            business_date=start + timedelta(days=index),
+            actual_revenue=90_000 + index * 150 + (index % 7) * 800,
+            source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
+        )
+        for index in range(70)
+    )
 
 
 def test_registry_composes_without_monolithic_switch() -> None:
@@ -85,6 +101,7 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         # boundary. This crosses the API service boundary and writes an audit
         # event (ODP-AC-SD08-003).
         client = TestClient(app)
+        _seed_forecast_series(bundle, "store-gate-001")
         response = client.post(
             "/jobs",
             json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},

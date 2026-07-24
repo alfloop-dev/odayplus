@@ -17,6 +17,7 @@ from modules.opsboard.auth.boundary import (
 from modules.opsboard.auth.claims import principal_from_claims
 from modules.opsboard.auth.config import AuthBoundaryConfig, config_from_env
 from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
+from modules.opsboard.auth.jwks import JwksResolver, KeyResolver
 from modules.opsboard.auth.jwt import (
     BadSignatureError,
     JwtError,
@@ -43,6 +44,8 @@ __all__ = [
     "BadSignatureError",
     "Credentials",
     "JwtError",
+    "JwksResolver",
+    "KeyResolver",
     "MalformedTokenError",
     "ServiceIdentity",
     "ServiceIdentityVerifier",

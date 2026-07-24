@@ -23,6 +23,7 @@ class ExternalProviderMode(StrEnum):
 
 
 class ProviderCategory(StrEnum):
+    CONTROL_PLANE = "control_plane"
     LISTING = "listing"
     POI = "poi"
     GEOCODE = "geocode"
@@ -151,6 +152,7 @@ class ExternalProviderConfigError(RuntimeError):
 
 
 LIVE_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
+PRODUCTION_PROVIDER_IDS_ENV_VAR = "ODP_PRODUCTION_PROVIDER_IDS"
 INVALID_AUTH_STATUSES = {"expired", "unauthorized", "revoked", "invalid"}
 PLACEHOLDER_VALUES = {"", "changeme", "change-me", "todo", "placeholder", "dummy", "example"}
 
@@ -299,9 +301,48 @@ def validate_external_providers(
     deploy_env = source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
     production_like = deploy_env in {"prod", "production"}
     now = _today_utc(source_env)
+    providers = PROVIDER_REGISTRY
 
     if resolved_mode is ExternalProviderMode.LIVE:
-        for provider in PROVIDER_REGISTRY:
+        raw_provider_ids = source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "")
+        selected_provider_ids = {
+            provider_id.strip()
+            for provider_id in raw_provider_ids.split(",")
+            if provider_id.strip()
+        }
+        known_provider_ids = {provider.provider_id for provider in PROVIDER_REGISTRY}
+        unknown_provider_ids = selected_provider_ids - known_provider_ids
+        if production_like and not selected_provider_ids:
+            errors.append(
+                ProviderValidationError(
+                    provider_id="provider_registry",
+                    category=ProviderCategory.CONTROL_PLANE,
+                    env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                    code="provider_allowlist_required",
+                    message=(
+                        "Production live mode requires an explicit provider allowlist."
+                    ),
+                )
+            )
+            providers = ()
+        elif selected_provider_ids:
+            for provider_id in sorted(unknown_provider_ids):
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider_id,
+                        category=ProviderCategory.CONTROL_PLANE,
+                        env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                        code="unknown_provider",
+                        message="The production provider allowlist contains an unknown provider ID.",
+                    )
+                )
+            providers = tuple(
+                provider
+                for provider in PROVIDER_REGISTRY
+                if provider.provider_id in selected_provider_ids
+            )
+
+        for provider in providers:
             if production_like and not provider.license.allowed_in_production:
                 errors.append(
                     ProviderValidationError(
@@ -359,7 +400,7 @@ def validate_external_providers(
     return ProviderValidationResult(
         mode=resolved_mode,
         correlation_id=corr,
-        providers=PROVIDER_REGISTRY,
+        providers=providers,
         errors=tuple(errors),
     )
 

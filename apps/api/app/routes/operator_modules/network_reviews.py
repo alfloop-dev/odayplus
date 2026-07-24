@@ -25,15 +25,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_reviews import (
     DECISION_ACTIONS,
     NetworkReviewConflict,
     NetworkReviewNotFound,
     NetworkReviewPolicyError,
     NetworkReviewRoleError,
+    NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
 
@@ -65,19 +67,46 @@ def create_network_review_sub_router(
     *,
     require_view_permission_fn: Callable[..., Any],
     require_decide_permission_fn: Callable[..., Any],
+    service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-reviews")
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network review reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
     def get_network_reviews(
+        request: Request,
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
-        return service.snapshot(correlation_id=x_correlation_id)
+        try:
+            return resolve_service(request, service, service_resolver).snapshot(
+                correlation_id=x_correlation_id
+            )
+        except NetworkReviewRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
-    @router.post("/reset", dependencies=[Depends(require_decide_permission_fn)])
-    def reset_network_reviews() -> dict[str, Any]:
-        return service.reset()
+    @router.post(
+        "/reset",
+        dependencies=[
+            Depends(require_decide_permission_fn),
+            Depends(require_reset_allowed),
+        ],
+    )
+    def reset_network_reviews(request: Request) -> dict[str, Any]:
+        return resolve_service(request, service, service_resolver).reset()
 
     @router.post(
         "/{review_id}/decide",
@@ -86,11 +115,12 @@ def create_network_review_sub_router(
     def decide_review(
         review_id: str,
         body: ReviewDecisionPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.decide_review(
+            return resolve_service(request, service, service_resolver).decide_review(
                 review_id=review_id,
                 decision=body.decision,
                 reason=body.reason,
@@ -111,6 +141,11 @@ def create_network_review_sub_router(
         except NetworkReviewPolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        except NetworkReviewRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
             ) from exc
 
     return router

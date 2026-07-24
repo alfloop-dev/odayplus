@@ -34,12 +34,17 @@ Backward-compat note:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from modules.opsboard.application.growth import GrowthService
+from modules.opsboard.application.operator_live_repository import (
+    OperatorLiveRepositoryError,
+    OperatorLiveRepositoryProtocol,
+)
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import InMemoryAuditLog
 
@@ -47,8 +52,10 @@ from shared.audit import InMemoryAuditLog
 # Legacy DTO aliases (backward compat — do not add new fields here)
 # ---------------------------------------------------------------------------
 
+
 class TransitionPayload(BaseModel):
     """Legacy alias — prefer IssueTransitionRequest in new code."""
+
     issueId: str | None = None
     status: str | None = None
     note: str | None = None
@@ -58,6 +65,7 @@ class TransitionPayload(BaseModel):
 
 class ApprovalDecisionPayload(BaseModel):
     """Legacy alias — prefer ApprovalDecisionRequest in new code."""
+
     status: str
     reason: str | None = None
     actorRoleId: str | None = None
@@ -66,6 +74,7 @@ class ApprovalDecisionPayload(BaseModel):
 
 class EvidencePurposePayload(BaseModel):
     """Legacy alias — prefer EvidencePurposeRequest in new code."""
+
     purpose: str
     cameraLocation: str | None = None
     timeWindow: str | None = None
@@ -74,9 +83,34 @@ class EvidencePurposePayload(BaseModel):
     auditNote: str | None = None
 
 
+def _live_operator_request_context(
+    request: Request,
+    *,
+    x_operator_role: str | None = None,
+    x_subject_id: str | None = None,
+    x_roles: str | None = None,
+    x_correlation_id: str | None = None,
+) -> dict[str, Any]:
+    """Build live read scope only from the verified request principal."""
+
+    principal = getattr(request.state, "operator_principal", None)
+    scope = getattr(principal, "scope", None)
+    return {
+        "role_id": getattr(request.state, "operator_role_id", None) or x_operator_role,
+        "subject_id": getattr(request.state, "operator_subject_id", None) or x_subject_id,
+        "system_roles": getattr(request.state, "operator_system_roles", None) or x_roles,
+        "correlation_id": getattr(request.state, "correlation_id", None) or x_correlation_id,
+        "tenant_id": getattr(scope, "tenant_id", None),
+        "brand_ids": tuple(getattr(scope, "brand_ids", ()) or ()),
+        "region_ids": tuple(getattr(scope, "region_ids", ()) or ()),
+        "store_ids": tuple(getattr(scope, "store_ids", ()) or ()),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
+
 
 def create_operator_router(
     *,
@@ -85,8 +119,21 @@ def create_operator_router(
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
+    listing_repository_for_tenant: Any | None = None,
+    sitescore_repository_for_tenant: Any | None = None,
+    sitescore_decision_repository_for_tenant: Any | None = None,
+    avm_repository_for_tenant: Any | None = None,
+    netplan_repository_for_tenant: Any | None = None,
+    priceops_repository_for_tenant: Any | None = None,
+    model_runtime: Any | None = None,
+    avm_production_executor: Any | None = None,
+    netplan_production_executor: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    live_repository: OperatorLiveRepositoryProtocol | None = None,
+    require_live_data: bool = False,
+    persistence_mode: str = "memory",
+    provider_mode: str = "fixture",
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -111,6 +158,7 @@ def create_operator_router(
     """
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
+        OPERATOR_TENANT_ID,
         build_engine,
         require_operator_permission,
         require_permission,
@@ -120,8 +168,25 @@ def create_operator_router(
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
 
-    # Shared state service — one instance per router lifetime.
-    svc = state_service or OperatorStateService()
+    # Shared state service — one instance per router lifetime. A live-required
+    # router accepts only a state service backed by the injected live
+    # repository; fixture services can never cross this composition boundary.
+    if require_live_data:
+        svc = (
+            state_service
+            if state_service is not None and state_service.live_repository is not None
+            else OperatorStateService(
+                require_live_data=True,
+                persistence_mode=persistence_mode,
+                provider_mode=provider_mode,
+                live_repository=live_repository,
+            )
+        )
+    else:
+        svc = state_service or OperatorStateService(
+            persistence_mode=persistence_mode,
+            provider_mode=provider_mode,
+        )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -159,11 +224,794 @@ def create_operator_router(
     from shared.infrastructure.persistence.operator_shell import DurableShellRepository
 
     operator_view_guard = require_operator_permission(
-        OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.VIEW,
+        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        engine=authz_engine,
     )
     operator_write_guard = require_operator_permission(
-        OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.UPDATE,
+        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        engine=authz_engine,
     )
+
+    if require_live_data:
+        # Production exposes only read surfaces backed by the live repository.
+        # Seed reset and modules whose services still own process-local state
+        # are not mounted at all.
+        def _context(
+            request: Request,
+            *,
+            x_operator_role: str | None,
+            x_subject_id: str | None,
+            x_roles: str | None,
+            x_correlation_id: str | None,
+        ) -> dict[str, Any]:
+            return _live_operator_request_context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
+
+        def _live_read(operation: str, method: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return method(*args, **kwargs)
+            except OperatorLiveRepositoryError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
+                        "operation": operation,
+                        "message": str(exc),
+                    },
+                ) from exc
+
+        @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
+        @router.get("/today", dependencies=[Depends(operator_view_guard)])
+        def live_envelope(
+            request: Request,
+            x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        ) -> dict[str, Any]:
+            return _live_read(
+                "operator.envelope",
+                svc.get_today,
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                ),
+            )
+
+        @router.get("/search", dependencies=[Depends(operator_view_guard)])
+        def live_search(
+            request: Request,
+            q: str = Query(default=""),
+            x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        ) -> dict[str, Any]:
+            return _live_read(
+                "operator.search",
+                svc.search,
+                q,
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                ),
+            )
+
+        def _task_row(item: dict[str, Any]) -> dict[str, Any]:
+            target = item.get("target") or {}
+            task_id = str(item.get("id", ""))
+            tone = str(item.get("tone", "info"))
+            return {
+                **item,
+                "taskId": task_id,
+                "assigneeId": None,
+                "assigneeName": None,
+                "assignedAt": None,
+                "assignedToMe": False,
+                "slaDueAt": None,
+                "slaState": "none",
+                "severity": {
+                    "danger": "critical",
+                    "warning": "warning",
+                }.get(tone, "info"),
+                "deepLink": {
+                    "workspace": target.get(
+                        "workspace",
+                        item.get("workspace", "today"),
+                    ),
+                    "entityId": target.get("entityId", task_id),
+                    "tab": target.get("tab", "overview"),
+                },
+                "sourceHref": (
+                    f"/tasks?taskId={target.get('entityId', task_id)}"
+                    f"&workspace={target.get('workspace', item.get('workspace', 'today'))}"
+                ),
+            }
+
+        def _notification_row(item: dict[str, Any]) -> dict[str, Any]:
+            target = item.get("target") or {}
+            notification_id = str(item.get("id") or item.get("title", ""))
+            return {
+                **item,
+                "notificationId": notification_id,
+                "severity": {
+                    "danger": "critical",
+                    "warning": "warning",
+                }.get(str(item.get("tone", "info")), "info"),
+                "acknowledged": False,
+                "acknowledgedAt": None,
+                "acknowledgedBy": None,
+                "sourceHref": (
+                    f"/tasks?taskId={target.get('entityId')}"
+                    f"&workspace={target.get('workspace', 'today')}"
+                    if target.get("entityId")
+                    else "/notifications"
+                ),
+            }
+
+        @router.get(
+            "/shell/home",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_home(
+            request: Request,
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            envelope = _live_read(
+                "operator.shell.home",
+                svc.get_today,
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                ),
+            )
+            tasks = [_task_row(item) for item in envelope["workQueue"]]
+            notifications = [_notification_row(item) for item in envelope["notifications"]]
+            role = envelope["meta"]["role"]
+            from modules.opsboard.application.shell import ENTRY_POINTS
+
+            allowed_workspaces = set(role["allowedWorkspaces"])
+            entry_points = [
+                {key: value for key, value in entry.items() if key != "requiresAdmin"}
+                for entry in ENTRY_POINTS
+                if entry["workspace"] in allowed_workspaces
+                and (not entry.get("requiresAdmin") or role["id"] == "ops-lead")
+            ]
+            return {
+                "meta": {
+                    **envelope["meta"],
+                    "source": "operator-live-shell-home",
+                    "allowedWorkspaces": role["allowedWorkspaces"],
+                    "isAdmin": role["id"] == "ops-lead",
+                },
+                "status": {
+                    "headline": f"{role['label']}・{len(tasks)} 件待處理",
+                    "openTasks": len(tasks),
+                    "slaBreached": 0,
+                    "slaAtRisk": 0,
+                    "pendingApprovals": len(envelope["approvals"]),
+                    "unacknowledgedNotifications": len(notifications),
+                    "tone": "warning" if tasks else "success",
+                },
+                "tasks": tasks[:5],
+                "approvals": envelope["approvals"][:5],
+                "decisions": envelope["decisions"][:5],
+                "freshness": [
+                    {
+                        "source": "operator-live-repository",
+                        "label": "Operator live repositories",
+                        "generatedAt": envelope["meta"]["generatedAt"],
+                        "records": sum(
+                            int(value)
+                            for value in envelope["meta"].get("recordCounts", {}).values()
+                        ),
+                        "state": (
+                            "live" if envelope["meta"]["liveReadiness"]["ready"] else "unavailable"
+                        ),
+                    }
+                ],
+                "entryPoints": entry_points,
+                "notifications": notifications[:5],
+                "kpis": envelope["kpis"],
+            }
+
+        @router.get(
+            "/shell/tasks",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_tasks(
+            request: Request,
+            sla: str | None = Query(default=None),
+            assignee: str | None = Query(default=None),
+            task_status: str | None = Query(default=None, alias="status"),
+            task_id: str | None = Query(default=None, alias="taskId"),
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            context = _context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
+            queue_context = {
+                key: value for key, value in context.items() if key != "correlation_id"
+            }
+            tasks = [
+                _task_row(item)
+                for item in _live_read(
+                    "operator.shell.tasks",
+                    svc.get_work_queue,
+                    **queue_context,
+                )
+            ]
+            filtered = tasks
+            if sla:
+                filtered = [item for item in filtered if item["slaState"] == sla]
+            if assignee == "me":
+                filtered = [item for item in filtered if item["assignedToMe"]]
+            elif assignee == "unassigned":
+                filtered = [item for item in filtered if not item["assigneeId"]]
+            elif assignee:
+                filtered = [item for item in filtered if item["assigneeId"] == assignee]
+            if task_status:
+                filtered = [item for item in filtered if str(item.get("status")) == task_status]
+            if task_id:
+                filtered = [item for item in filtered if item["taskId"] == task_id]
+            return {
+                "meta": {
+                    "generatedAt": datetime.now(UTC).isoformat(),
+                    "correlationId": context["correlation_id"],
+                    "source": "operator-live-shell-tasks",
+                    "dataOrigin": svc.data_origin,
+                    "filters": {
+                        "sla": sla,
+                        "assignee": assignee,
+                        "status": task_status,
+                        "taskId": task_id,
+                    },
+                },
+                "items": filtered,
+                "count": len(filtered),
+                "total": len(tasks),
+                "facets": {
+                    "sla": {
+                        "breached": 0,
+                        "at-risk": 0,
+                        "on-track": 0,
+                        "none": len(tasks),
+                    },
+                    "status": {
+                        status_value: sum(
+                            1 for item in tasks if str(item.get("status")) == status_value
+                        )
+                        for status_value in {str(item.get("status")) for item in tasks}
+                    },
+                    "assignee": {"me": 0},
+                },
+                "actions": [
+                    {
+                        "key": "task.open",
+                        "label": "開啟來源",
+                        "allowed": True,
+                        "reason": None,
+                    }
+                ],
+                "assignableRoles": [],
+            }
+
+        @router.get(
+            "/shell/notifications",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_notifications(
+            request: Request,
+            severity: str | None = Query(default=None),
+            acknowledged: bool | None = Query(default=None),
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            context = _context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
+            envelope = _live_read(
+                "operator.shell.notifications",
+                svc.get_today,
+                **context,
+            )
+            rows = [_notification_row(item) for item in envelope["notifications"]]
+            filtered = rows
+            if severity:
+                filtered = [item for item in filtered if item["severity"] == severity]
+            if acknowledged is not None:
+                filtered = [item for item in filtered if item["acknowledged"] is acknowledged]
+            return {
+                "meta": {
+                    "generatedAt": envelope["meta"]["generatedAt"],
+                    "correlationId": context["correlation_id"],
+                    "source": "operator-live-shell-notifications",
+                    "dataOrigin": envelope["meta"]["dataOrigin"],
+                },
+                "items": filtered,
+                "count": len(filtered),
+                "unacknowledged": len(rows),
+                "facets": {
+                    "severity": {
+                        level: sum(1 for item in rows if item["severity"] == level)
+                        for level in ("critical", "warning", "info")
+                    }
+                },
+                "preferences": None,
+            }
+
+        if document_store is None:
+
+            class _UnavailableOperatorDomainStore:
+                @property
+                def engine(self) -> None:
+                    return None
+
+                def __getattr__(self, _name: str) -> Any:
+                    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+                        from fastapi import HTTPException, status
+
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail={
+                                "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                                "message": (
+                                    "live Operator domain routes require an "
+                                    "injected durable document store"
+                                ),
+                            },
+                        )
+
+                    return unavailable
+
+            document_store = _UnavailableOperatorDomainStore()
+
+        from apps.api.app.routes.operator_modules.governance import (
+            create_governance_sub_router,
+        )
+        from apps.api.app.routes.operator_modules.live_service import (
+            DurableTenantServiceResolver,
+        )
+        from modules.opsboard.application.governance import GovernanceService
+        from shared.infrastructure.persistence.operator_domains import (
+            DurableOperatorDomainStateRepository,
+            TenantScopedDocumentStore,
+        )
+        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+
+        def require_tenant_repository(
+            provider: Any | None,
+            dependency: str,
+            tenant_id: str,
+        ) -> Any:
+            if provider is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
+                        "dependency": dependency,
+                        "message": (f"live Operator route requires tenant-aware {dependency}"),
+                    },
+                )
+            repository = provider(tenant_id)
+            if repository is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
+                        "dependency": dependency,
+                        "message": (
+                            f"tenant-aware {dependency} is not configured for tenant {tenant_id}"
+                        ),
+                    },
+                )
+            return repository
+
+        def require_model_runtime() -> Any:
+            if model_runtime is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "SITESCORE_RUNTIME_UNAVAILABLE",
+                        "dependency": "model_runtime",
+                        "message": (
+                            "live Operator SiteScore requires the canonical "
+                            "MLflow production runtime"
+                        ),
+                    },
+                )
+            return model_runtime
+
+        listing_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-listings",
+        )
+        scoring_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-scoring",
+        )
+        review_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-reviews",
+        )
+        rebalance_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-rebalance",
+        )
+        growth_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "growth",
+        )
+        governance_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "governance",
+        )
+
+        listing_resolver = DurableTenantServiceResolver(
+            listing_state_repository,
+            factory=lambda state, tenant_id: NetworkListingService(
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant,
+                    "listing_repository",
+                    tenant_id,
+                ),
+                intake_repository=DurableAssistedIntakeRepository(
+                    TenantScopedDocumentStore(document_store, tenant_id)
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "convert_listing",
+                "merge_listing",
+                "archive_listing",
+                "submit_intake",
+                "correct_intake",
+                "decide_intake",
+                "retry_intake",
+                "promote_intake",
+            },
+        )
+        scoring_resolver = DurableTenantServiceResolver(
+            scoring_state_repository,
+            factory=lambda state, tenant_id: NetworkScoringService(
+                initial_state=state,
+                seed_fixtures=False,
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant,
+                    "listing_repository",
+                    tenant_id,
+                ),
+                sitescore_repository=require_tenant_repository(
+                    sitescore_repository_for_tenant,
+                    "sitescore_repository",
+                    tenant_id,
+                ),
+                model_runtime=require_model_runtime(),
+                require_canonical=True,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "score_candidate",
+                "score_batch",
+                "set_compare_set",
+            },
+        )
+        review_resolver = DurableTenantServiceResolver(
+            review_state_repository,
+            factory=lambda state, tenant_id: (
+                lambda decision_repository, sitescore_repository: NetworkReviewService(
+                    initial_state=state,
+                    seed_fixtures=False,
+                    decision_repository=decision_repository,
+                    sitescore_repository=sitescore_repository,
+                    decision_workflow=SiteScoreDecisionWorkflow(
+                        audit_log=active_audit_log,
+                        store=decision_repository,
+                    ),
+                    require_canonical=True,
+                )
+            )(
+                require_tenant_repository(
+                    sitescore_decision_repository_for_tenant,
+                    "sitescore_decision_repository",
+                    tenant_id,
+                ),
+                require_tenant_repository(
+                    sitescore_repository_for_tenant,
+                    "sitescore_repository",
+                    tenant_id,
+                ),
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"reset", "decide_review"},
+        )
+
+        def write_governance_approval(
+            tenant_id: str,
+            approval: dict[str, Any],
+        ) -> dict[str, Any]:
+            growth_state = growth_state_repository.load(tenant_id)
+            governance = GovernanceService(
+                growth_service=GrowthService(
+                    initial_state=growth_state,
+                    seed_fixtures=False,
+                ),
+                initial_state=governance_state_repository.load(tenant_id),
+                seed_fixtures=False,
+            )
+            result = governance.upsert_approval(approval)
+            governance_state_repository.save(
+                tenant_id,
+                governance.export_state(),
+            )
+            return result
+
+        rebalance_resolver = DurableTenantServiceResolver(
+            rebalance_state_repository,
+            factory=lambda state, tenant_id: NetworkRebalanceService(
+                govern_approval_writer=lambda approval: write_governance_approval(
+                    tenant_id,
+                    approval,
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+                avm_repository=require_tenant_repository(
+                    avm_repository_for_tenant,
+                    "avm_repository",
+                    tenant_id,
+                ),
+                netplan_repository=require_tenant_repository(
+                    netplan_repository_for_tenant,
+                    "netplan_repository",
+                    tenant_id,
+                ),
+                avm_production_executor=avm_production_executor,
+                netplan_production_executor=netplan_production_executor,
+                runtime_mode="production",
+                tenant_id=tenant_id,
+                require_canonical=True,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "request_avm",
+                "complete_avm",
+                "solve_netplan",
+                "select_scenario",
+                "submit_review",
+            },
+        )
+        growth_resolver = DurableTenantServiceResolver(
+            growth_state_repository,
+            factory=lambda state, tenant_id: GrowthService(
+                initial_state=state,
+                audit_log=active_audit_log,
+                seed_fixtures=False,
+                priceops_repository=require_tenant_repository(
+                    priceops_repository_for_tenant,
+                    "priceops_repository",
+                    tenant_id,
+                ),
+                tenant_id=tenant_id,
+                require_canonical=True,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "create_action",
+                "transition_action",
+                "write_outcome",
+                "submit_for_approval",
+                "resolve_approval",
+                "reset_to_seed",
+            },
+        )
+
+        def governance_factory(
+            state: dict[str, Any] | None,
+            tenant_id: str,
+        ) -> GovernanceService:
+            return GovernanceService(
+                growth_service=GrowthService(
+                    initial_state=growth_state_repository.load(tenant_id),
+                    audit_log=active_audit_log,
+                    seed_fixtures=False,
+                    priceops_repository=require_tenant_repository(
+                        priceops_repository_for_tenant,
+                        "priceops_repository",
+                        tenant_id,
+                    ),
+                    tenant_id=tenant_id,
+                    require_canonical=True,
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+                sitescore_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant,
+                    "sitescore_decision_repository",
+                    tenant_id,
+                ),
+                avm_repository=require_tenant_repository(
+                    avm_repository_for_tenant,
+                    "avm_repository",
+                    tenant_id,
+                ),
+                netplan_repository=require_tenant_repository(
+                    netplan_repository_for_tenant,
+                    "netplan_repository",
+                    tenant_id,
+                ),
+                priceops_repository=require_tenant_repository(
+                    priceops_repository_for_tenant,
+                    "priceops_repository",
+                    tenant_id,
+                ),
+                tenant_id=tenant_id,
+                require_canonical=True,
+            )
+
+        def save_governance_growth(
+            service: GovernanceService,
+            tenant_id: str,
+        ) -> None:
+            growth_state = service.export_growth_state()
+            if growth_state is not None:
+                growth_state_repository.save(tenant_id, growth_state)
+
+        governance_resolver = DurableTenantServiceResolver(
+            governance_state_repository,
+            factory=governance_factory,
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "decide",
+                "export_evidence_package",
+                "upsert_approval",
+            },
+            after_save=save_governance_growth,
+        )
+
+        router.include_router(
+            create_network_listings_sub_router(
+                NetworkListingService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "listing", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "listing", Action.UPDATE, engine=authz_engine
+                ),
+                audit_log=active_audit_log,
+                service_resolver=listing_resolver,
+                allow_reset=False,
+            )
+        )
+        router.include_router(
+            create_network_scoring_sub_router(
+                NetworkScoringService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "sitescore", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "sitescore", Action.EXECUTE, engine=authz_engine
+                ),
+                service_resolver=scoring_resolver,
+                allow_reset=False,
+            )
+        )
+        router.include_router(
+            create_network_review_sub_router(
+                NetworkReviewService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "sitescore", Action.VIEW, engine=authz_engine
+                ),
+                require_decide_permission_fn=require_operator_permission(
+                    "sitescore", Action.APPROVE, engine=authz_engine
+                ),
+                service_resolver=review_resolver,
+                allow_reset=False,
+            )
+        )
+        router.include_router(
+            create_network_rebalance_sub_router(
+                NetworkRebalanceService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "listing", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "listing", Action.UPDATE, engine=authz_engine
+                ),
+                service_resolver=rebalance_resolver,
+                allow_reset=False,
+            )
+        )
+        router.include_router(
+            create_growth_sub_router(
+                GrowthService(
+                    audit_log=active_audit_log,
+                    seed_fixtures=False,
+                ),
+                require_view_permission_fn=operator_view_guard,
+                require_permission_fn=require_operator_permission(
+                    "intervention", Action.CREATE, engine=authz_engine
+                ),
+                service_resolver=growth_resolver,
+            )
+        )
+        router.include_router(
+            create_governance_sub_router(
+                GovernanceService(seed_fixtures=False),
+                require_view_permission_fn=operator_view_guard,
+                require_decision_permission_fn=require_operator_permission(
+                    "intervention", Action.APPROVE, engine=authz_engine
+                ),
+                require_export_permission_fn=require_operator_permission(
+                    "intervention", Action.CREATE, engine=authz_engine
+                ),
+                service_resolver=governance_resolver,
+            )
+        )
+
+        return router
 
     # Shell — protected read envelope plus the product-shell surface.
     #
@@ -185,9 +1033,7 @@ def create_operator_router(
             shell_service=ShellService(
                 svc,
                 repository=(
-                    DurableShellRepository(document_store)
-                    if document_store is not None
-                    else None
+                    DurableShellRepository(document_store) if document_store is not None else None
                 ),
             ),
         )
@@ -255,9 +1101,7 @@ def create_operator_router(
     # Network rebalance — AVM job, NetPlan three-case solve, Govern approval boundary.
     router.include_router(
         create_network_rebalance_sub_router(
-            NetworkRebalanceService(
-                govern_approval_writer=svc.upsert_network_rebalance_approval
-            ),
+            NetworkRebalanceService(govern_approval_writer=svc.upsert_network_rebalance_approval),
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),

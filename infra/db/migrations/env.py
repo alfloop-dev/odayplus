@@ -10,7 +10,10 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+if (
+    config.config_file_name is not None
+    and config.file_config.has_section("loggers")
+):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
@@ -29,7 +32,9 @@ def database_url() -> str:
     url = config.get_main_option("sqlalchemy.url") or os.environ.get("ODAY_DATABASE_URL")
     if not url:
         raise RuntimeError("Set ODAY_DATABASE_URL or sqlalchemy.url before running migrations")
-    config.set_main_option("sqlalchemy.url", url)
+    # Alembic stores options in ConfigParser, where URL-encoded '%' characters
+    # must be doubled before assignment to survive interpolation.
+    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     return url
 
 

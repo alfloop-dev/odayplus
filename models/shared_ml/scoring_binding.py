@@ -146,6 +146,13 @@ class ModelBinding:
     label_version: str
     git_sha: str | None
     resolved_at: datetime
+    artifact_uri: str
+    artifact_sha256: str | None
+    source_run_id: str | None
+    mlflow_run_id: str | None
+    approved_by: str | None
+    approved_at: datetime | None
+    engine: str | None
 
     def to_audit_metadata(self) -> dict[str, Any]:
         return {
@@ -159,6 +166,15 @@ class ModelBinding:
             "feature_schema_version": self.feature_schema_version,
             "label_version": self.label_version,
             "model_git_sha": self.git_sha,
+            "artifact_uri": self.artifact_uri,
+            "artifact_sha256": self.artifact_sha256,
+            "source_run_id": self.source_run_id,
+            "mlflow_run_id": self.mlflow_run_id,
+            "model_approved_by": self.approved_by,
+            "model_approved_at": (
+                self.approved_at.isoformat() if self.approved_at else None
+            ),
+            "model_engine": self.engine,
             "binding_resolved_at": self.resolved_at.isoformat(),
         }
 
@@ -169,6 +185,9 @@ class ModelBinding:
         model_version: ModelVersion,
         *,
         resolved_at: datetime | None = None,
+        artifact_sha256: str | None = None,
+        engine: str | None = None,
+        mlflow_run_id: str | None = None,
     ) -> ModelBinding:
         return cls(
             service=service,
@@ -182,6 +201,13 @@ class ModelBinding:
             label_version=model_version.label_version,
             git_sha=model_version.git_sha,
             resolved_at=resolved_at or datetime.now(UTC),
+            artifact_uri=model_version.artifact_uri,
+            artifact_sha256=artifact_sha256,
+            source_run_id=model_version.run_id,
+            mlflow_run_id=mlflow_run_id,
+            approved_by=model_version.approved_by,
+            approved_at=model_version.approved_at,
+            engine=engine,
         )
 
 

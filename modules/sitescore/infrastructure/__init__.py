@@ -1,5 +1,8 @@
 """SiteScore infrastructure layer."""
 
-from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+from modules.sitescore.infrastructure.repositories import (
+    InMemorySiteScoreRepository,
+    SiteScoreRepository,
+)
 
-__all__ = ["InMemorySiteScoreRepository"]
+__all__ = ["InMemorySiteScoreRepository", "SiteScoreRepository"]

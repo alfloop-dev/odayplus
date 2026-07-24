@@ -3,6 +3,14 @@
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  isSeedDataSource,
+  operatorFixturesAllowed,
+  payloadContainsSeedData,
+  toUnavailableOperatorStatus,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
 import styles from "./designAligned.module.css";
 import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
 import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
@@ -60,7 +68,52 @@ type StoreOpsApiState = {
   auditEvents: AuditEvent[];
   fourLightSummary: StoreOpsLightSummary[];
   count: number;
+  source?: string;
 };
+
+const EMPTY_STORE_OPS_ISSUE: Issue = {
+  id: "",
+  title: "",
+  storeId: "",
+  storeName: "",
+  status: "new",
+  severity: "low",
+  source: "multiSignal",
+  ownerRoleId: "opsLead",
+  ownerName: "",
+  slaDueAt: "",
+  createdAt: "",
+  updatedAt: "",
+  evidenceIds: [],
+  summary: "",
+};
+
+export function inspectStoreOpsApiPayload(
+  payload: unknown,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "empty";
+  const record = payload as Record<string, unknown>;
+  if (payloadContainsSeedData(payload) || isSeedDataSource(record.source)) return "seed";
+
+  const source = typeof record.source === "string" ? record.source.trim() : "";
+  const issues = Array.isArray(record.issues) ? record.issues : null;
+  const stores = Array.isArray(record.stores) ? record.stores : null;
+  const evidence = Array.isArray(record.evidence) ? record.evidence : null;
+  const auditEvents = Array.isArray(record.auditEvents) ? record.auditEvents : null;
+
+  if (
+    !source ||
+    !issues ||
+    !stores ||
+    !evidence ||
+    !auditEvents ||
+    issues.length === 0 ||
+    stores.length === 0
+  ) {
+    return "empty";
+  }
+  return "ready";
+}
 
 const lightStatusOrder: StoreLightStatus[] = ["red", "yellow"];
 
@@ -229,6 +282,10 @@ export function DesignTodayWorkspace({
   riskStores: propRiskStores,
   auditFeed: propAuditFeed,
 }: DesignTodayWorkspaceProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
+  if (!fixturesAllowed) {
+    return <OperatorDataUnavailableGate status="empty" />;
+  }
   const activeKpis = propKpis || kpis;
   const activeTodayRows = propTodayRows || todayRows;
   const activeDecisions = propDecisions || decisions;
@@ -365,11 +422,16 @@ export function DesignStoreOpsWorkspace({
   onOpenWorkflow,
   issues: propIssues,
 }: DesignStoreOpsWorkspaceProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
   // 1. Get current operator role from sessionStorage if available
   const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
   const [apiState, setApiState] = useState<StoreOpsApiState | null>(null);
   const [storeOpsRefreshToken, setStoreOpsRefreshToken] = useState(0);
   const [isStoreOpsLoading, setIsStoreOpsLoading] = useState(false);
+  const [storeOpsLoadState, setStoreOpsLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [storeOpsLoadError, setStoreOpsLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedRole = window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId;
@@ -416,17 +478,39 @@ export function DesignStoreOpsWorkspace({
       }
 
       setIsStoreOpsLoading(true);
+      if (!fixturesAllowed) setStoreOpsLoadState("loading");
+      setStoreOpsLoadError(null);
       try {
         const response = await fetch(`/api/v1/operator/store-ops/issues?${params.toString()}`, {
           headers: operatorSecurityHeaders(roleId),
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+          throw new Error(`Store Ops API returned ${response.status}`);
+        }
         const data = (await response.json()) as StoreOpsApiState;
         if (!cancelled) {
-          setApiState(data);
+          const inspection = inspectStoreOpsApiPayload(data);
+          setApiState(
+            inspection === "ready" || fixturesAllowed
+              ? data
+              : null,
+          );
+          setStoreOpsLoadState(
+            inspection === "ready"
+              ? "ready"
+              : fixturesAllowed
+                ? "fixture"
+                : inspection,
+          );
         }
       } catch (error) {
         console.error("Error loading Store Ops issues:", error);
+        if (!cancelled) {
+          setStoreOpsLoadState(fixturesAllowed ? "fixture" : "error");
+          setStoreOpsLoadError(
+            error instanceof Error ? error.message : "Store Ops API request failed",
+          );
+        }
       } finally {
         if (!cancelled) {
           setIsStoreOpsLoading(false);
@@ -438,12 +522,12 @@ export function DesignStoreOpsWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [searchQuery, selectedSources, selectedSeverities, mineOnly, roleId, selectedLightFilter, storeOpsRefreshToken]);
+  }, [fixturesAllowed, searchQuery, selectedSources, selectedSeverities, mineOnly, roleId, selectedLightFilter, storeOpsRefreshToken]);
 
-  const issueSource = apiState?.issues ?? propIssues ?? ISSUE_FIXTURES;
-  const activeStores = apiState?.stores ?? STORE_FIXTURES;
-  const activeEvidence = apiState?.evidence ?? EVIDENCE_FIXTURES;
-  const activeAuditEvents = apiState?.auditEvents ?? AUDIT_EVENT_FIXTURES;
+  const issueSource = apiState?.issues ?? (fixturesAllowed ? propIssues ?? ISSUE_FIXTURES : []);
+  const activeStores = apiState?.stores ?? (fixturesAllowed ? STORE_FIXTURES : []);
+  const activeEvidence = apiState?.evidence ?? (fixturesAllowed ? EVIDENCE_FIXTURES : []);
+  const activeAuditEvents = apiState?.auditEvents ?? (fixturesAllowed ? AUDIT_EVENT_FIXTURES : []);
   const fourLightSummary = apiState?.fourLightSummary ?? [];
 
   // 3. Apply filters and sort (by severity + SLA)
@@ -466,8 +550,10 @@ export function DesignStoreOpsWorkspace({
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
-    return filteredIssues.find((i) => i.id === selectedIssueId) ?? filteredIssues[0] ?? ISSUE_FIXTURES[0];
-  }, [filteredIssues, selectedIssueId]);
+    return filteredIssues.find((i) => i.id === selectedIssueId) ??
+      filteredIssues[0] ??
+      (fixturesAllowed ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
+  }, [filteredIssues, fixturesAllowed, selectedIssueId]);
 
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
@@ -609,7 +695,17 @@ export function DesignStoreOpsWorkspace({
           (total, status) => total + fourLightSummary[0].issueCounts[status],
           fourLightSummary[0].issueCounts.green,
         )
-      : (propIssues ?? ISSUE_FIXTURES).length;
+      : issueSource.length;
+
+  if (!fixturesAllowed && storeOpsLoadState !== "ready") {
+    return (
+      <OperatorDataUnavailableGate
+        detail={storeOpsLoadError}
+        onRetry={() => setStoreOpsRefreshToken((token) => token + 1)}
+        status={toUnavailableOperatorStatus(storeOpsLoadState)}
+      />
+    );
+  }
 
   return (
     <div
@@ -623,15 +719,17 @@ export function DesignStoreOpsWorkspace({
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>
       </header>
 
-      <div data-screen-label="Store Ops 全店四燈摘要" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          <strong style={{ fontSize: "12px", color: "#1C2333" }}>全店營運狀況（四燈）</strong>
-          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 需求</span>
-          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 設備</span>
-          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 清潔</span>
-          <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 利潤</span>
+      {fixturesAllowed ? (
+        <div data-screen-label="Store Ops 全店四燈摘要" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <strong style={{ fontSize: "12px", color: "#1C2333" }}>全店營運狀況（四燈）</strong>
+            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 需求</span>
+            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 設備</span>
+            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 清潔</span>
+            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 利潤</span>
+          </div>
         </div>
-      </div>
+      ) : null}
       <div className={styles.storeGrid}>
         <aside className={styles.storeQueue} aria-label="門市 Issue queue">
           <label className={styles.designSearch}>
@@ -937,7 +1035,8 @@ export function DesignStoreOpsWorkspace({
             </div>
 
             {/* 28-day Revenue Forecast and Anomaly Band Chart */}
-            <div className={styles.forecastChartSection}>
+            {fixturesAllowed ? (
+              <div className={styles.forecastChartSection}>
               <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
               <svg
                 width="100%"
@@ -997,7 +1096,13 @@ export function DesignStoreOpsWorkspace({
                 <span className={styles.legendItem}><i style={{ borderTop: "2px dashed #3b82f6" }} /> P50 預測中位數</span>
                 <span className={styles.legendItem}><i style={{ borderTop: "2px solid #10b981" }} /> 實際營收 (實際跌破預測帶)</span>
               </div>
-            </div>
+              </div>
+            ) : (
+              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable">
+                <h4>28 天門市營運營收預測與異常帶</h4>
+                <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
+              </div>
+            )}
 
             <div className={styles.evidenceLists}>
               <section>

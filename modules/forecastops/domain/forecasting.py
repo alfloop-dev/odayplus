@@ -5,7 +5,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import numpy as np
@@ -17,6 +17,18 @@ class ForecastOpsError(ValueError):
 
 class ForecastOpsNotFoundError(ForecastOpsError):
     """Raised when an alert or handoff referenced by id does not exist."""
+
+
+class ForecastEngineError(ForecastOpsError):
+    """Raised when a selected forecast engine cannot produce a forecast."""
+
+
+class ForecastEngineUnavailableError(ForecastEngineError):
+    """Raised when an explicitly selected OSS engine is unavailable."""
+
+
+class ForecastEngineInputError(ForecastEngineError):
+    """Raised when an OSS engine cannot safely fit the supplied history."""
 
 
 FORECASTOPS_MODEL_VERSION = "forecastops-baseline-v1"
@@ -52,6 +64,27 @@ class ForecastBand:
 
     def to_dict(self) -> dict[str, float]:
         return {"p10": self.p10, "p50": self.p50, "p90": self.p90}
+
+
+@dataclass(frozen=True)
+class ForecastEngineResult:
+    """Engine-owned forecasts and immutable execution metadata."""
+
+    bands: dict[int, ForecastBand]
+    engine_name: str
+    model_name: str
+    model_version: str
+    metadata: dict[str, Any]
+
+
+class ForecastEngine(Protocol):
+    """Contract implemented by optional ForecastOps engines."""
+
+    engine_name: str
+    model_name: str
+
+    def fit_predict(self, forecast_input: ForecastInput) -> ForecastEngineResult:
+        """Fit on one store history and predict all canonical horizons."""
 
 
 @dataclass(frozen=True)
@@ -176,6 +209,9 @@ class ForecastOutput:
     scored_at: datetime
     source_snapshot_ids: tuple[str, ...] = ()
     forecast_version: int = 1
+    engine_name: str = "baseline"
+    model_name: str = "trailing_average"
+    model_metadata: dict[str, Any] = field(default_factory=dict)
 
     def with_version(self, *, forecast_version: int, forecast_output_id: str) -> ForecastOutput:
         return ForecastOutput(
@@ -214,6 +250,9 @@ class ForecastOutput:
             "actual_revenue": self.actual_revenue,
             "sitescore_baseline_p50": self.sitescore_baseline_p50,
             "model_version": self.model_version,
+            "engine_name": self.engine_name,
+            "model_name": self.model_name,
+            "model_metadata": dict(self.model_metadata),
             "feature_version": self.feature_version,
             "policy_version": self.policy_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
@@ -236,9 +275,7 @@ class Alert:
     acknowledged_at: datetime | None = None
     acknowledgement_note: str | None = None
 
-    def acknowledge(
-        self, *, actor: str, note: str | None = None, now: datetime
-    ) -> Alert:
+    def acknowledge(self, *, actor: str, note: str | None = None, now: datetime) -> Alert:
         """Return an acknowledged copy of this alert.
 
         Acknowledgement is a persisted human action: an alert can only be
@@ -349,6 +386,7 @@ def forecast_stores(
     prediction_origin_time: datetime | None = None,
     scored_at: datetime | None = None,
     prediction_run_id: str | None = None,
+    engine: ForecastEngine | None = None,
 ) -> tuple[list[ForecastOutput], list[Alert], list[InterventionHandoff]]:
     scored_time = scored_at or datetime.now(UTC)
     run_id = prediction_run_id or f"forecast-run-{uuid4()}"
@@ -362,6 +400,7 @@ def forecast_stores(
             prediction_origin_time=prediction_origin_time or forecast_input.prediction_origin_time,
             scored_at=scored_time,
             prediction_run_id=run_id,
+            engine=engine,
         )
         outputs.append(output)
         alert = _alert_for(output, opened_at=scored_time)
@@ -378,6 +417,7 @@ def _forecast_one(
     prediction_origin_time: datetime,
     scored_at: datetime,
     prediction_run_id: str,
+    engine: ForecastEngine | None = None,
 ) -> ForecastOutput:
     observations = forecast_input.observations
     if not observations:
@@ -404,8 +444,33 @@ def _forecast_one(
         trajectory_class = _trajectory_class(delta_ratio)
         turning_point_probability = round(_bounded(abs(delta_ratio) * 0.8), 4)
 
-    spread = _prediction_spread(observations)
-    bands = _forecast_bands(p50=p50, spread=spread, trajectory_class=trajectory_class)
+    if engine is None:
+        spread = _prediction_spread(observations)
+        bands = _forecast_bands(p50=p50, spread=spread, trajectory_class=trajectory_class)
+        model_version = FORECASTOPS_MODEL_VERSION
+        engine_name = "baseline"
+        model_name = "trailing_average"
+        model_metadata = {
+            "algorithm": "trailing_average_with_residual_interval",
+            "interval": "residual_cv_central_80",
+        }
+    else:
+        engine_result = engine.fit_predict(forecast_input)
+        missing_horizons = set(FORECAST_HORIZON_WEEKS) - set(engine_result.bands)
+        if missing_horizons:
+            missing = ", ".join(str(value) for value in sorted(missing_horizons))
+            raise ForecastEngineError(
+                f"{engine_result.engine_name} did not return forecast horizons: {missing}"
+            )
+        bands = {
+            f"w{weeks}": _ordered_band(engine_result.bands[weeks])
+            for weeks in FORECAST_HORIZON_WEEKS
+        }
+        model_version = engine_result.model_version
+        engine_name = engine_result.engine_name
+        model_name = engine_result.model_name
+        model_metadata = dict(engine_result.metadata)
+
     w4 = bands["w4"]
     gap_ratio = _sitescore_gap_ratio(actual=actual, baseline=baseline)
     return ForecastOutput(
@@ -426,12 +491,15 @@ def _forecast_one(
         sitescore_gap_ratio=gap_ratio,
         actual_revenue=actual,
         sitescore_baseline_p50=baseline,
-        model_version=FORECASTOPS_MODEL_VERSION,
+        model_version=model_version,
         feature_version=FORECASTOPS_FEATURE_VERSION,
         policy_version=FOUR_LIGHT_POLICY_VERSION,
         prediction_origin_time=prediction_origin_time,
         scored_at=scored_at,
         source_snapshot_ids=source_snapshot_ids,
+        engine_name=engine_name,
+        model_name=model_name,
+        model_metadata=model_metadata,
     )
 
 
@@ -457,6 +525,9 @@ def _alert_for(output: ForecastOutput, *, opened_at: datetime) -> Alert:
             "sitescore_baseline_p50": output.sitescore_baseline_p50,
             "sitescore_gap_ratio": output.sitescore_gap_ratio,
             "trajectory_class": output.trajectory_class,
+            "engine_name": output.engine_name,
+            "model_name": output.model_name,
+            "model_version": output.model_version,
             "policy_version": output.policy_version,
         },
         opened_at=opened_at,
@@ -561,6 +632,11 @@ def _sitescore_gap_ratio(*, actual: float, baseline: float | None) -> float:
     if baseline is None or baseline <= 0:
         return 0.0
     return round((actual - baseline) / baseline, 4)
+
+
+def _ordered_band(band: ForecastBand) -> ForecastBand:
+    p10, p50, p90 = sorted((max(0.0, band.p10), max(0.0, band.p50), max(0.0, band.p90)))
+    return ForecastBand(p10=round(p10, 2), p50=round(p50, 2), p90=round(p90, 2))
 
 
 def _coerce_forecast_input(item: ForecastInput | Mapping[str, Any]) -> ForecastInput:

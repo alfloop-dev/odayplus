@@ -14,10 +14,13 @@ and scheduler processes:
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from apps.scheduler.oday_scheduler.main import ODayScheduler
 from apps.worker.oday_worker.main import ODayWorker
+from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
 from shared.jobs.queue import JobRequest, JobStatus
 
@@ -31,6 +34,19 @@ def db_path(tmp_path) -> str:
 
 def _queued_of_type(bundle, job_type: str) -> list:
     return [rec for rec in bundle.job_queue._jobs.values() if rec.job_type == job_type]
+
+
+def _seed_forecast_series(bundle, store_id: str) -> None:
+    start = date(2026, 4, 1)
+    ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
+        StoreDayObservation(
+            store_id=store_id,
+            business_date=start + timedelta(days=index),
+            actual_revenue=80_000 + index * 250 + (index % 7) * 900,
+            source_snapshot_ids=(f"pos-{index:03d}",),
+        )
+        for index in range(70)
+    )
 
 
 def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
@@ -59,6 +75,7 @@ def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
 def test_worker_forecast_job_claims_and_succeeds() -> None:
     """A forecast job is claimed, executed against the repository, and succeeds."""
     bundle = build_persistence()
+    _seed_forecast_series(bundle, "store-001")
     job, created = bundle.job_queue.enqueue(
         JobRequest(job_type="forecast", payload={"store_id": "store-001"}),
         correlation_id="corr-forecast",

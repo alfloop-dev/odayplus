@@ -4,6 +4,12 @@ import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
 import { freshness, interventionCases, statusTone, type InterventionCase } from "./data.ts";
 import styles from "./intervention.module.css";
 
@@ -13,9 +19,17 @@ type InterventionWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /interventions` binding; supplied by the server route. */
   liveInterventions?: ApiBinding<InterventionSummary>;
+  isProduction?: boolean;
 };
 
-export function InterventionWorkspace({ searchParams = {}, liveInterventions }: InterventionWorkspaceProps) {
+export function InterventionWorkspace({
+  searchParams = {},
+  liveInterventions,
+  isProduction: isProductionProp,
+}: InterventionWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return <ProductionInterventionWorkspace binding={liveInterventions} />;
+  }
   const selectedId = readParam(searchParams.selected) ?? interventionCases[0].id;
   const selected = interventionCases.find((item) => item.id === selectedId) ?? interventionCases[0];
 
@@ -52,6 +66,35 @@ export function InterventionWorkspace({ searchParams = {}, liveInterventions }: 
   );
 }
 
+function ProductionInterventionWorkspace({
+  binding,
+}: {
+  binding?: ApiBinding<InterventionSummary>;
+}) {
+  const state = productionBindingState(binding);
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "總覽", href: "/" }, { label: "營運 Operations", href: "/operations" }, { label: "干預決策" }]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production intervention lifecycle. Only persisted backend cases are rendered."
+        title="干預決策"
+      />
+      <main className="odp-content" data-testid="intervention-production-page">
+        <WorkspaceNav />
+        <ProductionDataState binding={binding} resource="Intervention cases" testId="intervention-production-data-state">
+          {binding ? <LiveInterventionCases binding={binding} productionMode /> : null}
+        </ProductionDataState>
+      </main>
+    </>
+  );
+}
+
 function WorkspaceNav() {
   return (
     <nav className={styles.workspaceNav} aria-label="Intervention module navigation">
@@ -62,16 +105,26 @@ function WorkspaceNav() {
   );
 }
 
-function LiveInterventionCases({ binding }: { binding: ApiBinding<InterventionSummary> }) {
+function LiveInterventionCases({
+  binding,
+  productionMode = false,
+}: {
+  binding: ApiBinding<InterventionSummary>;
+  productionMode?: boolean;
+}) {
   return (
     <section className={styles.panel} data-testid="intervention-live-cases" aria-label="API-bound intervention cases">
       <div className={styles.badgeRow}>
         <h2>Intervention cases（API live）</h2>
-        <DataSourceBadge binding={binding} testId="intervention-data-source" />
+        {productionMode ? (
+          <ProductionDataBadge binding={binding} testId="intervention-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="intervention-data-source" />
+        )}
       </div>
       <p>
-        本區直接讀取 <code>GET /interventions</code> 的完整生命週期狀態（含 CLOSED 收尾）；
-        下方固定案例為 documented non-product fallback。
+        本區直接讀取 <code>GET /interventions</code> 的完整生命週期狀態（含 CLOSED 收尾）。
+        {!productionMode ? " 下方固定案例為 documented non-product fixture。" : null}
       </p>
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>

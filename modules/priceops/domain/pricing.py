@@ -159,6 +159,7 @@ class PricingPlanItem:
     constraints: PriceConstraints
     baseline_demand: float
     elasticity: PriceElasticityEstimate
+    source_snapshot_ids: tuple[str, ...] = ()
 
     @classmethod
     def create(
@@ -169,6 +170,7 @@ class PricingPlanItem:
         constraints: PriceConstraints,
         baseline_demand: float,
         elasticity: PriceElasticityEstimate,
+        source_snapshot_ids: tuple[str, ...] = (),
         item_id: str | None = None,
     ) -> PricingPlanItem:
         return cls(
@@ -178,6 +180,7 @@ class PricingPlanItem:
             constraints=constraints,
             baseline_demand=baseline_demand,
             elasticity=elasticity,
+            source_snapshot_ids=source_snapshot_ids,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +191,7 @@ class PricingPlanItem:
             "constraints": self.constraints.to_dict(),
             "baseline_demand": self.baseline_demand,
             "elasticity": self.elasticity.to_dict(),
+            "source_snapshot_ids": list(self.source_snapshot_ids),
         }
 
 
@@ -327,6 +331,7 @@ class PlanOptimization:
     requires_approval: bool
     solver_version: str
     optimized_at: datetime
+    solver_metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_constraint_safe(self) -> bool:
@@ -352,6 +357,7 @@ class PlanOptimization:
             "solver_status": self.solver_status,
             "requires_approval": self.requires_approval,
             "solver_version": self.solver_version,
+            "solver_metadata": self.solver_metadata,
             "optimized_at": self.optimized_at.isoformat(),
         }
 

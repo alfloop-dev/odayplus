@@ -4,6 +4,12 @@ import { Badge, PageHeader } from "@oday-plus/ui";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
+import {
   approvalLabel,
   formatActionCounts,
   freshness,
@@ -27,6 +33,7 @@ type NetPlanWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /netplan/scenarios` binding; supplied by the server route. */
   liveScenarios?: ApiBinding<NetPlanScenarioSummary>;
+  isProduction?: boolean;
 };
 
 export function NetPlanWorkspace({
@@ -34,10 +41,56 @@ export function NetPlanWorkspace({
   scenarioId,
   searchParams = {},
   liveScenarios,
+  isProduction: isProductionProp,
 }: NetPlanWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return <ProductionNetPlanWorkspace binding={liveScenarios} scenarioId={scenarioId} view={view} />;
+  }
   if (view === "scenarios") return <ScenariosListPage searchParams={searchParams} />;
   if (view === "scenarioDetail") return <ScenarioDetailPage scenarioId={scenarioId} />;
   return <NetPlanOverview liveScenarios={liveScenarios} />;
+}
+
+function ProductionNetPlanWorkspace({
+  binding,
+  scenarioId,
+  view,
+}: {
+  binding?: ApiBinding<NetPlanScenarioSummary>;
+  scenarioId?: string;
+  view: NetPlanRouteKey;
+}) {
+  const state = productionBindingState(binding);
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[
+          { label: "網絡規劃 NetPlan", href: "/netplan" },
+          { label: scenarioId ?? (view === "overview" ? "Overview" : "情境") },
+        ]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production NetPlan workspace. Scenario rows come only from the NetPlan API."
+        title={scenarioId ? `NetPlan 情境 ${scenarioId}` : view === "overview" ? "NetPlan 店網規劃" : "NetPlan 情境"}
+      />
+      <main className="odp-content" data-testid={`netplan-${view}-production-page`}>
+        <WorkspaceNav active={view} />
+        <ProductionDataState binding={binding} resource="NetPlan scenarios" testId="netplan-production-data-state">
+          {binding ? <LiveNetPlanScenarios binding={binding} productionMode /> : null}
+        </ProductionDataState>
+        {binding?.state === "ready" && scenarioId && !binding.items.some((item) => item.scenario_id === scenarioId) ? (
+          <section className={styles.reportSection} data-testid="netplan-scenario-not-found" role="status">
+            <h2>Scenario not found</h2>
+            <p>API 回傳的情境中沒有 {scenarioId}；未以固定情境替代。</p>
+          </section>
+        ) : null}
+      </main>
+    </>
+  );
 }
 
 function Header({
@@ -127,7 +180,13 @@ function NetPlanOverview({ liveScenarios }: { liveScenarios?: ApiBinding<NetPlan
   );
 }
 
-function LiveNetPlanScenarios({ binding }: { binding: ApiBinding<NetPlanScenarioSummary> }) {
+function LiveNetPlanScenarios({
+  binding,
+  productionMode = false,
+}: {
+  binding: ApiBinding<NetPlanScenarioSummary>;
+  productionMode?: boolean;
+}) {
   return (
     <section
       className={styles.reportSection}
@@ -136,11 +195,16 @@ function LiveNetPlanScenarios({ binding }: { binding: ApiBinding<NetPlanScenario
     >
       <div className={styles.badgeRow}>
         <h2>情境比較（API live）</h2>
-        <DataSourceBadge binding={binding} testId="netplan-data-source" />
+        {productionMode ? (
+          <ProductionDataBadge binding={binding} testId="netplan-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="netplan-data-source" />
+        )}
       </div>
       <p>
         本區直接讀取 <code>GET /netplan/scenarios</code> 的完整生命週期狀態（solved / infeasible /
-        approved / executed / outcome_observed）；下方固定情境為 documented non-product fallback。
+        approved / executed / outcome_observed）。
+        {!productionMode ? " 下方固定情境為 documented non-product fixture。" : null}
       </p>
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>

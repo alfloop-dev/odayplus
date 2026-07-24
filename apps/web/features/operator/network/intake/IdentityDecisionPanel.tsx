@@ -7,6 +7,7 @@ import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
 import { ListingCompareTable, type TargetListingData } from "./ListingCompareTable";
 import { MatchEvidencePanel } from "./MatchEvidencePanel";
+import { operatorFixturesAllowed } from "../../operatorDataMode";
 import {
   decisionTitle,
   matchLabel,
@@ -213,8 +214,7 @@ export function IdentityDecisionPanel({
 
       if (res && res.receiptId) {
         setReceipt(res);
-      } else {
-        // Fallback receipt mock for demonstration when onSubmitDecision returns void
+      } else if (operatorFixturesAllowed()) {
         setReceipt({
           receiptId: `RCPT-MATCH-${Date.now().toString(36).toUpperCase()}`,
           actor: currentOperator.name,
@@ -229,6 +229,10 @@ export function IdentityDecisionPanel({
           correlationId: record.correlationId || "corr-default",
           auditEventId: `AUDIT-${Date.now()}`,
         });
+      } else {
+        setLocalError(
+          "DECISION_RECEIPT_MISSING · API 未回傳 durable receipt；Production 不會建立模擬收據。",
+        );
       }
     } catch (err: unknown) {
       if (typeof err === "object" && err !== null && "status" in err && (err as { status: number }).status === 409) {

@@ -5,6 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.production_runtime import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
+from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
     ApprovalDecision,
     DataRoom,
@@ -26,8 +31,27 @@ class AVMError(ValueError):
 
 
 class AVMService:
-    def __init__(self, *, repository: InMemoryAVMRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: InMemoryAVMRepository | None = None,
+        production_executor: AVMProductionExecutor | None = None,
+        runtime_mode: str | None = None,
+    ) -> None:
+        self.production_required = production_execution_required(runtime_mode)
+        self.strict_production_composition = runtime_mode is not None and self.production_required
+        if self.strict_production_composition and (
+            repository is None or isinstance(repository, InMemoryAVMRepository)
+        ):
+            raise ProductionExecutionConfigurationError(
+                "AVM production requires an injected durable repository"
+            )
+        if self.strict_production_composition and production_executor is None:
+            raise ProductionExecutionConfigurationError(
+                "AVM production requires an injected approved model and liquidity executor"
+            )
         self.repository = repository or InMemoryAVMRepository()
+        self.production_executor = production_executor
 
     def create_case(
         self,
@@ -84,15 +108,22 @@ class AVMService:
                 raise AVMError("normalized margin required before valuation")
             margin = self.normalize(case_id, actor=actor, correlation_id=correlation_id)
             case = self._case(case_id)
-        valuing = self.repository.save_case(
-            case.transition(
-                ValuationCaseStatus.VALUING,
-                actor=actor,
-                reason="valuation started",
-                correlation_id=correlation_id,
-            )
+        valuing = case.transition(
+            ValuationCaseStatus.VALUING,
+            actor=actor,
+            reason="valuation started",
+            correlation_id=correlation_id,
         )
-        report = self.repository.save_report(value_store(valuing, margin))
+        if self.production_required:
+            executor = self.production_executor
+            if executor is None:
+                executor = AVMProductionExecutor.from_environment()
+                self.production_executor = executor
+            report = executor.execute(valuing, margin)
+        else:
+            report = value_store(valuing, margin)
+        self.repository.save_case(valuing)
+        report = self.repository.save_report(report)
         self.repository.save_case(
             valuing.transition(
                 ValuationCaseStatus.REVIEW_REQUIRED,

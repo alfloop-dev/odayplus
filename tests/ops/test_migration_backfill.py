@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from apps.cli.oday_cli import ops
 from apps.cli.oday_cli.ops import (
     OpsPlanError,
     build_backfill_plan,
@@ -56,6 +58,53 @@ def test_migration_runner_rejects_manifest_mismatch() -> None:
             environment="dev",
             expected_manifest_sha256="0" * 64,
         )
+
+
+def test_migration_runner_applies_full_assisted_intake_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ODAY_DATABASE_URL",
+        "postgresql+psycopg://user:pass@db/oday",
+    )
+    monkeypatch.setattr(
+        ops.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+    applied_urls: list[str] = []
+
+    def apply_stack(database_url: str) -> SimpleNamespace:
+        applied_urls.append(database_url)
+        return SimpleNamespace(
+            manifest_sha256="a" * 64,
+            steps=(
+                "001_baseline.sql",
+                "002_consistency.sql",
+                "003_promotion_state.sql",
+                "004_tenant_rls_lineage.sql",
+            ),
+        )
+
+    monkeypatch.setattr(ops, "apply_upgrade_to_database", apply_stack)
+
+    run = build_migration_run(
+        environment="staging",
+        dry_run=False,
+        include_assisted_intake=True,
+    )
+
+    assert applied_urls == [
+        "postgresql+psycopg://user:pass@db/oday"
+    ]
+    assert run.assisted_intake_schema_status == "verified"
+    assert run.assisted_intake_manifest_sha256 == "a" * 64
+    assert run.assisted_intake_steps == (
+        "001_baseline.sql",
+        "002_consistency.sql",
+        "003_promotion_state.sql",
+        "004_tenant_rls_lineage.sql",
+    )
 
 
 def test_backfill_plan_is_idempotent_for_same_inputs() -> None:

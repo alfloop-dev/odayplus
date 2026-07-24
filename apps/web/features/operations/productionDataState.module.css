@@ -1,0 +1,29 @@
+.state {
+  border: 1px solid var(--odp-color-border, #d4d8df);
+  border-radius: 6px;
+  padding: var(--odp-space-4, 16px);
+  background: var(--odp-color-surface, #fff);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--odp-space-3, 12px);
+}
+
+.heading h2,
+.state p {
+  margin: 0;
+}
+
+.state p {
+  margin-top: var(--odp-space-2, 8px);
+}
+
+.meta {
+  color: var(--odp-color-text-muted, #5f6878);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}

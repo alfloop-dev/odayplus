@@ -2,9 +2,21 @@ import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
 import type { DataStatus } from "@oday-plus/domain-types";
-import type { SourceFreshnessEvidence } from "@oday-plus/openapi-client";
+import type {
+  CandidateSiteCard,
+  HeatZoneScore,
+  NetworkListingRadarSnapshot,
+  SiteScoreReportSummary,
+  SourceFreshnessEvidence,
+} from "@oday-plus/openapi-client";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
 import { AccessibleDrawer } from "./AccessibleDrawer.tsx";
 import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
 import { AssistedIntakeSection } from "../operator/network/intake/AssistedIntakeSection.tsx";
@@ -32,6 +44,11 @@ type ExpansionWorkspaceProps = {
   reportId?: string;
   searchParams?: SearchParams;
   liveFreshness?: FreshnessBinding;
+  liveHeatZones?: ApiBinding<HeatZoneScore>;
+  liveNetwork?: ApiBinding<NetworkListingRadarSnapshot>;
+  liveCandidates?: ApiBinding<CandidateSiteCard>;
+  liveSiteScores?: ApiBinding<SiteScoreReportSummary>;
+  isProduction?: boolean;
 };
 
 /**
@@ -65,13 +82,256 @@ export function ExpansionWorkspace({
   reportId,
   searchParams = {},
   liveFreshness,
+  liveHeatZones,
+  liveNetwork,
+  liveCandidates,
+  liveSiteScores,
+  isProduction: isProductionProp,
 }: ExpansionWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return (
+      <ProductionExpansionWorkspace
+        liveCandidates={liveCandidates}
+        liveFreshness={liveFreshness}
+        liveHeatZones={liveHeatZones}
+        liveNetwork={liveNetwork}
+        liveSiteScores={liveSiteScores}
+        reportId={reportId}
+        view={view}
+      />
+    );
+  }
   if (view === "heatzone") return <HeatZonePage searchParams={searchParams} />;
   if (view === "listings") return <ListingsPage searchParams={searchParams} />;
   if (view === "candidates") return <CandidatesPage searchParams={searchParams} />;
   if (view === "sitescore") return <SiteScoreListPage searchParams={searchParams} />;
   if (view === "sitescoreDetail") return <SiteScoreDetailPage reportId={reportId} />;
   return <ExpansionOverview liveFreshness={liveFreshness} />;
+}
+
+function ProductionExpansionWorkspace({
+  liveCandidates,
+  liveFreshness,
+  liveHeatZones,
+  liveNetwork,
+  liveSiteScores,
+  reportId,
+  view,
+}: {
+  liveCandidates?: ApiBinding<CandidateSiteCard>;
+  liveFreshness?: FreshnessBinding;
+  liveHeatZones?: ApiBinding<HeatZoneScore>;
+  liveNetwork?: ApiBinding<NetworkListingRadarSnapshot>;
+  liveSiteScores?: ApiBinding<SiteScoreReportSummary>;
+  reportId?: string;
+  view: ExpansionRouteKey;
+}) {
+  const activeBinding =
+    view === "heatzone"
+      ? liveHeatZones
+      : view === "listings"
+        ? liveNetwork
+        : view === "candidates"
+          ? liveCandidates
+          : view === "sitescore" || view === "sitescoreDetail"
+            ? liveSiteScores
+            : liveFreshness;
+  const state = productionBindingState(activeBinding);
+
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "展店 Expansion", href: "/expansion" }, { label: reportId ?? view }]}
+        lastUpdated={activeBinding?.fetchedAt ? `API checked ${activeBinding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production expansion workspace. Only persisted API records are rendered."
+        title={productionExpansionTitle(view, reportId)}
+      />
+      <main className="odp-content" data-testid={`exp-${view}-production-page`}>
+        <WorkspaceNav active={view} />
+        {view === "heatzone" ? <ProductionHeatZones binding={liveHeatZones} /> : null}
+        {view === "listings" ? <ProductionNetworkListings binding={liveNetwork} /> : null}
+        {view === "candidates" ? <ProductionCandidates binding={liveCandidates} /> : null}
+        {view === "sitescore" || view === "sitescoreDetail" ? (
+          <ProductionSiteScores binding={liveSiteScores} reportId={reportId} />
+        ) : null}
+        {view === "overview" ? <ProductionFreshness binding={liveFreshness} /> : null}
+      </main>
+    </>
+  );
+}
+
+function ProductionFreshness({ binding }: { binding?: FreshnessBinding }) {
+  return (
+    <ProductionDataState binding={binding} resource="External source freshness" testId="exp-production-data-state">
+      {binding ? (
+        <section className={styles.reportSection} data-testid="exp-live-freshness">
+          <ProductionDataBadge binding={binding} testId="exp-freshness-source" />
+          <DenseTable
+            caption="Live external source freshness"
+            headers={["Provider", "Snapshot", "Status", "Observed", "Ingested", "Correlation"]}
+            rows={binding.items.map((item) => [
+              item.provider_id,
+              item.source_snapshot_id,
+              item.data_status,
+              item.provider_observed_at ?? "—",
+              item.ingested_at ?? "—",
+              item.correlation_id,
+            ])}
+          />
+        </section>
+      ) : null}
+    </ProductionDataState>
+  );
+}
+
+function ProductionHeatZones({ binding }: { binding?: ApiBinding<HeatZoneScore> }) {
+  const tileConfigured =
+    Boolean(process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL) &&
+    !process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL?.startsWith("mock://");
+  const geocoderConfigured =
+    Boolean(process.env.NEXT_PUBLIC_ODP_GEOCODER_URL) &&
+    !process.env.NEXT_PUBLIC_ODP_GEOCODER_URL?.startsWith("mock://");
+
+  return (
+    <ProductionDataState binding={binding} resource="HeatZone scores" testId="exp-production-data-state">
+      {binding ? (
+        <>
+          <section className={styles.reportSection} data-testid="exp-live-heatzones">
+            <ProductionDataBadge binding={binding} testId="exp-heatzone-source" />
+            <DenseTable
+              caption="Live HeatZone scores"
+              headers={["Rank", "H3", "Score", "State", "Confidence", "Unmet demand"]}
+              rows={binding.items.map((zone) => [
+                String(zone.rank),
+                zone.h3_index,
+                String(zone.score),
+                zone.state,
+                String(zone.confidence),
+                String(zone.unmet_demand),
+              ])}
+            />
+          </section>
+          {!tileConfigured || !geocoderConfigured ? (
+            <section className={styles.mapWarning} data-testid="exp-production-map-unavailable" role="status">
+              <strong>地圖暫不可用</strong>
+              <p>
+                {!tileConfigured ? "Live tile provider 未設定。" : ""}
+                {!geocoderConfigured ? " Live geocoder 未設定。" : ""}
+                上方列表只顯示 API 回傳的真實 HeatZone 資料。
+              </p>
+            </section>
+          ) : null}
+        </>
+      ) : null}
+    </ProductionDataState>
+  );
+}
+
+function ProductionNetworkListings({
+  binding,
+}: {
+  binding?: ApiBinding<NetworkListingRadarSnapshot>;
+}) {
+  const snapshot = binding?.items[0];
+  return (
+    <ProductionDataState binding={binding} resource="Listing radar" testId="exp-production-data-state">
+      {binding && snapshot ? (
+        <section className={styles.reportSection} data-testid="exp-live-listings">
+          <ProductionDataBadge binding={binding} testId="exp-listing-source" />
+          <DenseTable
+            caption="Live listing radar rows"
+            headers={["Listing", "Source", "Address", "Status", "Rent", "Area", "HeatZone"]}
+            rows={snapshot.listings.map((listing) => [
+              listing.id,
+              `${listing.sourceId}:${listing.sourceListingId}`,
+              listing.address,
+              listing.status,
+              String(listing.rentPerMonth),
+              String(listing.areaPing),
+              listing.heatZoneId,
+            ])}
+          />
+        </section>
+      ) : null}
+    </ProductionDataState>
+  );
+}
+
+function ProductionCandidates({ binding }: { binding?: ApiBinding<CandidateSiteCard> }) {
+  return (
+    <ProductionDataState binding={binding} resource="Candidate sites" testId="exp-production-data-state">
+      {binding ? (
+        <section className={styles.reportSection} data-testid="exp-live-candidates">
+          <ProductionDataBadge binding={binding} testId="exp-candidate-source" />
+          <DenseTable
+            caption="Live candidate sites"
+            headers={["Candidate", "Address", "Status", "HeatZone", "Rent", "Area", "Geocode confidence"]}
+            rows={binding.items.map((candidate) => [
+              candidate.candidateSiteId,
+              candidate.address,
+              candidate.status,
+              candidate.heatZone,
+              String(candidate.rent),
+              String(candidate.area),
+              String(candidate.geocodeConfidence),
+            ])}
+          />
+        </section>
+      ) : null}
+    </ProductionDataState>
+  );
+}
+
+function ProductionSiteScores({
+  binding,
+  reportId,
+}: {
+  binding?: ApiBinding<SiteScoreReportSummary>;
+  reportId?: string;
+}) {
+  const rows = reportId
+    ? binding?.items.filter((item) => item.candidateSiteId === reportId) ?? []
+    : binding?.items ?? [];
+  return (
+    <ProductionDataState binding={binding} resource="SiteScore reports" testId="exp-production-data-state">
+      {binding ? (
+        <section className={styles.reportSection} data-testid="exp-live-sitescores">
+          <ProductionDataBadge binding={binding} testId="exp-sitescore-source" />
+          {reportId && rows.length === 0 ? (
+            <p data-testid="exp-sitescore-not-found">API 回傳資料中沒有 {reportId}；未以固定報告替代。</p>
+          ) : (
+            <DenseTable
+              caption="Live SiteScore reports"
+              headers={["Candidate", "Version", "Recommendation", "Confidence", "Model", "Snapshot", "Cannibalization"]}
+              rows={rows.map((report) => [
+                report.candidateSiteId,
+                String(report.reportVersion),
+                report.recommendation,
+                String(report.confidence),
+                report.modelVersion,
+                report.featureSnapshotTime,
+                report.cannibalizationRisk,
+              ])}
+            />
+          )}
+        </section>
+      ) : null}
+    </ProductionDataState>
+  );
+}
+
+function productionExpansionTitle(view: ExpansionRouteKey, reportId?: string): string {
+  if (reportId) return `SiteScore ${reportId}`;
+  if (view === "heatzone") return "HeatZone Radar";
+  if (view === "listings") return "Listing 收件匣";
+  if (view === "candidates") return "Candidate Sites";
+  if (view === "sitescore" || view === "sitescoreDetail") return "SiteScore Reports";
+  return "展店選址";
 }
 
 function ExpansionOverview({ liveFreshness }: { liveFreshness?: FreshnessBinding }) {

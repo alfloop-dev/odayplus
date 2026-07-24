@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.shared_ml import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Depends, Header, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from modules.adlift.application import AdLiftService
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.adlift.workers import AdLiftBatchResult, run_adlift_incrementality_batch
 
@@ -52,15 +57,44 @@ else:
         repository: InMemoryAdLiftRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         job_store: AdLiftJobStore | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/adlift", tags=["adlift"])
-        adlift_repository = repository or InMemoryAdLiftRepository()
+        production_required = production_execution_required(runtime_mode)
+        adlift_repository = (
+            repository
+            if production_required
+            else repository or InMemoryAdLiftRepository()
+        )
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or AdLiftJobStore()
+        composition_error: ProductionExecutionConfigurationError | None = None
+        try:
+            AdLiftService(
+                repository=adlift_repository,
+                runtime_mode=runtime_mode,
+            )
+        except ProductionExecutionConfigurationError as exc:
+            composition_error = exc
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/adlift",
+            tags=["adlift"],
+            dependencies=[Depends(require_runtime_binding)],
+        )
 
         @router.post("/incrementality-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("adlift", Action.CREATE, engine=authz_engine))])
         def create_incrementality_job(
@@ -77,6 +111,7 @@ else:
                         campaigns=body.campaigns,
                         generated_at=body.generated_at,
                         repository=adlift_repository,
+                        runtime_mode=runtime_mode,
                     ),
                     idempotency_key=effective_key,
                 )

@@ -7,6 +7,9 @@ infeasibility diagnosis, approval lifecycle, execution, and outcome tracking.
 from modules.netplan.application import (
     NetPlanApprovalError,
     NetPlanNotFoundError,
+    NetPlanProductionExecution,
+    NetPlanProductionExecutionError,
+    NetPlanProductionExecutor,
     NetPlanService,
     ScenarioBuildRequest,
 )
@@ -52,6 +55,9 @@ __all__ = [
     "NetPlanBatchResult",
     "NetPlanConstraints",
     "NetPlanNotFoundError",
+    "NetPlanProductionExecution",
+    "NetPlanProductionExecutionError",
+    "NetPlanProductionExecutor",
     "NetPlanScenario",
     "NetPlanScenarioStatus",
     "NetPlanService",

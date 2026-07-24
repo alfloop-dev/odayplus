@@ -1,12 +1,33 @@
 import Link from "next/link";
+import type { AdliftReport as LiveAdLiftReport } from "@oday-plus/openapi-client";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
 import { freshness, preTrendTone, recommendationTone, reports, type AdLiftReport } from "./data.ts";
 import styles from "../intervention/intervention.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-export function AdLiftWorkspace({ searchParams = {} }: { searchParams?: SearchParams }) {
+type AdLiftWorkspaceProps = {
+  searchParams?: SearchParams;
+  liveReports?: ApiBinding<LiveAdLiftReport>;
+  isProduction?: boolean;
+};
+
+export function AdLiftWorkspace({
+  searchParams = {},
+  liveReports,
+  isProduction: isProductionProp,
+}: AdLiftWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return <ProductionAdLiftWorkspace binding={liveReports} searchParams={searchParams} />;
+  }
   const selectedId = readParam(searchParams.selected) ?? reports[0].id;
   const selected = reports.find((item) => item.id === selectedId) ?? reports[0];
 
@@ -44,6 +65,154 @@ export function AdLiftWorkspace({ searchParams = {} }: { searchParams?: SearchPa
       </main>
     </>
   );
+}
+
+function ProductionAdLiftWorkspace({
+  binding,
+  searchParams,
+}: {
+  binding?: ApiBinding<LiveAdLiftReport>;
+  searchParams: SearchParams;
+}) {
+  const state = productionBindingState(binding);
+  const selectedId = readParam(searchParams.selected);
+  const selected = binding?.items.find((report) => liveReportId(report) === selectedId);
+
+  return (
+    <>
+      <PageHeader
+        title="廣告增益"
+        summary="Production AdLift reports. Only persisted API results are rendered."
+        breadcrumb={[{ label: "總覽", href: "/" }, { label: "定價 Pricing", href: "/pricing" }, { label: "廣告增益" }]}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+      />
+      <main className="odp-content" data-testid="adlift-production-page">
+        <nav className={styles.workspaceNav} aria-label="AdLift module navigation">
+          <Link href="/pricing">PriceOps Plans</Link>
+          <Link aria-current="page" href="/adlift">AdLift Reports</Link>
+          <Link href="/interventions">Intervention overlaps</Link>
+        </nav>
+        <ProductionDataState binding={binding} resource="AdLift reports" testId="adlift-production-data-state">
+          {binding ? (
+            <section className={styles.panel} data-testid="adlift-live-reports">
+              <div className={styles.badgeRow}>
+                <h2>AdLift reports（API live）</h2>
+                <ProductionDataBadge binding={binding} testId="adlift-data-source" />
+              </div>
+              <LiveReportSummary reports={binding.items} />
+              <LiveReportTable reports={binding.items} selectedId={selectedId} />
+              {selectedId && !selected ? (
+                <p data-testid="adlift-report-not-found">
+                  API 回傳資料中沒有 {selectedId}；未以固定報告替代。
+                </p>
+              ) : null}
+              {selected ? <LiveReportDetail report={selected} /> : null}
+            </section>
+          ) : null}
+        </ProductionDataState>
+      </main>
+    </>
+  );
+}
+
+function LiveReportSummary({ reports: liveReports }: { reports: LiveAdLiftReport[] }) {
+  const blocked = liveReports.filter((report) => !liveCausalClaimAllowed(report)).length;
+  const contaminated = liveReports.filter((report) => liveContaminationCount(report) > 0).length;
+  return (
+    <section className={styles.overviewGrid} aria-label="Live AdLift overview">
+      <Summary title="Reports ready" value={String(liveReports.length)} copy="API report count" />
+      <Summary title="Blocked claims" value={String(blocked)} copy="API causal claim guard" />
+      <Summary title="Contamination" value={String(contaminated)} copy="API contamination findings" />
+    </section>
+  );
+}
+
+function LiveReportTable({
+  reports: liveReports,
+  selectedId,
+}: {
+  reports: LiveAdLiftReport[];
+  selectedId?: string;
+}) {
+  return (
+    <div className={styles.tableWrap}>
+      <table className={styles.table} data-testid="adlift-live-table">
+        <caption>Persisted AdLift reports served by GET /adlift/reports.</caption>
+        <thead>
+          <tr>
+            <th>Report</th>
+            <th>Campaign</th>
+            <th>Treatment</th>
+            <th>Control</th>
+            <th>Pre-trend</th>
+            <th>iROMI</th>
+            <th>Evidence</th>
+            <th>Recommendation</th>
+          </tr>
+        </thead>
+        <tbody>
+          {liveReports.map((report) => {
+            const reportId = liveReportId(report);
+            return (
+              <tr key={reportId} aria-selected={reportId === selectedId} data-testid="adlift-live-row">
+                <td><Link href={`/adlift?selected=${encodeURIComponent(reportId)}`}>{reportId}</Link></td>
+                <td>{liveString(report.campaign_name) || liveString(report.campaign_id) || "—"}</td>
+                <td>{liveStringList(report.treatment_store_ids).length}</td>
+                <td>{liveStringList(report.control_store_ids).length}</td>
+                <td>{liveString(report.pre_trend_status) || "—"}</td>
+                <td>{liveNumber(report.iromi)}</td>
+                <td>{liveString(report.evidence_level) || "—"}</td>
+                <td>{liveString(report.recommendation) || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LiveReportDetail({ report }: { report: LiveAdLiftReport }) {
+  return (
+    <aside className={styles.drawer} data-testid="adlift-live-report-detail">
+      <h2>{liveReportId(report)} · {liveString(report.campaign_name) || "Campaign"}</h2>
+      <p>incremental revenue: {liveNumber(report.incremental_revenue)}</p>
+      <p>incremental gross margin: {liveNumber(report.incremental_gross_margin)}</p>
+      <p>model: {liveString(report.model_version) || "—"}</p>
+      <p>policy: {liveString(report.policy_version) || "—"}</p>
+      <p>generated at: {liveString(report.generated_at) || "—"}</p>
+      <p>source snapshots: {liveStringList(report.source_snapshot_ids).join(", ") || "—"}</p>
+    </aside>
+  );
+}
+
+function liveReportId(report: LiveAdLiftReport): string {
+  return liveString(report.report_id) || liveString(report.campaign_id) || "unknown-report";
+}
+
+function liveString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function liveStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function liveNumber(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
+}
+
+function liveCausalClaimAllowed(report: LiveAdLiftReport): boolean {
+  return report.causal_claim_allowed === true;
+}
+
+function liveContaminationCount(report: LiveAdLiftReport): number {
+  return Array.isArray(report.contamination) ? report.contamination.length : 0;
 }
 
 function Summary({ title, value, copy }: { title: string; value: string; copy: string }) {

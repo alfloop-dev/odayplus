@@ -73,9 +73,15 @@ class InMemoryJobQueue:
         self._jobs: dict[str, JobRecord] = {}
         self._idempotency_index: dict[str, str] = {}
 
-    def count_active_jobs(self) -> int:
+    def count_active_jobs(self, *, tenant_id: str | None = None) -> int:
         return sum(
-            1 for job in self._jobs.values() if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            1
+            for job in self._jobs.values()
+            if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            and (
+                tenant_id is None
+                or str(job.payload.get("tenant_id") or "") == tenant_id
+            )
         )
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:

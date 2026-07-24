@@ -8,9 +8,9 @@ Owns the task-scoped low-efficiency store rebalance state used by
 - Scenario selection with persisted evidence and owner.
 - Govern approval creation boundary without marking relocation executed.
 
-The service is deliberately in-memory for the Operator Console R4 product
-slice. It follows the existing NetworkListingService pattern: deterministic
-seed data, idempotent writes, and one service instance per API router lifetime.
+Local/test mode retains deterministic fixture data. Production mode discovers
+tenant AVM cases and NetPlan scenarios from canonical durable repositories,
+then delegates valuation and optimization to their application services.
 """
 
 from __future__ import annotations
@@ -20,6 +20,9 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+
+from modules.avm.application.valuation import AVMError, AVMService
+from modules.netplan.application.planning import NetPlanService
 
 
 class NetworkRebalanceError(RuntimeError):
@@ -193,15 +196,71 @@ def _seed_state() -> dict[str, Any]:
 class NetworkRebalanceService:
     """Application service for the R4 low-efficiency rebalance workflow."""
 
-    def __init__(self, govern_approval_writer: GovernApprovalWriter | None = None) -> None:
-        self._state = _seed_state()
-        self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    def __init__(
+        self,
+        govern_approval_writer: GovernApprovalWriter | None = None,
+        *,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+        avm_repository: Any | None = None,
+        netplan_repository: Any | None = None,
+        avm_production_executor: Any | None = None,
+        netplan_production_executor: Any | None = None,
+        runtime_mode: str | None = None,
+        tenant_id: str | None = None,
+        require_canonical: bool = False,
+    ) -> None:
+        self._seed_fixtures = seed_fixtures
+        self._avm_repository = avm_repository
+        self._netplan_repository = netplan_repository
+        self._avm_production_executor = avm_production_executor
+        self._netplan_production_executor = netplan_production_executor
+        self._runtime_mode = runtime_mode
+        self._tenant_id = tenant_id
+        self._require_canonical = require_canonical
+        self._state = _copy(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else {
+                "stores": [],
+                "auditEvents": [],
+                "governApprovals": [],
+            }
+        )
+        self._idempotency_cache = _copy(
+            (initial_state or {}).get("idempotencyCache", {})
+        )
+        self._state.pop("idempotencyCache", None)
         self._govern_approval_writer = govern_approval_writer
+        if self._require_canonical:
+            self._refresh_canonical_stores()
 
     def reset(self) -> dict[str, Any]:
-        self._state = _seed_state()
+        if self._require_canonical:
+            self._state["auditEvents"] = []
+            self._state["governApprovals"] = []
+            self._idempotency_cache = {}
+            self._refresh_canonical_stores()
+            return self.snapshot()
+        self._state = (
+            _seed_state()
+            if self._seed_fixtures
+            else {
+                "stores": [],
+                "auditEvents": [],
+                "governApprovals": [],
+            }
+        )
         self._idempotency_cache = {}
         return self.snapshot()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            **_copy(self._state),
+            "idempotencyCache": _copy(self._idempotency_cache),
+        }
 
     def snapshot(
         self,
@@ -209,18 +268,22 @@ class NetworkRebalanceService:
         selected_store_id: str | None = None,
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
-        selected_id = selected_store_id or self._state["stores"][0]["id"]
+        if self._require_canonical:
+            self._refresh_canonical_stores()
+        selected_id = selected_store_id or (
+            self._state["stores"][0]["id"] if self._state["stores"] else None
+        )
         return {
-            "source": "api",
+            "source": "canonical" if self._require_canonical else "api",
             "stores": [_copy(self._view_store(store)) for store in self._state["stores"]],
             "selectedStoreId": selected_id,
             "metadata": {
                 "serviceVersion": "operator-network-rebalance-r4",
-                "canonicalPackage": "r4-20260707-package-6",
-                "canonicalZipSha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+                "canonicalPackage": None if self._require_canonical else "r4-20260707-package-6",
+                "canonicalZipSha256": None if self._require_canonical else "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
                 "screenLabels": ["Network 展店與店網", "Network 低效重配", "Govern 治理稽核"],
-                "avm": _copy(_AVM_MODEL),
-                "netPlan": _copy(_NETPLAN_MODEL),
+                "avm": self._canonical_avm_metadata(),
+                "netPlan": self._canonical_netplan_metadata(),
             },
             "governApprovals": _copy(self._state["governApprovals"]),
             "auditEvents": _copy(self._state["auditEvents"]),
@@ -253,6 +316,52 @@ class NetworkRebalanceService:
             raise NetworkRebalanceConflict(f"{store_id} is already past AVM request")
 
         store["status"] = "avmrequested"
+        if self._require_canonical:
+            case_id = store.get("canonicalAvmCaseId")
+            if not case_id:
+                raise NetworkRebalanceRuntimeUnavailable(
+                    model="AVM input",
+                    store_id=store_id,
+                )
+            case = self._avm_repository.get_case(case_id)
+            if case is None:
+                raise NetworkRebalanceRuntimeUnavailable(
+                    model="AVM input",
+                    store_id=store_id,
+                )
+            store["avmRequestId"] = case.case_id
+            store["avmJob"] = {
+                "id": case.case_id,
+                "status": case.status.value,
+                "requestedAt": case.created_at.isoformat(),
+                "sourceSnapshotIds": list(
+                    case.valuation_input.source_snapshot_ids
+                ),
+                "retryable": True,
+            }
+            store["runtimeState"] = None
+            audit = self._audit(
+                action="rebalance.avm.requested",
+                target_id=store_id,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                correlation_id=correlation_id,
+                metadata={
+                    "avmRequestId": case.case_id,
+                    "sourceSnapshotIds": list(
+                        case.valuation_input.source_snapshot_ids
+                    ),
+                },
+            )
+            result = {
+                "store": _copy(self._view_store(store)),
+                "auditEvent": audit,
+                "correlationId": correlation_id,
+            }
+            if idempotency_key:
+                self._idempotency_cache[cache_key] = _copy(result)
+            return result
+
         store["avmRequestId"] = store.get("avmRequestId") or "AVM-611"
         store["avmJob"] = {
             "id": store["avmRequestId"],
@@ -296,6 +405,70 @@ class NetworkRebalanceService:
             raise NetworkRebalanceRuntimeUnavailable(model="AVM", store_id=store_id)
         if store["status"] != "avmrequested":
             raise NetworkRebalanceConflict(f"{store_id} must be avmrequested before AVM completion")
+
+        if self._require_canonical:
+            case_id = store.get("canonicalAvmCaseId")
+            if not case_id:
+                raise NetworkRebalanceRuntimeUnavailable(
+                    model="AVM input",
+                    store_id=store_id,
+                )
+            try:
+                report = AVMService(
+                    repository=self._avm_repository,
+                    production_executor=self._avm_production_executor,
+                    runtime_mode=self._runtime_mode,
+                ).value(
+                    case_id,
+                    actor=actor_name or actor_role_id,
+                    correlation_id=correlation_id or "",
+                )
+            except AVMError as exc:
+                raise NetworkRebalanceConflict(str(exc)) from exc
+            store["status"] = "avmready"
+            store["avmJob"] = {
+                "id": report.case_id,
+                "status": "completed",
+                "completedAt": report.valued_at.isoformat(),
+                "reportId": report.report_id,
+                "valuationVersion": report.valuation_version,
+            }
+            store["avm"] = {
+                "requestId": report.case_id,
+                "reportId": report.report_id,
+                "valuationVersion": report.valuation_version,
+                "p10": report.fair_price.p10,
+                "p50": report.fair_price.p50,
+                "p90": report.fair_price.p90,
+                "confidence": report.confidence,
+                "reservePrice": report.reserve_price,
+                "modelVersion": report.model_version,
+                "featureVersion": report.feature_version,
+                "predictionOriginTime": report.prediction_origin_time.isoformat(),
+                "valuedAt": report.valued_at.isoformat(),
+            }
+            store["runtimeState"] = None
+            audit = self._audit(
+                action="rebalance.avm.completed",
+                target_id=store_id,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                correlation_id=correlation_id,
+                metadata={
+                    "reportId": report.report_id,
+                    "valuationVersion": report.valuation_version,
+                    "p50": report.fair_price.p50,
+                    "modelVersion": report.model_version,
+                },
+            )
+            result = {
+                "store": _copy(self._view_store(store)),
+                "auditEvent": audit,
+                "correlationId": correlation_id,
+            }
+            if idempotency_key:
+                self._idempotency_cache[cache_key] = _copy(result)
+            return result
 
         evidence_id = _evidence_id("EV-AVM")
         store["status"] = "avmready"
@@ -356,6 +529,108 @@ class NetworkRebalanceService:
             raise NetworkRebalanceRuntimeUnavailable(model="NetPlan", store_id=store_id)
         if store["status"] != "avmready":
             raise NetworkRebalanceConflict(f"{store_id} must be avmready before NetPlan solve")
+
+        if self._require_canonical:
+            scenario_ids = list(store.get("canonicalNetPlanScenarioIds", []))
+            scenarios = [
+                self._netplan_repository.get_scenario(scenario_id)
+                for scenario_id in scenario_ids
+            ]
+            scenario = next(
+                (
+                    item
+                    for item in scenarios
+                    if item is not None and item.status.value == "draft"
+                ),
+                None,
+            )
+            if scenario is None:
+                raise NetworkRebalanceRuntimeUnavailable(
+                    model="NetPlan scenario input",
+                    store_id=store_id,
+                )
+            solve = NetPlanService(
+                repository=self._netplan_repository,
+                production_executor=self._netplan_production_executor,
+                runtime_mode=self._runtime_mode,
+            ).solve(
+                scenario.scenario_id,
+                actor=actor_name or actor_role_id,
+                reason="Operator network rebalance canonical solve",
+            )
+            result_payload = solve.result.to_dict()
+            plan_rows = [
+                {
+                    "id": scenario.scenario_id,
+                    "name": scenario.scenario_name,
+                    "score": result_payload["objective_value"],
+                    "expectedGrossMargin": result_payload["expected_gross_margin"],
+                    "investmentTwd": result_payload["budget_usage"],
+                    "risk": result_payload["average_risk"],
+                    "capacityDelta": result_payload["capacity_delta"],
+                    "actions": result_payload["selected_actions"],
+                    "bindingConstraints": result_payload["binding_constraints"],
+                    "isSystemRecommendation": True,
+                    "selected": False,
+                    "solverStatus": result_payload["solver_status"],
+                    "solverVersion": result_payload["solver_version"],
+                    "evidenceIds": [scenario.scenario_id],
+                }
+            ]
+            for index, alternative in enumerate(
+                result_payload.get("alternatives", []),
+                start=1,
+            ):
+                plan_rows.append(
+                    {
+                        "id": f"{scenario.scenario_id}:alternative:{index}",
+                        "name": f"{scenario.scenario_name} alternative {index}",
+                        "score": alternative["objective_value"],
+                        "expectedGrossMargin": alternative["expected_gross_margin"],
+                        "investmentTwd": alternative["budget_usage"],
+                        "risk": alternative["average_risk"],
+                        "capacityDelta": alternative["capacity_delta"],
+                        "actions": alternative["actions"],
+                        "bindingConstraints": alternative["binding_constraints"],
+                        "isSystemRecommendation": False,
+                        "selected": False,
+                        "solverStatus": result_payload["solver_status"],
+                        "solverVersion": result_payload["solver_version"],
+                        "evidenceIds": [scenario.scenario_id],
+                    }
+                )
+            store["status"] = "netplanreview"
+            store["netPlanJob"] = {
+                "id": scenario.scenario_id,
+                "status": result_payload["solver_status"],
+                "completedAt": solve.solved_at.isoformat(),
+                "modelVersion": scenario.model_version,
+                "featureVersion": scenario.feature_version,
+                "solverVersion": result_payload["solver_version"],
+            }
+            store["netPlanScenarios"] = plan_rows
+            store["runtimeState"] = None
+            audit = self._audit(
+                action="rebalance.netplan.solved",
+                target_id=store_id,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                correlation_id=correlation_id,
+                metadata={
+                    "scenarioId": scenario.scenario_id,
+                    "solverStatus": result_payload["solver_status"],
+                    "solverVersion": result_payload["solver_version"],
+                    "alternativeCount": len(result_payload.get("alternatives", [])),
+                },
+            )
+            result = {
+                "store": _copy(self._view_store(store)),
+                "auditEvent": audit,
+                "correlationId": correlation_id,
+            }
+            if idempotency_key:
+                self._idempotency_cache[cache_key] = _copy(result)
+            return result
 
         evidence_id = _evidence_id("EV-NP")
         scenarios = []
@@ -434,7 +709,12 @@ class NetworkRebalanceService:
                 "id": evidence_id,
                 "kind": "netplan-selection",
                 "label": f"Selected scenario: {scenario['name']}",
-                "source": f"{actor_name or actor_role_id} · {_NETPLAN_MODEL['snapshotId']}",
+                "source": (
+                    f"{actor_name or actor_role_id} · "
+                    f"{store.get('netPlanJob', {}).get('solverVersion', '')}"
+                    if self._require_canonical
+                    else f"{actor_name or actor_role_id} · {_NETPLAN_MODEL['snapshotId']}"
+                ),
             }
         )
         audit = self._audit(
@@ -447,7 +727,15 @@ class NetworkRebalanceService:
                 "scenarioId": scenario_id,
                 "scenarioName": scenario["name"],
                 "evidenceId": evidence_id,
-                **_NETPLAN_MODEL,
+                **(
+                    {
+                        "modelVersion": store.get("netPlanJob", {}).get("modelVersion"),
+                        "featureVersion": store.get("netPlanJob", {}).get("featureVersion"),
+                        "solverVersion": store.get("netPlanJob", {}).get("solverVersion"),
+                    }
+                    if self._require_canonical
+                    else _NETPLAN_MODEL
+                ),
             },
         )
         result = {"store": _copy(self._view_store(store)), "auditEvent": audit, "correlationId": correlation_id}
@@ -489,7 +777,12 @@ class NetworkRebalanceService:
             "title": f"NetPlan 重配審核：{store['storeName']}（{scenario['name']}）",
             "meta": (
                 f"{scenario['name']} score {scenario['score']} · "
-                f"{_NETPLAN_MODEL['modelVersion']} · {_NETPLAN_MODEL['snapshotId']}"
+                + (
+                    f"{store.get('netPlanJob', {}).get('modelVersion')} · "
+                    f"{store.get('netPlanJob', {}).get('solverVersion')}"
+                    if self._require_canonical
+                    else f"{_NETPLAN_MODEL['modelVersion']} · {_NETPLAN_MODEL['snapshotId']}"
+                )
             ),
             "status": "pending",
             "cta": "Review",
@@ -546,7 +839,101 @@ class NetworkRebalanceService:
             self._idempotency_cache[cache_key] = _copy(result)
         return result
 
+    def _require_canonical_dependencies(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("avm_repository", self._avm_repository),
+                ("netplan_repository", self._netplan_repository),
+                ("tenant_id", self._tenant_id),
+            )
+            if value is None or value == ""
+        ]
+        if missing:
+            raise NetworkRebalanceRuntimeUnavailable(
+                model="AVM/NetPlan",
+                store_id="unscoped",
+            )
+
+    def _refresh_canonical_stores(self) -> None:
+        self._require_canonical_dependencies()
+        existing = {
+            str(row.get("storeId") or row.get("id")): row
+            for row in self._state.get("stores", [])
+        }
+        cases = self._avm_repository.list_cases()
+        scenarios = [
+            scenario
+            for scenario in self._netplan_repository.list_scenarios()
+            if scenario.tenant_id == self._tenant_id
+        ]
+        store_ids = {case.store_id for case in cases}
+        refreshed: list[dict[str, Any]] = []
+        for store_id in sorted(store_ids):
+            case = next(
+                (item for item in cases if item.store_id == store_id),
+                None,
+            )
+            linked_scenarios = [
+                scenario
+                for scenario in scenarios
+                if store_id in scenario.options_by_entity
+            ]
+            base = {
+                "id": store_id,
+                "storeId": store_id,
+                "storeName": store_id,
+                "status": "watching",
+                "ownerRoleId": None,
+                "ownerName": None,
+                "summary": "Canonical AVM / NetPlan inputs available",
+                "healthNote": None,
+                "evidence": [],
+                "relocationExecuted": False,
+                "runtimeState": None,
+            }
+            row = {**base, **_copy(existing.get(store_id, {}))}
+            row["id"] = store_id
+            row["storeId"] = store_id
+            row["canonicalAvmCaseId"] = case.case_id if case is not None else None
+            row["canonicalNetPlanScenarioIds"] = [
+                scenario.scenario_id for scenario in linked_scenarios
+            ]
+            refreshed.append(row)
+        self._state["stores"] = refreshed
+
+    def _canonical_avm_metadata(self) -> dict[str, Any]:
+        if not self._require_canonical:
+            return _copy(_AVM_MODEL)
+        reports = [
+            self._avm_repository.latest_report(case.case_id)
+            for case in self._avm_repository.list_cases()
+        ]
+        reports = [report for report in reports if report is not None]
+        return {
+            "modelVersions": sorted({report.model_version for report in reports}),
+            "featureVersions": sorted({report.feature_version for report in reports}),
+            "reportCount": len(reports),
+        }
+
+    def _canonical_netplan_metadata(self) -> dict[str, Any]:
+        if not self._require_canonical:
+            return _copy(_NETPLAN_MODEL)
+        scenarios = [
+            scenario
+            for scenario in self._netplan_repository.list_scenarios()
+            if scenario.tenant_id == self._tenant_id
+        ]
+        return {
+            "modelVersions": sorted({scenario.model_version for scenario in scenarios}),
+            "featureVersions": sorted({scenario.feature_version for scenario in scenarios}),
+            "solverVersions": sorted({scenario.solver_version for scenario in scenarios}),
+            "scenarioCount": len(scenarios),
+        }
+
     def _store(self, store_id: str) -> dict[str, Any]:
+        if self._require_canonical:
+            self._refresh_canonical_stores()
         for store in self._state["stores"]:
             if store.get("id") == store_id or store.get("storeId") == store_id:
                 return store

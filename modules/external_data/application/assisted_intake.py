@@ -1,8 +1,8 @@
 """Human-assisted listing intake domain (ODP-OC-R5-001 / ODP-EXT-002 addendum).
 
 This module owns the *source-facing* half of the assisted intake workflow:
-URL normalization, source identification, the access-policy gate, deterministic
-retrieval replay, field parsing/normalization, and entity matching. It holds no
+URL normalization, source identification, the access-policy gate, test-only
+fixture replay, field parsing/normalization, and entity matching. It holds no
 queue, no decisions, and no audit trail — those belong to the Operator Console
 service (``modules.opsboard.application.network_intake``) that composes this.
 
@@ -10,11 +10,10 @@ Deliberate boundaries (ODP-EXT-002-R5-ADDENDUM):
 
 - **No crawling.** There is no scheduled discovery, no result-page fetching, and
   no listing-id enumeration. One human submits one URL; nothing else is fetched.
-- **Retrieval is approval-gated, then replayed.** ``retrieve()`` never opens a
-  socket. Server-side retrieval is modelled as a deterministic replay over
-  ``RETRIEVAL_CORPUS`` so fixture replay stays the CI default. A live adapter
-  would substitute here *only* for a source whose policy is
-  ``APPROVED_RETRIEVAL``; every other policy short-circuits before retrieval.
+- **Fixture replay is non-production only.** ``retrieve()`` never opens a
+  socket and may read ``RETRIEVAL_CORPUS`` only in POC, test, or local mode.
+  Production/live retrieval belongs to a separately configured server adapter;
+  this fixture source fails closed whenever live data is required.
 - **Fail closed.** An unknown host resolves to ``POLICY_UNKNOWN`` and is
   quarantined for governance review rather than optimistically fetched.
 """
@@ -23,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -133,6 +133,16 @@ TRACKING_PARAMS = frozenset(
 )
 
 PARSER_VERSION = "listing-parser v1.4"
+
+SYNTHETIC_SOURCE_ID = "SRC-SYNTHETIC"
+SYNTHETIC_FIXTURE_BLOCKED_CODE = "ODP-INTAKE-SYNTHETIC-FIXTURE-DISABLED"
+SYNTHETIC_FIXTURE_BLOCKED_SUMMARY = (
+    "Synthetic assisted-listing fixture data is disabled in production/live mode."
+)
+SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION = (
+    "Configure a governed live retrieval adapter for an approved source, "
+    "or continue through assisted entry."
+)
 
 # Identity-affecting fields. A manual correction to any of these requires a
 # reason, because it can change the matching outcome (design requirements §5.3).
@@ -270,6 +280,8 @@ class SourcePolicyDecision:
     policy_reason: str
     may_retrieve: bool
     quarantines: bool
+    failure_code: str | None = None
+    next_action: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -279,6 +291,9 @@ class SourcePolicyDecision:
             "policyLabel": self.policy_label,
             "policyReason": self.policy_reason,
             "mayRetrieve": self.may_retrieve,
+            "quarantines": self.quarantines,
+            "failureCode": self.failure_code,
+            "nextAction": self.next_action,
         }
 
 
@@ -503,6 +518,18 @@ def resolve_source_policy(url: str) -> SourcePolicyDecision:
             may_retrieve=False,
             quarantines=True,
         )
+    if definition.source_id == SYNTHETIC_SOURCE_ID and not fixture_replay_allowed():
+        return SourcePolicyDecision(
+            source_id=definition.source_id,
+            source_name=definition.name,
+            policy="SOURCE_BLOCKED",
+            policy_label=SOURCE_POLICY_LABEL["SOURCE_BLOCKED"],
+            policy_reason=SYNTHETIC_FIXTURE_BLOCKED_SUMMARY,
+            may_retrieve=False,
+            quarantines=True,
+            failure_code=SYNTHETIC_FIXTURE_BLOCKED_CODE,
+            next_action=SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION,
+        )
     return SourcePolicyDecision(
         source_id=definition.source_id,
         source_name=definition.name,
@@ -515,13 +542,25 @@ def resolve_source_policy(url: str) -> SourcePolicyDecision:
 
 
 def retrieve(canonical_url: str, *, policy: SourcePolicyDecision) -> RetrievalResult:
-    """Replay the raw landing snapshot for an approved retrieval.
+    """Replay a test-only raw landing snapshot for an approved retrieval.
 
-    Fails closed: calling this for a non-retrievable policy is a programming
-    error, not a recoverable state, because the policy gate must have already
-    routed that record to assisted entry or quarantine.
+    Production/live mode never reads the deterministic corpus and returns an
+    explicit failure even if a stale caller still supplies an approved policy.
+    Outside live mode, calling this for a non-retrievable policy remains a
+    programming error because the policy gate must short-circuit first.
     """
 
+    if not fixture_replay_allowed():
+        return RetrievalResult(
+            snapshot_id=f"SNAP-BLOCKED-{_short_hash(canonical_url)}",
+            captured_at="",
+            failure=RetrievalFailure(
+                code=SYNTHETIC_FIXTURE_BLOCKED_CODE,
+                summary=SYNTHETIC_FIXTURE_BLOCKED_SUMMARY,
+                next_action=SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION,
+                retryable=False,
+            ),
+        )
     if not policy.may_retrieve:
         raise AssertionError(
             f"retrieve() called for non-retrievable policy {policy.policy!r} — "
@@ -534,6 +573,19 @@ def retrieve(canonical_url: str, *, policy: SourcePolicyDecision) -> RetrievalRe
             captured_at="",
             failure=_PAGE_REMOVED,
         ),
+    )
+
+
+def fixture_replay_allowed() -> bool:
+    """Return whether deterministic assisted-listing fixtures may be used."""
+
+    product_mode = os.getenv("ODP_PRODUCT_MODE", "").strip().lower()
+    provider_mode = os.getenv("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
+    require_live_data = os.getenv("ODP_REQUIRE_LIVE_DATA", "").strip().lower()
+    return not (
+        product_mode == "production"
+        or provider_mode == "live"
+        or require_live_data in {"1", "true", "yes", "on"}
     )
 
 
@@ -942,6 +994,8 @@ __all__ = [
     "MATCH_OUTCOME_LABEL",
     "PARSER_VERSION",
     "RETRIEVAL_CORPUS",
+    "SYNTHETIC_FIXTURE_BLOCKED_CODE",
+    "SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION",
     "SOURCE_POLICY_LABEL",
     "SOURCE_POLICY_STATES",
     "SOURCE_REGISTRY",
@@ -956,6 +1010,7 @@ __all__ = [
     "content_fingerprint",
     "detect_source",
     "effective_fields",
+    "fixture_replay_allowed",
     "match_listing",
     "normalize_address",
     "normalize_floor",

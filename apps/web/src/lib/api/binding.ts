@@ -1,13 +1,13 @@
 import type { OdpApiClient } from "@oday-plus/openapi-client";
-import { headers } from "next/headers";
+import { payloadContainsNonProductionData } from "./liveData";
 
 /**
  * Outcome of attempting to bind a workspace region to live backend data.
  *
  * - `ready`        — the API responded with one or more rows (render live).
- * - `empty`        — the API responded but the store is cold (fixture fallback).
- * - `error`        — the API was unreachable or returned a non-2xx (fallback).
- * - `unconfigured` — no API base URL is set (fixture-only build).
+ * - `empty`        — the API responded but the store is cold.
+ * - `error`        — the API was unreachable or returned a non-2xx.
+ * - `unconfigured` — no API base URL is set.
  */
 export type BindingState = "ready" | "empty" | "error" | "unconfigured";
 
@@ -15,17 +15,17 @@ export type ApiBinding<T> = {
   state: BindingState;
   /** Live rows from the API; empty for every non-`ready` state. */
   items: T[];
-  /** `api` once the backend has actually served the rendered rows. */
-  source: "api" | "fixture";
+  /** Origin of the rendered rows, or `unavailable` when no rows were served. */
+  source: "api" | "fixture" | "unavailable";
   error?: string;
   baseUrl?: string;
   fetchedAt: string;
 };
 
 /**
- * Fetch a list from the backend and classify the result. Never throws —
- * a cold store, an unreachable API, or a missing base URL all degrade to a
- * `fixture` source so the workspace keeps rendering its documented fallback.
+ * Fetch a list from the backend and classify the result. Never throws.
+ * Non-ready results are marked as `unavailable`; production callers render a
+ * fail-closed state instead of treating missing API data as a fixture source.
  */
 export async function loadApiBinding<T>(options: {
   client: OdpApiClient | null;
@@ -33,15 +33,11 @@ export async function loadApiBinding<T>(options: {
 }): Promise<ApiBinding<T>> {
   const fetchedAt = new Date().toISOString();
   const { client, fetcher } = options;
-  const isProduction =
-    process.env.NODE_ENV === "production" ||
-    process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true";
-
   if (!client) {
     return {
       state: "unconfigured",
       items: [],
-      source: isProduction ? "api" : "fixture",
+      source: "unavailable",
       fetchedAt,
     };
   }
@@ -52,7 +48,17 @@ export async function loadApiBinding<T>(options: {
       return {
         state: "empty",
         items: [],
-        source: isProduction ? "api" : "fixture",
+        source: "unavailable",
+        baseUrl: client.baseUrl,
+        fetchedAt,
+      };
+    }
+    if (payloadContainsNonProductionData(items)) {
+      return {
+        state: "error",
+        items: [],
+        source: "unavailable",
+        error: "NON_PRODUCTION_DATA_BLOCKED",
         baseUrl: client.baseUrl,
         fetchedAt,
       };
@@ -68,7 +74,7 @@ export async function loadApiBinding<T>(options: {
     return {
       state: "error",
       items: [],
-      source: isProduction ? "api" : "fixture",
+      source: "unavailable",
       error: error instanceof Error ? error.message : String(error),
       baseUrl: client.baseUrl,
       fetchedAt,

@@ -36,6 +36,7 @@ from modules.learninghub.domain import (
     validate_point_in_time,
 )
 from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
+from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
 from modules.learninghub.workers import (
     LearningHubReleaseWorker,
     run_learninghub_release,
@@ -52,6 +53,7 @@ __all__ = [
     "LearningHubError",
     "LearningHubReleaseWorker",
     "LearningHubService",
+    "LearningHubRuntimeConfigurationError",
     "MlflowRegistryAdapter",
     "ModelReadyRecord",
     "ModelReleaseDecision",

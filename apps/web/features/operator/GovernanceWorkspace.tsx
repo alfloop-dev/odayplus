@@ -16,9 +16,18 @@ import {
   exportEvidencePackage,
   fetchGovernanceSnapshot,
   submitGovernanceDecision,
+  type GovernanceSnapshot,
   type GovernanceStatusBoard,
   type GovernanceStatusRow,
 } from "./governance/governanceLoader";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  isSeedDataSource,
+  operatorFixturesAllowed,
+  payloadContainsSeedData,
+  toUnavailableOperatorStatus,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
 
 type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard";
 
@@ -259,6 +268,44 @@ const baseAuditCategories: GovernanceAuditCategory[] = [
   "system",
 ];
 
+export function inspectGovernanceSnapshot(
+  snapshot: GovernanceSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) {
+    return "seed";
+  }
+
+  const statusBoard = snapshot.statusBoard;
+  const statusGroups = statusBoard
+    ? [
+        statusBoard.dataQuality,
+        statusBoard.models,
+        statusBoard.connectors,
+        statusBoard.sla,
+        statusBoard.users,
+      ]
+    : [];
+  const hasRequiredShape =
+    typeof snapshot.source === "string" &&
+    snapshot.source.trim().length > 0 &&
+    Array.isArray(snapshot.approvals) &&
+    Array.isArray(snapshot.decisions) &&
+    Array.isArray(snapshot.auditRows) &&
+    Array.isArray(snapshot.evidencePackages) &&
+    statusGroups.length === 5 &&
+    statusGroups.every(Array.isArray);
+  const hasRows = [
+    snapshot.approvals,
+    snapshot.decisions,
+    snapshot.auditRows,
+    snapshot.evidencePackages,
+    ...statusGroups,
+  ].some((rows) => rows.length > 0);
+
+  return hasRequiredShape && hasRows ? "ready" : "empty";
+}
+
 export function GovernanceWorkspace({
   approvals,
   decisions,
@@ -268,16 +315,27 @@ export function GovernanceWorkspace({
   canDecide = true,
   callbacks,
 }: GovernanceWorkspaceProps) {
-  const [localApprovals, setLocalApprovals] = useState<GovernanceApproval[]>(approvals ?? fallbackApprovals);
-  const [localDecisions, setLocalDecisions] = useState<GovernanceDecisionRow[]>(decisions ?? fallbackDecisions);
-  const [localAuditRows, setLocalAuditRows] = useState<GovernanceAuditRow[]>(auditRows ?? fallbackAuditRows);
+  const fixturesAllowed = operatorFixturesAllowed();
+  const [localApprovals, setLocalApprovals] = useState<GovernanceApproval[]>(
+    approvals ?? (fixturesAllowed ? fallbackApprovals : []),
+  );
+  const [localDecisions, setLocalDecisions] = useState<GovernanceDecisionRow[]>(
+    decisions ?? (fixturesAllowed ? fallbackDecisions : []),
+  );
+  const [localAuditRows, setLocalAuditRows] = useState<GovernanceAuditRow[]>(
+    auditRows ?? (fixturesAllowed ? fallbackAuditRows : []),
+  );
 
   // When the Govern API answers, it becomes the source of truth: approvals,
   // decisions, audit trail, status board and evidence history all come from
-  // /api/v1/operator/governance/snapshot.  Until then the embedded fixtures
-  // render (SSR / offline / unit tests never break).
+  // /api/v1/operator/governance/snapshot. Local/POC may render fixtures while
+  // production waits for a verified live response.
   const [apiActive, setApiActive] = useState(false);
   const [apiStatusBoard, setApiStatusBoard] = useState<GovernanceStatusBoard | null>(null);
+  const [apiLoadState, setApiLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [apiLoadError, setApiLoadError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<GovernanceTab>("approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(localApprovals[0]?.id ?? "");
@@ -302,14 +360,49 @@ export function GovernanceWorkspace({
 
   const [evdRunning, setEvdRunning] = useState(false);
   const [evdResult, setEvdResult] = useState<{ file: string; size: string; t: string; range: string } | null>(null);
-  const [evdHist, setEvdHist] = useState<Array<{ id: string; range: string; mod: string; fmt: string; t: string; by: string }>>([
-    { id: "EVD-2026-0701-01", range: "2026-06-01 – 2026-06-30", mod: "Store Ops＋Growth＋Network", fmt: "PDF", t: "2026-07-01 10:15", by: "周明德" },
-    { id: "EVD-2026-0615-02", range: "2026-05-01 – 2026-05-31", mod: "Store Ops＋Network", fmt: "CSV", t: "2026-06-15 14:22", by: "周明德" }
-  ]);
+  const [evdHist, setEvdHist] = useState<Array<{ id: string; range: string; mod: string; fmt: string; t: string; by: string }>>(
+    fixturesAllowed
+      ? [
+          { id: "EVD-2026-0701-01", range: "2026-06-01 – 2026-06-30", mod: "Store Ops＋Growth＋Network", fmt: "PDF", t: "2026-07-01 10:15", by: "周明德" },
+          { id: "EVD-2026-0615-02", range: "2026-05-01 – 2026-05-31", mod: "Store Ops＋Network", fmt: "CSV", t: "2026-06-15 14:22", by: "周明德" },
+        ]
+      : [],
+  );
 
   const refreshSnapshot = useCallback(async () => {
+    if (!fixturesAllowed) setApiLoadState("loading");
+    setApiLoadError(null);
     const snapshot = await fetchGovernanceSnapshot(roleId);
-    if (!snapshot) return false;
+    if (!snapshot) {
+      setApiLoadState(fixturesAllowed ? "fixture" : "error");
+      setApiLoadError("Governance snapshot API 無法完成讀取。");
+      return false;
+    }
+    const inspection = inspectGovernanceSnapshot(snapshot);
+    if (!fixturesAllowed && inspection !== "ready") {
+      setLocalApprovals([]);
+      setLocalDecisions([]);
+      setLocalAuditRows([]);
+      setApiStatusBoard(null);
+      setEvdHist([]);
+      setApiActive(false);
+      setApiLoadState(inspection);
+      setApiLoadError(
+        inspection === "seed"
+          ? "Governance snapshot API 回傳 seed、fixture 或 mock 資料。"
+          : "Governance snapshot API 回傳空白或不完整資料。",
+      );
+      return false;
+    }
+    const statusRows = snapshot.statusBoard
+      ? Object.values(snapshot.statusBoard).flatMap((rows) => rows ?? [])
+      : [];
+    const hasData =
+      snapshot.approvals.length > 0 ||
+      snapshot.decisions.length > 0 ||
+      snapshot.auditRows.length > 0 ||
+      snapshot.evidencePackages.length > 0 ||
+      statusRows.length > 0;
     setLocalApprovals(snapshot.approvals);
     setLocalDecisions(snapshot.decisions);
     setLocalAuditRows(snapshot.auditRows);
@@ -332,11 +425,16 @@ export function GovernanceWorkspace({
         : snapshot.approvals[0]?.id ?? "",
     );
     setApiActive(true);
+    if (inspection === "seed") {
+      setApiLoadState(fixturesAllowed ? "fixture" : "seed");
+    } else {
+      setApiLoadState(hasData ? "ready" : fixturesAllowed ? "fixture" : "empty");
+    }
     return true;
-  }, [roleId]);
+  }, [fixturesAllowed, roleId]);
 
   useEffect(() => {
-    // Bind to the Govern API on mount / role change; fixtures stay until it answers.
+    // Bind on mount / role change; only local/POC keeps fixtures while pending.
     void refreshSnapshot();
   }, [refreshSnapshot]);
 
@@ -371,6 +469,16 @@ export function GovernanceWorkspace({
     localAuditRows.forEach((row) => categorySet.add(row.category));
     return Array.from(categorySet);
   }, [localAuditRows]);
+
+  if (!fixturesAllowed && apiLoadState !== "ready") {
+    return (
+      <OperatorDataUnavailableGate
+        detail={apiLoadError}
+        onRetry={() => void refreshSnapshot()}
+        status={toUnavailableOperatorStatus(apiLoadState)}
+      />
+    );
+  }
 
   const filteredAuditRows =
     auditCategory === "all"
@@ -432,7 +540,15 @@ export function GovernanceWorkspace({
         );
         return;
       }
-      // API unreachable — fall through to the offline record below.
+      if (!fixturesAllowed) {
+        setEvdRunning(false);
+        triggerToast("Evidence Package 未建立，API 暫時無法使用。");
+        return;
+      }
+    } else if (!fixturesAllowed) {
+      setEvdRunning(false);
+      triggerToast("Evidence Package 未建立，Governance API 尚未就緒。");
+      return;
     }
 
     const selectedMods = modules.join("＋") || "全模組";
@@ -527,7 +643,13 @@ export function GovernanceWorkspace({
         setReasonError(outcome.detail);
         return;
       }
-      // Network failure — fall back to the offline local decision below.
+      if (!fixturesAllowed) {
+        setReasonError(outcome.detail);
+        return;
+      }
+    } else if (!fixturesAllowed) {
+      setReasonError("決策未送出，Governance API 尚未就緒。");
+      return;
     }
 
     const finalDecisionLabel = action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
@@ -622,7 +744,9 @@ export function GovernanceWorkspace({
           isGood: row.good,
           note: row.note,
         }))
-      : fallback;
+      : fixturesAllowed
+        ? fallback
+        : [];
 
   const dqRows = mapStatusRows(apiStatusBoard?.dataQuality, [
     { src: "Google Reviews Connector", st: "正常", isGood: true, note: "15 分鐘前同步 · 覆蓋 12/12 門市" },
@@ -1098,13 +1222,19 @@ export function GovernanceWorkspace({
                 <div className={styles.exportResultMeta}>
                   範圍 {evdResult.range} · 匯出行為已寫入 Audit Trail
                 </div>
-                <button
-                  className={styles.downloadButton}
-                  onClick={() => triggerToast(`已下載證據包：${evdResult.file}`)}
-                  type="button"
-                >
-                  下載 (mock)
-                </button>
+                {fixturesAllowed ? (
+                  <button
+                    className={styles.downloadButton}
+                    onClick={() => triggerToast(`已下載證據包：${evdResult.file}`)}
+                    type="button"
+                  >
+                    下載 (local fixture)
+                  </button>
+                ) : (
+                  <span className={styles.errorText}>
+                    尚未提供可下載 artifact，請由 Evidence Package API 回傳正式下載位置。
+                  </span>
+                )}
               </div>
             ) : null}
           </div>

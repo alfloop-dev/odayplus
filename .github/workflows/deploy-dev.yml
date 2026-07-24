@@ -1,9 +1,5 @@
 name: Deploy Dev
 
-# Ladder step: dev branch -> dev environment.
-# On every push to dev (after CI gates the merge), build the API + web container
-# images from the actual source and publish them to GitHub Container Registry.
-# These are the real, runnable artifacts the dev environment deploys.
 on:
   push:
     branches: [dev]
@@ -23,7 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Run E2E deployment health, backup, restore, and rollback proof
         run: python3 scripts/e2e/verify_deployment_health_backup_rollback.py
 
@@ -33,6 +28,56 @@ jobs:
     environment:
       name: dev
       url: ${{ vars.ODP_DEV_DEPLOY_URL }}
+    env:
+      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+      HAS_GCP_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+      GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+      WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+      MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+      WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+      SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+      WORKER_SCHEDULE_NAME: ${{ vars.ODP_CLOUD_SCHEDULER_WORKER_TRIGGER }}
+      SCHEDULER_SCHEDULE_NAME: ${{ vars.ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER }}
+      ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+      ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT }}
+      ODP_WORKER_CRON: ${{ vars.ODP_WORKER_CRON }}
+      ODP_SCHEDULER_CRON: ${{ vars.ODP_SCHEDULER_CRON }}
+      ODP_SCHEDULER_TIME_ZONE: ${{ vars.ODP_SCHEDULER_TIME_ZONE }}
+      ODP_SNAPSHOT_BUCKET: ${{ vars.ODP_SNAPSHOT_BUCKET }}
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      ODP_LISTING_PROVIDER_FEED_URL: ${{ vars.ODP_LISTING_PROVIDER_FEED_URL }}
+      ODP_GEOCODE_PROVIDER_URL: ${{ vars.ODP_GEOCODE_PROVIDER_URL }}
+      ODP_LISTING_PROVIDER_AUTH_STATUS: ${{ vars.ODP_LISTING_PROVIDER_AUTH_STATUS }}
+      ODP_POI_PROVIDER_AUTH_STATUS: ${{ vars.ODP_POI_PROVIDER_AUTH_STATUS }}
+      ODP_GEOCODE_PROVIDER_AUTH_STATUS: ${{ vars.ODP_GEOCODE_PROVIDER_AUTH_STATUS }}
+      ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS: ${{ vars.ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS }}
+      ODP_PRODUCTION_PROVIDER_IDS: ${{ vars.ODP_PRODUCTION_PROVIDER_IDS }}
+      ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled
+      ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
+      ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
+      ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
+      ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
+      ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
+      ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      ODP_LISTING_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_LISTING_PROVIDER_API_KEY_SECRET }}
+      ODP_POI_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_POI_PROVIDER_API_KEY_SECRET }}
+      ODP_GEOCODE_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_GEOCODE_PROVIDER_API_KEY_SECRET }}
+      ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET: ${{ vars.ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET }}
+      ODP_WEB_OIDC_CLIENT_SECRET_SECRET: ${{ vars.ODP_WEB_OIDC_CLIENT_SECRET_SECRET }}
+      ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
+      ODP_DEPLOY_ENV: dev
+      ODAY_RELEASE_SHA: ${{ github.sha }}
+      ODP_REQUIRE_LIVE_DATA: "true"
+      ODP_DATA_BINDING_MODE: live
+      ODP_PRODUCT_MODE: production
+      ODP_EXTERNAL_PROVIDER_MODE: live
+      ODP_PERSISTENCE: postgresql
+      ODP_OBJECT_STORE: gcs
     steps:
       - uses: actions/checkout@v4
 
@@ -53,53 +98,28 @@ jobs:
       - name: Generate SBOM
         run: python3 scripts/security/generate_sbom.py
 
-      - name: Validate GCP Deployment Variables
+      - name: Validate authentication and live runtime preflight
+        env:
+          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
         run: |
-          echo "Checking deployment configuration..."
-          MISSING_CONFIG=0
-          if [ -z "${{ vars.GCP_PROJECT_ID }}" ]; then
-            echo "Error: vars.GCP_PROJECT_ID is not configured." >&2
-            MISSING_CONFIG=1
-          fi
-          if [ -z "${{ vars.GCP_REGION }}" ]; then
-            echo "Error: vars.GCP_REGION is not configured." >&2
-            MISSING_CONFIG=1
-          fi
-          if [ -z "${{ vars.GCP_AR_REPO }}" ]; then
-            echo "Error: vars.GCP_AR_REPO is not configured." >&2
-            MISSING_CONFIG=1
-          fi
-
-          has_wif=false
-          if [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ] && [ -n "${{ vars.GCP_SERVICE_ACCOUNT }}" ]; then
-            has_wif=true
-          fi
-
-          has_sa=false
-          if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
-            has_sa=true
-          fi
-
-          if [ "$has_wif" = "false" ] && [ "$has_sa" = "false" ]; then
-            echo "Error: GCP authentication is not configured. Configure either vars.GCP_WORKLOAD_IDENTITY_PROVIDER and vars.GCP_SERVICE_ACCOUNT (for WIF), or secrets.GCP_SA_KEY (for Service Account JSON Key)." >&2
-            MISSING_CONFIG=1
-          fi
-
-          if [ "$MISSING_CONFIG" -ne 0 ]; then
-            echo "Failed configuration validation. Aborting workflow (fail-closed)." >&2
+          if [ "${HAS_WIF}" != "true" ] && [ "${HAS_GCP_SA_KEY}" != "true" ]; then
+            echo "Error: configure WIF variables or the GCP_SA_KEY secret." >&2
             exit 1
           fi
-          echo "All required configurations are present."
+          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+            --environment dev \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --output .odp_data/deployment/cloud-run-preflight.json
 
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Authenticate to Google Cloud (SA Key)
-        if: ${{ secrets.GCP_SA_KEY != '' && (vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || vars.GCP_SERVICE_ACCOUNT == '') }}
+        if: ${{ env.HAS_GCP_SA_KEY == 'true' && env.HAS_WIF != 'true' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
@@ -110,12 +130,16 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Build, Push, and Deploy to Cloud Run
+      - name: Build, push, deploy, and verify Cloud Run
         env:
-          GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-          GCP_REGION: ${{ vars.GCP_REGION }}
-          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
           IMAGE_TAG: dev-${{ github.sha }}
-        run: |
-          chmod +x scripts/deploy_cloud_run_waji.sh
-          ./scripts/deploy_cloud_run_waji.sh
+          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+        run: ./scripts/deploy_cloud_run_waji.sh
+
+      - name: Upload deployment validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-run-dev-validation
+          path: .odp_data/deployment/*.json
+          if-no-files-found: ignore

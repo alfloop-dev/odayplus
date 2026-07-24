@@ -19,13 +19,16 @@ from datetime import UTC, date, datetime
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
 from modules.forecastops import (
     ForecastInput,
     ForecastOpsService,
     StoreDayObservation,
 )
+from modules.listing.domain.models import ListingDedupKey
 from shared.audit.events import AuditEvent
+from shared.domain import AddressLocation, Listing
 from shared.infrastructure.persistence import (
     DurableForecastOpsRepository,
     PersistenceBundle,
@@ -76,6 +79,61 @@ def test_factory_selects_durable_from_env(monkeypatch, db_path) -> None:
         assert isinstance(bundle, PersistenceBundle)
     finally:
         bundle.engine.close()
+
+
+def test_listing_address_hydration_and_status_update_survive_restart(db_path) -> None:
+    bundle = _durable_bundle(db_path)
+    listing = Listing(
+        listing_id="listing-promotion-001",
+        source_listing_id="provider-001",
+        source_id="approved-provider",
+        address_id="address-promotion-001",
+        rent_amount=54_000,
+        area_ping=22,
+        floor="1F",
+        frontage_m=5,
+        confidence=0.9,
+    )
+    address = AddressLocation(
+        address_id=listing.address_id,
+        raw_address="新北市板橋區府中路 26 號 1F",
+        normalized_address="新北市板橋區府中路26號1樓",
+        latitude=25.008,
+        longitude=121.459,
+        geocode_confidence=0.95,
+        h3_res_9="8929a1d4d67ffff",
+    )
+    key = ListingDedupKey(
+        source_id=listing.source_id,
+        source_listing_id=listing.source_listing_id,
+        normalized_address=address.normalized_address,
+        rent_amount=listing.rent_amount,
+        area_ping=listing.area_ping,
+    )
+    try:
+        bundle.listing_repository.save_listing(listing, address, key)
+    finally:
+        bundle.engine.close()
+
+    reopened = _durable_bundle(db_path)
+    try:
+        adapter = V1ListingRepositoryAdapter(reopened.listing_repository)
+        hydrated = adapter.get_listing(listing.listing_id)
+
+        assert hydrated is not None
+        assert hydrated.get("address") == address.raw_address
+        assert hydrated.get("h3Index") == address.h3_res_9
+
+        hydrated["status"] = "candidate"
+        adapter.save_listing(hydrated)
+
+        persisted = reopened.listing_repository.get_listing(listing.listing_id)
+        persisted_address = reopened.listing_repository.get_address(address.address_id)
+        assert persisted is not None
+        assert persisted.listing_status == "candidate"
+        assert persisted_address == address
+    finally:
+        reopened.engine.close()
 
 
 # -- application-layer compatibility + restart survival -----------------------

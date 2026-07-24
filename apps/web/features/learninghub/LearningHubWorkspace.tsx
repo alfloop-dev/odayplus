@@ -1,9 +1,18 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import type { StatusTone } from "@oday-plus/domain-types";
-import type { ModelReleaseSummary } from "@oday-plus/openapi-client";
+import type {
+  ModelReleaseSummary,
+  ModelVersionSummary,
+} from "@oday-plus/openapi-client";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
 import {
   models,
   releases,
@@ -25,6 +34,9 @@ type LearningHubWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /learninghub/releases` binding; supplied by the server route. */
   liveReleases?: ApiBinding<ModelReleaseSummary>;
+  /** Live `GET /learninghub/models` binding; supplied by the server route. */
+  liveModels?: ApiBinding<ModelVersionSummary>;
+  isProduction?: boolean;
 };
 
 export function LearningHubWorkspace({
@@ -34,13 +46,175 @@ export function LearningHubWorkspace({
   releaseId,
   searchParams = {},
   liveReleases,
+  liveModels,
+  isProduction: isProductionProp,
 }: LearningHubWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return (
+      <ProductionLearningHubWorkspace
+        modelBinding={liveModels}
+        modelName={modelName}
+        releaseBinding={liveReleases}
+        releaseId={releaseId}
+        version={version}
+        view={view}
+      />
+    );
+  }
   if (view === "models") return <ModelsPage searchParams={searchParams} />;
   if (view === "modelHistory") return <ModelHistoryPage model={selectedModel(modelName)} />;
   if (view === "modelDetail") return <ModelDetailPage model={selectedModel(modelName, version)} />;
   if (view === "releases") return <ReleasesPage liveReleases={liveReleases} />;
   if (view === "releaseDetail") return <ReleaseDetailPage release={selectedRelease(releaseId)} />;
   return <LearningOverview liveReleases={liveReleases} />;
+}
+
+function ProductionLearningHubWorkspace({
+  modelBinding,
+  modelName,
+  releaseBinding,
+  releaseId,
+  version,
+  view,
+}: {
+  modelBinding?: ApiBinding<ModelVersionSummary>;
+  modelName?: string;
+  releaseBinding?: ApiBinding<ModelReleaseSummary>;
+  releaseId?: string;
+  version?: string;
+  view: NonNullable<LearningHubWorkspaceProps["view"]>;
+}) {
+  const supportsReleaseRows = view === "overview" || view === "releases" || view === "releaseDetail";
+  const productionBinding = supportsReleaseRows ? releaseBinding : modelBinding;
+  const state = productionBindingState(productionBinding);
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "模型與學習", href: "/learning" }, { label: releaseId ?? view }]}
+        lastUpdated={productionBinding?.fetchedAt ? `API checked ${productionBinding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production Learning Hub. Model governance data is never substituted with bundled samples."
+        title={releaseId ? `模型發布 ${releaseId}` : view === "models" ? "模型登錄" : "模型與學習"}
+      />
+      <main className="odp-content" data-testid={`learning-${view}-production-page`}>
+        <WorkspaceNav active={view === "overview" ? "overview" : view.startsWith("model") ? "models" : "releases"} />
+        {supportsReleaseRows ? (
+          <ProductionDataState
+            binding={releaseBinding}
+            resource="Learning Hub releases"
+            testId="learning-production-data-state"
+          >
+            {releaseBinding ? <LiveReleases binding={releaseBinding} productionMode /> : null}
+          </ProductionDataState>
+        ) : (
+          <ProductionDataState
+            binding={modelBinding}
+            resource="Model registry"
+            testId="learning-production-data-state"
+          >
+            {modelBinding ? (
+              <LiveModels
+                binding={modelBinding}
+                selectedModelName={modelName}
+                selectedVersion={version}
+              />
+            ) : null}
+          </ProductionDataState>
+        )}
+        {releaseBinding?.state === "ready" && releaseId && !releaseBinding.items.some((item) => item.release_id === releaseId) ? (
+          <section className={styles.panel} data-testid="learning-release-not-found" role="status">
+            <h2>Release not found</h2>
+            <p>API 回傳資料中沒有 {releaseId}；未以固定發布紀錄替代。</p>
+          </section>
+        ) : null}
+      </main>
+    </>
+  );
+}
+
+function LiveModels({
+  binding,
+  selectedModelName,
+  selectedVersion,
+}: {
+  binding: ApiBinding<ModelVersionSummary>;
+  selectedModelName?: string;
+  selectedVersion?: string;
+}) {
+  const rows = binding.items.filter(
+    (item) =>
+      (!selectedModelName || item.model_name === selectedModelName) &&
+      (!selectedVersion || item.version === selectedVersion),
+  );
+
+  return (
+    <section className={styles.panel} data-testid="learning-live-models">
+      <div className={styles.badgeRow}>
+        <h2>模型登錄（API live）</h2>
+        <ProductionDataBadge binding={binding} testId="learning-model-data-source" />
+      </div>
+      {(selectedModelName || selectedVersion) && rows.length === 0 ? (
+        <p data-testid="learning-live-model-not-found">
+          API 回傳資料中沒有 {selectedModelName}
+          {selectedVersion ? `:${selectedVersion}` : ""}；未以固定模型替代。
+        </p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="learning-live-models-table">
+            <caption>Persisted model versions served by GET /learninghub/models.</caption>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Version</th>
+                <th>Stage / aliases</th>
+                <th>Dataset / schema</th>
+                <th>Artifact</th>
+                <th>Approval</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((item) => (
+                <tr
+                  key={`${item.model_name}:${item.version}`}
+                  data-testid="learning-live-model-row"
+                >
+                  <td>
+                    <Link href={`/w/ai/models/${encodeURIComponent(item.model_name)}`}>
+                      {item.model_name}
+                    </Link>
+                  </td>
+                  <td>
+                    <Link
+                      href={`/w/ai/models/${encodeURIComponent(item.model_name)}/${encodeURIComponent(item.version)}`}
+                    >
+                      {item.version}
+                    </Link>
+                  </td>
+                  <td>
+                    {item.stage}
+                    <span className={styles.subtle}>{item.aliases.join(", ") || "no alias"}</span>
+                  </td>
+                  <td>
+                    <span className={styles.mono}>{item.dataset_snapshot_id}</span>
+                    <span className={styles.subtle}>{item.feature_schema_version}</span>
+                  </td>
+                  <td className={styles.mono}>{item.artifact_uri}</td>
+                  <td>
+                    {item.approved_by || "not approved"}
+                    <span className={styles.subtle}>{item.approved_at || "—"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function LearningOverview({ liveReleases }: { liveReleases?: ApiBinding<ModelReleaseSummary> }) {
@@ -201,7 +375,13 @@ function ReleasesPage({ liveReleases }: { liveReleases?: ApiBinding<ModelRelease
   );
 }
 
-function LiveReleases({ binding }: { binding: ApiBinding<ModelReleaseSummary> }) {
+function LiveReleases({
+  binding,
+  productionMode = false,
+}: {
+  binding: ApiBinding<ModelReleaseSummary>;
+  productionMode?: boolean;
+}) {
   return (
     <section
       className={styles.panel}
@@ -210,11 +390,16 @@ function LiveReleases({ binding }: { binding: ApiBinding<ModelReleaseSummary> })
     >
       <div className={styles.badgeRow}>
         <h2>發布 / 回滾（API live）</h2>
-        <DataSourceBadge binding={binding} testId="learning-data-source" />
+        {productionMode ? (
+          <ProductionDataBadge binding={binding} testId="learning-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="learning-data-source" />
+        )}
       </div>
       <p>
         本區直接讀取 <code>GET /learninghub/releases</code> 的治理決策（shadow / canary / full /
-        rollback）；下方固定發布為 documented non-product fallback。
+        rollback）。
+        {!productionMode ? " 下方固定發布為 documented non-product fixture。" : null}
       </p>
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>

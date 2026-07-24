@@ -19,7 +19,8 @@ duplicate windows and keeps advancing from the persisted watermark.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -29,12 +30,12 @@ from modules.external_data.application.ingestion_store import (
     InMemoryIngestionRunStore,
     build_ingestion_run_record,
 )
-from modules.external_data.providers import ListingPartnerFeedProvider
 from modules.external_data.workers.scheduled_fetch import (
     ExternalFetchJobSpec,
     ExternalFetchResiliencePolicy,
     ExternalFetchScheduler,
     InMemoryExternalFetchStateStore,
+    default_external_fetch_provider_factories,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
 
@@ -42,11 +43,6 @@ DEFAULT_FRESHNESS_SLA = timedelta(hours=24)
 DEFAULT_INTERVAL = timedelta(hours=1)
 
 ProviderFactory = Callable[[], Any]
-
-_DEFAULT_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
-    "listing.partner_feed": ListingPartnerFeedProvider,
-}
-
 
 @dataclass(frozen=True)
 class IngestionOutcome:
@@ -67,14 +63,20 @@ class ExternalIngestionService:
         resilience_policy: ExternalFetchResiliencePolicy | None = None,
         freshness_sla: timedelta = DEFAULT_FRESHNESS_SLA,
         default_interval: timedelta = DEFAULT_INTERVAL,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store or InMemoryIngestionRunStore()
         self.audit_log = audit_log or InMemoryAuditLog()
         self.freshness_sla = freshness_sla
         self.default_interval = default_interval
+        self.env = os.environ if env is None else env
         self._captures: dict[str, Any] = {}
 
-        base_factories = dict(provider_factories or _DEFAULT_PROVIDER_FACTORIES)
+        base_factories = dict(
+            default_external_fetch_provider_factories(self.env)
+            if provider_factories is None
+            else provider_factories
+        )
         wrapped = {
             provider_id: self._wrap_factory(provider_id, factory)
             for provider_id, factory in base_factories.items()
@@ -83,6 +85,7 @@ class ExternalIngestionService:
             state_store=InMemoryExternalFetchStateStore(),
             provider_factories=wrapped,
             resilience_policy=resilience_policy,
+            env=self.env,
         )
         self._rehydrate()
 

@@ -1,4 +1,8 @@
 import { NetPlanWorkspace } from "../../../../../../features/netplan/NetPlanWorkspace.tsx";
+import { getServerApiClient } from "../../../../../lib/api/client.ts";
+import { loadApiBinding } from "../../../../../lib/api/binding.ts";
+
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ scenarioId: string }>;
@@ -6,5 +10,9 @@ type PageProps = {
 
 export default async function NetworkScenarioDetailPage({ params }: PageProps) {
   const { scenarioId } = await params;
-  return <NetPlanWorkspace view="scenarioDetail" scenarioId={scenarioId} />;
+  const liveScenarios = await loadApiBinding({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.listNetplanScenarios().then((response) => response.items),
+  });
+  return <NetPlanWorkspace view="scenarioDetail" scenarioId={scenarioId} liveScenarios={liveScenarios} />;
 }

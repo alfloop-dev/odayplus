@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.shared_ml import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from modules.avm.application.valuation import AVMError
 from shared.audit import AuditEvent, InMemoryAuditLog
 
@@ -11,7 +15,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
-    from modules.avm.application import AVMService
+    from modules.avm.application import AVMProductionExecutor, AVMService
     from modules.avm.infrastructure import InMemoryAVMRepository
 
 
@@ -66,15 +70,47 @@ else:
         repository: InMemoryAVMRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         case_store: AVMCaseStore | None = None,
+        production_executor: AVMProductionExecutor | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/avm", tags=["avm"])
-        service = AVMService(repository=repository or InMemoryAVMRepository())
+        production_required = production_execution_required(runtime_mode)
+        active_repository = (
+            repository
+            if production_required
+            else repository or InMemoryAVMRepository()
+        )
+        composition_error: ProductionExecutionConfigurationError | None = None
+        try:
+            service = AVMService(
+                repository=active_repository,
+                production_executor=production_executor,
+                runtime_mode=runtime_mode,
+            )
+        except ProductionExecutionConfigurationError as exc:
+            composition_error = exc
+            service = None
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         idempotency = case_store or AVMCaseStore()
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/avm",
+            tags=["avm"],
+            dependencies=[Depends(require_runtime_binding)],
+        )
 
         def _audit(
             *,

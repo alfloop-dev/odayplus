@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ListingCompareTable } from "../ListingCompareTable";
 import { MatchEvidencePanel } from "../MatchEvidencePanel";
 import { IdentityDecisionPanel } from "../IdentityDecisionPanel";
+import { operatorFixturesAllowed } from "../../../operatorDataMode";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +28,7 @@ afterEach(() => {
     container.remove();
     container = null;
   }
+  vi.unstubAllEnvs();
 });
 
 function render(ui: React.ReactNode) {
@@ -449,6 +451,37 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
         expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
         expectAny(screen.getByTestId("receipt-actor-val")).toBeInTheDocument();
       });
+    });
+
+    it("does not fabricate a durable receipt in production", async () => {
+      vi.stubEnv("ODP_PRODUCT_MODE", "production");
+      vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+      expect(operatorFixturesAllowed()).toBe(false);
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <IdentityDecisionPanel
+          record={sampleRecordPossibleMatch}
+          proposerId="OP-100"
+          reviewerId="OP-200"
+          onSubmitDecision={handleSubmit}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+        target: { value: "Production decision" },
+      });
+      fireEvent.click(screen.getByTestId("identity-risk-ack"));
+      fireEvent.click(screen.getByTestId("identity-submit-btn"));
+
+      await waitFor(() => {
+        expect(handleSubmit).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expectAny(screen.getByTestId("identity-decision-error")).toHaveTextContent(
+          "DECISION_RECEIPT_MISSING",
+        );
+      });
+      expect(document.body.querySelector('[data-testid="identity-durable-receipt"]')).toBeNull();
     });
   });
 });

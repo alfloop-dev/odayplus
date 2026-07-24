@@ -150,6 +150,52 @@ export type ForecastAlert = {
   [key: string]: unknown;
 };
 
+export type ForecastBand = {
+  horizon: string;
+  p10: number;
+  p50: number;
+  p90: number;
+  [key: string]: unknown;
+};
+
+export type ForecastOutputSummary = {
+  forecast_output_id: string;
+  forecast_version: number;
+  store_id: string;
+  prediction_run_id: string;
+  p10: number;
+  p50: number;
+  p90: number;
+  w4: ForecastBand;
+  w8: ForecastBand;
+  w12: ForecastBand;
+  w24: ForecastBand;
+  trajectory_class: string;
+  turning_point_probability: number;
+  sitescore_gap_ratio: number;
+  actual_revenue: number;
+  sitescore_baseline_p50?: number | null;
+  model_version: string;
+  engine_name: string;
+  model_name: string;
+  feature_version: string;
+  policy_version: string;
+  prediction_origin_time: string;
+  scored_at: string;
+  source_snapshot_ids: string[];
+  [key: string]: unknown;
+};
+
+export type PricePlanSummary = {
+  plan_id: string;
+  tenant_id: string;
+  status: string;
+  items: unknown[];
+  created_at: string;
+  correlation_id: string;
+  [key: string]: unknown;
+};
+
 export type SourceFreshnessEvidence = {
   provider_id: string;
   source_snapshot_id: string;
@@ -260,6 +306,23 @@ export type ModelReleaseSummary = {
   approved_by?: string;
   created_at?: string;
   audit_event_id?: string | null;
+  [key: string]: unknown;
+};
+
+export type ModelVersionSummary = {
+  model_name: string;
+  version: string;
+  artifact_uri: string;
+  dataset_snapshot_id: string;
+  feature_schema_version: string;
+  label_version: string;
+  metrics: Record<string, number>;
+  stage: string;
+  aliases: string[];
+  run_id?: string | null;
+  git_sha?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
   [key: string]: unknown;
 };
 
@@ -914,6 +977,32 @@ export class OdpApiClient {
     });
   }
 
+  listForecasts(): Promise<ListResponse<ForecastOutputSummary>> {
+    return this.request<ListResponse<ForecastOutputSummary>>("/forecastops/forecasts");
+  }
+
+  listPriceOpsPlans(
+    options: {
+      tenantId?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+      sort?: string;
+      order?: "asc" | "desc";
+    } = {},
+  ): Promise<ListResponse<PricePlanSummary>> {
+    return this.request<ListResponse<PricePlanSummary>>("/priceops/plans", {
+      query: {
+        tenant_id: options.tenantId,
+        status: options.status,
+        limit: options.limit === undefined ? undefined : String(options.limit),
+        offset: options.offset === undefined ? undefined : String(options.offset),
+        sort: options.sort,
+        order: options.order,
+      },
+    });
+  }
+
   listExternalDataFreshness(): Promise<ExternalDataFreshnessResponse> {
     return this.request<ExternalDataFreshnessResponse>("/external-data/freshness");
   }
@@ -956,6 +1045,10 @@ export class OdpApiClient {
     return this.request<ListResponse<ModelReleaseSummary>>("/learninghub/releases", {
       query: { model_name: options.modelName },
     });
+  }
+
+  listLearningModels(): Promise<ListResponse<ModelVersionSummary>> {
+    return this.request<ListResponse<ModelVersionSummary>>("/learninghub/models");
   }
 
   // ---------------------------------------------------------------------------

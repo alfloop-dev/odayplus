@@ -49,6 +49,12 @@ class InMemoryListingRepository:
                 return lst
         return None
 
+    def get_address(self, address_id: str) -> AddressLocation | None:
+        for address in self.addresses:
+            if address.address_id == address_id:
+                return address
+        return None
+
     def clear(self) -> None:
         self.listings.clear()
         self.addresses.clear()
