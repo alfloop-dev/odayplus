@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
@@ -94,6 +95,7 @@ def create_network_listings_sub_router(
     require_view_permission_fn: Callable[..., Any],
     require_write_permission_fn: Callable[..., Any],
     audit_log: InMemoryAuditLog | None = None,
+    service_resolver: Callable[[Request], Any] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
 
@@ -122,6 +124,9 @@ def create_network_listings_sub_router(
     def get_operator_role_id(request: Request) -> str | None:
         return getattr(request.state, "operator_role_id", None)
 
+    def active_service(request: Request) -> Any:
+        return resolve_service(request, service, service_resolver)
+
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
     def get_network_listings(
@@ -139,7 +144,7 @@ def create_network_listings_sub_router(
             audit_log=audit_log,
             correlation_id=x_correlation_id,
         )
-        snap = service.snapshot(
+        snap = active_service(request).snapshot(
             selected_heat_zone_id=selected_heat_zone_id,
             lens=lens,
             correlation_id=x_correlation_id,
@@ -186,8 +191,8 @@ def create_network_listings_sub_router(
         "/reset",
         dependencies=[Depends(require_write_permission_fn)],
     )
-    def reset_network_listings() -> dict[str, Any]:
-        return service.reset()
+    def reset_network_listings(request: Request) -> dict[str, Any]:
+        return active_service(request).reset()
 
     @router.post(
         "/listings/{listing_id}/convert",
@@ -203,7 +208,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            listing = service._listing(listing_id)
+            listing = active_service(request)._listing(listing_id)
             has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
             first_actor_id = listing.get("submitter") or listing.get("owner")
             actor_name = body.actorName or principal.subject_id
@@ -223,7 +228,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.convert_listing(
+            result = active_service(request).convert_listing(
                 listing_id=listing_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=actor_name,
@@ -257,8 +262,8 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            source = service._listing(listing_id)
-            target = service._listing(body.targetListingId)
+            source = active_service(request)._listing(listing_id)
+            target = active_service(request)._listing(body.targetListingId)
 
             has_legal_hold = (
                 source.get("hasLegalHold")
@@ -299,7 +304,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.merge_listing(
+            result = active_service(request).merge_listing(
                 source_listing_id=listing_id,
                 target_listing_id=body.targetListingId,
                 reason=body.reason or "",
@@ -337,7 +342,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            listing = service._listing(listing_id)
+            listing = active_service(request)._listing(listing_id)
             has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
             actor_name = body.actorName or principal.subject_id
 
@@ -351,7 +356,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.archive_listing(
+            result = active_service(request).archive_listing(
                 listing_id=listing_id,
                 reason=body.reason or "",
                 actor_role_id=body.actorRoleId,
@@ -411,7 +416,7 @@ def create_network_listings_sub_router(
 
             is_async = (x_async_intake == "true")
 
-            result = service.submit_intake(
+            result = active_service(request).submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
                 actor_role_id=body.actorRoleId,
@@ -461,7 +466,9 @@ def create_network_listings_sub_router(
             audit_log=audit_log,
             correlation_id=correlation_id,
         )
-        intakes = service.list_intakes(selected_heat_zone_id=selected_heat_zone_id)
+        intakes = active_service(request).list_intakes(
+            selected_heat_zone_id=selected_heat_zone_id
+        )
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",
@@ -551,7 +558,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            intake = service.get_intake(intake_id)
+            intake = active_service(request).get_intake(intake_id)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             authorize_intake_action(
                 principal,
@@ -579,7 +586,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            intake = service.get_intake(intake_id)
+            intake = active_service(request).get_intake(intake_id)
 
             is_identity_affecting = any(
                 k in {"providerListingId", "address", "rent", "areaPing"} for k in body.fields
@@ -602,7 +609,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.correct_intake(
+            result = active_service(request).correct_intake(
                 intake_id=intake_id,
                 fields=body.fields,
                 reason=body.reason,
@@ -635,7 +642,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            intake = service.get_intake(intake_id)
+            intake = active_service(request).get_intake(intake_id)
             first_actor_id = intake.get("submitter")
             has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
             actor_name = body.actorName or principal.subject_id
@@ -653,7 +660,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.decide_intake(
+            result = active_service(request).decide_intake(
                 intake_id=intake_id,
                 action=body.action,
                 reason=body.reason,
@@ -686,7 +693,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            intake = service.get_intake(intake_id)
+            intake = active_service(request).get_intake(intake_id)
             actor_name = body.actorName or principal.subject_id
 
             if intake.get("stage") == "QUARANTINED":
@@ -704,7 +711,7 @@ def create_network_listings_sub_router(
             )
 
             job_queue = getattr(request.app.state, "job_queue", None)
-            result = service.retry_intake(
+            result = active_service(request).retry_intake(
                 intake_id=intake_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=actor_name,
@@ -734,7 +741,7 @@ def create_network_listings_sub_router(
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            intake = service.get_intake(intake_id)
+            intake = active_service(request).get_intake(intake_id)
             first_actor_id = intake.get("submitter")
             has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
             actor_name = body.actorName or principal.subject_id
@@ -752,7 +759,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            result = service.promote_intake(
+            result = active_service(request).promote_intake(
                 intake_id=intake_id,
                 reason=body.reason,
                 risk_summary=body.riskSummary,

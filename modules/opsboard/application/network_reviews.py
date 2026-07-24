@@ -276,8 +276,25 @@ def _seed_reviews() -> list[dict[str, Any]]:
 class NetworkReviewService:
     """Application service for R4 review decision + atomic governance sync."""
 
-    def __init__(self) -> None:
-        self._reviews: list[dict[str, Any]] = _seed_reviews()
+    def __init__(
+        self,
+        *,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+    ) -> None:
+        self._seed_fixtures = seed_fixtures
+        if initial_state is not None:
+            self._reviews = _copy(initial_state.get("reviews", []))
+            self._candidates = _copy(initial_state.get("candidates", {}))
+            self._approvals = _copy(initial_state.get("approvals", {}))
+            self._decisions = _copy(initial_state.get("decisions", []))
+            self._audit_events = _copy(initial_state.get("auditEvents", []))
+            self._idempotency_cache = _copy(
+                initial_state.get("idempotencyCache", {})
+            )
+            return
+
+        self._reviews = _seed_reviews() if seed_fixtures else []
         self._candidates: dict[str, dict[str, Any]] = {}
         self._approvals: dict[str, dict[str, Any]] = {}
         self._decisions: list[dict[str, Any]] = []
@@ -314,8 +331,18 @@ class NetworkReviewService:
     # -- public API ----------------------------------------------------
 
     def reset(self) -> dict[str, Any]:
-        self.__init__()
+        self.__init__(seed_fixtures=self._seed_fixtures)
         return self.snapshot()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            "reviews": _copy(self._reviews),
+            "candidates": _copy(self._candidates),
+            "approvals": _copy(self._approvals),
+            "decisions": _copy(self._decisions),
+            "auditEvents": _copy(self._audit_events),
+            "idempotencyCache": _copy(self._idempotency_cache),
+        }
 
     def snapshot(self, *, correlation_id: str | None = None) -> dict[str, Any]:
         reviews = [self._review_view(review) for review in self._sorted_reviews()]

@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.growth import (
     GrowthCloseoutGateError,
     GrowthConflict,
@@ -155,6 +156,7 @@ def create_growth_sub_router(
     *,
     require_view_permission_fn: Any = None,
     require_permission_fn: Any = None,
+    service_resolver: Any = None,
 ) -> APIRouter:
     """Return the Growth sub-router wired to a shared GrowthService instance."""
     router = APIRouter(prefix="/growth", tags=["operator-growth"])
@@ -173,7 +175,7 @@ def create_growth_sub_router(
 
     @router.get("/freshness", dependencies=read_deps)
     def get_freshness(request: Request) -> dict[str, Any]:
-        data = service.get_freshness()
+        data = resolve_service(request, service, service_resolver).get_freshness()
         data["correlation_id"] = request.state.correlation_id
         return data
 
@@ -182,7 +184,9 @@ def create_growth_sub_router(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
     ) -> dict[str, Any]:
-        items = service.list_segments(segment_id=segment_id)
+        items = resolve_service(
+            request, service, service_resolver
+        ).list_segments(segment_id=segment_id)
         return {
             "items": items,
             "count": len(items),
@@ -194,7 +198,9 @@ def create_growth_sub_router(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
     ) -> dict[str, Any]:
-        items = service.list_recommendations(segment_id=segment_id)
+        items = resolve_service(
+            request, service, service_resolver
+        ).list_recommendations(segment_id=segment_id)
         return {
             "items": items,
             "count": len(items),
@@ -207,7 +213,9 @@ def create_growth_sub_router(
         segment_id: str | None = Query(default=None, alias="segment_id"),
         action_status: str | None = Query(default=None, alias="status"),
     ) -> dict[str, Any]:
-        items = service.list_actions(segment_id=segment_id, status=action_status)
+        items = resolve_service(
+            request, service, service_resolver
+        ).list_actions(segment_id=segment_id, status=action_status)
         return {
             "items": items,
             "count": len(items),
@@ -217,7 +225,9 @@ def create_growth_sub_router(
     @router.get("/actions/{action_id}", dependencies=read_deps)
     def get_action(action_id: str, request: Request) -> dict[str, Any]:
         try:
-            data = service.get_action(action_id)
+            data = resolve_service(
+                request, service, service_resolver
+            ).get_action(action_id)
             data["correlation_id"] = request.state.correlation_id
             return data
         except GrowthNotFound as exc:
@@ -225,7 +235,7 @@ def create_growth_sub_router(
 
     @router.get("/summary", dependencies=read_deps)
     def get_summary(request: Request) -> dict[str, Any]:
-        summary = service.get_summary()
+        summary = resolve_service(request, service, service_resolver).get_summary()
         summary["correlation_id"] = request.state.correlation_id
         return summary
 
@@ -240,7 +250,7 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.create_action(
+            return resolve_service(request, service, service_resolver).create_action(
                 name=body.name,
                 segment_id=body.segmentId,
                 objective=body.objective,
@@ -272,7 +282,9 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.transition_action(
+            return resolve_service(
+                request, service, service_resolver
+            ).transition_action(
                 action_id=action_id,
                 target_status=body.targetStatus,
                 actor_role_id=body.actorRoleId or "opsLead",
@@ -295,7 +307,7 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.write_outcome(
+            return resolve_service(request, service, service_resolver).write_outcome(
                 action_id=action_id,
                 outcome=body.outcome,
                 required_action=body.requiredAction,
@@ -320,7 +332,9 @@ def create_growth_sub_router(
 
     @router.post("/conflicts/check", dependencies=read_deps)
     def check_conflicts(body: ConflictCheckPayload, request: Request) -> dict[str, Any]:
-        result = service.check_conflicts(
+        result = resolve_service(
+            request, service, service_resolver
+        ).check_conflicts(
             kind=body.kind,
             store=body.store,
             observation_window=body.observationWindow,
@@ -339,7 +353,9 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.submit_for_approval(
+            return resolve_service(
+                request, service, service_resolver
+            ).submit_for_approval(
                 action_id=action_id,
                 actor_role_id=body.actorRoleId or "growthLead",
                 actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
@@ -355,7 +371,9 @@ def create_growth_sub_router(
 
     @router.get("/approvals", dependencies=read_deps)
     def list_approvals(request: Request) -> dict[str, Any]:
-        items = service.list_approvals()
+        items = resolve_service(
+            request, service, service_resolver
+        ).list_approvals()
         return {
             "items": items,
             "count": len(items),
@@ -370,7 +388,9 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.resolve_approval(
+            return resolve_service(
+                request, service, service_resolver
+            ).resolve_approval(
                 approval_id=approval_id,
                 decision=body.decision,
                 reason=body.reason,
@@ -386,7 +406,9 @@ def create_growth_sub_router(
 
     @router.get("/decisions", dependencies=read_deps)
     def list_decisions(request: Request) -> dict[str, Any]:
-        items = service.list_decisions()
+        items = resolve_service(
+            request, service, service_resolver
+        ).list_decisions()
         return {
             "items": items,
             "count": len(items),

@@ -272,21 +272,51 @@ _DEFAULT_COMPARE_SET = ("CS-1001", "CS-1002", "CS-1004")
 class NetworkScoringService:
     """Application service for R4 Candidate gate + SiteScore + Compare."""
 
-    def __init__(self) -> None:
-        self._candidates: list[dict[str, Any]] = _seed_candidates()
+    def __init__(
+        self,
+        *,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+    ) -> None:
+        self._seed_fixtures = seed_fixtures
+        if initial_state is not None:
+            self._candidates = _copy(initial_state.get("candidates", []))
+            self._scores = _copy(initial_state.get("scores", {}))
+            self._audit_events = _copy(initial_state.get("auditEvents", []))
+            self._idempotency_cache = _copy(
+                initial_state.get("idempotencyCache", {})
+            )
+            self._compare_set = list(initial_state.get("compareSet", []))
+            return
+
+        self._candidates = _seed_candidates() if seed_fixtures else []
         self._scores: dict[str, dict[str, Any]] = {}
         self._audit_events: list[dict[str, Any]] = []
         self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
-        self._compare_set: list[str] = list(_DEFAULT_COMPARE_SET)
-        for candidate in self._candidates:
-            if candidate["id"] in _INITIALLY_SCORED:
-                self._scores[candidate["id"]] = self._build_scorecard(candidate)
+        self._compare_set = (
+            list(_DEFAULT_COMPARE_SET) if seed_fixtures else []
+        )
+        if seed_fixtures:
+            for candidate in self._candidates:
+                if candidate["id"] in _INITIALLY_SCORED:
+                    self._scores[candidate["id"]] = self._build_scorecard(
+                        candidate
+                    )
 
     # -- public API ----------------------------------------------------
 
     def reset(self) -> dict[str, Any]:
-        self.__init__()
+        self.__init__(seed_fixtures=self._seed_fixtures)
         return self.snapshot()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            "candidates": _copy(self._candidates),
+            "scores": _copy(self._scores),
+            "auditEvents": _copy(self._audit_events),
+            "idempotencyCache": _copy(self._idempotency_cache),
+            "compareSet": list(self._compare_set),
+        }
 
     def snapshot(self, *, correlation_id: str | None = None) -> dict[str, Any]:
         candidates = [self._candidate_view(candidate) for candidate in self._candidates]

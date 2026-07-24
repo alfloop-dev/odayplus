@@ -602,6 +602,282 @@ def create_operator_router(
                 "preferences": None,
             }
 
+        if document_store is None:
+            class _UnavailableOperatorDomainStore:
+                @property
+                def engine(self) -> None:
+                    return None
+
+                def __getattr__(self, _name: str) -> Any:
+                    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+                        from fastapi import HTTPException, status
+
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail={
+                                "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                                "message": (
+                                    "live Operator domain routes require an "
+                                    "injected durable document store"
+                                ),
+                            },
+                        )
+
+                    return unavailable
+
+            document_store = _UnavailableOperatorDomainStore()
+
+        from apps.api.app.routes.operator_modules.governance import (
+            create_governance_sub_router,
+        )
+        from apps.api.app.routes.operator_modules.live_service import (
+            DurableTenantServiceResolver,
+        )
+        from modules.opsboard.application.governance import GovernanceService
+        from shared.infrastructure.persistence.operator_domains import (
+            DurableOperatorDomainStateRepository,
+            TenantScopedDocumentStore,
+        )
+
+        listing_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-listings",
+        )
+        scoring_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-scoring",
+        )
+        review_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-reviews",
+        )
+        rebalance_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "network-rebalance",
+        )
+        growth_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "growth",
+        )
+        governance_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "governance",
+        )
+
+        listing_resolver = DurableTenantServiceResolver(
+            listing_state_repository,
+            factory=lambda state, tenant_id: NetworkListingService(
+                intake_repository=DurableAssistedIntakeRepository(
+                    TenantScopedDocumentStore(document_store, tenant_id)
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "convert_listing",
+                "merge_listing",
+                "archive_listing",
+                "submit_intake",
+                "correct_intake",
+                "decide_intake",
+                "retry_intake",
+                "promote_intake",
+            },
+        )
+        scoring_resolver = DurableTenantServiceResolver(
+            scoring_state_repository,
+            factory=lambda state, _tenant_id: NetworkScoringService(
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "score_candidate",
+                "score_batch",
+                "set_compare_set",
+            },
+        )
+        review_resolver = DurableTenantServiceResolver(
+            review_state_repository,
+            factory=lambda state, _tenant_id: NetworkReviewService(
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"reset", "decide_review"},
+        )
+
+        def write_governance_approval(
+            tenant_id: str,
+            approval: dict[str, Any],
+        ) -> dict[str, Any]:
+            growth_state = growth_state_repository.load(tenant_id)
+            governance = GovernanceService(
+                growth_service=GrowthService(
+                    initial_state=growth_state,
+                    seed_fixtures=False,
+                ),
+                initial_state=governance_state_repository.load(tenant_id),
+                seed_fixtures=False,
+            )
+            result = governance.upsert_approval(approval)
+            governance_state_repository.save(
+                tenant_id,
+                governance.export_state(),
+            )
+            return result
+
+        rebalance_resolver = DurableTenantServiceResolver(
+            rebalance_state_repository,
+            factory=lambda state, tenant_id: NetworkRebalanceService(
+                govern_approval_writer=lambda approval: write_governance_approval(
+                    tenant_id,
+                    approval,
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "reset",
+                "request_avm",
+                "complete_avm",
+                "solve_netplan",
+                "select_scenario",
+                "submit_review",
+            },
+        )
+        growth_resolver = DurableTenantServiceResolver(
+            growth_state_repository,
+            factory=lambda state, _tenant_id: GrowthService(
+                initial_state=state,
+                audit_log=active_audit_log,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "create_action",
+                "transition_action",
+                "write_outcome",
+                "submit_for_approval",
+                "resolve_approval",
+                "reset_to_seed",
+            },
+        )
+
+        def governance_factory(
+            state: dict[str, Any] | None,
+            tenant_id: str,
+        ) -> GovernanceService:
+            return GovernanceService(
+                growth_service=GrowthService(
+                    initial_state=growth_state_repository.load(tenant_id),
+                    audit_log=active_audit_log,
+                    seed_fixtures=False,
+                ),
+                initial_state=state,
+                seed_fixtures=False,
+            )
+
+        def save_governance_growth(
+            service: GovernanceService,
+            tenant_id: str,
+        ) -> None:
+            growth_state = service.export_growth_state()
+            if growth_state is not None:
+                growth_state_repository.save(tenant_id, growth_state)
+
+        governance_resolver = DurableTenantServiceResolver(
+            governance_state_repository,
+            factory=governance_factory,
+            exporter=lambda service: service.export_state(),
+            mutating_methods={
+                "decide",
+                "export_evidence_package",
+                "upsert_approval",
+            },
+            after_save=save_governance_growth,
+        )
+
+        router.include_router(
+            create_network_listings_sub_router(
+                NetworkListingService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "listing", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "listing", Action.UPDATE, engine=authz_engine
+                ),
+                audit_log=active_audit_log,
+                service_resolver=listing_resolver,
+            )
+        )
+        router.include_router(
+            create_network_scoring_sub_router(
+                NetworkScoringService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "sitescore", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "sitescore", Action.EXECUTE, engine=authz_engine
+                ),
+                service_resolver=scoring_resolver,
+            )
+        )
+        router.include_router(
+            create_network_review_sub_router(
+                NetworkReviewService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "sitescore", Action.VIEW, engine=authz_engine
+                ),
+                require_decide_permission_fn=require_operator_permission(
+                    "sitescore", Action.APPROVE, engine=authz_engine
+                ),
+                service_resolver=review_resolver,
+            )
+        )
+        router.include_router(
+            create_network_rebalance_sub_router(
+                NetworkRebalanceService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "listing", Action.VIEW, engine=authz_engine
+                ),
+                require_write_permission_fn=require_operator_permission(
+                    "listing", Action.UPDATE, engine=authz_engine
+                ),
+                service_resolver=rebalance_resolver,
+            )
+        )
+        router.include_router(
+            create_growth_sub_router(
+                GrowthService(
+                    audit_log=active_audit_log,
+                    seed_fixtures=False,
+                ),
+                require_view_permission_fn=operator_view_guard,
+                require_permission_fn=require_operator_permission(
+                    "intervention", Action.CREATE, engine=authz_engine
+                ),
+                service_resolver=growth_resolver,
+            )
+        )
+        router.include_router(
+            create_governance_sub_router(
+                GovernanceService(seed_fixtures=False),
+                require_view_permission_fn=operator_view_guard,
+                require_decision_permission_fn=require_operator_permission(
+                    "intervention", Action.APPROVE, engine=authz_engine
+                ),
+                require_export_permission_fn=require_operator_permission(
+                    "intervention", Action.CREATE, engine=authz_engine
+                ),
+                service_resolver=governance_resolver,
+            )
+        )
+
         return router
 
     # Shell — protected read envelope plus the product-shell surface.

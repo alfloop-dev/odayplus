@@ -193,15 +193,49 @@ def _seed_state() -> dict[str, Any]:
 class NetworkRebalanceService:
     """Application service for the R4 low-efficiency rebalance workflow."""
 
-    def __init__(self, govern_approval_writer: GovernApprovalWriter | None = None) -> None:
-        self._state = _seed_state()
-        self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    def __init__(
+        self,
+        govern_approval_writer: GovernApprovalWriter | None = None,
+        *,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+    ) -> None:
+        self._seed_fixtures = seed_fixtures
+        self._state = _copy(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else {
+                "stores": [],
+                "auditEvents": [],
+                "governApprovals": [],
+            }
+        )
+        self._idempotency_cache = _copy(
+            (initial_state or {}).get("idempotencyCache", {})
+        )
+        self._state.pop("idempotencyCache", None)
         self._govern_approval_writer = govern_approval_writer
 
     def reset(self) -> dict[str, Any]:
-        self._state = _seed_state()
+        self._state = (
+            _seed_state()
+            if self._seed_fixtures
+            else {
+                "stores": [],
+                "auditEvents": [],
+                "governApprovals": [],
+            }
+        )
         self._idempotency_cache = {}
         return self.snapshot()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            **_copy(self._state),
+            "idempotencyCache": _copy(self._idempotency_cache),
+        }
 
     def snapshot(
         self,
@@ -209,7 +243,9 @@ class NetworkRebalanceService:
         selected_store_id: str | None = None,
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
-        selected_id = selected_store_id or self._state["stores"][0]["id"]
+        selected_id = selected_store_id or (
+            self._state["stores"][0]["id"] if self._state["stores"] else None
+        )
         return {
             "source": "api",
             "stores": [_copy(self._view_store(store)) for store in self._state["stores"]],

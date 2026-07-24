@@ -92,10 +92,43 @@ class GovernanceService:
     merges a shared ``GrowthService`` for live Growth decisions/approvals.
     """
 
-    def __init__(self, *, growth_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        growth_service: Any | None = None,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+    ) -> None:
         self._growth = growth_service
-        self._state: dict[str, Any] = _seed_state()
-        self._idempotency: dict[str, dict[str, Any]] = {}
+        self._state = _clone(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else _empty_state()
+        )
+        self._idempotency = _clone(self._state.pop("idempotency", {}))
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            **_clone(self._state),
+            "idempotency": _clone(self._idempotency),
+        }
+
+    def export_growth_state(self) -> dict[str, Any] | None:
+        if self._growth is None:
+            return None
+        exporter = getattr(self._growth, "export_state", None)
+        return exporter() if exporter is not None else None
+
+    def upsert_approval(self, approval: dict[str, Any]) -> dict[str, Any]:
+        row = _clone(approval)
+        for index, existing in enumerate(self._state["approvals"]):
+            if existing.get("id") == row.get("id"):
+                self._state["approvals"][index] = row
+                return _clone(row)
+        self._state["approvals"].append(row)
+        return _clone(row)
 
     # ------------------------------------------------------------------
     # Read path
@@ -764,4 +797,18 @@ def _seed_state() -> dict[str, Any]:
         "nextDecisionOrdinal": 8900,
         "nextAuditOrdinal": 7200,
         "nextEvidenceOrdinal": 3,
+    }
+
+
+def _empty_state() -> dict[str, Any]:
+    return {
+        "approvals": [],
+        "decisions": [],
+        "auditRows": [],
+        "statusBoard": [],
+        "evidencePackages": [],
+        "nextDecisionOrdinal": 1,
+        "nextAuditOrdinal": 1,
+        "nextEvidenceOrdinal": 1,
+        "idempotency": {},
     }

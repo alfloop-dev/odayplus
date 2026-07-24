@@ -25,9 +25,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_reviews import (
     DECISION_ACTIONS,
     NetworkReviewConflict,
@@ -65,19 +66,23 @@ def create_network_review_sub_router(
     *,
     require_view_permission_fn: Callable[..., Any],
     require_decide_permission_fn: Callable[..., Any],
+    service_resolver: Callable[[Request], Any] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-reviews")
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
     def get_network_reviews(
+        request: Request,
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
-        return service.snapshot(correlation_id=x_correlation_id)
+        return resolve_service(request, service, service_resolver).snapshot(
+            correlation_id=x_correlation_id
+        )
 
     @router.post("/reset", dependencies=[Depends(require_decide_permission_fn)])
-    def reset_network_reviews() -> dict[str, Any]:
-        return service.reset()
+    def reset_network_reviews(request: Request) -> dict[str, Any]:
+        return resolve_service(request, service, service_resolver).reset()
 
     @router.post(
         "/{review_id}/decide",
@@ -86,11 +91,12 @@ def create_network_review_sub_router(
     def decide_review(
         review_id: str,
         body: ReviewDecisionPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.decide_review(
+            return resolve_service(request, service, service_resolver).decide_review(
                 review_id=review_id,
                 decision=body.decision,
                 reason=body.reason,

@@ -432,6 +432,29 @@ def _seed_state() -> dict[str, Any]:
     }
 
 
+def _empty_state() -> dict[str, Any]:
+    return {
+        "freshness": {
+            "status": "UNAVAILABLE",
+            "updatedAt": None,
+            "modelVersion": "UNBOUND",
+            "policyVersion": "UNBOUND",
+            "featureSnapshotTime": None,
+            "sourceSnapshotId": None,
+        },
+        "segments": [],
+        "recommendations": [],
+        "actions": [],
+        "approvals": [],
+        "decisions": [],
+        "auditEvents": [],
+        "nextAuditOrdinal": 1,
+        "nextApprovalOrdinal": 1,
+        "nextDecisionOrdinal": 1,
+        "idempotencyResults": {},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -450,9 +473,20 @@ class GrowthService:
         initial_state: dict[str, Any] | None = None,
         *,
         audit_log: InMemoryAuditLog | None = None,
+        seed_fixtures: bool = True,
     ) -> None:
-        self._state: dict[str, Any] = _clone(initial_state or _seed_state())
+        self._seed_fixtures = seed_fixtures
+        self._state = _clone(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else _empty_state()
+        )
         self._audit_log = audit_log or InMemoryAuditLog()
+
+    def export_state(self) -> dict[str, Any]:
+        return _clone(self._state)
 
     # ------------------------------------------------------------------
     # Read paths
@@ -1193,7 +1227,9 @@ class GrowthService:
     # ------------------------------------------------------------------
 
     def reset_to_seed(self) -> None:
-        self._state = _seed_state()
+        self._state = (
+            _seed_state() if self._seed_fixtures else _empty_state()
+        )
 
     # ------------------------------------------------------------------
     # Private helpers
