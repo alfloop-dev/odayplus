@@ -55,7 +55,16 @@ REQUIRED_PUBLIC_CONFIG = (
     "GCP_CLOUD_SQL_INSTANCE",
     "API_SERVICE",
     "WEB_SERVICE",
+    "MIGRATION_JOB",
+    "WORKER_JOB",
+    "SCHEDULER_JOB",
+    "WORKER_SCHEDULE_NAME",
+    "SCHEDULER_SCHEDULE_NAME",
     "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+    "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+    "ODP_WORKER_CRON",
+    "ODP_SCHEDULER_CRON",
+    "ODP_SCHEDULER_TIME_ZONE",
     "ODP_SNAPSHOT_BUCKET",
     "ODP_LISTING_PROVIDER_FEED_URL",
     "ODP_GEOCODE_PROVIDER_URL",
@@ -138,11 +147,83 @@ def repository_capability_checks(
     deploy_script = root / "scripts/deploy_cloud_run_waji.sh"
     deploy_text = deploy_script.read_text(encoding="utf-8") if deploy_script.exists() else ""
     worker_dockerfile = root / "infra/docker/worker.Dockerfile"
-    deploys_worker = bool(
-        re.search(
-            r"gcloud\s+run\s+(?:jobs\s+deploy|deploy\s+[\"']?\$\{?WORKER_SERVICE)",
-            deploy_text,
+    scheduler_dockerfile = root / "infra/docker/scheduler.Dockerfile"
+    job_entrypoint = root / "scripts/deployment/cloud_run_job_entrypoint.py"
+    worker_text = (
+        worker_dockerfile.read_text(encoding="utf-8") if worker_dockerfile.exists() else ""
+    )
+    scheduler_text = (
+        scheduler_dockerfile.read_text(encoding="utf-8")
+        if scheduler_dockerfile.exists()
+        else ""
+    )
+    entrypoint_text = (
+        job_entrypoint.read_text(encoding="utf-8") if job_entrypoint.exists() else ""
+    )
+    deploys_worker = all(
+        marker in deploy_text
+        for marker in (
+            'gcloud run jobs deploy "${WORKER_JOB}"',
+            'execute_job "worker" "${WORKER_JOB}"',
+            'upsert_scheduler_trigger "${WORKER_SCHEDULE_NAME}"',
         )
+    )
+    deploys_scheduler = all(
+        marker in deploy_text
+        for marker in (
+            'gcloud run jobs deploy "${SCHEDULER_JOB}"',
+            'execute_job "scheduler" "${SCHEDULER_JOB}"',
+            'upsert_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"',
+        )
+    )
+    deploys_migration_first = all(
+        marker in deploy_text
+        for marker in (
+            'gcloud run jobs deploy "${MIGRATION_JOB}"',
+            'execute_job "migration" "${MIGRATION_JOB}"',
+            "jobs-smoke",
+        )
+    ) and all(
+        marker in entrypoint_text
+        for marker in (
+            "build_migration_run",
+            "_verify_runtime_schema",
+            "runtime_schema_verified=True",
+        )
+    ) and deploy_text.index(
+        'execute_job "migration" "${MIGRATION_JOB}"'
+    ) < deploy_text.index('gcloud run deploy "${API_SERVICE}"')
+    worker_receipt_contract = all(
+        marker in entrypoint_text
+        for marker in (
+            "TrackingJobQueue",
+            "EXIT_RETRY_QUEUED",
+            "JobStatus.SUCCEEDED",
+            "JobStatus.QUEUED",
+            "JobStatus.FAILED",
+            "JobStatus.CANCELLED",
+            "claimed_job_receipt_missing",
+        )
+    )
+    scheduler_receipt_contract = all(
+        marker in entrypoint_text
+        for marker in (
+            "tracking_queue.enqueued",
+            "no_enqueue_receipt",
+            "enqueue_receipt_not_persisted",
+        )
+    )
+    worker_runtime_wired = (
+        worker_dockerfile.exists()
+        and "cloud_run_job_entrypoint.py" in worker_text
+        and deploys_worker
+        and worker_receipt_contract
+    )
+    scheduler_runtime_wired = (
+        scheduler_dockerfile.exists()
+        and "cloud_run_job_entrypoint.py" in scheduler_text
+        and deploys_scheduler
+        and scheduler_receipt_contract
     )
 
     operator_state = root / "modules/opsboard/application/operator_state.py"
@@ -197,12 +278,30 @@ def repository_capability_checks(
             ),
         ),
         CheckResult(
-            ok=worker_dockerfile.exists() and deploys_worker,
+            ok=worker_runtime_wired,
             name="repository:worker_runtime",
             detail=(
-                "worker image and Cloud Run worker deployment are present"
-                if worker_dockerfile.exists() and deploys_worker
-                else "missing: no deployable worker image and Cloud Run worker runtime"
+                "worker image, Cloud Run Job execution, schedule, and terminal receipt checks are wired"
+                if worker_runtime_wired
+                else "missing: worker image/job/trigger or terminal queue receipt validation"
+            ),
+        ),
+        CheckResult(
+            ok=scheduler_runtime_wired,
+            name="repository:scheduler_runtime",
+            detail=(
+                "scheduler image, Cloud Run Job execution, schedule, and enqueue receipt checks are wired"
+                if scheduler_runtime_wired
+                else "missing: scheduler image/job/trigger or enqueue receipt validation"
+            ),
+        ),
+        CheckResult(
+            ok=deploys_migration_first,
+            name="repository:migration_runtime",
+            detail=(
+                "migration Cloud Run Job executes and validates before API/worker/scheduler deployment"
+                if deploys_migration_first
+                else "missing: migration Job execution and proof must precede all runtime deployment"
             ),
         ),
         CheckResult(
@@ -745,6 +844,112 @@ def smoke_checks(
     return checks, report
 
 
+def _read_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def _json_text(payload: Mapping[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True).lower()
+
+
+def _execution_completed(payload: Mapping[str, Any]) -> bool:
+    status = payload.get("status")
+    if not isinstance(status, Mapping):
+        return False
+    failed_count = int(status.get("failedCount") or status.get("failed_count") or 0)
+    succeeded_count = int(
+        status.get("succeededCount") or status.get("succeeded_count") or 0
+    )
+    conditions = status.get("conditions")
+    completed = False
+    if isinstance(conditions, list):
+        for condition in conditions:
+            if not isinstance(condition, Mapping):
+                continue
+            condition_type = str(condition.get("type") or "").lower()
+            condition_state = str(
+                condition.get("state")
+                or condition.get("status")
+                or condition.get("conditionState")
+                or ""
+            ).lower()
+            if condition_type in {"completed", "completion"} and condition_state in {
+                "true",
+                "condition_succeeded",
+                "succeeded",
+            }:
+                completed = True
+    return completed and succeeded_count >= 1 and failed_count == 0
+
+
+def cloud_run_job_checks(
+    *,
+    kind: str,
+    job_description: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    expected_sha: str,
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Verify a deployed Job spec and its latest completed execution."""
+
+    description_text = _json_text(job_description)
+    execution_text = _json_text(execution)
+    required_secret_envs = (
+        "oday_database_url",
+        "odp_listing_provider_api_key",
+        "odp_poi_provider_api_key",
+        "odp_geocode_provider_api_key",
+        "odp_admin_boundary_provider_token",
+    )
+    expected_mode = "migrate" if kind == "migration" else kind
+    checks = [
+        CheckResult(
+            expected_sha.lower() in description_text,
+            f"jobs-smoke:{kind}:release_sha",
+            "exact release SHA is present in image/env/labels",
+        ),
+        CheckResult(
+            "scripts/deployment/cloud_run_job_entrypoint.py" in description_text
+            and expected_mode in description_text,
+            f"jobs-smoke:{kind}:entrypoint",
+            f"bounded {expected_mode} entrypoint is configured",
+        ),
+        CheckResult(
+            all(name in description_text for name in required_secret_envs),
+            f"jobs-smoke:{kind}:secret_bindings",
+            "database and provider secret environment bindings are configured",
+        ),
+        CheckResult(
+            _execution_completed(execution),
+            f"jobs-smoke:{kind}:execution",
+            "latest execution completed with succeededCount>=1 and failedCount=0",
+        ),
+        CheckResult(
+            expected_sha.lower() in execution_text or bool(execution.get("status")),
+            f"jobs-smoke:{kind}:execution_receipt",
+            "execution has a queryable Cloud Run status receipt",
+        ),
+    ]
+    report = {
+        "job_kind": kind,
+        "expected_sha": expected_sha,
+        "job_name": (
+            job_description.get("metadata", {}).get("name")
+            if isinstance(job_description.get("metadata"), Mapping)
+            else job_description.get("name")
+        ),
+        "execution_name": (
+            execution.get("metadata", {}).get("name")
+            if isinstance(execution.get("metadata"), Mapping)
+            else execution.get("name")
+        ),
+        "secret_values_redacted": True,
+    }
+    return checks, report
+
+
 def _finalize(
     *,
     checks: list[CheckResult],
@@ -794,6 +999,15 @@ def main() -> int:
     smoke.add_argument("--timeout", type=float, default=15.0)
     smoke.add_argument("--output", type=Path)
 
+    jobs_smoke = subparsers.add_parser("jobs-smoke")
+    jobs_smoke.add_argument(
+        "--job-kind", required=True, choices=("migration", "worker", "scheduler")
+    )
+    jobs_smoke.add_argument("--job-description", required=True, type=Path)
+    jobs_smoke.add_argument("--execution", required=True, type=Path)
+    jobs_smoke.add_argument("--expected-sha", required=True)
+    jobs_smoke.add_argument("--output", type=Path)
+
     args = parser.parse_args()
     if args.command == "preflight":
         checks = preflight_checks(
@@ -812,6 +1026,36 @@ def main() -> int:
             report=report,
             output=args.output,
             label="Cloud Run live deployment preflight",
+        )
+
+    if args.command == "jobs-smoke":
+        try:
+            job_description = _read_json_object(args.job_description)
+            execution = _read_json_object(args.execution)
+            checks, report = cloud_run_job_checks(
+                kind=args.job_kind,
+                job_description=job_description,
+                execution=execution,
+                expected_sha=args.expected_sha,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            checks = [
+                CheckResult(
+                    False,
+                    f"jobs-smoke:{args.job_kind}:artifact",
+                    f"{type(exc).__name__}: {exc}",
+                )
+            ]
+            report = {
+                "job_kind": args.job_kind,
+                "expected_sha": args.expected_sha,
+                "secret_values_redacted": True,
+            }
+        return _finalize(
+            checks=checks,
+            report=report,
+            output=args.output,
+            label=f"Cloud Run {args.job_kind} Job smoke",
         )
 
     token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")

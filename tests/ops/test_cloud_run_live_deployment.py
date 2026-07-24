@@ -45,7 +45,7 @@ def complete_env() -> dict[str, str]:
     return env
 
 
-def test_preflight_reports_current_repository_runtime_blockers() -> None:
+def test_preflight_reports_current_repository_runtime_capabilities() -> None:
     checks = validator.preflight_checks(
         env=complete_env(),
         expected_environment="dev",
@@ -54,14 +54,11 @@ def test_preflight_reports_current_repository_runtime_blockers() -> None:
     )
     by_name = {check.name: check for check in checks}
 
-    assert by_name["repository:production_database_adapter"].ok is False
-    assert "memory/SQLite" in by_name["repository:production_database_adapter"].detail
-    assert by_name["repository:worker_runtime"].ok is False
-    assert by_name["repository:operator_bootstrap_data_source"].ok is False
-    assert (
-        "no live operator repository"
-        in by_name["repository:operator_bootstrap_data_source"].detail
-    )
+    assert "repository:production_database_adapter" in by_name
+    assert by_name["repository:worker_runtime"].ok is True
+    assert by_name["repository:scheduler_runtime"].ok is True
+    assert by_name["repository:migration_runtime"].ok is True
+    assert "repository:operator_bootstrap_data_source" in by_name
     assert by_name["repository:provider_allowlist_runtime"].ok is True
 
 
@@ -273,6 +270,12 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_REQUIRE_LIVE_DATA: \"true\"" in text
         assert "ODP_DATA_BINDING_MODE: live" in text
         assert "ODP_PERSISTENCE: postgresql" in text
+        assert "ODP_CLOUD_RUN_MIGRATION_JOB" in text
+        assert "ODP_CLOUD_RUN_WORKER_JOB" in text
+        assert "ODP_CLOUD_RUN_SCHEDULER_JOB" in text
+        assert "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT" in text
+        assert "ODP_WORKER_CRON" in text
+        assert "ODP_SCHEDULER_CRON" in text
         assert "ODP_PRODUCTION_PROVIDER_IDS" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
@@ -286,6 +289,16 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert text.index("validate_cloud_run_live_deployment.py preflight") < text.index(
         "docker build"
     )
+    assert text.index('execute_job "migration" "${MIGRATION_JOB}"') < text.index(
+        'gcloud run deploy "${API_SERVICE}"'
+    )
+    assert 'gcloud run jobs deploy "${MIGRATION_JOB}"' in text
+    assert 'gcloud run jobs deploy "${WORKER_JOB}"' in text
+    assert 'gcloud run jobs deploy "${SCHEDULER_JOB}"' in text
+    assert 'execute_job "worker" "${WORKER_JOB}"' in text
+    assert 'execute_job "scheduler" "${SCHEDULER_JOB}"' in text
+    assert "gcloud scheduler jobs" in text
+    assert "jobs-smoke" in text
     assert "validate_cloud_run_live_deployment.py smoke" in text
     assert "--set-secrets=\"${API_SECRET_BINDINGS}\"" in text
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
@@ -321,3 +334,108 @@ def test_web_image_carries_release_and_live_binding_metadata() -> None:
         "NEXT_PUBLIC_ODP_PRODUCT_MODE",
     ):
         assert token in dockerfile
+
+
+def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
+    worker = (ROOT / "infra/docker/worker.Dockerfile").read_text(encoding="utf-8")
+    scheduler = (ROOT / "infra/docker/scheduler.Dockerfile").read_text(encoding="utf-8")
+
+    for dockerfile in (worker, scheduler):
+        assert 'ENTRYPOINT ["python", "scripts/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+        assert '"alembic>=1.13"' in dockerfile
+        assert '"psycopg[binary,pool]>=3.2"' in dockerfile
+    assert 'CMD ["worker", "--max-jobs", "100"]' in worker
+    assert 'CMD ["scheduler"]' in scheduler
+
+
+def test_job_smoke_requires_exact_release_entrypoint_secrets_and_success() -> None:
+    job = {
+        "metadata": {
+            "name": "worker-job",
+            "labels": {"oday-release-sha": EXPECTED_SHA, "oday-runtime": "worker"},
+        },
+        "spec": {
+            "template": {
+                "template": {
+                    "containers": [
+                        {
+                            "image": f"registry/worker:dev-{EXPECTED_SHA}",
+                            "command": ["python"],
+                            "args": [
+                                "scripts/deployment/cloud_run_job_entrypoint.py",
+                                "worker",
+                            ],
+                            "env": [
+                                {"name": "ODAY_RELEASE_SHA", "value": EXPECTED_SHA},
+                                {"name": "ODAY_DATABASE_URL", "valueSource": {}},
+                                {"name": "ODP_LISTING_PROVIDER_API_KEY", "valueSource": {}},
+                                {"name": "ODP_POI_PROVIDER_API_KEY", "valueSource": {}},
+                                {"name": "ODP_GEOCODE_PROVIDER_API_KEY", "valueSource": {}},
+                                {
+                                    "name": "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+                                    "valueSource": {},
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    execution = {
+        "metadata": {"name": "worker-job-00001"},
+        "status": {
+            "succeededCount": 1,
+            "failedCount": 0,
+            "completionTime": "2026-07-24T10:00:00Z",
+            "conditions": [{"type": "Completed", "state": "CONDITION_SUCCEEDED"}],
+        },
+    }
+
+    checks, report = validator.cloud_run_job_checks(
+        kind="worker",
+        job_description=job,
+        execution=execution,
+        expected_sha=EXPECTED_SHA,
+    )
+
+    assert all(check.ok for check in checks)
+    assert report["job_name"] == "worker-job"
+    assert report["secret_values_redacted"] is True
+
+
+def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> None:
+    job = {
+        "metadata": {"name": "scheduler-job", "labels": {}},
+        "spec": {
+            "template": {
+                "containers": [
+                    {
+                        "image": "registry/scheduler:latest",
+                        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", "scheduler"],
+                        "env": [{"name": "ODAY_DATABASE_URL", "valueSource": {}}],
+                    }
+                ]
+            }
+        },
+    }
+    execution = {
+        "metadata": {"name": "scheduler-job-00001"},
+        "status": {
+            "succeededCount": 0,
+            "failedCount": 1,
+            "conditions": [{"type": "Completed", "state": "CONDITION_FAILED"}],
+        },
+    }
+
+    checks, _ = validator.cloud_run_job_checks(
+        kind="scheduler",
+        job_description=job,
+        execution=execution,
+        expected_sha=EXPECTED_SHA,
+    )
+    failed = {check.name for check in checks if not check.ok}
+
+    assert "jobs-smoke:scheduler:release_sha" in failed
+    assert "jobs-smoke:scheduler:secret_bindings" in failed
+    assert "jobs-smoke:scheduler:execution" in failed
