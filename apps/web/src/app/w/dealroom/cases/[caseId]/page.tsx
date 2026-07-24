@@ -17,16 +17,17 @@ export default async function DealRoomCaseDetailPage({ params }: PageProps) {
   const requestedProductionMode = reqHeaders.get("x-production-mode");
   const isProduction =
     requestedProductionMode === "true" ||
-    (requestedProductionMode !== "false" && isProductionMode());
+    isProductionMode();
 
   const liveCases = await loadApiBinding({
     client: await getServerApiClient(),
     fetcher: (client) => client.listAvmCases().then((response) => response.items),
   });
 
-  const subjectId = reqHeaders.get("x-subject-id") || "product-ui-analyst";
-  const roles = reqHeaders.get("x-roles") || "analyst,finance";
+  const subjectId = reqHeaders.get("x-subject-id");
+  const roles = reqHeaders.get("x-roles");
   const tenantId = reqHeaders.get("x-tenant-id") || undefined;
+  const currentUser = subjectId && roles ? { subjectId, roles, tenantId } : undefined;
 
   return (
     <AvmWorkspace
@@ -34,7 +35,7 @@ export default async function DealRoomCaseDetailPage({ params }: PageProps) {
       caseId={caseId}
       liveCases={liveCases}
       isProduction={isProduction}
-      currentUser={{ subjectId, roles, tenantId }}
+      currentUser={currentUser}
     />
   );
 }

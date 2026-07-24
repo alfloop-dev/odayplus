@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  AdliftReport,
   AuditEvent,
   AvmCase,
   CandidateSiteCard,
@@ -11,8 +12,11 @@ import type {
   InterventionSummary,
   ModelReleaseSummary,
   NetPlanScenarioSummary,
+  ShellHomeResponse,
+  SourceFreshnessEvidence,
 } from "@oday-plus/openapi-client";
 import type { ApiBinding, BindingState } from "../../../src/lib/api/binding.ts";
+import { AdLiftWorkspace } from "../../adlift/AdLiftWorkspace.tsx";
 import { AuditWorkspace } from "../../audit/AuditWorkspace.tsx";
 import { AvmWorkspace } from "../../avm/AvmWorkspace.tsx";
 import { ExpansionWorkspace } from "../../expansion/ExpansionWorkspace.tsx";
@@ -20,6 +24,9 @@ import { InterventionWorkspace } from "../../intervention/InterventionWorkspace.
 import { LearningHubWorkspace } from "../../learninghub/LearningHubWorkspace.tsx";
 import { HeatZoneMap } from "../../map/HeatZoneMap.tsx";
 import { NetPlanWorkspace } from "../../netplan/NetPlanWorkspace.tsx";
+import { PriceOpsWorkspace, type LivePricePlan } from "../../priceops/PriceOpsWorkspace.tsx";
+import { HomeWorkspace } from "../../shell/HomeWorkspace.tsx";
+import type { ApiResource } from "../../shell/resource.ts";
 import { OperationsWorkspace } from "../OperationsWorkspace.tsx";
 import { resolveProductionMode } from "../ProductionDataState.tsx";
 
@@ -44,10 +51,10 @@ function binding<T>(items: T[], state: BindingState = items.length ? "ready" : "
 }
 
 describe("non-Operator production data removal", () => {
-  it("honors the explicit product mode before the production build default", () => {
+  it("never allows an explicit POC flag to downgrade a production build", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ODP_PRODUCT_MODE", "poc");
-    expect(resolveProductionMode()).toBe(false);
+    expect(resolveProductionMode()).toBe(true);
 
     vi.stubEnv("ODP_PRODUCT_MODE", "production");
     expect(resolveProductionMode()).toBe(true);
@@ -214,6 +221,23 @@ describe("non-Operator production data removal", () => {
     expect(screen.queryByTestId("candidate-site-card")).not.toBeInTheDocument();
   });
 
+  it("shows backend-declared stale freshness without substituting fixture lineage", () => {
+    const stale: SourceFreshnessEvidence = {
+      provider_id: "live-provider-stale",
+      source_snapshot_id: "live-stale-snapshot-7",
+      data_status: "STALE",
+      provider_observed_at: "2026-07-20T12:00:00Z",
+      ingested_at: "2026-07-20T12:01:00Z",
+      freshness_sla_seconds: 3600,
+      correlation_id: "live-stale-correlation-7",
+    };
+    render(<ExpansionWorkspace isProduction liveFreshness={binding([stale])} view="overview" />);
+
+    expect(screen.getByText("STALE")).toBeInTheDocument();
+    expect(screen.getByText("live-stale-snapshot-7")).toBeInTheDocument();
+    expect(screen.queryByText("snap-expansion-20260628-0100")).not.toBeInTheDocument();
+  });
+
   it("does not mount local map data when production providers or API provenance are absent", () => {
     render(
       <HeatZoneMap
@@ -235,5 +259,178 @@ describe("non-Operator production data removal", () => {
 
     expect(screen.getByTestId("heat-zone-map-unavailable")).toBeInTheDocument();
     expect(screen.queryByTestId("heat-zone-map-canvas")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      domain: "AVM",
+      renderWorkspace: () => render(<AvmWorkspace isProduction view="cases" />),
+      stateId: "avm-production-data-state",
+      fixtureText: "vc-5101",
+    },
+    {
+      domain: "Audit",
+      renderWorkspace: () => render(<AuditWorkspace isProduction view="decisions" />),
+      stateId: "audit-production-data-state",
+      fixtureText: "decision-lh-240",
+    },
+    {
+      domain: "Intervention",
+      renderWorkspace: () => render(<InterventionWorkspace isProduction />),
+      stateId: "intervention-production-data-state",
+      fixtureText: "int-3001",
+    },
+    {
+      domain: "Learning Hub",
+      renderWorkspace: () => render(<LearningHubWorkspace isProduction view="releases" />),
+      stateId: "learning-production-data-state",
+      fixtureText: "rel-lh-240-canary",
+    },
+    {
+      domain: "NetPlan",
+      renderWorkspace: () => render(<NetPlanWorkspace isProduction view="scenarios" />),
+      stateId: "netplan-production-data-state",
+      fixtureText: "np-6201",
+    },
+    {
+      domain: "Expansion",
+      renderWorkspace: () => render(<ExpansionWorkspace isProduction view="heatzone" />),
+      stateId: "exp-production-data-state",
+      fixtureText: "hz-1049",
+    },
+  ])("fails closed for $domain when the production API is unconfigured", ({ renderWorkspace, stateId, fixtureText }) => {
+    renderWorkspace();
+    expect(screen.getByTestId(stateId)).toHaveAttribute("data-state", "unconfigured");
+    expect(screen.queryByText(fixtureText)).not.toBeInTheDocument();
+  });
+
+  it("renders only API-backed AdLift rows and derives counts from those rows", () => {
+    const report: AdliftReport = {
+      report_id: "live-adlift-report-91",
+      campaign_id: "live-campaign-91",
+      campaign_name: "Live campaign",
+      treatment_store_ids: ["live-store-1", "live-store-2"],
+      control_store_ids: ["live-control-1"],
+      pre_trend_status: "PASS",
+      iromi: 1.91,
+      evidence_level: "medium",
+      recommendation: "CONTINUE",
+      causal_claim_allowed: true,
+      contamination: [],
+      model_version: "live-adlift-v3",
+      policy_version: "live-policy-v3",
+      generated_at: "2026-07-24T12:00:00Z",
+      source_snapshot_ids: ["live-snapshot-91"],
+    };
+    render(<AdLiftWorkspace isProduction liveReports={binding([report])} />);
+
+    expect(screen.getByText("live-adlift-report-91")).toBeInTheDocument();
+    expect(screen.getByText("Live campaign")).toBeInTheDocument();
+    expect(screen.getByText("1", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.queryByText("adlift-8801")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("adlift-table")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["empty", undefined],
+    ["error", "adlift API timeout"],
+    ["unconfigured", undefined],
+  ] as const)("fails closed for AdLift %s without bundled reports", (state, error) => {
+    render(
+      <AdLiftWorkspace
+        isProduction
+        liveReports={state === "unconfigured" ? undefined : binding<AdliftReport>([], state, error)}
+      />,
+    );
+
+    expect(screen.getByTestId("adlift-production-data-state")).toHaveAttribute("data-state", state);
+    expect(screen.queryByText("adlift-8801")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("adlift-table")).not.toBeInTheDocument();
+  });
+
+  it("renders only API-backed PriceOps rows and derives counts from those rows", () => {
+    const livePlan: LivePricePlan = {
+      plan_id: "live-price-plan-51",
+      tenant_id: "live-tenant-51",
+      status: "PENDING_APPROVAL",
+      items: [{ item_id: "live-item" }],
+      created_at: "2026-07-24T12:00:00Z",
+      correlation_id: "live-price-correlation-51",
+    };
+    render(<PriceOpsWorkspace isProduction livePlans={binding([livePlan])} />);
+
+    expect(screen.getByText("live-price-plan-51")).toBeInTheDocument();
+    expect(screen.getByText("live-price-correlation-51")).toBeInTheDocument();
+    expect(screen.queryByText("price-5101")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("priceops-table")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["empty", undefined],
+    ["error", "priceops API timeout"],
+    ["unconfigured", undefined],
+  ] as const)("fails closed for PriceOps %s without bundled plans or fabricated counts", (state, error) => {
+    render(
+      <PriceOpsWorkspace
+        isProduction
+        livePlans={state === "unconfigured" ? undefined : binding<LivePricePlan>([], state, error)}
+      />,
+    );
+
+    expect(screen.getByTestId("priceops-production-data-state")).toHaveAttribute("data-state", state);
+    expect(screen.queryByText("price-5101")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("priceops-table")).not.toBeInTheDocument();
+  });
+
+  it("renders no shell metrics or fabricated counts when the aggregate API is unavailable", () => {
+    const home: ApiResource<ShellHomeResponse> = {
+      state: "unconfigured",
+      data: null,
+      source: "none",
+      fetchedAt: "2026-07-24T12:00:00Z",
+    };
+    render(<HomeWorkspace home={home} />);
+
+    expect(screen.getByTestId("home-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-metrics")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("metric-open-tasks")).not.toBeInTheDocument();
+  });
+
+  it("renders shell counts exactly as returned by the aggregate API", () => {
+    const data: ShellHomeResponse = {
+      meta: {
+        generatedAt: "2026-07-24T12:00:00Z",
+        source: "operator-shell-production",
+        role: { id: "opsManager", label: "Operations manager" },
+      },
+      status: {
+        headline: "Live operations state",
+        openTasks: 41,
+        slaBreached: 6,
+        slaAtRisk: 12,
+        pendingApprovals: 17,
+        unacknowledgedNotifications: 23,
+        tone: "warning",
+      },
+      tasks: [],
+      approvals: [],
+      decisions: [],
+      freshness: [],
+      entryPoints: [],
+      notifications: [],
+      kpis: [],
+    };
+    const home: ApiResource<ShellHomeResponse> = {
+      state: "ready",
+      data,
+      source: "api",
+      baseUrl: "https://api.example.com",
+      fetchedAt: "2026-07-24T12:00:00Z",
+    };
+    render(<HomeWorkspace home={home} />);
+
+    expect(screen.getByTestId("metric-open-tasks-value")).toHaveTextContent("41");
+    expect(screen.getByTestId("metric-approvals-value")).toHaveTextContent("17");
+    expect(screen.getByTestId("metric-notifications-value")).toHaveTextContent("23");
   });
 });

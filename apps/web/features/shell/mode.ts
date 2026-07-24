@@ -32,11 +32,12 @@ function readEnv(): Record<string, string | undefined> {
 }
 
 export function resolveProductMode(env: Record<string, string | undefined> = readEnv()): ProductMode {
+  if (env.NODE_ENV === "production") return "production";
   for (const key of PRODUCT_MODE_ENV_KEYS) {
     const value = env[key]?.trim().toLowerCase();
     if (value === "production" || value === "poc") return value;
   }
-  return env.NODE_ENV === "production" ? "production" : "poc";
+  return "poc";
 }
 
 /** True when placeholder routes and fixture copy must not render. */

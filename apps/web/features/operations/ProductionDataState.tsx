@@ -20,8 +20,9 @@ const STATE_TONE: Record<BindingState, StatusTone> = {
 };
 
 export function resolveProductionMode(explicit?: boolean): boolean {
-  if (explicit !== undefined) return explicit;
+  if (isProductionMode()) return true;
   if (process.env.ODP_REQUIRE_LIVE_DATA === "true") return true;
+  if (explicit !== undefined) return explicit;
   return isProductionMode();
 }
 
