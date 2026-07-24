@@ -156,7 +156,14 @@ export function HeatZoneMap({
         }`,
       );
     });
+    const projectMapCoordinate = (coordinates: [number, number]) => {
+      const projected = map.project(coordinates);
+      return { x: projected.x, y: projected.y };
+    };
+    window.__odpHeatZoneMapProject = projectMapCoordinate;
+
     map.on("load", () => {
+      window.__odpHeatZoneMapProject = projectMapCoordinate;
       map.addSource("odp-local-heatzones", {
         type: "geojson",
         data: {
@@ -205,10 +212,6 @@ export function HeatZoneMap({
       fitToZones(map, visibleZones.length ? visibleZones : zones);
       map.resize();
     });
-    window.__odpHeatZoneMapProject = (coordinates: [number, number]) => {
-      const projected = map.project(coordinates);
-      return { x: projected.x, y: projected.y };
-    };
 
     const syncDeckView = () => {
       const center = map.getCenter();
@@ -225,7 +228,9 @@ export function HeatZoneMap({
 
     return () => {
       map.off("move", syncDeckView);
-      delete window.__odpHeatZoneMapProject;
+      if (window.__odpHeatZoneMapProject === projectMapCoordinate) {
+        delete window.__odpHeatZoneMapProject;
+      }
       map.remove();
       mapRef.current = null;
     };
