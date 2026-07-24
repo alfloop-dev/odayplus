@@ -5,6 +5,7 @@ services:
       dockerfile: infra/docker/api.Dockerfile
     image: odayplus/api:e2e
     environment:
+      CI: "1"
       ODP_ENV: e2e
       ODP_PERSISTENCE: durable
       ODP_DB_PATH: /data/product-e2e.sqlite3

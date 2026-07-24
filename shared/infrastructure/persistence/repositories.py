@@ -1627,6 +1627,9 @@ class DurableListingRepository:
     def get_listing(self, listing_id: str) -> Listing | None:
         return self._store.get(self._LISTINGS, listing_id)
 
+    def get_address(self, address_id: str) -> AddressLocation | None:
+        return self._store.get(self._ADDRESSES, address_id)
+
     def clear(self) -> None:
         for collection in (self._LISTINGS, self._ADDRESSES, self._CANDIDATES, self._DEDUP):
             self._store.delete_collection(collection)

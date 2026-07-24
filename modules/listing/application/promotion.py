@@ -279,12 +279,11 @@ class PromotionService:
                 ds_id = listing.get("datasetSnapshotId") or listing.get("snapshot_id") or listing.get("dataset_snapshot_id")
             else:
                 # Domain object Listing
-                address_obj = None
-                if hasattr(self.listing_repository, "addresses"):
-                    for addr in self.listing_repository.addresses:
-                        if addr.address_id == listing.address_id:
-                            address_obj = addr
-                            break
+                address_obj = (
+                    self.listing_repository.get_address(listing.address_id)
+                    if hasattr(self.listing_repository, "get_address")
+                    else None
+                )
                 h3_val = address_obj.h3_res_9 if (address_obj and address_obj.h3_res_9) else "HZ-01"
                 address_val = address_obj.normalized_address if address_obj else ""
                 rent_val = listing.rent_amount
@@ -354,12 +353,17 @@ class PromotionService:
             if hasattr(self.listing_repository, "save_candidate") and not hasattr(self.listing_repository, "_state"):
                 from modules.listing.domain.models import CandidateSiteDraft
                 from shared.domain.models import AddressLocation, CandidateSite
-                orig_addr = None
-                if hasattr(self.listing_repository, "addresses"):
-                    for addr in self.listing_repository.addresses:
-                        if addr.address_id == (listing.address_id if not hasattr(listing, "get") else listing.get("address_id")):
-                            orig_addr = addr
-                            break
+                address_id = (
+                    listing.address_id
+                    if not hasattr(listing, "get")
+                    else listing.get("address_id")
+                )
+                orig_addr = (
+                    self.listing_repository.get_address(address_id)
+                    if address_id
+                    and hasattr(self.listing_repository, "get_address")
+                    else None
+                )
                 if not orig_addr:
                     orig_addr = AddressLocation(
                         raw_address=address_val,
@@ -375,8 +379,15 @@ class PromotionService:
                     site_status="ready",
                     created_by=context.actor.actor_id,
                 )
+                candidate_listing = (
+                    self.listing_repository.get_domain_listing(listing_id)
+                    if hasattr(self.listing_repository, "get_domain_listing")
+                    else listing
+                )
+                if candidate_listing is None:
+                    raise ValueError(f"Listing {listing_id} not found")
                 draft = CandidateSiteDraft(
-                    listing=listing,
+                    listing=candidate_listing,
                     address=orig_addr,
                     candidate_site=c_site,
                     heat_zone_id=h3_val,
