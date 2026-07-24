@@ -52,6 +52,8 @@ npx playwright test \
   tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts \
   tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts \
   tests/e2e/product-e2e-env.spec.ts \
+  --workers=1 \
+  --retries=0 \
   --project=chromium
 test_status=$?
 set -e
