@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from apps.data_platform.contracts import SourceKind
+from apps.data_platform.serialization import aggregate_checksum
 from apps.data_platform.store import PsycopgCanonicalStore
+
 
 def _schema() -> str:
     return (
@@ -74,9 +76,48 @@ class _CaptureConnection:
         return self
 
 
+class _Result:
+    def __init__(
+        self,
+        *,
+        one: tuple[object, ...] | None = None,
+        many: list[tuple[object, ...]] | None = None,
+    ) -> None:
+        self._one = one
+        self._many = many or []
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self._one
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self._many
+
+
+class _ReconcileConnection:
+    def __init__(self, *, raw_relation_exists: bool) -> None:
+        self.raw_relation_exists = raw_relation_exists
+        self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def execute(self, sql: str, params: tuple[object, ...]) -> _Result:
+        self.statements.append((sql, params))
+        if "to_regclass" in sql:
+            relation = params[0] if self.raw_relation_exists else None
+            return _Result(one=(relation,))
+        return _Result()
+
+
 def _store() -> PsycopgCanonicalStore:
     store = object.__new__(PsycopgCanonicalStore)
-    store._config = SimpleNamespace(control_schema="data_plane")
+    store._config = SimpleNamespace(
+        control_schema="data_plane",
+        raw_schema="fongniao_raw",
+    )
     return store
 
 
@@ -163,3 +204,43 @@ def test_place_upsert_casts_nullable_geography_parameters() -> None:
     geography_sql = connection.statements[0][0]
     assert geography_sql.count("::double precision") == 6
     assert "ST_MakePoint" in geography_sql
+
+
+def test_empty_partition_reconciles_when_dlt_did_not_create_a_raw_table() -> None:
+    store = _store()
+    connection = _ReconcileConnection(raw_relation_exists=False)
+    store._connect = lambda: connection
+
+    result = store.reconcile(
+        "00000000-0000-4000-8000-000000000099",
+        SourceKind.DEVICE_DAILY_STATISTICS,
+        0,
+        aggregate_checksum([]),
+        aggregate_checksum([]),
+    )
+
+    assert result.reconciled
+    assert result.raw_count == 0
+    assert all(
+        "raw_device_daily_statistics" not in sql or "to_regclass" in sql
+        for sql, _ in connection.statements
+    )
+
+
+def test_non_empty_partition_requires_a_durable_raw_table() -> None:
+    store = _store()
+    connection = _ReconcileConnection(raw_relation_exists=False)
+    store._connect = lambda: connection
+
+    try:
+        store.reconcile(
+            "00000000-0000-4000-8000-000000000099",
+            SourceKind.ORDERS,
+            1,
+            "source",
+            "valid",
+        )
+    except RuntimeError as exc:
+        assert "fongniao_raw.raw_orders" in str(exc)
+    else:
+        raise AssertionError("A missing raw table must fail a non-empty run")

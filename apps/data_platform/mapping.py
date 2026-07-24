@@ -982,6 +982,7 @@ def project_transaction(
         explicit_status = {
             "TRADE_SUCCESS": "succeeded",
             "TRADE_FAIL": "failed",
+            "TRADE_NOT_PAY": "failed",
             "TRADE_REFUND": "refunded",
         }
         raw_state = str(document.get("state") or "").strip().upper()
@@ -998,10 +999,12 @@ def project_transaction(
                 QuarantineReason.MISSING_AUTHORITATIVE_PAYMENT,
                 "orders.payment object is required",
             )
-        document["amountPaid"] = payment.get("amountPaid") or payment.get("amount")
+        document["amountPaid"] = (
+            document.get("amount") if document["status"] == "succeeded" else 0
+        )
         document["payGateway"] = (
-            payment.get("gateway")
-            or payment.get("payGateway")
+            payment.get("payGateway")
+            or payment.get("gateway")
             or payment.get("method")
         )
         document["currency"] = document.get("currency") or payment.get("currency")

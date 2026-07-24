@@ -1026,14 +1026,26 @@ class PsycopgCanonicalStore:
     ) -> ReconciliationResult:
         raw_table = f"raw_{source_kind.value}"
         with self._connect() as connection:
-            raw_rows = connection.execute(
-                f"""
-                SELECT source_snapshot_id::text, content_sha256
-                FROM {self._config.raw_schema}.{raw_table}
-                WHERE run_id = %s
-                """,
-                (run_id,),
-            ).fetchall()
+            raw_relation = f"{self._config.raw_schema}.{raw_table}"
+            raw_relation_exists = connection.execute(
+                "SELECT to_regclass(%s)",
+                (raw_relation,),
+            ).fetchone()
+            if raw_relation_exists is None or raw_relation_exists[0] is None:
+                if source_count:
+                    raise RuntimeError(
+                        f"Raw landing table {raw_relation} is missing for a non-empty run"
+                    )
+                raw_rows = []
+            else:
+                raw_rows = connection.execute(
+                    f"""
+                    SELECT source_snapshot_id::text, content_sha256
+                    FROM {raw_relation}
+                    WHERE run_id = %s
+                    """,
+                    (run_id,),
+                ).fetchall()
             canonical_rows = connection.execute(
                 f"""
                 SELECT DISTINCT source_snapshot_id::text, content_sha256

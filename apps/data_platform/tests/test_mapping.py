@@ -560,7 +560,11 @@ def test_orders_explicit_state_is_authoritative_without_numeric_guess(envelope_f
         "amount": 100,
         "currency": "TWD",
         "state": "TRADE_SUCCESS",
-        "payment": {"amount": 100, "gateway": "card", "currency": "TWD"},
+        "payment": {
+            "payGateway": "card",
+            "provider": "provider",
+            "result": {},
+        },
         "createdAt": "2026-07-23T00:00:00Z",
     }
     projection = project_transaction(
@@ -568,6 +572,32 @@ def test_orders_explicit_state_is_authoritative_without_numeric_guess(envelope_f
     )
     assert projection.transaction_status == "succeeded"
     assert projection.net_amount == 100
+    assert projection.payment_method == "card"
+
+
+def test_unpaid_order_uses_authoritative_state_and_zero_paid_amount(
+    envelope_factory,
+) -> None:
+    document = {
+        "_id": "order-not-paid-1",
+        "orderId": "order-not-paid-1",
+        "merchant": {"_id": "merchant-1"},
+        "place": {"_id": "place-1"},
+        "amount": 100,
+        "currency": "TWD",
+        "state": "TRADE_NOT_PAY",
+        "payment": {"payGateway": "card", "result": {}},
+        "createdAt": "2026-07-23T00:00:00Z",
+    }
+
+    projection = project_transaction(
+        envelope_factory(SourceKind.ORDERS, document), Lookup()
+    )
+
+    assert projection.transaction_status == "failed"
+    assert projection.gross_amount == 100
+    assert projection.net_amount == 0
+    assert projection.payment_time is None
 
 
 def test_order_id_links_authoritative_order_and_transaction(envelope_factory) -> None:
@@ -586,7 +616,7 @@ def test_order_id_links_authoritative_order_and_transaction(envelope_factory) ->
         "amount": 100,
         "currency": "TWD",
         "state": "TRADE_SUCCESS",
-        "payment": {"amount": 100, "gateway": "card", "currency": "TWD"},
+        "payment": {"payGateway": "card", "provider": "provider", "result": {}},
         "createdAt": "2026-07-23T00:00:00Z",
     }
     transaction = {
