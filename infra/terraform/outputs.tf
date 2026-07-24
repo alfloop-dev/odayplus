@@ -8,9 +8,24 @@ output "api_service_account" {
   description = "Least-privilege API runtime service account."
 }
 
+output "web_uri" {
+  value       = google_cloud_run_v2_service.web.uri
+  description = "Cloud Run Web URI. Application routes are protected by the Web OIDC session."
+}
+
+output "web_service_account" {
+  value       = google_service_account.web.email
+  description = "Least-privilege Web BFF identity and private API invoker."
+}
+
 output "worker_service_account" {
   value       = google_service_account.worker.email
   description = "Least-privilege asynchronous worker service account."
+}
+
+output "web_session_secret_id" {
+  value       = google_secret_manager_secret.web_session_secret.secret_id
+  description = "Secret Manager id containing the generated Web session encryption key."
 }
 
 output "artifact_bucket" {

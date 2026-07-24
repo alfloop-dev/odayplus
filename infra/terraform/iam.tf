@@ -7,6 +7,15 @@ data "google_secret_manager_secret" "external_runtime" {
   depends_on = [google_project_service.required]
 }
 
+data "google_secret_manager_secret" "web_oidc_client" {
+  for_each = local.web_oidc_secret_refs
+
+  project   = var.project_id
+  secret_id = each.value.secret_id
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_project_iam_member" "runtime_cloud_sql_client" {
   project = var.project_id
   role    = "roles/cloudsql.client"
@@ -34,6 +43,22 @@ resource "google_secret_manager_secret_iam_member" "runtime_external_secrets" {
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "web_session_secret" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.web_session_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.web.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "web_oidc_client_secret" {
+  for_each = data.google_secret_manager_secret.web_oidc_client
+
+  project   = var.project_id
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.web.email}"
 }
 
 resource "google_storage_bucket_iam_member" "runtime_artifact_objects" {

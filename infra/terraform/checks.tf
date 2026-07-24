@@ -33,14 +33,18 @@ resource "terraform_data" "production_contract" {
       condition = !local.is_prod || (
         can(regex("@sha256:[0-9a-f]{64}$", var.api_image))
         && startswith(var.api_image, "${var.region}-docker.pkg.dev/${var.project_id}/")
+        && can(regex("@sha256:[0-9a-f]{64}$", var.web_image))
+        && startswith(var.web_image, "${var.region}-docker.pkg.dev/${var.project_id}/")
       )
-      error_message = "Production requires an immutable API digest from the selected project's regional Artifact Registry."
+      error_message = "Production requires immutable API and Web digests from the selected project's regional Artifact Registry."
     }
 
     precondition {
       condition = !local.is_prod || (
         var.api_min_instances >= 2
         && var.api_max_instances >= var.api_min_instances
+        && var.web_min_instances >= 2
+        && var.web_max_instances >= var.web_min_instances
         && var.cloud_sql_disk_gb >= 100
         && var.cloud_sql_retained_backups >= 30
         && can(regex("^db-custom-([4-9]|[1-9][0-9]+)-[0-9]+$", var.cloud_sql_tier))
@@ -56,8 +60,13 @@ resource "terraform_data" "production_contract" {
         && length(var.api_invoker_members) > 0
         && !contains(var.api_invoker_members, "allUsers")
         && !contains(var.api_invoker_members, "allAuthenticatedUsers")
+        && startswith(var.web_base_url, "https://")
+        && length(var.web_oidc_client_id) > 0
+        && var.web_oidc_client_secret_ref != null
+        && can(regex("^[1-9][0-9]*$", try(var.web_oidc_client_secret_ref.version, "")))
+        && length(var.web_invoker_members) > 0
       )
-      error_message = "Production requires complete HTTPS OIDC configuration and explicit non-public invokers."
+      error_message = "Production requires complete API/Web OIDC configuration, pinned Web client secret, and explicit invokers."
     }
 
     precondition {
@@ -140,6 +149,17 @@ check "runtime_environment_names_do_not_collide" {
   }
 
   assert {
+    condition = !local.is_prod || (
+      can(regex("@sha256:[0-9a-f]{64}$", var.web_image))
+      && startswith(
+        var.web_image,
+        "${var.region}-docker.pkg.dev/${var.project_id}/",
+      )
+    )
+    error_message = "Production web_image must be an immutable digest from the selected project's regional Artifact Registry."
+  }
+
+  assert {
     condition = length(setintersection(
       local.runtime_plain_env_names,
       local.runtime_secret_env_names_contract,
@@ -175,7 +195,12 @@ check "production_image_and_capacity" {
 
   assert {
     condition     = !local.is_prod || var.api_min_instances >= 2
-    error_message = "Production requires at least two warm Cloud Run instances."
+    error_message = "Production requires at least two warm API Cloud Run instances."
+  }
+
+  assert {
+    condition     = !local.is_prod || var.web_min_instances >= 2
+    error_message = "Production requires at least two warm Web Cloud Run instances."
   }
 
   assert {
@@ -184,8 +209,24 @@ check "production_image_and_capacity" {
   }
 
   assert {
+    condition     = var.web_max_instances >= var.web_min_instances
+    error_message = "web_max_instances must be greater than or equal to web_min_instances."
+  }
+
+  assert {
     condition     = !local.is_prod || var.cloud_sql_disk_gb >= 100
     error_message = "Production Cloud SQL requires at least 100 GB of initial SSD capacity."
+  }
+
+  assert {
+    condition = !local.is_prod || (
+      startswith(var.web_base_url, "https://")
+      && length(var.web_oidc_client_id) > 0
+      && var.web_oidc_client_secret_ref != null
+      && can(regex("^[1-9][0-9]*$", try(var.web_oidc_client_secret_ref.version, "")))
+      && length(var.web_invoker_members) > 0
+    )
+    error_message = "Production Web requires HTTPS base URL, OIDC client id, pinned client secret, and at least one invoker."
   }
 
   assert {

@@ -48,6 +48,19 @@ variable "api_image" {
   }
 }
 
+variable "web_image" {
+  type        = string
+  description = "Web container image. Production requires an immutable sha256 digest."
+
+  validation {
+    condition = (
+      length(trimspace(var.web_image)) > 0
+      && !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.web_image))
+    )
+    error_message = "web_image must be explicit and must not use latest or placeholder values."
+  }
+}
+
 variable "release_sha" {
   type        = string
   description = "Exact source commit deployed by the immutable API image."
@@ -56,6 +69,73 @@ variable "release_sha" {
     condition     = can(regex("^[0-9a-f]{40}$", var.release_sha))
     error_message = "release_sha must be a full 40-character lowercase Git commit SHA."
   }
+}
+
+variable "web_base_url" {
+  type        = string
+  description = "Public HTTPS origin used for OIDC redirects and secure web-session cookies."
+  default     = ""
+}
+
+variable "web_oidc_client_id" {
+  type        = string
+  description = "OIDC client id registered for the ODay Plus web application."
+  default     = ""
+}
+
+variable "web_oidc_scopes" {
+  type        = string
+  description = "Space-delimited OIDC scopes requested by the Web BFF."
+  default     = "openid profile email"
+}
+
+variable "web_oidc_client_secret_ref" {
+  type = object({
+    secret_id = string
+    version   = string
+  })
+  description = "Pinned Secret Manager reference for ODP_WEB_OIDC_CLIENT_SECRET."
+  default     = null
+}
+
+variable "web_invoker_members" {
+  type        = set(string)
+  description = "IAM members allowed to invoke the Web service. The web login surface may be public while application access remains OIDC-protected."
+  default     = []
+}
+
+variable "web_min_instances" {
+  type        = number
+  description = "Cloud Run Web minimum instances."
+  default     = 0
+
+  validation {
+    condition     = var.web_min_instances >= 0
+    error_message = "web_min_instances cannot be negative."
+  }
+}
+
+variable "web_max_instances" {
+  type        = number
+  description = "Cloud Run Web maximum instances."
+  default     = 10
+
+  validation {
+    condition     = var.web_max_instances >= 1
+    error_message = "web_max_instances must be at least one."
+  }
+}
+
+variable "web_cpu" {
+  type        = string
+  description = "Cloud Run Web CPU limit."
+  default     = "1"
+}
+
+variable "web_memory" {
+  type        = string
+  description = "Cloud Run Web memory limit."
+  default     = "1Gi"
 }
 
 variable "live_data_enabled" {

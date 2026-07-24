@@ -9,6 +9,7 @@ memory persistence.
 | Resource | Production contract |
 |---|---|
 | Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/healthz` liveness probe. |
+| Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
 | Secret Manager | Terraform-generated database URL and cursor key plus references to environment-owned provider/model credentials. No secret payload is accepted as a variable or exposed as an output. |
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
@@ -20,9 +21,9 @@ memory persistence.
 
 A production plan fails when any of the following is true:
 
-- the API image is not pinned as `...@sha256:<64 hex>`;
+- the API or Web image is not pinned as `...@sha256:<64 hex>`;
 - `release_sha` is not an exact 40-character Git SHA;
-- Cloud Run has fewer than two minimum instances or a public invoker;
+- API or Web Cloud Run has fewer than two minimum instances, or the API has a public invoker;
 - OIDC issuer/JWKS are not HTTPS or no audience is configured;
 - any required live-provider endpoint or Secret Manager binding is missing;
 - MLflow is not a remote HTTPS registry;
@@ -53,9 +54,9 @@ Values, approvals, and secret payloads are owned outside Terraform:
 1. GCP project, billing, organization policies, and a pre-created GCS state
    bucket with versioning, retention, CMEK, and tightly scoped Terraform-runner
    access.
-2. Immutable API image digest and the exact source commit in that image.
-3. OIDC issuer, audience list, JWKS URI, and IAM members allowed to invoke the
-   service.
+2. Immutable API and Web image digests built from the same exact source commit.
+3. OIDC issuer, audience list, JWKS URI, Web client registration/secret, public
+   HTTPS Web origin, API invoker members, and Web invoker members.
 4. Approved HTTPS endpoints for listing, POI, geocode, admin-boundary, weather,
    and demographics providers. Their owners must allowlist
    `runtime_egress_ip` when source-IP restrictions apply.
@@ -68,8 +69,9 @@ Values, approvals, and secret payloads are owned outside Terraform:
    workload identity.
 8. A migration/reconciliation release job and canonical live datasets that make
    `/readiness` return HTTP 200 before Cloud Run startup expires.
-9. DNS, HTTPS load balancer, Cloud Armor, and the web frontend. This module
-   intentionally leaves the API at internal/load-balancer ingress.
+9. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
+   The module deploys the Web BFF while leaving the API at
+   internal/load-balancer ingress.
 
 The application WORM/object-store client must use Cloud Run workload identity
 or metadata-server ADC. Do not create or inject service-account JSON keys or

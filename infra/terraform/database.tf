@@ -150,3 +150,29 @@ resource "google_secret_manager_secret_version" "cursor_signing_key" {
   secret      = google_secret_manager_secret.cursor_signing_key.id
   secret_data = random_password.cursor_signing_key.result
 }
+
+resource "random_password" "web_session_secret" {
+  length  = 64
+  special = false
+}
+
+resource "google_secret_manager_secret" "web_session_secret" {
+  secret_id = "${local.name_prefix}-web-session-secret"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.labels
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "web_session_secret" {
+  secret      = google_secret_manager_secret.web_session_secret.id
+  secret_data = random_password.web_session_secret.result
+}

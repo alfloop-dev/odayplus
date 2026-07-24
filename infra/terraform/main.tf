@@ -124,6 +124,9 @@ locals {
     "ODAY_DATABASE_URL",
     "ODP_INTAKE_CURSOR_SIGNING_KEY",
   ])
+  managed_web_secret_env_names = toset([
+    "ODP_WEB_SESSION_SECRET",
+  ])
   external_runtime_secret_env_names = setunion(
     toset(keys(var.external_provider_secret_refs)),
     toset(keys(var.model_secret_refs)),
@@ -140,6 +143,23 @@ locals {
     local.managed_runtime_secret_env_names,
     local.external_runtime_secret_env_names,
   )
+  web_plain_env = {
+    ODAY_RELEASE_SHA                     = var.release_sha
+    ODP_API_BASE_URL                     = google_cloud_run_v2_service.api.uri
+    ODP_API_SERVICE_AUDIENCE             = google_cloud_run_v2_service.api.uri
+    ODP_DATA_BINDING_MODE                = "live"
+    ODP_DEPLOY_ENV                       = var.environment
+    ODP_PRODUCT_MODE                     = (local.is_prod || var.live_data_enabled) ? "production" : "poc"
+    ODP_REQUIRE_LIVE_DATA                = tostring(local.is_prod || var.live_data_enabled)
+    ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS = "false"
+    ODP_WEB_BASE_URL                     = var.web_base_url
+    ODP_WEB_OIDC_CLIENT_ID               = var.web_oidc_client_id
+    ODP_WEB_OIDC_ISSUER                  = var.oidc_issuer
+    ODP_WEB_OIDC_SCOPES                  = var.web_oidc_scopes
+  }
+  web_oidc_secret_refs = var.web_oidc_client_secret_ref == null ? {} : {
+    ODP_WEB_OIDC_CLIENT_SECRET = var.web_oidc_client_secret_ref
+  }
 
   fixed_runtime_env = {
     APP_ENV                         = var.environment
@@ -196,15 +216,20 @@ locals {
     [
       var.project_id,
       var.api_image,
+      var.web_image,
       var.release_sha,
       var.database_name,
       var.database_user,
       var.oidc_issuer,
       var.oidc_jwks_uri,
+      var.web_base_url,
+      var.web_oidc_client_id,
+      var.web_oidc_scopes,
       var.mlflow_tracking_uri,
     ],
     tolist(var.oidc_audiences),
     tolist(var.api_invoker_members),
+    tolist(var.web_invoker_members),
     values(var.external_provider_endpoints),
     flatten([
       for ref in values(var.external_provider_secret_refs) :
@@ -220,6 +245,10 @@ locals {
       for ref in values(var.runtime_additional_secret_refs) :
       [ref.secret_id, ref.version]
     ]),
+    var.web_oidc_client_secret_ref == null ? [] : [
+      var.web_oidc_client_secret_ref.secret_id,
+      var.web_oidc_client_secret_ref.version,
+    ],
   )
 }
 
@@ -237,6 +266,14 @@ resource "google_service_account" "runtime" {
   account_id   = "${local.name_prefix}-runtime"
   display_name = "ODay Plus ${var.environment} API runtime"
   description  = "Runtime-only identity for ODay Plus API; no project-wide editor grants."
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_service_account" "web" {
+  account_id   = "${local.name_prefix}-web"
+  display_name = "ODay Plus ${var.environment} Web BFF"
+  description  = "Public web identity that invokes the private API with a separate service token."
 
   depends_on = [google_project_service.required]
 }

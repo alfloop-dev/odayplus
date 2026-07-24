@@ -46,6 +46,14 @@ resource "google_compute_subnetwork_iam_member" "runtime_network_user" {
   member     = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+resource "google_compute_subnetwork_iam_member" "web_network_user" {
+  project    = var.project_id
+  region     = var.region
+  subnetwork = google_compute_subnetwork.runtime.name
+  role       = "roles/compute.networkUser"
+  member     = "serviceAccount:${google_service_account.web.email}"
+}
+
 resource "google_compute_address" "nat" {
   name   = "${local.name_prefix}-nat"
   region = var.region

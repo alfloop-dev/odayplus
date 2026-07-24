@@ -5,6 +5,7 @@ environment = "prod"
 region      = "asia-east1"
 
 api_image   = "asia-east1-docker.pkg.dev/REPLACE_WITH_PROJECT/oday/api@sha256:REPLACE_WITH_64_HEX"
+web_image   = "asia-east1-docker.pkg.dev/REPLACE_WITH_PROJECT/oday/web@sha256:REPLACE_WITH_64_HEX"
 release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"
 
 cloud_sql_tier             = "db-custom-4-15360"
@@ -13,10 +14,19 @@ cloud_sql_retained_backups = 30
 
 api_min_instances = 2
 api_max_instances = 20
+web_min_instances = 2
+web_max_instances = 20
 
 oidc_issuer    = "https://REPLACE_WITH_IDP_ISSUER"
 oidc_audiences = ["REPLACE_WITH_API_AUDIENCE"]
 oidc_jwks_uri  = "https://REPLACE_WITH_IDP_JWKS"
+
+web_base_url      = "https://REPLACE_WITH_ODAY_PLUS_WEB_ORIGIN"
+web_oidc_client_id = "REPLACE_WITH_WEB_OIDC_CLIENT_ID"
+web_oidc_client_secret_ref = {
+  secret_id = "REPLACE_WITH_WEB_OIDC_CLIENT_SECRET_ID"
+  version   = "REPLACE_WITH_VERSION"
+}
 
 mlflow_tracking_uri = "https://REPLACE_WITH_MLFLOW_REGISTRY"
 
@@ -56,4 +66,8 @@ model_secret_refs = {}
 
 api_invoker_members = [
   "group:REPLACE_WITH_PRODUCTION_OPERATOR_GROUP",
+]
+
+web_invoker_members = [
+  "allUsers",
 ]
