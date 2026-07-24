@@ -249,7 +249,7 @@ else:
                 idempotency_key=effective_key,
                 operation=execute,
             )
-            if result.get("idempotency_replayed"):
+            if result.get("idempotent_replay"):
                 result["created"] = False
             return result
 

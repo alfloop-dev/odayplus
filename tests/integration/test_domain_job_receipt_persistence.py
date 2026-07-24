@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -180,6 +184,44 @@ def test_command_receipt_survives_restart_and_enforces_tenant_fingerprint(
         reopened.engine.close()
 
 
+def test_command_receipt_waits_for_concurrent_owner_and_replays(tmp_path) -> None:
+    bundle = _durable_bundle(tmp_path / "concurrent-command-receipts.sqlite3")
+    executions = 0
+    executions_lock = threading.Lock()
+    try:
+        store = TenantScopedCommandReceiptStore(
+            queue=bundle.job_queue,
+            service="priceops",
+        )
+
+        def invoke() -> object:
+            def operation(receipt_id: str) -> dict:
+                nonlocal executions
+                with executions_lock:
+                    executions += 1
+                time.sleep(0.05)
+                return {"receipt_id": receipt_id, "plan_id": "plan-once"}
+
+            return store.run(
+                tenant_id=TENANT_A,
+                idempotency_key="concurrent-key",
+                scope="priceops:create-plan",
+                payload={"rent": 50_000},
+                correlation_id="corr-concurrent",
+                operation=operation,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            outcomes = list(executor.map(lambda _: invoke(), range(8)))
+
+        assert executions == 1
+        assert sum(not outcome.replayed for outcome in outcomes) == 1
+        assert len({outcome.receipt_id for outcome in outcomes}) == 1
+        assert {outcome.value["plan_id"] for outcome in outcomes} == {"plan-once"}
+    finally:
+        bundle.engine.close()
+
+
 def test_priceops_command_replays_after_app_restart_and_rejects_payload_change(
     tmp_path,
 ) -> None:
@@ -216,7 +258,7 @@ def test_priceops_command_replays_after_app_restart_and_rejects_payload_change(
             json=_priceops_payload(TENANT_A, current_price=6.0),
         )
         assert conflict.status_code == 409
-        assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert conflict.json()["error"]["code"] == "idempotency_conflict"
 
         other_tenant = client.post(
             "/priceops/plans",

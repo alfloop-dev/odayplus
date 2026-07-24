@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,8 @@ class TenantScopedCommandReceiptStore:
 
     queue: JobQueue
     service: str
+    replay_wait_timeout_seconds: float = 10.0
+    replay_poll_interval_seconds: float = 0.01
 
     @property
     def is_durable(self) -> bool:
@@ -171,6 +174,9 @@ class TenantScopedCommandReceiptStore:
             raise IdempotencyConflictError(idempotency_key, scope)
         response = payload.get("response")
         if not isinstance(response, dict):
+            record = self._await_completed_record(record)
+            response = record.payload.get("response")
+        if not isinstance(response, dict):
             raise CommandReceiptIncompleteError(
                 f"{self.service} command receipt is not complete"
             )
@@ -179,6 +185,40 @@ class TenantScopedCommandReceiptStore:
             replayed=True,
             receipt_id=record.job_id,
         )
+
+    def _await_completed_record(self, record: Any) -> Any:
+        """Wait for an in-flight owner request, while stale receipts fail closed."""
+
+        deadline = time.monotonic() + max(self.replay_wait_timeout_seconds, 0.0)
+        current = record
+        while True:
+            response = current.payload.get("response")
+            if isinstance(response, dict):
+                return current
+            if current.status in {
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+                JobStatus.SUCCEEDED,
+            }:
+                raise CommandReceiptIncompleteError(
+                    f"{self.service} command receipt is not complete"
+                )
+            if time.monotonic() >= deadline:
+                raise CommandReceiptIncompleteError(
+                    f"{self.service} command receipt is still in progress"
+                )
+            time.sleep(max(self.replay_poll_interval_seconds, 0.001))
+            try:
+                refreshed = self.queue.get(current.job_id)
+            except Exception as exc:
+                raise CommandReceiptPersistenceError(
+                    f"{self.service} command receipt lookup is unavailable"
+                ) from exc
+            if refreshed is None:
+                raise CommandReceiptPersistenceError(
+                    f"{self.service} command receipt disappeared during replay"
+                )
+            current = refreshed
 
     def _mark_failed(
         self,
