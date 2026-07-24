@@ -15,9 +15,9 @@ Owns the task-scoped scoring surface behind
 - Compare recommendation: primary (GO) / alternate / avoid (REJECT) derived
   consistently from the persisted, score-sorted results.
 
-The service is deliberately in-memory for the Operator Console product slice.
-It is deterministic and narrow enough to compose with the R4-005 network
-listing intake and the SiteScore Review surface without owning those layers.
+Local/test mode retains the deterministic fixture scorecards. Production mode
+derives candidates from the tenant listing repository and delegates scoring to
+the canonical SiteScore report service and production model runtime.
 """
 
 from __future__ import annotations
@@ -26,6 +26,10 @@ import copy
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+from models.shared_ml.production_runtime import ProductionModelRuntimeError
+from modules.sitescore.application.reporting import SiteScoreReportService
+from modules.sitescore.domain.scoring import SiteScoreFeatureInput, SiteScoreReport
 
 MODEL_VERSION = "SiteScore v2.3"
 
@@ -51,6 +55,21 @@ class NetworkScoringGateError(RuntimeError):
     def __init__(self, message: str, *, missing: list[str] | None = None) -> None:
         super().__init__(message)
         self.missing = missing or []
+
+
+class NetworkScoringRuntimeUnavailable(RuntimeError):
+    """Raised when canonical SiteScore execution cannot run in production."""
+
+    def __init__(self, message: str, *, code: str = "SITESCORE_RUNTIME_UNAVAILABLE") -> None:
+        super().__init__(message)
+        self.code = code
+
+    def to_detail(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": str(self),
+            "retryable": True,
+        }
 
 
 def _now() -> str:
@@ -277,8 +296,16 @@ class NetworkScoringService:
         *,
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
+        listing_repository: Any | None = None,
+        sitescore_repository: Any | None = None,
+        model_runtime: Any | None = None,
+        require_canonical: bool = False,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._listing_repository = listing_repository
+        self._sitescore_repository = sitescore_repository
+        self._model_runtime = model_runtime
+        self._require_canonical = require_canonical
         if initial_state is not None:
             self._candidates = _copy(initial_state.get("candidates", []))
             self._scores = _copy(initial_state.get("scores", {}))
@@ -287,6 +314,8 @@ class NetworkScoringService:
                 initial_state.get("idempotencyCache", {})
             )
             self._compare_set = list(initial_state.get("compareSet", []))
+            if self._require_canonical:
+                self._refresh_canonical()
             return
 
         self._candidates = _seed_candidates() if seed_fixtures else []
@@ -302,10 +331,18 @@ class NetworkScoringService:
                     self._scores[candidate["id"]] = self._build_scorecard(
                         candidate
                     )
+        elif self._require_canonical:
+            self._refresh_canonical()
 
     # -- public API ----------------------------------------------------
 
     def reset(self) -> dict[str, Any]:
+        if self._require_canonical:
+            self._audit_events = []
+            self._idempotency_cache = {}
+            self._compare_set = []
+            self._refresh_canonical()
+            return self.snapshot()
         self.__init__(seed_fixtures=self._seed_fixtures)
         return self.snapshot()
 
@@ -319,11 +356,19 @@ class NetworkScoringService:
         }
 
     def snapshot(self, *, correlation_id: str | None = None) -> dict[str, Any]:
+        if self._require_canonical:
+            self._refresh_canonical()
         candidates = [self._candidate_view(candidate) for candidate in self._candidates]
         scorecards = self._sorted_scorecards()
         return {
-            "source": "api",
-            "modelVersion": MODEL_VERSION,
+            "source": "canonical" if self._require_canonical else "api",
+            "modelVersion": (
+                scorecards[0]["modelVersion"]
+                if scorecards
+                else None
+                if self._require_canonical
+                else MODEL_VERSION
+            ),
             "candidates": candidates,
             "scorecards": scorecards,
             "batchResults": self._batch_results(scorecards),
@@ -361,7 +406,10 @@ class NetworkScoringService:
                 missing=gate["missing"],
             )
 
-        scorecard = self._build_scorecard(candidate)
+        if self._require_canonical:
+            scorecard = self._run_canonical_score(candidate)
+        else:
+            scorecard = self._build_scorecard(candidate)
         self._scores[candidate_id] = scorecard
         audit = self._audit(
             action="sitescore.run",
@@ -410,7 +458,10 @@ class NetworkScoringService:
                     {"candidateId": candidate_id, "reason": gate["blockNote"], "missing": gate["missing"]}
                 )
                 continue
-            self._scores[candidate_id] = self._build_scorecard(candidate)
+            if self._require_canonical:
+                self._scores[candidate_id] = self._run_canonical_score(candidate)
+            else:
+                self._scores[candidate_id] = self._build_scorecard(candidate)
             scored.append(candidate_id)
 
         scorecards = self._sorted_scorecards()
@@ -466,6 +517,158 @@ class NetworkScoringService:
         }
 
     # -- internals -----------------------------------------------------
+
+    def _require_canonical_dependencies(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("listing_repository", self._listing_repository),
+                ("sitescore_repository", self._sitescore_repository),
+                ("model_runtime", self._model_runtime),
+            )
+            if value is None
+        ]
+        if missing:
+            raise NetworkScoringRuntimeUnavailable(
+                "canonical SiteScore dependencies are unavailable: "
+                + ", ".join(missing),
+                code="SITESCORE_CANONICAL_DEPENDENCY_UNAVAILABLE",
+            )
+
+    def _refresh_canonical(self) -> None:
+        self._require_canonical_dependencies()
+        drafts = self._listing_repository.list_candidates()
+        reports = self._sitescore_repository.list_latest()
+        self._candidates = [
+            self._candidate_from_draft(draft)
+            for draft in drafts
+        ]
+        self._scores = {
+            report.candidate_site_id: self._scorecard_from_report(report)
+            for report in reports
+        }
+        known = {candidate["id"] for candidate in self._candidates}
+        self._compare_set = [
+            candidate_id for candidate_id in self._compare_set if candidate_id in known
+        ]
+
+    def _candidate_from_draft(self, draft: Any) -> dict[str, Any]:
+        listing = draft.listing
+        address = draft.address
+        candidate = draft.candidate_site
+        normalized_address = address.normalized_address or address.raw_address
+        hard_rule_passed = not tuple(draft.feasibility_flags or ())
+        feature_snapshot_time = candidate.created_at
+        if feature_snapshot_time.tzinfo is None:
+            feature_snapshot_time = feature_snapshot_time.replace(tzinfo=UTC)
+        return {
+            "id": candidate.candidate_site_id,
+            "listingId": listing.listing_id,
+            "heatZoneId": draft.heat_zone_id,
+            "title": normalized_address or candidate.candidate_site_id,
+            "zoneLabel": address.district or draft.heat_zone_id,
+            "address": normalized_address,
+            "district": address.district,
+            "modelVersion": "",
+            "datasetSnapshotId": listing.snapshot_id,
+            "generatedAt": candidate.created_at.isoformat(),
+            "missingEvidence": list(draft.feasibility_flags or ()),
+            "data": {
+                "address": {"present": bool(normalized_address)},
+                "geocode": {
+                    "present": bool(address.latitude and address.longitude),
+                    "confidence": address.geocode_confidence,
+                },
+                "rent": {"present": listing.rent_amount > 0},
+                "area": {"present": listing.area_ping > 0},
+                "floor": {"present": bool(listing.floor)},
+                "hardRule": {
+                    "present": True,
+                    "pass": hard_rule_passed,
+                    "note": ", ".join(draft.feasibility_flags or ()),
+                },
+            },
+            "canonicalFeature": SiteScoreFeatureInput(
+                candidate_site_id=candidate.candidate_site_id,
+                target_format_code=candidate.target_format_code or "ODAY_G2",
+                feature_snapshot_time=feature_snapshot_time,
+                heat_zone_id=draft.heat_zone_id,
+                monthly_rent=listing.rent_amount,
+                area_ping=listing.area_ping,
+                frontage_m=listing.frontage_m,
+                average_confidence=min(
+                    listing.confidence,
+                    address.geocode_confidence,
+                ),
+                data_quality_score=min(
+                    listing.confidence,
+                    address.geocode_confidence,
+                ),
+                source_snapshot_ids=tuple(
+                    value for value in (listing.snapshot_id,) if value
+                ),
+            ),
+        }
+
+    def _run_canonical_score(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        self._require_canonical_dependencies()
+        try:
+            execution = SiteScoreReportService(
+                repository=self._sitescore_repository,
+                model_runtime=self._model_runtime,
+                require_production_model=True,
+            ).score_candidates_with_execution([candidate["canonicalFeature"]])
+        except ProductionModelRuntimeError as exc:
+            raise NetworkScoringRuntimeUnavailable(
+                str(exc),
+                code=getattr(exc, "code", "SITESCORE_RUNTIME_UNAVAILABLE"),
+            ) from exc
+        report = execution.reports[0]
+        return self._scorecard_from_report(report)
+
+    @staticmethod
+    def _scorecard_from_report(report: SiteScoreReport) -> dict[str, Any]:
+        confidence_score = int(round(report.confidence * 100))
+        conditions = list(report.key_negative_factors)
+        return {
+            "id": report.candidate_site_id,
+            "title": report.candidate_site_id,
+            "zoneLabel": report.heat_zone_id,
+            "heatZoneId": report.heat_zone_id,
+            "score": confidence_score,
+            "recommendation": report.recommendation.value,
+            "modelVersion": report.model_version,
+            "datasetSnapshotId": (
+                report.source_snapshot_ids[0]
+                if report.source_snapshot_ids
+                else ""
+            ),
+            "generatedAt": report.scored_at.isoformat(),
+            "confidence": report.confidence,
+            "payback": report.payback_p50_months,
+            "revenuePath": {
+                "m1": report.m1.to_dict(),
+                "m3": report.m3.to_dict(),
+                "m6": report.m6.to_dict(),
+                "m12": report.m12.to_dict(),
+            },
+            "band": report.m12.to_dict(),
+            "subScores": {
+                "rentReasonableness": report.rent_reasonableness,
+                "cannibalization": report.cannibalization_risk,
+            },
+            "capex": None,
+            "rentAssumption": None,
+            "drivers": list(report.key_positive_factors),
+            "reasons": list(report.key_positive_factors),
+            "risks": list(report.key_negative_factors),
+            "conditions": conditions,
+            "conditionTitle": "模型風險與補充條件" if conditions else "",
+            "reviewId": None,
+            "reportId": report.report_id,
+            "reportVersion": report.report_version,
+            "sitescoreRunId": report.sitescore_run_id,
+        }
 
     def _candidate(self, candidate_id: str) -> dict[str, Any]:
         for candidate in self._candidates:

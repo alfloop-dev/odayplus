@@ -10,8 +10,17 @@ from apps.api.app.routes.operator import create_operator_router
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
 )
+from shared.infrastructure.persistence import (
+    DurableAVMRepository,
+    DurableListingRepository,
+    DurableNetPlanRepository,
+    DurablePriceOpsRepository,
+    DurableSiteScoreRepository,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from shared.infrastructure.persistence.repositories import DurableDecisionStore
 
 BASE = "/api/v1/operator"
 SEED_IDS = {
@@ -23,6 +32,11 @@ SEED_IDS = {
     "seg-metro-dinner",
     "ap-store-1042",
 }
+
+
+class _UnusedModelRuntime:
+    def infer(self, **_kwargs: Any) -> Any:
+        raise AssertionError("empty canonical stores must not invoke SiteScore")
 
 
 def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str, str]:
@@ -40,6 +54,11 @@ def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str,
 
 def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
     bundle = _durable_bundle(database_path)
+    document_store = SqliteDocumentStore(bundle.engine)
+
+    def scoped(tenant_id: str) -> TenantScopedDocumentStore:
+        return TenantScopedDocumentStore(document_store, tenant_id)
+
     app = FastAPI()
     app.state.job_queue = bundle.job_queue
 
@@ -54,7 +73,26 @@ def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
     app.include_router(
         create_operator_router(
             audit_log=bundle.audit_log,
-            document_store=SqliteDocumentStore(bundle.engine),
+            document_store=document_store,
+            listing_repository_for_tenant=lambda tenant_id: DurableListingRepository(
+                scoped(tenant_id)
+            ),
+            sitescore_repository_for_tenant=lambda tenant_id: DurableSiteScoreRepository(
+                scoped(tenant_id)
+            ),
+            sitescore_decision_repository_for_tenant=lambda tenant_id: DurableDecisionStore(
+                scoped(tenant_id)
+            ),
+            avm_repository_for_tenant=lambda tenant_id: DurableAVMRepository(
+                scoped(tenant_id)
+            ),
+            netplan_repository_for_tenant=lambda tenant_id: DurableNetPlanRepository(
+                scoped(tenant_id)
+            ),
+            priceops_repository_for_tenant=lambda tenant_id: DurablePriceOpsRepository(
+                scoped(tenant_id)
+            ),
+            model_runtime=_UnusedModelRuntime(),
             live_repository=OperatorLiveRepository(bundle),
             require_live_data=True,
             persistence_mode="postgresql",

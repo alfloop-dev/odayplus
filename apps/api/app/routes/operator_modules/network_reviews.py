@@ -35,6 +35,7 @@ from modules.opsboard.application.network_reviews import (
     NetworkReviewNotFound,
     NetworkReviewPolicyError,
     NetworkReviewRoleError,
+    NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
 
@@ -76,9 +77,15 @@ def create_network_review_sub_router(
         request: Request,
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
-        return resolve_service(request, service, service_resolver).snapshot(
-            correlation_id=x_correlation_id
-        )
+        try:
+            return resolve_service(request, service, service_resolver).snapshot(
+                correlation_id=x_correlation_id
+            )
+        except NetworkReviewRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
     @router.post("/reset", dependencies=[Depends(require_decide_permission_fn)])
     def reset_network_reviews(request: Request) -> dict[str, Any]:
@@ -117,6 +124,11 @@ def create_network_review_sub_router(
         except NetworkReviewPolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        except NetworkReviewRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
             ) from exc
 
     return router

@@ -25,6 +25,7 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_scoring import (
     NetworkScoringGateError,
     NetworkScoringNotFound,
+    NetworkScoringRuntimeUnavailable,
     NetworkScoringService,
 )
 
@@ -59,9 +60,15 @@ def create_network_scoring_sub_router(
         request: Request,
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
-        return resolve_service(request, service, service_resolver).snapshot(
-            correlation_id=x_correlation_id
-        )
+        try:
+            return resolve_service(request, service, service_resolver).snapshot(
+                correlation_id=x_correlation_id
+            )
+        except NetworkScoringRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
     @router.post("/reset", dependencies=[Depends(require_write_permission_fn)])
     def reset_network_scoring(request: Request) -> dict[str, Any]:
@@ -95,6 +102,11 @@ def create_network_scoring_sub_router(
                 status_code=422,
                 detail={"message": str(exc), "missing": exc.missing},
             ) from exc
+        except NetworkScoringRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
     @router.post("/score", dependencies=[Depends(require_write_permission_fn)])
     def score_batch(
@@ -113,6 +125,11 @@ def create_network_scoring_sub_router(
             )
         except NetworkScoringNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkScoringRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
     @router.post("/compare", dependencies=[Depends(require_write_permission_fn)])
     def set_compare(
@@ -131,6 +148,11 @@ def create_network_scoring_sub_router(
             )
         except NetworkScoringNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NetworkScoringRuntimeUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=exc.to_detail(),
+            ) from exc
 
     return router
 

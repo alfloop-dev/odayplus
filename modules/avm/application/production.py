@@ -83,13 +83,18 @@ class AVMProductionExecutor:
         self.liquidity_evidence = liquidity_evidence
 
     @classmethod
-    def from_environment(cls) -> AVMProductionExecutor:
+    def from_environment(
+        cls,
+        *,
+        model_runtime: ModelRuntime | None = None,
+    ) -> AVMProductionExecutor:
         try:
-            from models.shared_ml.production_runtime import MlflowProductionModelRuntime
+            if model_runtime is None:
+                from models.shared_ml.production_runtime import MlflowProductionModelRuntime
 
-            model_runtime = MlflowProductionModelRuntime.from_environment(
-                model_names={"avm": os.getenv("ODP_AVM_MODEL_NAME", "avm")}
-            )
+                model_runtime = MlflowProductionModelRuntime.from_environment(
+                    model_names={"avm": os.getenv("ODP_AVM_MODEL_NAME", "avm")}
+                )
             liquidity_runtime, liquidity_evidence = _load_liquidity_artifact()
         except Exception as exc:
             if isinstance(exc, AVMProductionExecutionError):

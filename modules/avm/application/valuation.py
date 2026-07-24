@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from models.shared_ml.production_runtime import production_model_execution_required
+from models.shared_ml.production_runtime import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
     ApprovalDecision,
@@ -33,7 +36,20 @@ class AVMService:
         *,
         repository: InMemoryAVMRepository | None = None,
         production_executor: AVMProductionExecutor | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = production_execution_required(runtime_mode)
+        self.strict_production_composition = runtime_mode is not None and self.production_required
+        if self.strict_production_composition and (
+            repository is None or isinstance(repository, InMemoryAVMRepository)
+        ):
+            raise ProductionExecutionConfigurationError(
+                "AVM production requires an injected durable repository"
+            )
+        if self.strict_production_composition and production_executor is None:
+            raise ProductionExecutionConfigurationError(
+                "AVM production requires an injected approved model and liquidity executor"
+            )
         self.repository = repository or InMemoryAVMRepository()
         self.production_executor = production_executor
 
@@ -98,7 +114,7 @@ class AVMService:
             reason="valuation started",
             correlation_id=correlation_id,
         )
-        if production_model_execution_required():
+        if self.production_required:
             executor = self.production_executor
             if executor is None:
                 executor = AVMProductionExecutor.from_environment()

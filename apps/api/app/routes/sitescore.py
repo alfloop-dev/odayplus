@@ -27,6 +27,10 @@ except ModuleNotFoundError:  # pragma: no cover - optional API dependency
 else:
     from modules.sitescore.application.reporting import SiteScoreReportService
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+    from modules.sitescore.runtime import (
+        SiteScoreRuntimeConfigurationError,
+        sitescore_production_required,
+    )
     from shared.workflow.sitescore import (
         CandidateSiteRealizationHook,
         DecisionAction,
@@ -59,14 +63,35 @@ else:
         require_production_model: bool | None = None,
         job_queue: JobQueue | None = None,
         require_durable_jobs: bool | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/sitescore", tags=["sitescore"])
+        production_runtime_required = sitescore_production_required(runtime_mode)
+        production_model_required = (
+            production_runtime_required
+            or (
+                production_model_execution_required()
+                if require_production_model is None
+                else require_production_model
+            )
+        )
+        durable_jobs_required = (
+            production_runtime_required
+            or (
+                production_model_execution_required()
+                if require_durable_jobs is None
+                else require_durable_jobs
+            )
+        )
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        site_repository = repository or InMemorySiteScoreRepository()
+        site_repository = (
+            repository
+            if production_runtime_required
+            else repository or InMemorySiteScoreRepository()
+        )
         # ODP-FLOW-002: the injected realization hook (durable-backed in E2E mode)
         # is the one exposed via /sitescore/realized, so a realized approval
         # survives a restart. Avoid double-registering it on a provided workflow.
@@ -79,21 +104,39 @@ else:
             decision_workflow = workflow
             if active_realization_hook not in decision_workflow.hooks:
                 decision_workflow.register_hook(active_realization_hook)
-        production_model_required = (
-            production_model_execution_required()
-            if require_production_model is None
-            else require_production_model
-        )
-        service = SiteScoreReportService(
-            repository=site_repository,
-            model_runtime=model_runtime,
-            require_production_model=production_model_required,
-        )
-        local_job_queue = InMemoryJobQueue()
-        durable_jobs_required = (
-            production_model_execution_required()
-            if require_durable_jobs is None
-            else require_durable_jobs
+        composition_error: SiteScoreRuntimeConfigurationError | None = None
+        if production_runtime_required and model_runtime is None:
+            composition_error = SiteScoreRuntimeConfigurationError(
+                "SiteScore production requires an injected remote MLflow runtime"
+            )
+            service = None
+        else:
+            try:
+                service = SiteScoreReportService(
+                    repository=site_repository,
+                    model_runtime=model_runtime,
+                    require_production_model=production_model_required,
+                    runtime_mode=runtime_mode,
+                )
+            except SiteScoreRuntimeConfigurationError as exc:
+                composition_error = exc
+                service = None
+        local_job_queue = None if durable_jobs_required else InMemoryJobQueue()
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/sitescore",
+            tags=["sitescore"],
+            dependencies=[Depends(require_runtime_binding)],
         )
 
         def receipt_store(request: Request) -> TenantScopedJobReceiptStore:
@@ -102,6 +145,14 @@ else:
                 app = request.scope.get("app")
                 active_queue = getattr(getattr(app, "state", None), "job_queue", None)
             active_queue = active_queue or local_job_queue
+            if active_queue is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "DURABLE_JOB_RECEIPT_STORE_REQUIRED",
+                        "message": "SiteScore production jobs require durable persistence",
+                    },
+                )
             store = TenantScopedJobReceiptStore(
                 queue=active_queue,
                 service="sitescore.score",

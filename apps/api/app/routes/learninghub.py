@@ -13,6 +13,10 @@ from models.shared_ml.oss_capabilities import inspect_oss_stack
 from models.shared_ml.registry import ModelStage, ModelVersion
 from models.shared_ml.validation import MetricThreshold, SegmentMetric
 from modules.learninghub.application import LearningHubError, LearningHubService, ReleaseType
+from modules.learninghub.runtime import (
+    LearningHubRuntimeConfigurationError,
+    learninghub_production_required,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -21,7 +25,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
-    from modules.learninghub.infrastructure import InMemoryLearningHubRepository
+    from modules.learninghub.infrastructure import (
+        InMemoryLearningHubRepository,
+        MlflowRegistryAdapter,
+    )
 
 
     class DatasetSnapshotPayload(BaseModel):
@@ -124,20 +131,60 @@ else:
     def create_learninghub_router(
         *,
         repository: InMemoryLearningHubRepository | None = None,
-        artifact_store: InMemoryArtifactStore | None = None,
+        artifact_store: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        registry: MlflowRegistryAdapter | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/learninghub", tags=["learninghub"])
-        active_repository = repository or InMemoryLearningHubRepository()
-        active_artifacts = artifact_store or InMemoryArtifactStore()
+        production_runtime_required = learninghub_production_required(runtime_mode)
+        active_repository = (
+            repository
+            if production_runtime_required
+            else repository or InMemoryLearningHubRepository()
+        )
+        active_artifacts = (
+            artifact_store
+            if production_runtime_required
+            else artifact_store or InMemoryArtifactStore()
+        )
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        service = LearningHubService(
-            repository=active_repository,
-            audit_log=active_audit_log,
+        composition_error: LearningHubRuntimeConfigurationError | None = None
+        if production_runtime_required and registry is None:
+            composition_error = LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected remote MLflow registry"
+            )
+            service = None
+        else:
+            try:
+                service = LearningHubService(
+                    repository=active_repository,
+                    registry=registry,
+                    audit_log=active_audit_log,
+                    artifact_store=active_artifacts,
+                    runtime_mode=runtime_mode,
+                )
+            except LearningHubRuntimeConfigurationError as exc:
+                composition_error = exc
+                service = None
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/learninghub",
+            tags=["learninghub"],
+            dependencies=[Depends(require_runtime_binding)],
         )
 
         @router.post("/dataset-snapshots", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.CREATE, engine=authz_engine))])

@@ -32,6 +32,10 @@ else:
     )
     from modules.forecastops.domain import ForecastOpsError, ForecastOpsNotFoundError
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
+    from modules.forecastops.runtime import (
+        ForecastOpsRuntimeConfigurationError,
+        forecastops_production_required,
+    )
     from modules.forecastops.workers import ForecastOpsBatchResult, run_forecastops_batch_forecast
 
     class ForecastOpsTimeseriesPayload(BaseModel):
@@ -88,25 +92,61 @@ else:
         model_runtime: ProductionModelRuntime | None = None,
         require_production_model: bool | None = None,
         require_durable_jobs: bool | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/forecastops", tags=["forecastops"])
-        forecast_repository = repository or InMemoryForecastOpsRepository()
-        active_audit_log = audit_log or InMemoryAuditLog()
-        authz_engine = build_engine(audit_log=active_audit_log)
-        local_job_queue = InMemoryJobQueue()
-        service = ForecastOpsService(repository=forecast_repository)
+        production_runtime_required = forecastops_production_required(runtime_mode)
         production_model_required = (
-            production_model_execution_required()
-            if require_production_model is None
-            else require_production_model
+            production_runtime_required
+            or (
+                production_model_execution_required()
+                if require_production_model is None
+                else require_production_model
+            )
         )
         durable_jobs_required = (
-            production_model_execution_required()
-            if require_durable_jobs is None
-            else require_durable_jobs
+            production_runtime_required
+            or (
+                production_model_execution_required()
+                if require_durable_jobs is None
+                else require_durable_jobs
+            )
+        )
+        composition_error: ForecastOpsRuntimeConfigurationError | None = None
+        forecast_repository = (
+            repository
+            if production_runtime_required
+            else repository or InMemoryForecastOpsRepository()
+        )
+        active_audit_log = audit_log or InMemoryAuditLog()
+        authz_engine = build_engine(audit_log=active_audit_log)
+        local_job_queue = None if durable_jobs_required else InMemoryJobQueue()
+        try:
+            service = ForecastOpsService(
+                repository=forecast_repository,
+                model_runtime=model_runtime,
+                runtime_mode=runtime_mode,
+            )
+        except ForecastOpsRuntimeConfigurationError as exc:
+            composition_error = exc
+            service = None
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/forecastops",
+            tags=["forecastops"],
+            dependencies=[Depends(require_runtime_binding)],
         )
 
         def receipt_store(request: Request) -> TenantScopedJobReceiptStore:
@@ -115,6 +155,14 @@ else:
                 app = request.scope.get("app")
                 active_queue = getattr(getattr(app, "state", None), "job_queue", None)
             active_queue = active_queue or local_job_queue
+            if active_queue is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "DURABLE_JOB_RECEIPT_STORE_REQUIRED",
+                        "message": "ForecastOps production jobs require durable persistence",
+                    },
+                )
             store = TenantScopedJobReceiptStore(
                 queue=active_queue,
                 service="forecastops.forecast",

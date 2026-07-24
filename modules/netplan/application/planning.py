@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from models.shared_ml.production_runtime import production_model_execution_required
+from models.shared_ml.production_runtime import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from modules.netplan.application.production import NetPlanProductionExecutor
 from modules.netplan.domain.planning import (
     ApprovalRecord,
@@ -52,7 +55,20 @@ class NetPlanService:
         *,
         repository: InMemoryNetPlanRepository | None = None,
         production_executor: NetPlanProductionExecutor | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = production_execution_required(runtime_mode)
+        self.strict_production_composition = runtime_mode is not None and self.production_required
+        if self.strict_production_composition and (
+            repository is None or isinstance(repository, InMemoryNetPlanRepository)
+        ):
+            raise ProductionExecutionConfigurationError(
+                "NetPlan production requires an injected durable repository"
+            )
+        if self.strict_production_composition and production_executor is None:
+            raise ProductionExecutionConfigurationError(
+                "NetPlan production requires an injected OSS solver executor"
+            )
         self.repository = repository or InMemoryNetPlanRepository()
         self.production_executor = production_executor
 
@@ -101,7 +117,7 @@ class NetPlanService:
         scenario = self._require_scenario(scenario_id)
         now = solved_at or datetime.now(UTC)
         execution_metadata: dict[str, Any] = {}
-        if production_model_execution_required():
+        if self.production_required:
             executor = self.production_executor or NetPlanProductionExecutor()
             execution = executor.execute(
                 scenario,

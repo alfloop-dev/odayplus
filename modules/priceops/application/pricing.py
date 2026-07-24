@@ -16,7 +16,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from models.shared_ml.production_runtime import production_model_execution_required
+from models.shared_ml.production_runtime import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
     PRICEOPS_SOLVER_VERSION,
@@ -104,7 +107,20 @@ class PriceOpsService:
         *,
         repository: InMemoryPriceOpsRepository | None = None,
         production_optimizer: PriceOpsProductionOptimizer | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = production_execution_required(runtime_mode)
+        self.strict_production_composition = runtime_mode is not None and self.production_required
+        if self.strict_production_composition and (
+            repository is None or isinstance(repository, InMemoryPriceOpsRepository)
+        ):
+            raise ProductionExecutionConfigurationError(
+                "PriceOps production requires an injected durable repository"
+            )
+        if self.strict_production_composition and production_optimizer is None:
+            raise ProductionExecutionConfigurationError(
+                "PriceOps production requires an injected Optuna/CVXPY optimizer"
+            )
         self.repository = repository or InMemoryPriceOpsRepository()
         self.production_optimizer = production_optimizer
 
@@ -164,7 +180,7 @@ class PriceOpsService:
         now = optimized_at or datetime.now(UTC)
         solver_metadata: dict[str, Any] = {}
         solver_version = PRICEOPS_SOLVER_VERSION
-        if production_model_execution_required():
+        if self.production_required:
             executor = self.production_optimizer or PriceOpsProductionOptimizer()
             execution = executor.optimize(plan)
             pairs = execution.results

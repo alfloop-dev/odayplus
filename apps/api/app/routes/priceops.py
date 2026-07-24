@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from models.shared_ml import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from shared.api.errors import ApiError, ErrorCode
 from shared.api.idempotency import (
     IdempotencyConflictError,
@@ -27,6 +31,7 @@ else:
     )
     from modules.priceops.domain import PriceConstraints, PricingPlanItem
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
+    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
         PriceOpsBatchResult,
@@ -130,16 +135,47 @@ else:
         repository: InMemoryPriceOpsRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         job_store: PriceOpsJobStore | None = None,
+        production_optimizer: PriceOpsProductionOptimizer | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/priceops", tags=["priceops"])
-        price_repository = repository or InMemoryPriceOpsRepository()
+        production_required = production_execution_required(runtime_mode)
+        price_repository = (
+            repository
+            if production_required
+            else repository or InMemoryPriceOpsRepository()
+        )
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or PriceOpsJobStore()
-        service = PriceOpsService(repository=price_repository)
+        composition_error: ProductionExecutionConfigurationError | None = None
+        try:
+            service = PriceOpsService(
+                repository=price_repository,
+                production_optimizer=production_optimizer,
+                runtime_mode=runtime_mode,
+            )
+        except ProductionExecutionConfigurationError as exc:
+            composition_error = exc
+            service = None
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/priceops",
+            tags=["priceops"],
+            dependencies=[Depends(require_runtime_binding)],
+        )
         # One store for every priceops mutation, replacing the router-local
         # `idempotency_index` dict. Unlike that dict this one fingerprints the
         # request body, so reusing a key for a different payload is a 409
@@ -218,6 +254,8 @@ else:
                         requests=plan_requests,
                         optimized_at=_parse_time(body.optimized_at),
                         repository=price_repository,
+                        production_optimizer=production_optimizer,
+                        runtime_mode=runtime_mode,
                     ),
                     idempotency_key=effective_key,
                 )

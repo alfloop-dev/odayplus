@@ -28,8 +28,16 @@ class AdLiftBatchResult:
 
 
 class AdLiftIncrementalityWorker:
-    def __init__(self, *, repository: InMemoryAdLiftRepository | None = None) -> None:
-        self.service = AdLiftService(repository=repository)
+    def __init__(
+        self,
+        *,
+        repository: InMemoryAdLiftRepository | None = None,
+        runtime_mode: str | None = None,
+    ) -> None:
+        self.service = AdLiftService(
+            repository=repository,
+            runtime_mode=runtime_mode,
+        )
 
     def run(
         self,
@@ -57,8 +65,12 @@ def run_adlift_incrementality_batch(
     job_id: str | None = None,
     generated_at: datetime | str | None = None,
     repository: InMemoryAdLiftRepository | None = None,
+    runtime_mode: str | None = None,
 ) -> AdLiftBatchResult:
-    return AdLiftIncrementalityWorker(repository=repository).run(
+    return AdLiftIncrementalityWorker(
+        repository=repository,
+        runtime_mode=runtime_mode,
+    ).run(
         campaigns=campaigns,
         job_id=job_id,
         generated_at=generated_at,

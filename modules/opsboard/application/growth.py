@@ -474,8 +474,14 @@ class GrowthService:
         *,
         audit_log: InMemoryAuditLog | None = None,
         seed_fixtures: bool = True,
+        priceops_repository: Any | None = None,
+        tenant_id: str | None = None,
+        require_canonical: bool = False,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._priceops_repository = priceops_repository
+        self._tenant_id = tenant_id
+        self._require_canonical = require_canonical
         self._state = _clone(
             initial_state
             if initial_state is not None
@@ -484,6 +490,8 @@ class GrowthService:
             else _empty_state()
         )
         self._audit_log = audit_log or InMemoryAuditLog()
+        if self._require_canonical:
+            self._refresh_canonical()
 
     def export_state(self) -> dict[str, Any]:
         return _clone(self._state)
@@ -493,9 +501,13 @@ class GrowthService:
     # ------------------------------------------------------------------
 
     def get_freshness(self) -> dict[str, Any]:
+        if self._require_canonical:
+            self._refresh_canonical()
         return _clone(self._state["freshness"])
 
     def list_segments(self, *, segment_id: str | None = None) -> list[dict[str, Any]]:
+        if self._require_canonical:
+            self._refresh_canonical()
         segments = self._state["segments"]
         if segment_id:
             return _clone([s for s in segments if s["id"] == segment_id])
@@ -506,6 +518,8 @@ class GrowthService:
         *,
         segment_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self._require_canonical:
+            self._refresh_canonical()
         recs = self._state["recommendations"]
         if segment_id:
             recs = [r for r in recs if r["segmentId"] == segment_id]
@@ -517,6 +531,8 @@ class GrowthService:
         segment_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self._require_canonical:
+            self._refresh_canonical()
         actions = self._state["actions"]
         if segment_id:
             actions = [a for a in actions if a["segmentId"] == segment_id]
@@ -536,6 +552,8 @@ class GrowthService:
         return enriched
 
     def get_summary(self) -> dict[str, Any]:
+        if self._require_canonical:
+            self._refresh_canonical()
         actions = self._state["actions"]
         segments = self._state["segments"]
         active_count = sum(1 for a in actions if a.get("status") in _ACTIVE_STATUSES)
@@ -1227,6 +1245,10 @@ class GrowthService:
     # ------------------------------------------------------------------
 
     def reset_to_seed(self) -> None:
+        if self._require_canonical:
+            self._state = _empty_state()
+            self._refresh_canonical()
+            return
         self._state = (
             _seed_state() if self._seed_fixtures else _empty_state()
         )
@@ -1234,6 +1256,104 @@ class GrowthService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _refresh_canonical(self) -> None:
+        if self._priceops_repository is None or not self._tenant_id:
+            raise GrowthPolicyError(
+                "canonical PriceOps repository and tenant scope are required"
+            )
+        plans = [
+            plan
+            for plan in self._priceops_repository.list_plans()
+            if plan.tenant_id == self._tenant_id
+        ]
+        segments: list[dict[str, Any]] = []
+        recommendations: list[dict[str, Any]] = []
+        timestamps: list[datetime] = []
+        solver_versions: set[str] = set()
+        policy_versions: set[str] = set()
+        source_ids: set[str] = set()
+        for plan in plans:
+            timestamps.append(plan.created_at)
+            optimization = self._priceops_repository.get_optimization(plan.plan_id)
+            evaluation = self._priceops_repository.get_evaluation(plan.plan_id)
+            approvals = self._priceops_repository.list_approvals(plan.plan_id)
+            if optimization is not None:
+                timestamps.append(optimization.optimized_at)
+                solver_versions.add(optimization.solver_version)
+            for approval in approvals:
+                timestamps.append(approval.approved_at)
+                policy_versions.add(approval.policy_version)
+            optimization_by_item = {
+                item.item_id: item
+                for item in (optimization.items if optimization is not None else ())
+            }
+            for item in plan.items:
+                segment_id = f"priceops:{plan.plan_id}:{item.item_id}"
+                source_ids.add(plan.plan_id)
+                segments.append(
+                    {
+                        "id": segment_id,
+                        "name": f"{item.store_id} / {item.machine_type}",
+                        "storeId": item.store_id,
+                        "machineType": item.machine_type,
+                        "planId": plan.plan_id,
+                        "planStatus": plan.status.value,
+                        "baselineDemand": item.baseline_demand,
+                        "elasticity": item.elasticity.to_dict(),
+                        "evaluation": (
+                            evaluation.to_dict()
+                            if evaluation is not None
+                            else None
+                        ),
+                        "source": "priceops",
+                    }
+                )
+                optimized = optimization_by_item.get(item.item_id)
+                if optimized is None:
+                    continue
+                result = optimized.result
+                recommendations.append(
+                    {
+                        "id": f"priceops-rec:{plan.plan_id}:{item.item_id}",
+                        "segmentId": segment_id,
+                        "planId": plan.plan_id,
+                        "itemId": item.item_id,
+                        "storeId": item.store_id,
+                        "machineType": item.machine_type,
+                        "currentPrice": result.current_price,
+                        "recommendedPrice": result.recommended_price,
+                        "expectedIncrementalGrossMargin": (
+                            result.incremental_gross_margin
+                        ),
+                        "expectedDemandChange": result.expected_demand_change,
+                        "riskLevel": result.risk_level,
+                        "constraintStatus": (
+                            "HARD_CONSTRAINT_FAILED"
+                            if result.infeasible
+                            else "SAFE"
+                        ),
+                        "bindingConstraints": list(result.binding_constraints),
+                        "requiresApproval": result.requires_approval,
+                        "solverStatus": result.solver_status,
+                        "solverVersion": result.solver_version,
+                        "optimizedAt": optimization.optimized_at.isoformat(),
+                        "source": "priceops",
+                    }
+                )
+        self._state["segments"] = segments
+        self._state["recommendations"] = recommendations
+        latest = max(timestamps).isoformat() if timestamps else None
+        self._state["freshness"] = {
+            "status": "LIVE" if plans else "EMPTY",
+            "updatedAt": latest,
+            "modelVersion": None,
+            "policyVersion": sorted(policy_versions),
+            "featureSnapshotTime": latest,
+            "sourceSnapshotId": sorted(source_ids),
+            "solverVersions": sorted(solver_versions),
+            "planCount": len(plans),
+        }
 
     def _find_segment(self, segment_id: str) -> dict[str, Any]:
         for segment in self._state["segments"]:

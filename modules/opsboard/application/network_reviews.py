@@ -21,11 +21,9 @@ Owns the task-scoped review-decision surface behind
   but not to Expansion); this service adds a defense-in-depth allowlist so a
   mis-scoped caller still fails closed.
 
-The service is deliberately in-memory and self-contained for the Operator
-Console product slice, mirroring the R4-006 ``NetworkScoringService`` and the
-R4-009 ``GovernanceService`` idioms. Candidate CS-1002 (RV-701, WAIT) and
-CS-1004 (RV-698, REJECT) reuse the review ids seeded by the scoring service;
-CS-1001 (RV-702, GO) is the golden approve flow.
+Local/test mode remains self-contained for the package fixture. Production
+mode reads and mutates the tenant-scoped canonical SiteScore decision store
+through ``SiteScoreDecisionWorkflow``.
 """
 
 from __future__ import annotations
@@ -36,6 +34,12 @@ import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+from shared.workflow.sitescore import (
+    DecisionAction,
+    DecisionStatus,
+    SiteScoreDecisionError,
+)
 
 # The review decision verbs, matching the R4 design buttons
 # 核准 GO / 核准 WAIT / 退回修改 / 駁回.
@@ -119,6 +123,17 @@ class NetworkReviewPolicyError(RuntimeError):
 
 class NetworkReviewRoleError(RuntimeError):
     """Raised when the actor role is not allowed to decide (fail closed)."""
+
+
+class NetworkReviewRuntimeUnavailable(RuntimeError):
+    """Raised when canonical SiteScore decision dependencies are unavailable."""
+
+    def to_detail(self) -> dict[str, Any]:
+        return {
+            "code": "SITESCORE_DECISION_DEPENDENCY_UNAVAILABLE",
+            "message": str(self),
+            "retryable": True,
+        }
 
 
 def _now() -> str:
@@ -281,8 +296,16 @@ class NetworkReviewService:
         *,
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
+        decision_repository: Any | None = None,
+        sitescore_repository: Any | None = None,
+        decision_workflow: Any | None = None,
+        require_canonical: bool = False,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._decision_repository = decision_repository
+        self._sitescore_repository = sitescore_repository
+        self._decision_workflow = decision_workflow
+        self._require_canonical = require_canonical
         if initial_state is not None:
             self._reviews = _copy(initial_state.get("reviews", []))
             self._candidates = _copy(initial_state.get("candidates", {}))
@@ -331,6 +354,10 @@ class NetworkReviewService:
     # -- public API ----------------------------------------------------
 
     def reset(self) -> dict[str, Any]:
+        if self._require_canonical:
+            self._audit_events = []
+            self._idempotency_cache = {}
+            return self.snapshot()
         self.__init__(seed_fixtures=self._seed_fixtures)
         return self.snapshot()
 
@@ -345,6 +372,8 @@ class NetworkReviewService:
         }
 
     def snapshot(self, *, correlation_id: str | None = None) -> dict[str, Any]:
+        if self._require_canonical:
+            return self._canonical_snapshot(correlation_id=correlation_id)
         reviews = [self._review_view(review) for review in self._sorted_reviews()]
         pending = sum(1 for review in self._reviews if review["status"] == "pending")
         return {
@@ -411,6 +440,21 @@ class NetworkReviewService:
         )
         if idempotency_key and cache_key in self._idempotency_cache:
             return {**_copy(self._idempotency_cache[cache_key]), "idempotentReplay": True}
+
+        if self._require_canonical:
+            return self._decide_canonical(
+                review_id=review_id,
+                action=action,
+                reason=reason_text,
+                conditions=condition_text,
+                required_data=required_list,
+                override_ack=override_ack,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                idempotency_key=idempotency_key,
+                cache_key=cache_key,
+                correlation_id=correlation_id,
+            )
 
         if action not in DECISION_ACTIONS:
             raise NetworkReviewPolicyError(
@@ -572,6 +616,216 @@ class NetworkReviewService:
         return result
 
     # -- internals -----------------------------------------------------
+
+    def _require_canonical_dependencies(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("decision_repository", self._decision_repository),
+                ("sitescore_repository", self._sitescore_repository),
+                ("decision_workflow", self._decision_workflow),
+            )
+            if value is None
+        ]
+        if missing:
+            raise NetworkReviewRuntimeUnavailable(
+                "canonical SiteScore decision dependencies are unavailable: "
+                + ", ".join(missing)
+            )
+
+    def _canonical_snapshot(
+        self,
+        *,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        self._require_canonical_dependencies()
+        decisions = self._decision_repository.list_decisions()
+        reviews: list[dict[str, Any]] = []
+        approvals: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
+        status_map = {
+            DecisionStatus.SYSTEM_RECOMMENDED: "pending",
+            DecisionStatus.PENDING_REVIEW: "pending",
+            DecisionStatus.DRAFT: "needdata",
+            DecisionStatus.APPROVED: "approved",
+            DecisionStatus.REJECTED: "rejected",
+        }
+        for decision in decisions:
+            report = self._decision_repository.get_report(decision.decision_id)
+            status_key = status_map[decision.status]
+            score = int(round(report.confidence * 100)) if report is not None else None
+            risks = list(report.key_negative_factors) if report is not None else []
+            row = {
+                "id": decision.decision_id,
+                "candidateId": decision.candidate_site_id,
+                "candidateTitle": decision.candidate_site_id,
+                "zoneLabel": report.heat_zone_id if report is not None else "",
+                "recommendation": decision.recommendation.value,
+                "score": score,
+                "risk": risks,
+                "status": status_key,
+                "statusLabel": STATUS_LABEL[status_key],
+                "submittedAt": decision.created_at.isoformat(),
+                "reviewerRole": "Site Reviewer",
+                "modelVersion": decision.model_version,
+                "datasetSnapshotId": (
+                    report.source_snapshot_ids[0]
+                    if report is not None and report.source_snapshot_ids
+                    else ""
+                ),
+                "history": [
+                    {
+                        "t": transition.at.isoformat(),
+                        "v": (
+                            f"{transition.actor}: {transition.action} "
+                            f"{transition.to_status.value}"
+                        ),
+                    }
+                    for transition in reversed(decision.history)
+                ],
+                "decision": decision.to_dict() if decision.is_terminal else None,
+                "canonicalDecisionStatus": decision.status.value,
+                "reportId": decision.report_id,
+                "reportVersion": decision.report_version,
+            }
+            reviews.append(row)
+            candidates.append(
+                {
+                    "id": decision.candidate_site_id,
+                    "status": status_key,
+                    "statusLabel": STATUS_LABEL[status_key],
+                    "recommendation": decision.recommendation.value,
+                    "score": score,
+                    "reviewId": decision.decision_id,
+                    "missingData": [],
+                }
+            )
+            approvals.append(
+                {
+                    "id": decision.decision_id,
+                    "reviewId": decision.decision_id,
+                    "candidateId": decision.candidate_site_id,
+                    "title": decision.candidate_site_id,
+                    "systemRecommendation": decision.recommendation.value,
+                    "risk": risks,
+                    "status": decision.status.value.lower(),
+                    "submittedAt": decision.created_at.isoformat(),
+                    "decidedAt": (
+                        decision.history[-1].at.isoformat()
+                        if decision.is_terminal and decision.history
+                        else None
+                    ),
+                    "decidedBy": (
+                        decision.history[-1].actor
+                        if decision.is_terminal and decision.history
+                        else None
+                    ),
+                }
+            )
+        reviews.sort(key=lambda row: (row["submittedAt"], row["id"]), reverse=True)
+        pending = sum(row["status"] == "pending" for row in reviews)
+        return {
+            "source": "canonical",
+            "reviews": reviews,
+            "candidates": candidates,
+            "approvals": approvals,
+            "decisions": [decision.to_dict() for decision in decisions],
+            "auditEvents": _copy(self._audit_events),
+            "decisionMapping": dict(DECISION_FINAL_LABEL),
+            "counts": {
+                "reviews": len(reviews),
+                "pending": pending,
+                "decided": len(reviews) - pending,
+            },
+            "correlationId": correlation_id,
+        }
+
+    def _decide_canonical(
+        self,
+        *,
+        review_id: str,
+        action: str,
+        reason: str,
+        conditions: str,
+        required_data: list[str],
+        override_ack: bool,
+        actor_role_id: str,
+        actor_name: str | None,
+        idempotency_key: str | None,
+        cache_key: tuple[str, ...],
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        self._require_canonical_dependencies()
+        if action not in DECISION_ACTIONS:
+            raise NetworkReviewPolicyError(
+                f"decision must be one of {', '.join(DECISION_ACTIONS)}"
+            )
+        if actor_role_id not in DECIDING_ROLE_IDS:
+            raise NetworkReviewRoleError(
+                f"role {actor_role_id!r} may prepare or submit but not decide network reviews"
+            )
+        if len(reason) < _MIN_REASON_LEN:
+            raise NetworkReviewPolicyError(
+                "決策原因必填（至少 10 字），寫入 Decision Log"
+            )
+        if action == "WAIT" and not conditions:
+            raise NetworkReviewPolicyError("核准 WAIT 需填寫通過條件")
+        if action == "RETURN" and not required_data:
+            raise NetworkReviewPolicyError("退回修改需填寫需補資料")
+
+        existing = self._decision_repository.get_decision(review_id)
+        if existing is None:
+            raise NetworkReviewNotFound(f"review {review_id} not found")
+        natural = _NATURAL_ACTION.get(existing.recommendation.value)
+        override = action not in {natural, "RETURN"}
+        if override and not override_ack:
+            raise NetworkReviewPolicyError(
+                "本決策覆寫系統建議，需勾選風險確認後才能送出"
+            )
+        actor = actor_name or actor_role_id
+        try:
+            if existing.status in {
+                DecisionStatus.SYSTEM_RECOMMENDED,
+                DecisionStatus.DRAFT,
+            }:
+                self._decision_workflow.submit_for_review(
+                    review_id,
+                    submitted_by=actor,
+                    correlation_id=correlation_id or "",
+                )
+            outcome = self._decision_workflow.decide(
+                review_id,
+                action={
+                    "GO": DecisionAction.APPROVE,
+                    "WAIT": DecisionAction.REQUEST_REVISION,
+                    "RETURN": DecisionAction.REQUEST_REVISION,
+                    "REJECT": DecisionAction.REJECT,
+                }[action],
+                actor=actor,
+                reason=reason,
+                correlation_id=correlation_id or "",
+            )
+        except SiteScoreDecisionError as exc:
+            raise NetworkReviewConflict(str(exc)) from exc
+
+        result = {
+            "review": outcome.decision.to_dict(),
+            "decision": outcome.to_dict(),
+            "records": {
+                "candidateId": outcome.decision.candidate_site_id,
+                "reviewId": outcome.decision.decision_id,
+                "decisionId": outcome.decision.decision_id,
+                "auditId": outcome.audit_event_id,
+            },
+            "conditions": conditions,
+            "requiredData": required_data,
+            "override": override,
+            "correlationId": correlation_id,
+            "idempotentReplay": False,
+        }
+        if idempotency_key:
+            self._idempotency_cache[cache_key] = _copy(result)
+        return result
 
     def _review(self, review_id: str) -> dict[str, Any]:
         for review in self._reviews:

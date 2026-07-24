@@ -114,6 +114,7 @@ else:
         require_live_data = _env_flag("ODP_REQUIRE_LIVE_DATA") or (
             deployment_mode in _LIVE_REQUIRED_DEPLOYMENTS
         )
+        domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
         configured_persistence_mode = os.environ.get(
             "ODP_PERSISTENCE", persistence_mode
@@ -523,8 +524,19 @@ else:
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
         from shared.infrastructure.persistence import (
+            DurableAVMRepository,
+            DurableListingRepository,
+            DurableNetPlanRepository,
+            DurablePriceOpsRepository,
+            DurableSiteScoreRepository,
             PostgresDocumentStore,
             SqliteDocumentStore,
+        )
+        from shared.infrastructure.persistence.operator_domains import (
+            TenantScopedDocumentStore,
+        )
+        from shared.infrastructure.persistence.repositories import (
+            DurableDecisionStore,
         )
         from shared.workflow.sitescore import (
             CandidateSiteRealizationHook,
@@ -570,21 +582,53 @@ else:
             ProductionModelRuntimeError,
             seed_scoring_models,
         )
+        from modules.avm.application import (
+            AVMProductionExecutionError,
+            AVMProductionExecutor,
+        )
+        from modules.learninghub.infrastructure import MlflowRegistryAdapter
+        from modules.netplan.application import NetPlanProductionExecutor
+        from modules.priceops.infrastructure.oss_optimizer import (
+            PriceOpsProductionOptimizer,
+        )
 
         release_sha = (
             os.environ.get("ODAY_RELEASE_SHA")
             or os.environ.get("GITHUB_SHA")
             or os.environ.get("COMMIT_SHA")
         )
+        learninghub_registry: Any | None = None
+        avm_production_executor: Any | None = None
+        netplan_production_executor: Any | None = None
+        priceops_production_optimizer: Any | None = None
         if require_live_data:
             scoring_bindings: dict[str, Any] = {}
+            production_composition_errors: list[str] = []
             try:
+                from modules.avm.domain import AVM_FEATURE_VERSION
                 from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
-                model_runtime = MlflowProductionModelRuntime.from_environment()
+                model_runtime = MlflowProductionModelRuntime.from_environment(
+                    model_names={
+                        "avm": os.environ.get("ODP_AVM_MODEL_NAME", "avm"),
+                        "forecastops": os.environ.get(
+                            "ODP_FORECASTOPS_MODEL_NAME",
+                            "forecastops",
+                        ),
+                        "heatzone": os.environ.get(
+                            "ODP_HEATZONE_MODEL_NAME",
+                            "heatzone",
+                        ),
+                        "sitescore": os.environ.get(
+                            "ODP_SITESCORE_MODEL_NAME",
+                            "sitescore",
+                        ),
+                    }
+                )
                 for service, feature_schema_version in {
+                    "avm": AVM_FEATURE_VERSION,
                     "forecastops": FORECASTOPS_FEATURE_VERSION,
                     "heatzone": HEATZONE_FEATURE_VERSION,
                     "sitescore": SITESCORE_FEATURE_VERSION,
@@ -595,11 +639,44 @@ else:
                     )
                     scoring_bindings[service] = executable.binding
             except ProductionModelRuntimeError as exc:
-                production_model_error = f"{exc.code}: {exc}"
+                production_composition_errors.append(f"{exc.code}: {exc}")
                 model_runtime = None
                 scoring_bindings = {}
+            if model_runtime is not None:
+                try:
+                    learninghub_registry = MlflowRegistryAdapter(
+                        learning_repo,
+                        tracking_uri=model_runtime.tracking_uri,
+                        client=model_runtime.client,
+                        runtime_mode=domain_runtime_mode,
+                    )
+                    learninghub_registry.require_production_binding()
+                except Exception as exc:
+                    production_composition_errors.append(
+                        f"LEARNINGHUB_PRODUCTION_BINDING_REQUIRED: {exc}"
+                    )
+                    learninghub_registry = None
+                try:
+                    avm_production_executor = AVMProductionExecutor.from_environment(
+                        model_runtime=model_runtime
+                    )
+                except AVMProductionExecutionError as exc:
+                    production_composition_errors.append(
+                        f"AVM_PRODUCTION_EXECUTION_UNAVAILABLE: {exc}"
+                    )
+                    avm_production_executor = None
+            netplan_production_executor = NetPlanProductionExecutor()
+            priceops_production_optimizer = PriceOpsProductionOptimizer()
+            production_model_error = (
+                "; ".join(production_composition_errors)
+                if production_composition_errors
+                else None
+            )
             production_model_bindings_ready = (
-                len(scoring_bindings) == 3 and model_runtime is not None
+                len(scoring_bindings) == 4
+                and model_runtime is not None
+                and learninghub_registry is not None
+                and avm_production_executor is not None
             )
             if production_model_bindings_ready:
                 model_binding_mode = "mlflow-production"
@@ -656,7 +733,15 @@ else:
             ),
             exact_responses=True,
         )
-        mount_versioned(api, create_avm_router(repository=avm_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
+            create_avm_router(
+                repository=avm_repo,
+                audit_log=audit_log,
+                production_executor=avm_production_executor,
+                runtime_mode=domain_runtime_mode,
+            ),
+        )
         mount_versioned(
             api,
             create_forecastops_router(
@@ -665,18 +750,39 @@ else:
                 model_binding=scoring_bindings.get("forecastops"),
                 model_runtime=model_runtime,
                 require_production_model=require_live_data,
+                require_durable_jobs=require_live_data,
+                job_queue=job_queue,
+                runtime_mode=domain_runtime_mode,
             ),
         )
-        mount_versioned(api, create_netplan_router(repository=netplan_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
+            create_netplan_router(
+                repository=netplan_repo,
+                audit_log=audit_log,
+                production_executor=netplan_production_executor,
+                runtime_mode=domain_runtime_mode,
+            ),
+        )
         mount_versioned(
             api,
             create_learninghub_router(
                 repository=learning_repo,
                 artifact_store=model_artifacts,
                 audit_log=audit_log,
+                registry=learninghub_registry,
+                runtime_mode=domain_runtime_mode,
             ),
         )
-        mount_versioned(api, create_priceops_router(repository=price_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
+            create_priceops_router(
+                repository=price_repo,
+                audit_log=audit_log,
+                production_optimizer=priceops_production_optimizer,
+                runtime_mode=domain_runtime_mode,
+            ),
+        )
         mount_versioned(
             api,
             create_sitescore_router(
@@ -687,9 +793,19 @@ else:
                 model_binding=scoring_bindings.get("sitescore"),
                 model_runtime=model_runtime,
                 require_production_model=require_live_data,
+                require_durable_jobs=require_live_data,
+                job_queue=job_queue,
+                runtime_mode=domain_runtime_mode,
             ),
         )
-        mount_versioned(api, create_adlift_router(repository=adlift_repo, audit_log=audit_log))
+        mount_versioned(
+            api,
+            create_adlift_router(
+                repository=adlift_repo,
+                audit_log=audit_log,
+                runtime_mode=domain_runtime_mode,
+            ),
+        )
         mount_versioned(
             api,
             create_operator_store_ops_router(
@@ -716,6 +832,48 @@ else:
                 else InMemoryAssistedIntakeRepository()
             )
         )
+        if operator_document_store is not None:
+            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
+                return TenantScopedDocumentStore(operator_document_store, tenant_id)
+
+            def listing_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableListingRepository:
+                return DurableListingRepository(tenant_document_store(tenant_id))
+
+            def sitescore_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableSiteScoreRepository:
+                return DurableSiteScoreRepository(tenant_document_store(tenant_id))
+
+            def sitescore_decision_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableDecisionStore:
+                return DurableDecisionStore(tenant_document_store(tenant_id))
+
+            def avm_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableAVMRepository:
+                return DurableAVMRepository(tenant_document_store(tenant_id))
+
+            def netplan_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableNetPlanRepository:
+                return DurableNetPlanRepository(
+                    tenant_document_store(tenant_id)
+                )
+
+            def priceops_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurablePriceOpsRepository:
+                return DurablePriceOpsRepository(tenant_document_store(tenant_id))
+        else:
+            listing_repository_for_tenant = None
+            sitescore_repository_for_tenant = None
+            sitescore_decision_repository_for_tenant = None
+            avm_repository_for_tenant = None
+            netplan_repository_for_tenant = None
+            priceops_repository_for_tenant = None
 
         mount_versioned(
             api,
@@ -723,6 +881,17 @@ else:
                 audit_log=audit_log,
                 document_store=operator_document_store,
                 listing_repository=listing_repository,
+                listing_repository_for_tenant=listing_repository_for_tenant,
+                sitescore_repository_for_tenant=sitescore_repository_for_tenant,
+                sitescore_decision_repository_for_tenant=(
+                    sitescore_decision_repository_for_tenant
+                ),
+                avm_repository_for_tenant=avm_repository_for_tenant,
+                netplan_repository_for_tenant=netplan_repository_for_tenant,
+                priceops_repository_for_tenant=priceops_repository_for_tenant,
+                model_runtime=model_runtime,
+                avm_production_executor=avm_production_executor,
+                netplan_production_executor=netplan_production_executor,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
                 live_repository=operator_live_repository,
@@ -745,6 +914,11 @@ else:
         api.state.learninghub_repository = learning_repo
         api.state.scoring_bindings = scoring_bindings
         api.state.model_runtime = model_runtime
+        api.state.learninghub_registry = learninghub_registry
+        api.state.avm_production_executor = avm_production_executor
+        api.state.netplan_production_executor = netplan_production_executor
+        api.state.priceops_production_optimizer = priceops_production_optimizer
+        api.state.domain_runtime_mode = domain_runtime_mode
         api.state.production_model_error = production_model_error
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo

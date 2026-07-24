@@ -117,6 +117,15 @@ def create_operator_router(
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
+    listing_repository_for_tenant: Any | None = None,
+    sitescore_repository_for_tenant: Any | None = None,
+    sitescore_decision_repository_for_tenant: Any | None = None,
+    avm_repository_for_tenant: Any | None = None,
+    netplan_repository_for_tenant: Any | None = None,
+    priceops_repository_for_tenant: Any | None = None,
+    model_runtime: Any | None = None,
+    avm_production_executor: Any | None = None,
+    netplan_production_executor: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
@@ -638,6 +647,60 @@ def create_operator_router(
             DurableOperatorDomainStateRepository,
             TenantScopedDocumentStore,
         )
+        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+
+        def require_tenant_repository(
+            provider: Any | None,
+            dependency: str,
+            tenant_id: str,
+        ) -> Any:
+            if provider is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
+                        "dependency": dependency,
+                        "message": (
+                            f"live Operator route requires tenant-aware "
+                            f"{dependency}"
+                        ),
+                    },
+                )
+            repository = provider(tenant_id)
+            if repository is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
+                        "dependency": dependency,
+                        "message": (
+                            f"tenant-aware {dependency} is not configured for "
+                            f"tenant {tenant_id}"
+                        ),
+                    },
+                )
+            return repository
+
+        def require_model_runtime() -> Any:
+            if model_runtime is None:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "SITESCORE_RUNTIME_UNAVAILABLE",
+                        "dependency": "model_runtime",
+                        "message": (
+                            "live Operator SiteScore requires the canonical "
+                            "MLflow production runtime"
+                        ),
+                    },
+                )
+            return model_runtime
 
         listing_state_repository = DurableOperatorDomainStateRepository(
             document_store,
@@ -667,6 +730,11 @@ def create_operator_router(
         listing_resolver = DurableTenantServiceResolver(
             listing_state_repository,
             factory=lambda state, tenant_id: NetworkListingService(
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant,
+                    "listing_repository",
+                    tenant_id,
+                ),
                 intake_repository=DurableAssistedIntakeRepository(
                     TenantScopedDocumentStore(document_store, tenant_id)
                 ),
@@ -688,9 +756,21 @@ def create_operator_router(
         )
         scoring_resolver = DurableTenantServiceResolver(
             scoring_state_repository,
-            factory=lambda state, _tenant_id: NetworkScoringService(
+            factory=lambda state, tenant_id: NetworkScoringService(
                 initial_state=state,
                 seed_fixtures=False,
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant,
+                    "listing_repository",
+                    tenant_id,
+                ),
+                sitescore_repository=require_tenant_repository(
+                    sitescore_repository_for_tenant,
+                    "sitescore_repository",
+                    tenant_id,
+                ),
+                model_runtime=require_model_runtime(),
+                require_canonical=True,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -702,9 +782,29 @@ def create_operator_router(
         )
         review_resolver = DurableTenantServiceResolver(
             review_state_repository,
-            factory=lambda state, _tenant_id: NetworkReviewService(
-                initial_state=state,
-                seed_fixtures=False,
+            factory=lambda state, tenant_id: (
+                lambda decision_repository, sitescore_repository: NetworkReviewService(
+                    initial_state=state,
+                    seed_fixtures=False,
+                    decision_repository=decision_repository,
+                    sitescore_repository=sitescore_repository,
+                    decision_workflow=SiteScoreDecisionWorkflow(
+                        audit_log=active_audit_log,
+                        store=decision_repository,
+                    ),
+                    require_canonical=True,
+                )
+            )(
+                require_tenant_repository(
+                    sitescore_decision_repository_for_tenant,
+                    "sitescore_decision_repository",
+                    tenant_id,
+                ),
+                require_tenant_repository(
+                    sitescore_repository_for_tenant,
+                    "sitescore_repository",
+                    tenant_id,
+                ),
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={"reset", "decide_review"},
@@ -739,6 +839,21 @@ def create_operator_router(
                 ),
                 initial_state=state,
                 seed_fixtures=False,
+                avm_repository=require_tenant_repository(
+                    avm_repository_for_tenant,
+                    "avm_repository",
+                    tenant_id,
+                ),
+                netplan_repository=require_tenant_repository(
+                    netplan_repository_for_tenant,
+                    "netplan_repository",
+                    tenant_id,
+                ),
+                avm_production_executor=avm_production_executor,
+                netplan_production_executor=netplan_production_executor,
+                runtime_mode="production",
+                tenant_id=tenant_id,
+                require_canonical=True,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -752,10 +867,17 @@ def create_operator_router(
         )
         growth_resolver = DurableTenantServiceResolver(
             growth_state_repository,
-            factory=lambda state, _tenant_id: GrowthService(
+            factory=lambda state, tenant_id: GrowthService(
                 initial_state=state,
                 audit_log=active_audit_log,
                 seed_fixtures=False,
+                priceops_repository=require_tenant_repository(
+                    priceops_repository_for_tenant,
+                    "priceops_repository",
+                    tenant_id,
+                ),
+                tenant_id=tenant_id,
+                require_canonical=True,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -777,9 +899,38 @@ def create_operator_router(
                     initial_state=growth_state_repository.load(tenant_id),
                     audit_log=active_audit_log,
                     seed_fixtures=False,
+                    priceops_repository=require_tenant_repository(
+                        priceops_repository_for_tenant,
+                        "priceops_repository",
+                        tenant_id,
+                    ),
+                    tenant_id=tenant_id,
+                    require_canonical=True,
                 ),
                 initial_state=state,
                 seed_fixtures=False,
+                sitescore_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant,
+                    "sitescore_decision_repository",
+                    tenant_id,
+                ),
+                avm_repository=require_tenant_repository(
+                    avm_repository_for_tenant,
+                    "avm_repository",
+                    tenant_id,
+                ),
+                netplan_repository=require_tenant_repository(
+                    netplan_repository_for_tenant,
+                    "netplan_repository",
+                    tenant_id,
+                ),
+                priceops_repository=require_tenant_repository(
+                    priceops_repository_for_tenant,
+                    "priceops_repository",
+                    tenant_id,
+                ),
+                tenant_id=tenant_id,
+                require_canonical=True,
             )
 
         def save_governance_growth(

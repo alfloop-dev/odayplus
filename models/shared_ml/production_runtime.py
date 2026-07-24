@@ -66,6 +66,12 @@ class ProductionModelInferenceError(ProductionModelRuntimeError):
     code = "PRODUCTION_MODEL_INFERENCE_FAILED"
 
 
+class ProductionExecutionConfigurationError(RuntimeError):
+    """Raised when a production domain was composed with local-only dependencies."""
+
+    code = "PRODUCTION_EXECUTION_BINDING_REQUIRED"
+
+
 @dataclass(frozen=True)
 class ModelInferenceResult:
     """Predictions plus the exact executable model evidence used to make them."""
@@ -311,6 +317,22 @@ def production_model_execution_required() -> bool:
     if os.getenv("ODP_DEPLOY_ENV", "").strip().lower() in _PRODUCTION_ENVS:
         return True
     return product_mode == "production"
+
+
+def production_execution_required(runtime_mode: str | None = None) -> bool:
+    """Resolve an explicit runtime mode without downgrading a production process."""
+
+    environment_requires_production = production_model_execution_required()
+    if runtime_mode is None:
+        return environment_requires_production
+    normalized = runtime_mode.strip().lower()
+    if normalized in _PRODUCTION_ENVS:
+        return True
+    if normalized in {"local", "test", "testing", "development", "dev", "poc"}:
+        return environment_requires_production
+    raise ProductionExecutionConfigurationError(
+        f"unsupported production execution runtime mode {runtime_mode!r}"
+    )
 
 
 def require_production_runtime(
