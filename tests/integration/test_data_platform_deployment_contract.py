@@ -193,6 +193,31 @@ def test_backfill_is_receipt_gated_and_uses_real_secret_inputs() -> None:
         assert f'"{kind}"' in source
 
 
+def test_backfill_receipt_parser_ignores_dlt_progress_output() -> None:
+    runtime = _runtime_module()
+    payload = runtime._parse_backfill_receipt(
+        "dlt progress line\n"
+        'ODP_BACKFILL_RECEIPT={"runs":[],"source_database":"fongniao_prod",'
+        '"status":"SUCCEEDED"}\n'
+    )
+
+    assert payload == {
+        "runs": [],
+        "source_database": "fongniao_prod",
+        "status": "SUCCEEDED",
+    }
+
+
+def test_backfill_receipt_parser_fails_closed_without_sentinel() -> None:
+    runtime = _runtime_module()
+
+    with pytest.raises(
+        runtime.DeploymentContractError,
+        match="without an ODP_BACKFILL_RECEIPT",
+    ):
+        runtime._parse_backfill_receipt('{"status":"SUCCEEDED"}')
+
+
 def test_committed_status_mapping_covers_observed_scheduled_dimension_codes() -> None:
     import json
 

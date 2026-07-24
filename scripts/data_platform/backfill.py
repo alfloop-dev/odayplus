@@ -27,6 +27,7 @@ _LOAD_ORDER = {
     SourceKind.AI_CONSUMER_KMEANS_V1: 80,
     SourceKind.MEMBER: 90,
 }
+BACKFILL_RECEIPT_PREFIX = "ODP_BACKFILL_RECEIPT="
 
 
 def _instant(value: str) -> datetime:
@@ -121,18 +122,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 limit=limit,
             )
             results.append(summary.as_dict())
+    payload = {
+        "status": "SUCCEEDED",
+        "source_database": "fongniao_prod",
+        "load_order": [value.value for value in kinds],
+        "runs": results,
+    }
     print(
-        json.dumps(
-            {
-                "status": "SUCCEEDED",
-                "source_database": "fongniao_prod",
-                "load_order": [value.value for value in kinds],
-                "runs": results,
-            },
+        BACKFILL_RECEIPT_PREFIX
+        + json.dumps(
+            payload,
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
             sort_keys=True,
-        )
+        ),
+        flush=True,
     )
     return 0
 

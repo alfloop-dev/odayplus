@@ -53,6 +53,7 @@ SCHEDULED_KINDS = (
 )
 MANUAL_HARD_LIMIT = 100_000
 ORDERS_HISTORY_MAX_DAYS = 62
+BACKFILL_RECEIPT_PREFIX = "ODP_BACKFILL_RECEIPT="
 
 
 class DeploymentContractError(RuntimeError):
@@ -424,6 +425,18 @@ def _backfill_command(mode: str) -> list[str]:
     return command
 
 
+def _parse_backfill_receipt(stdout: str) -> dict[str, Any]:
+    for line in reversed(stdout.splitlines()):
+        if line.startswith(BACKFILL_RECEIPT_PREFIX):
+            payload = json.loads(line.removeprefix(BACKFILL_RECEIPT_PREFIX))
+            if not isinstance(payload, dict):
+                break
+            return payload
+    raise DeploymentContractError(
+        "Bounded backfill completed without an ODP_BACKFILL_RECEIPT"
+    )
+
+
 def backfill(mode: str) -> int:
     _wait_for_postgres()
     dsn = _database_url()
@@ -442,7 +455,7 @@ def backfill(mode: str) -> int:
         raise DeploymentContractError(
             f"Bounded {mode} backfill failed with exit {result.returncode}"
         )
-    payload = json.loads(result.stdout)
+    payload = _parse_backfill_receipt(result.stdout)
     runs = payload.get("runs")
     if payload.get("status") != "SUCCEEDED" or not isinstance(runs, list):
         raise DeploymentContractError("Backfill did not return a successful run envelope")
