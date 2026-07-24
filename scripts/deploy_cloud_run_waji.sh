@@ -2,187 +2,216 @@
 #
 # Deploy ODay Plus API and Web services to GCP Cloud Run.
 #
-# Required Environment Variables:
-#   GCP_PROJECT     - The GCP Project ID (e.g., alfaloop-data-project)
-#   GCP_REGION      - The GCP Region (e.g., asia-east1)
-#   GCP_AR_REPO     - The GCP Artifact Registry repository name
-#
-# Optional Environment Variables:
-#   IMAGE_TAG       - The docker image tag to push/deploy (defaults to "dev")
-#   API_SERVICE     - Cloud Run service name for API (defaults to "oday-api")
-#   WEB_SERVICE     - Cloud Run service name for Web (defaults to "oday-web")
-#
+# The script is intentionally fail-closed. It will not build or deploy while
+# the repository lacks a production database adapter, worker runtime, concrete
+# live-provider adapters, or a non-seed Operator bootstrap.
 
 set -euo pipefail
 
-# --- Configuration & Validation ---
-
 echo "=== Starting ODay Plus Cloud Run Deployment ==="
 
-IMAGE_TAG="${IMAGE_TAG:-dev}"
-API_SERVICE="${API_SERVICE:-oday-api}"
-WEB_SERVICE="${WEB_SERVICE:-oday-web}"
-
-# Fail-closed validation with clear messages
-MISSING_VARS=0
-if [ -z "${GCP_PROJECT:-}" ]; then
-  echo "Error: GCP_PROJECT environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-if [ -z "${GCP_REGION:-}" ]; then
-  echo "Error: GCP_REGION environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-if [ -z "${GCP_AR_REPO:-}" ]; then
-  echo "Error: GCP_AR_REPO environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-
-if [ "$MISSING_VARS" -ne 0 ]; then
-  echo "Error: Missing required configuration variables. Deploying aborted (fail-closed)." >&2
-  exit 1
-fi
-
-# Check required commands
-for cmd in gcloud docker curl; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "Error: Required command '$cmd' is not installed." >&2
+for cmd in python3 gcloud docker; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: required command '$cmd' is not installed." >&2
     exit 1
   fi
 done
 
-# Define Image URLs
+: "${ODP_DEPLOY_ENV:?Error: ODP_DEPLOY_ENV is required.}"
+: "${ODAY_RELEASE_SHA:?Error: ODAY_RELEASE_SHA is required.}"
+: "${API_SERVICE:?Error: API_SERVICE is required.}"
+: "${WEB_SERVICE:?Error: WEB_SERVICE is required.}"
+
+PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
+SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
+
+echo "Running fail-closed live deployment preflight..."
+python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+  --environment "${ODP_DEPLOY_ENV}" \
+  --release-sha "${ODAY_RELEASE_SHA}" \
+  --output "${PREFLIGHT_REPORT}"
+
+# No build, push, or Cloud Run mutation may occur above this line.
+IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
 WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
 
-echo "Deployment Details:"
+echo "Deployment details:"
+echo "  Environment:      ${ODP_DEPLOY_ENV}"
+echo "  Release SHA:      ${ODAY_RELEASE_SHA}"
 echo "  GCP Project:      ${GCP_PROJECT}"
 echo "  GCP Region:       ${GCP_REGION}"
 echo "  Artifact Repo:    ${GCP_AR_REPO}"
-echo "  Image Tag:        ${IMAGE_TAG}"
-echo "  API Image:        ${API_IMAGE}"
-echo "  Web Image:        ${WEB_IMAGE}"
-echo "  API Service Name: ${API_SERVICE}"
-echo "  Web Service Name: ${WEB_SERVICE}"
+echo "  API Service:      ${API_SERVICE}"
+echo "  Web Service:      ${WEB_SERVICE}"
+echo "  Runtime Mode:     live / production / PostgreSQL"
 echo "----------------------------------------------"
 
-# --- Docker Registry Authentication ---
-echo "Authenticating docker with Artifact Registry at ${REGISTRY_HOST}..."
+API_ENV_FILE="$(mktemp)"
+WEB_ENV_FILE="$(mktemp)"
+cleanup() {
+  rm -f "${API_ENV_FILE}" "${WEB_ENV_FILE}"
+}
+trap cleanup EXIT
+
+python3 - "${API_ENV_FILE}" <<'PY'
+import json
+import os
+import sys
+
+keys = (
+    "ODAY_RELEASE_SHA",
+    "ODP_DEPLOY_ENV",
+    "ODP_REQUIRE_LIVE_DATA",
+    "ODP_DATA_BINDING_MODE",
+    "ODP_PRODUCT_MODE",
+    "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_PERSISTENCE",
+    "ODP_OBJECT_STORE",
+    "ODP_SNAPSHOT_BUCKET",
+    "ODP_LISTING_PROVIDER_FEED_URL",
+    "ODP_GEOCODE_PROVIDER_URL",
+    "ODP_LISTING_PROVIDER_AUTH_STATUS",
+    "ODP_POI_PROVIDER_AUTH_STATUS",
+    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+    "ODP_PRODUCTION_PROVIDER_IDS",
+    "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
+    "ODP_AUTH_ISSUER",
+    "ODP_AUTH_AUDIENCES",
+)
+payload = {key: os.environ[key] for key in keys}
+payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
+payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
+json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
+PY
+
 gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
 
-# --- Build & Deploy API Service ---
-echo "Building API container image..."
+echo "Building and publishing API image..."
 docker build \
   --platform linux/amd64 \
+  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+  --label "com.oday-plus.data-binding=live" \
   -t "${API_IMAGE}" \
   -f infra/docker/api.Dockerfile \
   .
-
-echo "Pushing API container image to Artifact Registry..."
 docker push "${API_IMAGE}"
 
-if command -v cosign &>/dev/null; then
-  echo "Signing API container image..."
+if command -v cosign >/dev/null 2>&1; then
   cosign sign --yes "${API_IMAGE}"
-  echo "Verifying API container image signature..."
   CI=true ./scripts/security/sign_images.sh verify "${API_IMAGE}"
 else
-  echo "Warning: Cosign is not installed. Skipping API image signing and verification."
+  echo "Warning: cosign is not installed; workflow policy must install it before deployment." >&2
 fi
 
-echo "Deploying API service to Cloud Run..."
+API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
+API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+API_SECRET_BINDINGS+=",ODP_AUTH_HS256_KEYS=${ODP_AUTH_HS256_KEYS_SECRET}"
+
+echo "Deploying API service..."
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
   --platform=managed \
+  --port=8000 \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --add-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
+  --env-vars-file="${API_ENV_FILE}" \
+  --set-secrets="${API_SECRET_BINDINGS}" \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --allow-unauthenticated \
-  --set-env-vars="ODP_ENV=dev,ODP_OBJECT_STORE=gcs" \
   --quiet
 
-# Retrieve API URL
-echo "Retrieving API service URL..."
-API_URL=$(gcloud run services describe "${API_SERVICE}" \
+API_URL="$(gcloud run services describe "${API_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')
-
+  --format='value(status.url)')"
 if [ -z "${API_URL}" ]; then
-  echo "Error: Failed to retrieve API service URL from Cloud Run." >&2
+  echo "Error: failed to resolve the deployed API URL." >&2
   exit 1
 fi
-echo "API successfully deployed to: ${API_URL}"
 
-# --- Build & Deploy Web Service ---
-# We bake ODP_API_BASE_URL (pointing to the API service URL) at build time.
-echo "Building Web container image with baked API URL: ${API_URL}..."
+python3 - "${WEB_ENV_FILE}" "${API_URL}" <<'PY'
+import json
+import os
+import sys
+
+payload = {
+    "NODE_ENV": "production",
+    "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
+    "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
+    "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
+    "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
+    "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
+    "NEXT_PUBLIC_ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
+    "NEXT_PUBLIC_ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
+    "NEXT_PUBLIC_ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    "ODP_API_BASE_URL": sys.argv[2],
+    "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
+}
+json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
+PY
+
+echo "Building and publishing Web image..."
 docker build \
   --platform linux/amd64 \
-  --build-arg ODP_API_BASE_URL="${API_URL}" \
+  --build-arg "ODP_API_BASE_URL=${API_URL}" \
+  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
+  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+  --label "com.oday-plus.data-binding=live" \
   -t "${WEB_IMAGE}" \
   -f infra/docker/web.Dockerfile \
   .
-
-echo "Pushing Web container image to Artifact Registry..."
 docker push "${WEB_IMAGE}"
 
-if command -v cosign &>/dev/null; then
-  echo "Signing Web container image..."
+if command -v cosign >/dev/null 2>&1; then
   cosign sign --yes "${WEB_IMAGE}"
-  echo "Verifying Web container image signature..."
   CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
 else
-  echo "Warning: Cosign is not installed. Skipping Web image signing and verification."
+  echo "Warning: cosign is not installed; workflow policy must install it before deployment." >&2
 fi
 
-echo "Deploying Web service to Cloud Run..."
+echo "Deploying Web service..."
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
   --platform=managed \
+  --port=3000 \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --env-vars-file="${WEB_ENV_FILE}" \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --allow-unauthenticated \
   --quiet
 
-# Retrieve Web URL
-echo "Retrieving Web service URL..."
-WEB_URL=$(gcloud run services describe "${WEB_SERVICE}" \
+WEB_URL="$(gcloud run services describe "${WEB_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')
-
+  --format='value(status.url)')"
 if [ -z "${WEB_URL}" ]; then
-  echo "Error: Failed to retrieve Web service URL from Cloud Run." >&2
+  echo "Error: failed to resolve the deployed Web URL." >&2
   exit 1
 fi
-echo "Web successfully deployed to: ${WEB_URL}"
 
-# --- Smoke Checks ---
-echo "----------------------------------------------"
-echo "Running automatic smoke checks..."
+echo "Running release-aware, live-data smoke checks..."
+python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
+  --api-url "${API_URL}" \
+  --web-url "${WEB_URL}" \
+  --expected-sha "${ODAY_RELEASE_SHA}" \
+  --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+  --output "${SMOKE_REPORT}"
 
-# Check API health
-API_HEALTH_URL="${API_URL}/health"
-echo "Probing API health endpoint: ${API_HEALTH_URL}..."
-API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_HEALTH_URL}")
-if [ "$API_STATUS" -ne 200 ]; then
-  echo "Error: API smoke check failed with HTTP status code ${API_STATUS} (expected 200)." >&2
-  exit 1
-fi
-echo "API smoke check passed!"
-
-# Check Web operator console
-WEB_OP_URL="${WEB_URL}/operator"
-echo "Probing Web operator console: ${WEB_OP_URL}..."
-WEB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${WEB_OP_URL}")
-if [ "$WEB_STATUS" -ne 200 ]; then
-  echo "Error: Web operator console smoke check failed with HTTP status code ${WEB_STATUS} (expected 200)." >&2
-  exit 1
-fi
-echo "Web operator console smoke check passed!"
-
-echo "=== All Services Deployed and Verified Successfully ==="
+echo "=== Cloud Run deployment passed all live-data gates ==="
 echo "API Endpoint: ${API_URL}"
 echo "Web Endpoint: ${WEB_URL}"
