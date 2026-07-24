@@ -8,6 +8,7 @@ import type { OidcTransaction, WebSession } from "./session";
 import {
   OIDC_TRANSACTION_MAX_AGE_SECONDS,
   SESSION_COOKIE_MAX_AGE_SECONDS,
+  isProductionWebRuntime,
   resolveWebBaseUrl,
   safeReturnTo,
 } from "./runtime";
@@ -64,7 +65,7 @@ function validatedProviderUrl(
   environment: NodeJS.ProcessEnv,
 ): string {
   const parsed = new URL(value);
-  if (environment.NODE_ENV === "production" && parsed.protocol !== "https:") {
+  if (isProductionWebRuntime(environment) && parsed.protocol !== "https:") {
     throw new Error(`${name} must use https in production`);
   }
   return value;

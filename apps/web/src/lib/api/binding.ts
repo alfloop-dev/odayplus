@@ -1,5 +1,5 @@
 import type { OdpApiClient } from "@oday-plus/openapi-client";
-import { headers } from "next/headers";
+import { payloadContainsNonProductionData } from "./liveData";
 
 /**
  * Outcome of attempting to bind a workspace region to live backend data.
@@ -49,6 +49,16 @@ export async function loadApiBinding<T>(options: {
         state: "empty",
         items: [],
         source: "unavailable",
+        baseUrl: client.baseUrl,
+        fetchedAt,
+      };
+    }
+    if (payloadContainsNonProductionData(items)) {
+      return {
+        state: "error",
+        items: [],
+        source: "unavailable",
+        error: "NON_PRODUCTION_DATA_BLOCKED",
         baseUrl: client.baseUrl,
         fetchedAt,
       };

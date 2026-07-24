@@ -7,10 +7,11 @@ and shared UI integration.
 
 Production (`NODE_ENV=production`) uses OIDC authorization-code + PKCE. The
 browser receives only an encrypted `HttpOnly`, `Secure`, `SameSite=Lax` session
-cookie. Calls to `/api/v1/**` and `/avm/**` go through the same-origin Next BFF,
-which reads that session and injects the access-token bearer. Browser-supplied
-`Authorization`, `X-Subject-Id`, `X-Tenant-Id`, and `X-Roles` headers are not
-forwarded.
+cookie. Calls to `/api/v1/**` and `/avm/**` go through the same-origin Next BFF.
+The BFF forwards the end-user access token in `Authorization` and obtains its
+Cloud Run service identity from the Google metadata server for
+`X-Serverless-Authorization`. Browser-supplied identity, service-identity,
+`X-Subject-Id`, `X-Tenant-Id`, and `X-Roles` headers are not forwarded.
 
 Required environment:
 
@@ -21,6 +22,7 @@ Required environment:
 | `ODP_WEB_OIDC_ISSUER` | Exact OIDC issuer |
 | `ODP_WEB_OIDC_CLIENT_ID` | Registered web client ID |
 | `ODP_API_BASE_URL` | Server-side API origin used by the BFF and server components |
+| `ODP_API_SERVICE_AUDIENCE` | Cloud Run API audience used to mint the BFF service identity token |
 
 Optional environment:
 
@@ -39,3 +41,9 @@ Optional environment:
 
 The provider must register the callback URI and, when supported, the
 post-logout URI `<ODP_WEB_BASE_URL>/login`.
+
+The Web runtime service account must have permission to invoke the API Cloud
+Run service. Production requests fail closed before contacting the API when
+the service audience is missing or the metadata server cannot issue an
+identity token. The service token remains server-side and is never copied to a
+browser response.

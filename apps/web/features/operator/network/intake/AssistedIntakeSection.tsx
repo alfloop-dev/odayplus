@@ -40,6 +40,7 @@ import {
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
+import { isOperatorProductionMode } from "../../operatorDataMode";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
@@ -75,7 +76,7 @@ export function AssistedIntakeSection({
       setSessionSubjectId(activeSubjectId);
       return;
     }
-    if (process.env.NODE_ENV !== "production") return;
+    if (!isOperatorProductionMode()) return;
 
     let cancelled = false;
     void fetch("/auth/session", {

@@ -33,16 +33,24 @@ describe("web auth runtime policy", () => {
         ODP_WEB_BASE_URL: "http://ops.oday.plus",
       }),
     ).toThrow("must use https");
+    expect(() =>
+      resolveWebBaseUrl("https://ignored.example", {
+        NODE_ENV: "development",
+        ODP_DEPLOY_ENV: "production",
+        ODP_WEB_BASE_URL: "http://ops.oday.plus",
+      }),
+    ).toThrow("must use https");
   });
 
   it("never enables trusted browser identity headers in production", () => {
     expect(
       allowLegacyTrustedHeaders({
-        NODE_ENV: "production",
+        NODE_ENV: "development",
+        ODP_DEPLOY_ENV: "production",
+        ODP_PRODUCT_MODE: "poc",
         ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS: "true",
       }),
     ).toBe(false);
     expect(allowLegacyTrustedHeaders({ NODE_ENV: "test" })).toBe(true);
   });
 });
-

@@ -41,7 +41,7 @@ describe("operator data mode", () => {
         nodeEnv: "production",
         productMode: "poc",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       operatorFixturesAllowed({
         nodeEnv: "development",
@@ -49,6 +49,28 @@ describe("operator data mode", () => {
       }),
     ).toBe(false);
     expect(operatorFixturesAllowed({ nodeEnv: "development", productionMode: "true" })).toBe(false);
+    expect(operatorFixturesAllowed({ nodeEnv: "development" })).toBe(false);
+    expect(
+      operatorFixturesAllowed({
+        deployEnv: "local",
+        nodeEnv: "development",
+        productMode: "poc",
+      }),
+    ).toBe(true);
+    expect(
+      operatorFixturesAllowed({
+        deployEnv: "production",
+        nodeEnv: "development",
+        productMode: "poc",
+      }),
+    ).toBe(false);
+    expect(
+      operatorFixturesAllowed({
+        nodeEnv: "development",
+        productMode: "poc",
+        requireLiveData: "true",
+      }),
+    ).toBe(false);
     expect(isOperatorProductionMode({ nodeEnv: "production" })).toBe(true);
   });
 
@@ -63,6 +85,7 @@ describe("operator data mode", () => {
       status: "seed",
     });
     expect(isSeedDataSource("fixture-replay")).toBe(true);
+    expect(isSeedDataSource("demographics-provider")).toBe(false);
   });
 
   it("distinguishes empty and live shell payloads", () => {

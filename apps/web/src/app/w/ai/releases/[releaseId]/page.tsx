@@ -2,6 +2,8 @@ import { LearningHubWorkspace } from "../../../../../../features/learninghub/Lea
 import { getServerApiClient } from "../../../../../lib/api/client.ts";
 import { loadApiBinding } from "../../../../../lib/api/binding.ts";
 
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   params: Promise<{ releaseId: string }>;
 };

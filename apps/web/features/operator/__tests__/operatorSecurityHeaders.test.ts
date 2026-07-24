@@ -17,6 +17,18 @@ describe("operatorSecurityHeaders", () => {
     });
   });
 
+  it("also strips browser identity when live data is required outside a production NODE_ENV", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ODP_REQUIRE_LIVE_DATA", "true");
+    vi.stubEnv("ODP_PRODUCT_MODE", "poc");
+    sessionStorage.setItem("oday.operator.subject", "spoofed-subject");
+    sessionStorage.setItem("oday.operator.tenant", "spoofed-tenant");
+
+    expect(operatorSecurityHeaders("ops-lead", "spoofed-explicit")).toEqual({
+      "X-Operator-Role": "ops-lead",
+    });
+  });
+
   it("keeps explicitly configured trusted headers in local/test mode", () => {
     vi.stubEnv("NODE_ENV", "test");
     sessionStorage.setItem("oday.operator.subject", "local-user");
@@ -30,4 +42,3 @@ describe("operatorSecurityHeaders", () => {
     });
   });
 });
-

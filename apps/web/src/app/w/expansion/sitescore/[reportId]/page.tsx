@@ -2,6 +2,8 @@ import { ExpansionWorkspace } from "../../../../../../features/expansion/Expansi
 import { getServerApiClient } from "../../../../../lib/api/client.ts";
 import { loadApiBinding } from "../../../../../lib/api/binding.ts";
 
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   params: Promise<{ reportId: string }>;
 };

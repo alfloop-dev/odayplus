@@ -7,9 +7,11 @@ export type OperatorDataAvailability =
   | "fixture";
 
 type RuntimeEnvironment = {
+  deployEnv?: string;
   nodeEnv?: string;
   productMode?: string;
   productionMode?: string;
+  requireLiveData?: string;
 };
 
 type ShellInspection = {
@@ -35,17 +37,22 @@ function asArray(value: unknown): unknown[] {
 
 export function isOperatorProductionMode(
   environment: RuntimeEnvironment = {
+    deployEnv: process.env.ODP_DEPLOY_ENV,
     nodeEnv: process.env.NODE_ENV,
     productMode:
       process.env.ODP_PRODUCT_MODE ??
       process.env.NEXT_PUBLIC_ODP_PRODUCT_MODE,
     productionMode: process.env.NEXT_PUBLIC_PRODUCTION_MODE,
+    requireLiveData: process.env.ODP_REQUIRE_LIVE_DATA,
   },
 ): boolean {
-  const productMode = environment.productMode?.trim().toLowerCase();
-  if (productMode === "production") return true;
-  if (productMode === "poc") return false;
-  return environment.nodeEnv === "production" || environment.productionMode === "true";
+  return isProductionMode({
+    NODE_ENV: environment.nodeEnv,
+    ODP_DEPLOY_ENV: environment.deployEnv,
+    ODP_PRODUCT_MODE: environment.productMode,
+    ODP_REQUIRE_LIVE_DATA: environment.requireLiveData,
+    NEXT_PUBLIC_PRODUCTION_MODE: environment.productionMode,
+  });
 }
 
 export function operatorFixturesAllowed(environment?: RuntimeEnvironment): boolean {
@@ -53,48 +60,18 @@ export function operatorFixturesAllowed(environment?: RuntimeEnvironment): boole
 }
 
 export function isSeedDataSource(source: unknown): boolean {
-  if (typeof source !== "string") return false;
-  const normalized = source.trim().toLowerCase();
   return (
-    KNOWN_SEED_SOURCES.has(normalized) ||
-    normalized.includes("fixture") ||
-    normalized.includes("mock") ||
-    normalized.includes("prototype") ||
-    normalized.includes("demo") ||
-    normalized.includes("seed")
+    (typeof source === "string" &&
+      KNOWN_SEED_SOURCES.has(source.trim().toLowerCase())) ||
+    isNonProductionDataSource(source)
   );
 }
 
 export function payloadContainsSeedData(
   value: unknown,
-  visited: WeakSet<object> = new WeakSet<object>(),
+  _visited: WeakSet<object> = new WeakSet<object>(),
 ): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => payloadContainsSeedData(item, visited));
-  }
-
-  const record = asRecord(value);
-  if (!record || visited.has(record)) return false;
-  visited.add(record);
-
-  for (const [key, nestedValue] of Object.entries(record)) {
-    const normalizedKey = key.replace(/[_-]/g, "").toLowerCase();
-    if (
-      [
-        "source",
-        "datasource",
-        "datamode",
-        "origin",
-        "kind",
-      ].includes(normalizedKey) &&
-      isSeedDataSource(nestedValue)
-    ) {
-      return true;
-    }
-    if (payloadContainsSeedData(nestedValue, visited)) return true;
-  }
-
-  return false;
+  return payloadContainsNonProductionData(value);
 }
 
 function hasText(record: Record<string, unknown> | null, key: string): boolean {
@@ -228,3 +205,8 @@ export function toUnavailableOperatorStatus(
   if (status === "ready") return "error";
   return status;
 }
+import {
+  isNonProductionDataSource,
+  payloadContainsNonProductionData,
+} from "../../src/lib/api/liveData";
+import { isProductionMode } from "../shell/mode";

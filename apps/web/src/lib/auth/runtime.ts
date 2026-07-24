@@ -7,7 +7,7 @@ export const OIDC_TRANSACTION_MAX_AGE_SECONDS = 10 * 60;
 export function isProductionWebRuntime(
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return environment.NODE_ENV === "production";
+  return isProductionMode(environment);
 }
 
 export function allowLegacyTrustedHeaders(
@@ -56,3 +56,4 @@ export function resolveWebBaseUrl(
 
   return result.origin;
 }
+import { isProductionMode } from "../runtime/productMode";

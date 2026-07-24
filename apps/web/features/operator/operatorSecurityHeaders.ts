@@ -51,7 +51,7 @@ export function operatorSecurityHeaders(
   const headers: Record<string, string> = {
     "X-Operator-Role": resolvedRoleId,
   };
-  if (process.env.NODE_ENV !== "production") {
+  if (!isOperatorProductionMode()) {
     headers["X-Roles"] =
       OPERATOR_API_ROLES[resolvedRoleId] ?? "operations_manager";
     const subject = operatorSubjectId(resolvedRoleId, subjectId);
@@ -65,3 +65,4 @@ export function operatorSecurityHeaders(
   }
   return headers;
 }
+import { isOperatorProductionMode } from "./operatorDataMode";

@@ -23,6 +23,7 @@ import {
   type OdpApiClient,
 } from "@oday-plus/openapi-client";
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
+import { isOperatorProductionMode } from "../operatorDataMode";
 
 /**
  * Structured, renderable failure. `summary` is the server's own operator-facing
@@ -56,7 +57,7 @@ export function buildOperatorNetworkClient(
   subjectId?: string | null,
 ): OdpApiClient | null {
   const configured =
-    process.env.NODE_ENV === "production"
+    isOperatorProductionMode()
       ? undefined
       : process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
   const baseUrl =

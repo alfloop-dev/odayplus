@@ -5,6 +5,10 @@ import {
   allowLegacyTrustedHeaders,
   isProductionWebRuntime,
 } from "./runtime";
+import {
+  resolveGoogleMetadataIdentityToken,
+  type ServiceIdentityTokenResolver,
+} from "./cloudRunIdentity";
 
 const FORWARDED_REQUEST_HEADERS = [
   "accept",
@@ -38,6 +42,7 @@ export function buildUpstreamHeaders(options: {
   requestHeaders: Headers;
   accessToken?: string | null;
   allowLegacyIdentity?: boolean;
+  serviceIdentityToken?: string | null;
 }): Headers {
   const result = new Headers();
   for (const name of FORWARDED_REQUEST_HEADERS) {
@@ -55,16 +60,27 @@ export function buildUpstreamHeaders(options: {
   if (options.accessToken) {
     result.set("authorization", `Bearer ${options.accessToken}`);
   }
+  if (options.serviceIdentityToken) {
+    result.set(
+      "x-serverless-authorization",
+      `Bearer ${options.serviceIdentityToken}`,
+    );
+  }
   return result;
 }
 
-function authError(status: number, code: string, summary: string): NextResponse {
+function authError(
+  status: number,
+  code: string,
+  summary: string,
+  retryable = false,
+): NextResponse {
   return NextResponse.json(
     {
       error: {
         code,
         summary,
-        retryable: false,
+        retryable,
       },
     },
     {
@@ -100,6 +116,9 @@ export async function proxyApiRequest(
   request: NextRequest,
   path: string,
   environment: NodeJS.ProcessEnv = process.env,
+  dependencies: {
+    resolveServiceIdentityToken?: ServiceIdentityTokenResolver;
+  } = {},
 ): Promise<Response> {
   const production = isProductionWebRuntime(environment);
   let session = null;
@@ -136,11 +155,37 @@ export async function proxyApiRequest(
     );
   }
 
+  let serviceIdentityToken: string | null = null;
+  if (production) {
+    const audience = environment.ODP_API_SERVICE_AUDIENCE?.trim();
+    if (!audience) {
+      return authError(
+        503,
+        "WEB_SERVICE_IDENTITY_NOT_CONFIGURED",
+        "The Web BFF service identity audience is not configured.",
+      );
+    }
+    try {
+      serviceIdentityToken = await (
+        dependencies.resolveServiceIdentityToken ??
+        resolveGoogleMetadataIdentityToken
+      )(audience);
+    } catch {
+      return authError(
+        503,
+        "WEB_SERVICE_IDENTITY_UNAVAILABLE",
+        "The Web BFF could not obtain its service identity.",
+        true,
+      );
+    }
+  }
+
   const requestHeaders = buildUpstreamHeaders({
     requestHeaders: request.headers,
     accessToken: session?.accessToken,
     allowLegacyIdentity:
       !production && !session && allowLegacyTrustedHeaders(environment),
+    serviceIdentityToken,
   });
 
   try {
@@ -185,4 +230,3 @@ export async function proxyApiRequest(
     );
   }
 }
-

@@ -2,6 +2,8 @@ import { AuditWorkspace } from "../../../../../../features/audit/AuditWorkspace.
 import { getServerApiClient } from "../../../../../lib/api/client.ts";
 import { loadApiBinding } from "../../../../../lib/api/binding.ts";
 
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   params: Promise<{ decisionId: string }>;
 };
