@@ -1439,6 +1439,7 @@ export const API_PATHS = {
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
+  "/api/v1/learninghub/models": ["GET"],
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],
   "/api/v1/learninghub/models/{model_name}/versions": ["POST"],
