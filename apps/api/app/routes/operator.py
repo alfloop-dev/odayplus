@@ -37,11 +37,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from modules.opsboard.application.growth import GrowthService
 from modules.opsboard.application.operator_live_repository import (
+    OperatorLiveRepositoryError,
     OperatorLiveRepositoryProtocol,
 )
 from modules.opsboard.application.operator_state import OperatorStateService
@@ -51,8 +52,10 @@ from shared.audit import InMemoryAuditLog
 # Legacy DTO aliases (backward compat — do not add new fields here)
 # ---------------------------------------------------------------------------
 
+
 class TransitionPayload(BaseModel):
     """Legacy alias — prefer IssueTransitionRequest in new code."""
+
     issueId: str | None = None
     status: str | None = None
     note: str | None = None
@@ -62,6 +65,7 @@ class TransitionPayload(BaseModel):
 
 class ApprovalDecisionPayload(BaseModel):
     """Legacy alias — prefer ApprovalDecisionRequest in new code."""
+
     status: str
     reason: str | None = None
     actorRoleId: str | None = None
@@ -70,6 +74,7 @@ class ApprovalDecisionPayload(BaseModel):
 
 class EvidencePurposePayload(BaseModel):
     """Legacy alias — prefer EvidencePurposeRequest in new code."""
+
     purpose: str
     cameraLocation: str | None = None
     timeWindow: str | None = None
@@ -91,14 +96,10 @@ def _live_operator_request_context(
     principal = getattr(request.state, "operator_principal", None)
     scope = getattr(principal, "scope", None)
     return {
-        "role_id": getattr(request.state, "operator_role_id", None)
-        or x_operator_role,
-        "subject_id": getattr(request.state, "operator_subject_id", None)
-        or x_subject_id,
-        "system_roles": getattr(request.state, "operator_system_roles", None)
-        or x_roles,
-        "correlation_id": getattr(request.state, "correlation_id", None)
-        or x_correlation_id,
+        "role_id": getattr(request.state, "operator_role_id", None) or x_operator_role,
+        "subject_id": getattr(request.state, "operator_subject_id", None) or x_subject_id,
+        "system_roles": getattr(request.state, "operator_system_roles", None) or x_roles,
+        "correlation_id": getattr(request.state, "correlation_id", None) or x_correlation_id,
         "tenant_id": getattr(scope, "tenant_id", None),
         "brand_ids": tuple(getattr(scope, "brand_ids", ()) or ()),
         "region_ids": tuple(getattr(scope, "region_ids", ()) or ()),
@@ -109,6 +110,7 @@ def _live_operator_request_context(
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
+
 
 def create_operator_router(
     *,
@@ -172,8 +174,7 @@ def create_operator_router(
     if require_live_data:
         svc = (
             state_service
-            if state_service is not None
-            and state_service.live_repository is not None
+            if state_service is not None and state_service.live_repository is not None
             else OperatorStateService(
                 require_live_data=True,
                 persistence_mode=persistence_mode,
@@ -255,6 +256,19 @@ def create_operator_router(
                 x_correlation_id=x_correlation_id,
             )
 
+        def _live_read(operation: str, method: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return method(*args, **kwargs)
+            except OperatorLiveRepositoryError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
+                        "operation": operation,
+                        "message": str(exc),
+                    },
+                ) from exc
+
         @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
         @router.get("/today", dependencies=[Depends(operator_view_guard)])
         def live_envelope(
@@ -264,14 +278,16 @@ def create_operator_router(
             x_roles: str | None = Header(default=None, alias="X-Roles"),
             x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
         ) -> dict[str, Any]:
-            return svc.get_today(
+            return _live_read(
+                "operator.envelope",
+                svc.get_today,
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
                     x_subject_id=x_subject_id,
                     x_roles=x_roles,
                     x_correlation_id=x_correlation_id,
-                )
+                ),
             )
 
         @router.get("/search", dependencies=[Depends(operator_view_guard)])
@@ -283,7 +299,9 @@ def create_operator_router(
             x_roles: str | None = Header(default=None, alias="X-Roles"),
             x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
         ) -> dict[str, Any]:
-            return svc.search(
+            return _live_read(
+                "operator.search",
+                svc.search,
                 q,
                 **_context(
                     request,
@@ -363,35 +381,28 @@ def create_operator_router(
                 alias="X-Correlation-Id",
             ),
         ) -> dict[str, Any]:
-            envelope = svc.get_today(
+            envelope = _live_read(
+                "operator.shell.home",
+                svc.get_today,
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
                     x_subject_id=x_subject_id,
                     x_roles=x_roles,
                     x_correlation_id=x_correlation_id,
-                )
+                ),
             )
             tasks = [_task_row(item) for item in envelope["workQueue"]]
-            notifications = [
-                _notification_row(item) for item in envelope["notifications"]
-            ]
+            notifications = [_notification_row(item) for item in envelope["notifications"]]
             role = envelope["meta"]["role"]
             from modules.opsboard.application.shell import ENTRY_POINTS
 
             allowed_workspaces = set(role["allowedWorkspaces"])
             entry_points = [
-                {
-                    key: value
-                    for key, value in entry.items()
-                    if key != "requiresAdmin"
-                }
+                {key: value for key, value in entry.items() if key != "requiresAdmin"}
                 for entry in ENTRY_POINTS
                 if entry["workspace"] in allowed_workspaces
-                and (
-                    not entry.get("requiresAdmin")
-                    or role["id"] == "ops-lead"
-                )
+                and (not entry.get("requiresAdmin") or role["id"] == "ops-lead")
             ]
             return {
                 "meta": {
@@ -419,14 +430,10 @@ def create_operator_router(
                         "generatedAt": envelope["meta"]["generatedAt"],
                         "records": sum(
                             int(value)
-                            for value in envelope["meta"]
-                            .get("recordCounts", {})
-                            .values()
+                            for value in envelope["meta"].get("recordCounts", {}).values()
                         ),
                         "state": (
-                            "live"
-                            if envelope["meta"]["liveReadiness"]["ready"]
-                            else "unavailable"
+                            "live" if envelope["meta"]["liveReadiness"]["ready"] else "unavailable"
                         ),
                     }
                 ],
@@ -464,43 +471,29 @@ def create_operator_router(
                 x_correlation_id=x_correlation_id,
             )
             queue_context = {
-                key: value
-                for key, value in context.items()
-                if key != "correlation_id"
+                key: value for key, value in context.items() if key != "correlation_id"
             }
             tasks = [
                 _task_row(item)
-                for item in svc.get_work_queue(**queue_context)
+                for item in _live_read(
+                    "operator.shell.tasks",
+                    svc.get_work_queue,
+                    **queue_context,
+                )
             ]
             filtered = tasks
             if sla:
-                filtered = [
-                    item for item in filtered if item["slaState"] == sla
-                ]
+                filtered = [item for item in filtered if item["slaState"] == sla]
             if assignee == "me":
-                filtered = [
-                    item for item in filtered if item["assignedToMe"]
-                ]
+                filtered = [item for item in filtered if item["assignedToMe"]]
             elif assignee == "unassigned":
-                filtered = [
-                    item for item in filtered if not item["assigneeId"]
-                ]
+                filtered = [item for item in filtered if not item["assigneeId"]]
             elif assignee:
-                filtered = [
-                    item
-                    for item in filtered
-                    if item["assigneeId"] == assignee
-                ]
+                filtered = [item for item in filtered if item["assigneeId"] == assignee]
             if task_status:
-                filtered = [
-                    item
-                    for item in filtered
-                    if str(item.get("status")) == task_status
-                ]
+                filtered = [item for item in filtered if str(item.get("status")) == task_status]
             if task_id:
-                filtered = [
-                    item for item in filtered if item["taskId"] == task_id
-                ]
+                filtered = [item for item in filtered if item["taskId"] == task_id]
             return {
                 "meta": {
                     "generatedAt": datetime.now(UTC).isoformat(),
@@ -526,13 +519,9 @@ def create_operator_router(
                     },
                     "status": {
                         status_value: sum(
-                            1
-                            for item in tasks
-                            if str(item.get("status")) == status_value
+                            1 for item in tasks if str(item.get("status")) == status_value
                         )
-                        for status_value in {
-                            str(item.get("status")) for item in tasks
-                        }
+                        for status_value in {str(item.get("status")) for item in tasks}
                     },
                     "assignee": {"me": 0},
                 },
@@ -573,23 +562,17 @@ def create_operator_router(
                 x_roles=x_roles,
                 x_correlation_id=x_correlation_id,
             )
-            envelope = svc.get_today(**context)
-            rows = [
-                _notification_row(item) for item in envelope["notifications"]
-            ]
+            envelope = _live_read(
+                "operator.shell.notifications",
+                svc.get_today,
+                **context,
+            )
+            rows = [_notification_row(item) for item in envelope["notifications"]]
             filtered = rows
             if severity:
-                filtered = [
-                    item
-                    for item in filtered
-                    if item["severity"] == severity
-                ]
+                filtered = [item for item in filtered if item["severity"] == severity]
             if acknowledged is not None:
-                filtered = [
-                    item
-                    for item in filtered
-                    if item["acknowledged"] is acknowledged
-                ]
+                filtered = [item for item in filtered if item["acknowledged"] is acknowledged]
             return {
                 "meta": {
                     "generatedAt": envelope["meta"]["generatedAt"],
@@ -602,9 +585,7 @@ def create_operator_router(
                 "unacknowledged": len(rows),
                 "facets": {
                     "severity": {
-                        level: sum(
-                            1 for item in rows if item["severity"] == level
-                        )
+                        level: sum(1 for item in rows if item["severity"] == level)
                         for level in ("critical", "warning", "info")
                     }
                 },
@@ -612,6 +593,7 @@ def create_operator_router(
             }
 
         if document_store is None:
+
             class _UnavailableOperatorDomainStore:
                 @property
                 def engine(self) -> None:
@@ -662,10 +644,7 @@ def create_operator_router(
                     detail={
                         "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
                         "dependency": dependency,
-                        "message": (
-                            f"live Operator route requires tenant-aware "
-                            f"{dependency}"
-                        ),
+                        "message": (f"live Operator route requires tenant-aware {dependency}"),
                     },
                 )
             repository = provider(tenant_id)
@@ -678,8 +657,7 @@ def create_operator_router(
                         "code": "OPERATOR_CANONICAL_DEPENDENCY_UNAVAILABLE",
                         "dependency": dependency,
                         "message": (
-                            f"tenant-aware {dependency} is not configured for "
-                            f"tenant {tenant_id}"
+                            f"tenant-aware {dependency} is not configured for tenant {tenant_id}"
                         ),
                     },
                 )
@@ -964,6 +942,7 @@ def create_operator_router(
                 ),
                 audit_log=active_audit_log,
                 service_resolver=listing_resolver,
+                allow_reset=False,
             )
         )
         router.include_router(
@@ -976,6 +955,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
+                allow_reset=False,
             )
         )
         router.include_router(
@@ -988,6 +968,7 @@ def create_operator_router(
                     "sitescore", Action.APPROVE, engine=authz_engine
                 ),
                 service_resolver=review_resolver,
+                allow_reset=False,
             )
         )
         router.include_router(
@@ -1000,6 +981,7 @@ def create_operator_router(
                     "listing", Action.UPDATE, engine=authz_engine
                 ),
                 service_resolver=rebalance_resolver,
+                allow_reset=False,
             )
         )
         router.include_router(
@@ -1051,9 +1033,7 @@ def create_operator_router(
             shell_service=ShellService(
                 svc,
                 repository=(
-                    DurableShellRepository(document_store)
-                    if document_store is not None
-                    else None
+                    DurableShellRepository(document_store) if document_store is not None else None
                 ),
             ),
         )
@@ -1121,9 +1101,7 @@ def create_operator_router(
     # Network rebalance — AVM job, NetPlan three-case solve, Govern approval boundary.
     router.include_router(
         create_network_rebalance_sub_router(
-            NetworkRebalanceService(
-                govern_approval_writer=svc.upsert_network_rebalance_approval
-            ),
+            NetworkRebalanceService(govern_approval_writer=svc.upsert_network_rebalance_approval),
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),

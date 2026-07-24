@@ -58,8 +58,19 @@ def create_network_rebalance_sub_router(
     require_write_permission_fn: Callable[..., Any],
     reset_govern_fn: Callable[[], None] | None = None,
     service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-rebalance", tags=["operator-network-rebalance"])
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network rebalance reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
@@ -73,7 +84,13 @@ def create_network_rebalance_sub_router(
             correlation_id=x_correlation_id,
         )
 
-    @router.post("/reset", dependencies=[Depends(require_write_permission_fn)])
+    @router.post(
+        "/reset",
+        dependencies=[
+            Depends(require_write_permission_fn),
+            Depends(require_reset_allowed),
+        ],
+    )
     def reset_network_rebalance(request: Request) -> dict[str, Any]:
         if reset_govern_fn is not None:
             reset_govern_fn()
@@ -100,13 +117,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/avm/complete",
@@ -129,13 +150,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/netplan/solve",
@@ -158,13 +183,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/scenarios/{scenario_id}/select",
@@ -192,7 +221,9 @@ def create_network_rebalance_sub_router(
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/submit-review",
@@ -219,7 +250,9 @@ def create_network_rebalance_sub_router(
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     return router
 

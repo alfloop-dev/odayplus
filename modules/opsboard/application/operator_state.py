@@ -12,9 +12,9 @@ approvals, evidence, seed) and the in-memory R4 seed store.  It owns:
 - reset_to_seed() → deterministic seed reset
 
 Production note: this module does not implement a live operator repository.
-When live data is required it deliberately starts with no operational records
-and reports that state in the response envelope. Fixtures remain available for
-local development and tests only.
+When live data is required it delegates every read to the injected repository
+and fails closed when that repository is absent or unavailable. Fixtures remain
+available for local development and tests only.
 Composes with: operator_modules/* sub-routers via create_operator_router().
 """
 
@@ -25,6 +25,9 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from modules.opsboard.application.operator_live_repository import (
+    OperatorLiveRepositoryError,
+)
 from modules.opsboard.domain.r4_dtos import (
     ISSUE_STATUS_BY_ACTION,
     ApprovalDecisionRequest,
@@ -246,9 +249,7 @@ class OperatorStateService:
         self._live_repository = live_repository
         self._live_ready = False
         self._live_error: str | None = None
-        self._state: dict[str, Any] = (
-            {} if self._require_live_data else load_r4_seed()
-        )
+        self._state: dict[str, Any] = {} if self._require_live_data else load_r4_seed()
         self._idempotency_cache: dict[str, Any] = {}
 
     @property
@@ -312,6 +313,10 @@ class OperatorStateService:
         store_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         if self._live_repository is None:
+            if self._require_live_data:
+                self._live_ready = False
+                self._live_error = "Operator live repository is not configured"
+                raise OperatorLiveRepositoryError(self._live_error)
             return self._state
         normalized_tenant = str(tenant_id or "").strip()
         if not normalized_tenant:
@@ -333,6 +338,9 @@ class OperatorStateService:
             self._state = {}
             self._live_ready = False
             self._live_error = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, OperatorLiveRepositoryError):
+                raise
+            raise OperatorLiveRepositoryError(self._live_error) from exc
         else:
             self._live_ready = True
             self._live_error = None
@@ -566,9 +574,7 @@ class OperatorStateService:
             {
                 "actor": body.actorName or "System",
                 "category": "Decision log",
-                "detail": (
-                    f"Approval {approval_id} decided: {body.status}. Reason: {body.reason}"
-                ),
+                "detail": (f"Approval {approval_id} decided: {body.status}. Reason: {body.reason}"),
                 "time": datetime.now(UTC).strftime("%H:%M"),
                 "auditEventId": audit_id,
             },
@@ -669,10 +675,7 @@ class OperatorStateService:
         state: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         active_state = self._state if state is None else state
-        rows = [
-            self._enrich_queue_item(item)
-            for item in active_state.get("workQueue", [])
-        ]
+        rows = [self._enrich_queue_item(item) for item in active_state.get("workQueue", [])]
         return [_strip_roles(item) for item in rows if _has_role(item, role_id)]
 
     def _filtered_approvals(
@@ -682,10 +685,7 @@ class OperatorStateService:
         state: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         active_state = self._state if state is None else state
-        rows = [
-            self._enrich_approval_item(item)
-            for item in active_state.get("decisions", [])
-        ]
+        rows = [self._enrich_approval_item(item) for item in active_state.get("decisions", [])]
         return [
             _strip_roles(item)
             for item in rows
@@ -744,9 +744,7 @@ class OperatorStateService:
                 ),
                 "dataOrigin": self.data_origin,
                 "liveReadiness": self.live_readiness,
-                "recordCounts": deepcopy(
-                    state.get("_meta", {}).get("recordCounts", {})
-                ),
+                "recordCounts": deepcopy(state.get("_meta", {}).get("recordCounts", {})),
                 "tenantId": state.get("_meta", {}).get("tenantId"),
             },
             "navigation": {
@@ -806,9 +804,7 @@ class OperatorStateService:
     def _enrich_queue_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)
         metadata = QUEUE_METADATA.get(str(enriched.get("id")), {})
-        enriched["roles"] = list(
-            enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
-        )
+        enriched["roles"] = list(enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS)))
         enriched["tags"] = list(enriched.get("tags", metadata.get("tags", [])))
         enriched["target"] = deepcopy(
             enriched.get(
@@ -828,9 +824,7 @@ class OperatorStateService:
     def _enrich_approval_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)
         metadata = APPROVAL_METADATA.get(str(enriched.get("id")), {})
-        enriched["roles"] = list(
-            enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
-        )
+        enriched["roles"] = list(enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS)))
         enriched["target"] = deepcopy(
             enriched.get(
                 "target",
@@ -881,9 +875,7 @@ class OperatorStateService:
                 "id",
                 metadata.get("id", enriched.get("title")),
             )
-            enriched["roles"] = list(
-                enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS))
-            )
+            enriched["roles"] = list(enriched.get("roles", metadata.get("roles", ALL_ROLE_IDS)))
             if "target" not in enriched and "target" in metadata:
                 enriched["target"] = deepcopy(metadata["target"])
             if _has_role(enriched, role_id):
@@ -993,7 +985,11 @@ class OperatorStateService:
                     "label": f"{entity_id} {row['title']}",
                     "description": f"{row['owner']} / {row['meta']}",
                     "keywords": " ".join(
-                        [str(row.get("workspace", "")), str(row.get("status", "")), *row.get("tags", [])]
+                        [
+                            str(row.get("workspace", "")),
+                            str(row.get("status", "")),
+                            *row.get("tags", []),
+                        ]
                     ),
                     "target": deepcopy(row["target"]),
                 }

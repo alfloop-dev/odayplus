@@ -39,9 +39,7 @@ def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
     owner = record.get("owner")
     submitter = record.get("submitter")
     sentinels = {"system", "unassigned", "SYSTEM", "UNASSIGNED", None, ""}
-    ownership_subjects = {
-        subject for subject in (owner, submitter) if subject not in sentinels
-    }
+    ownership_subjects = {subject for subject in (owner, submitter) if subject not in sentinels}
     return principal.subject_id in ownership_subjects
 
 
@@ -96,6 +94,7 @@ def create_network_listings_sub_router(
     require_write_permission_fn: Callable[..., Any],
     audit_log: InMemoryAuditLog | None = None,
     service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
 
@@ -126,6 +125,16 @@ def create_network_listings_sub_router(
 
     def active_service(request: Request) -> Any:
         return resolve_service(request, service, service_resolver)
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network listing reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
@@ -159,7 +168,8 @@ def create_network_listings_sub_router(
         )
         is_staff = (
             principal.has_role(Role.EXPANSION_USER)
-            or operator_role_id in (
+            or operator_role_id
+            in (
                 "expansion-staff",
                 "expansionStaff",
                 "expansion-user",
@@ -170,12 +180,12 @@ def create_network_listings_sub_router(
         if is_staff:
             if "listings" in snap:
                 snap["listings"] = [
-                    lst for lst in snap["listings"]
-                    if is_record_owner(principal, lst)
+                    lst for lst in snap["listings"] if is_record_owner(principal, lst)
                 ]
             if "assistedIntakes" in snap:
                 snap["assistedIntakes"] = [
-                    intake for intake in snap["assistedIntakes"]
+                    intake
+                    for intake in snap["assistedIntakes"]
                     if is_record_owner(principal, intake)
                 ]
 
@@ -189,7 +199,10 @@ def create_network_listings_sub_router(
 
     @router.post(
         "/reset",
-        dependencies=[Depends(require_write_permission_fn)],
+        dependencies=[
+            Depends(require_write_permission_fn),
+            Depends(require_reset_allowed),
+        ],
     )
     def reset_network_listings(request: Request) -> dict[str, Any]:
         return active_service(request).reset()
@@ -414,7 +427,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
             )
 
-            is_async = (x_async_intake == "true")
+            is_async = x_async_intake == "true"
 
             result = active_service(request).submit_intake(
                 url=body.url,
@@ -457,7 +470,9 @@ def create_network_listings_sub_router(
     ) -> dict[str, Any]:
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
-        correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+        correlation_id = request.headers.get("x-correlation-id") or request.headers.get(
+            "X-Correlation-Id"
+        )
         authorize_intake_action(
             principal,
             "view",
@@ -466,9 +481,7 @@ def create_network_listings_sub_router(
             audit_log=audit_log,
             correlation_id=correlation_id,
         )
-        intakes = active_service(request).list_intakes(
-            selected_heat_zone_id=selected_heat_zone_id
-        )
+        intakes = active_service(request).list_intakes(selected_heat_zone_id=selected_heat_zone_id)
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",
@@ -479,7 +492,8 @@ def create_network_listings_sub_router(
         )
         is_staff = (
             principal.has_role(Role.EXPANSION_USER)
-            or operator_role_id in (
+            or operator_role_id
+            in (
                 "expansion-staff",
                 "expansionStaff",
                 "expansion-user",
@@ -488,10 +502,7 @@ def create_network_listings_sub_router(
         ) and not is_manager
 
         if is_staff:
-            intakes = [
-                intake for intake in intakes
-                if is_record_owner(principal, intake)
-            ]
+            intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
         visible = [mask_intake(principal, intake) for intake in intakes]
         processing_stages = {
             "SUBMITTED",
@@ -503,7 +514,9 @@ def create_network_listings_sub_router(
         }
         counts = {
             "needsReview": sum(item.get("stage") == "NEEDS_REVIEW" for item in visible),
-            "awaitingEntry": sum(item.get("stage") == "AWAITING_ASSISTED_ENTRY" for item in visible),
+            "awaitingEntry": sum(
+                item.get("stage") == "AWAITING_ASSISTED_ENTRY" for item in visible
+            ),
             "processing": sum(item.get("stage") in processing_stages for item in visible),
             "blocked": sum(item.get("stage") in {"QUARANTINED", "FAILED"} for item in visible),
             "ready": sum(item.get("stage") == "READY" for item in visible),
@@ -511,18 +524,16 @@ def create_network_listings_sub_router(
 
         def latest(item: dict[str, Any]) -> str:
             events = item.get("auditEvents") or []
-            return (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
+            return (
+                (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
+            )
 
         if saved_view == "needsReview":
             visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
         elif saved_view == "awaitingEntry":
-            visible = [
-                i for i in visible if i.get("stage") == "AWAITING_ASSISTED_ENTRY"
-            ]
+            visible = [i for i in visible if i.get("stage") == "AWAITING_ASSISTED_ENTRY"]
         elif saved_view == "blocked":
-            visible = [
-                i for i in visible if i.get("stage") in {"QUARANTINED", "FAILED"}
-            ]
+            visible = [i for i in visible if i.get("stage") in {"QUARANTINED", "FAILED"}]
         elif saved_view == "processing":
             visible = [i for i in visible if i.get("stage") in processing_stages]
         elif saved_view == "ready":
@@ -533,22 +544,46 @@ def create_network_listings_sub_router(
             visible = [i for i in visible if i.get("stage") == intake_stage]
         if match_outcome:
             visible = [
-                i
-                for i in visible
-                if (i.get("matchResult") or {}).get("outcome") == match_outcome
+                i for i in visible if (i.get("matchResult") or {}).get("outcome") == match_outcome
             ]
         if sla_state:
             visible = [i for i in visible if i.get("slaState") == sla_state]
         if search:
             needle = search.casefold()
-            visible = [i for i in visible if any(needle in str(i.get(k) or "").casefold() for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner"))]
-        keys = {"id": lambda i: i.get("id", ""), "stage": lambda i: i.get("stage", ""), "sourceId": lambda i: i.get("sourceId", ""), "updatedAt": latest}
-        visible.sort(key=lambda i: (keys.get(sort_by, latest)(i), i.get("id", "")), reverse=sort_order == "desc")
+            visible = [
+                i
+                for i in visible
+                if any(
+                    needle in str(i.get(k) or "").casefold()
+                    for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner")
+                )
+            ]
+        keys = {
+            "id": lambda i: i.get("id", ""),
+            "stage": lambda i: i.get("stage", ""),
+            "sourceId": lambda i: i.get("sourceId", ""),
+            "updatedAt": latest,
+        }
+        visible.sort(
+            key=lambda i: (keys.get(sort_by, latest)(i), i.get("id", "")),
+            reverse=sort_order == "desc",
+        )
         total = len(visible)
         start = (page - 1) * page_size
-        page_items = visible[start:start + page_size]
-        evidence_state = "degraded" if any(i.get("failure") for i in page_items) else ("partial" if any(not i.get("rawSnapshot") for i in page_items) else "complete")
-        return {"items": page_items, "total": total, "page": page, "pageSize": page_size, "counts": counts, "evidenceState": evidence_state}
+        page_items = visible[start : start + page_size]
+        evidence_state = (
+            "degraded"
+            if any(i.get("failure") for i in page_items)
+            else ("partial" if any(not i.get("rawSnapshot") for i in page_items) else "complete")
+        )
+        return {
+            "items": page_items,
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+            "counts": counts,
+            "evidenceState": evidence_state,
+        }
 
     @router.get(
         "/intake/{intake_id}",
@@ -559,7 +594,9 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = active_service(request).get_intake(intake_id)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get(
+                "X-Correlation-Id"
+            )
             authorize_intake_action(
                 principal,
                 "view",

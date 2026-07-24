@@ -68,8 +68,19 @@ def create_network_review_sub_router(
     require_view_permission_fn: Callable[..., Any],
     require_decide_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-reviews")
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network review reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
@@ -87,7 +98,13 @@ def create_network_review_sub_router(
                 detail=exc.to_detail(),
             ) from exc
 
-    @router.post("/reset", dependencies=[Depends(require_decide_permission_fn)])
+    @router.post(
+        "/reset",
+        dependencies=[
+            Depends(require_decide_permission_fn),
+            Depends(require_reset_allowed),
+        ],
+    )
     def reset_network_reviews(request: Request) -> dict[str, Any]:
         return resolve_service(request, service, service_resolver).reset()
 

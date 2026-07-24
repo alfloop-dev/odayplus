@@ -43,9 +43,7 @@ class DurableTenantServiceResolver:
         self._locks_guard = RLock()
 
     def __call__(self, request: Request) -> Any:
-        tenant_id = str(
-            getattr(request.state, "operator_tenant_id", "") or ""
-        ).strip()
+        tenant_id = str(getattr(request.state, "operator_tenant_id", "") or "").strip()
         if not tenant_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -65,18 +63,52 @@ class DurableTenantServiceResolver:
         **kwargs: Any,
     ) -> Any:
         with self._lock_for(partition_tenant_id):
-            service = self._factory(
-                self._repository.load(partition_tenant_id),
-                partition_tenant_id,
-            )
+            try:
+                persisted_state = self._repository.load(partition_tenant_id)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                        "operation": f"{method_name}.load",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    },
+                ) from exc
+            service = self._factory(persisted_state, partition_tenant_id)
             result = getattr(service, method_name)(*args, **kwargs)
             if method_name in self._mutating_methods:
-                self._repository.save(
-                    partition_tenant_id,
-                    self._exporter(service),
-                )
+                try:
+                    self._repository.save(
+                        partition_tenant_id,
+                        self._exporter(service),
+                    )
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail={
+                            "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                            "operation": f"{method_name}.save",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        },
+                    ) from exc
                 if self._after_save is not None:
-                    self._after_save(service, partition_tenant_id)
+                    try:
+                        self._after_save(service, partition_tenant_id)
+                    except HTTPException:
+                        raise
+                    except Exception as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail={
+                                "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                                "operation": f"{method_name}.after_save",
+                                "message": f"{type(exc).__name__}: {exc}",
+                            },
+                        ) from exc
             return result
 
 

@@ -10,8 +10,14 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.operator import create_operator_router
+from apps.api.app.routes.operator_modules import create_operator_store_ops_router
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
+    OperatorLiveRepositoryError,
+)
+from modules.opsboard.application.store_ops import (
+    DurableStoreOpsRepository,
+    InMemoryStoreOpsRepository,
 )
 from shared.infrastructure.persistence import (
     DurableAVMRepository,
@@ -96,9 +102,7 @@ def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
             sitescore_decision_repository_for_tenant=lambda tenant_id: DurableDecisionStore(
                 scoped(tenant_id)
             ),
-            avm_repository_for_tenant=lambda tenant_id: DurableAVMRepository(
-                scoped(tenant_id)
-            ),
+            avm_repository_for_tenant=lambda tenant_id: DurableAVMRepository(scoped(tenant_id)),
             netplan_repository_for_tenant=lambda tenant_id: DurableNetPlanRepository(
                 scoped(tenant_id)
             ),
@@ -160,6 +164,205 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         bundle.engine.close()
 
 
+def test_live_router_rejects_every_network_reset(tmp_path: Path) -> None:
+    app, bundle = _live_app(tmp_path / "operator-live-reset-denied.sqlite3")
+    try:
+        with TestClient(app) as client:
+            headers = _headers("tenant-live-reset")
+            responses = [
+                client.post(f"{BASE}/network-listings/reset", headers=headers),
+                client.post(f"{BASE}/network-scoring/reset", headers=headers),
+                client.post(f"{BASE}/network-reviews/reset", headers=headers),
+                client.post(f"{BASE}/network-rebalance/reset", headers=headers),
+            ]
+
+        assert [response.status_code for response in responses] == [403] * 4
+        assert {response.json()["detail"]["code"] for response in responses} == {
+            "PRODUCTION_RESET_DENIED"
+        }
+    finally:
+        bundle.engine.close()
+
+
+def test_live_operator_repository_failure_returns_503_instead_of_empty_200() -> None:
+    class BrokenLiveRepository:
+        @property
+        def data_origin(self) -> dict[str, Any]:
+            return {
+                "kind": "live",
+                "sourceId": "broken-live-repository",
+                "persistenceMode": "postgresql",
+            }
+
+        def load_state(self, **_kwargs: Any) -> dict[str, Any]:
+            raise OperatorLiveRepositoryError("database unavailable")
+
+    app = FastAPI()
+    app.include_router(
+        create_operator_router(
+            live_repository=BrokenLiveRepository(),
+            require_live_data=True,
+            persistence_mode="postgresql",
+            provider_mode="live",
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"{BASE}/today",
+            headers=_headers("tenant-live-failure"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
+        "operation": "operator.envelope",
+        "message": "database unavailable",
+    }
+
+
+def test_live_operator_without_repository_returns_503_not_fixture() -> None:
+    app = FastAPI()
+    app.include_router(
+        create_operator_router(
+            require_live_data=True,
+            persistence_mode="postgresql",
+            provider_mode="live",
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"{BASE}/shell/home",
+            headers=_headers("tenant-live-unwired"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "OPERATOR_LIVE_DATA_UNAVAILABLE"
+    assert "r4-seed" not in response.text
+
+
+def test_store_ops_production_empty_postgres_state_returns_503_without_seeding() -> None:
+    class PostgresEngineStub:
+        dialect = "postgresql"
+
+    class EmptyPostgresDocumentStore:
+        engine = PostgresEngineStub()
+
+        def __init__(self) -> None:
+            self.put_calls: list[tuple[Any, ...]] = []
+
+        def get(self, *_args: Any) -> None:
+            return None
+
+        def put(self, *args: Any, **_kwargs: Any) -> None:
+            self.put_calls.append(args)
+
+    store = EmptyPostgresDocumentStore()
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def correlation_id(request: Request, call_next: Any) -> Any:
+        request.state.correlation_id = "corr-store-ops-production"
+        return await call_next(request)
+
+    app.include_router(
+        create_operator_store_ops_router(
+            repository=DurableStoreOpsRepository(store),
+            require_live_data=True,
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"{BASE}/store-ops/summary",
+            headers=_headers("tenant-store-ops"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "STORE_OPS_LIVE_DATA_UNAVAILABLE",
+        "operation": "store_ops.summary",
+        "message": "Store Ops production state has not been materialized",
+    }
+    assert store.put_calls == []
+    assert "ST-008" not in response.text
+
+
+def test_store_ops_production_rejects_in_memory_fixture_repository() -> None:
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def correlation_id(request: Request, call_next: Any) -> Any:
+        request.state.correlation_id = "corr-store-ops-memory"
+        return await call_next(request)
+
+    app.include_router(
+        create_operator_store_ops_router(
+            repository=InMemoryStoreOpsRepository(),
+            require_live_data=True,
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"{BASE}/store-ops/issues",
+            headers=_headers("tenant-store-ops"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "STORE_OPS_LIVE_DATA_UNAVAILABLE"
+    assert "ISS-1021" not in response.text
+
+
+def test_store_ops_production_rejects_fixture_already_persisted_in_postgres() -> None:
+    class PostgresEngineStub:
+        dialect = "postgresql"
+
+    fixture_state = InMemoryStoreOpsRepository().get_state()
+
+    class FixturePostgresDocumentStore:
+        engine = PostgresEngineStub()
+
+        def get(self, *_args: Any) -> dict[str, Any]:
+            return fixture_state
+
+        def put(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("production fixture state must never be rewritten")
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def correlation_id(request: Request, call_next: Any) -> Any:
+        request.state.correlation_id = "corr-store-ops-persisted-fixture"
+        return await call_next(request)
+
+    app.include_router(
+        create_operator_store_ops_router(
+            repository=DurableStoreOpsRepository(FixturePostgresDocumentStore()),
+            require_live_data=True,
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"{BASE}/store-ops/summary",
+            headers=_headers("tenant-store-ops"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "STORE_OPS_LIVE_DATA_UNAVAILABLE"
+    assert response.json()["detail"]["message"] == (
+        "Store Ops production state contains canonical fixture identifiers"
+    )
+    assert "ST-008" not in response.text
+
+
 def test_live_router_without_document_store_mounts_routes_and_returns_503(
     tmp_path: Path,
 ) -> None:
@@ -183,9 +386,7 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
                 headers=_headers("tenant-unavailable"),
             )
         assert response.status_code == 503
-        assert response.json()["detail"]["code"] == (
-            "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE"
-        )
+        assert response.json()["detail"]["code"] == ("OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE")
     finally:
         bundle.engine.close()
 
@@ -265,9 +466,7 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
         assert tenant_a.json()["id"] != tenant_b.json()["id"]
         assert tenant_b_list.status_code == 200, tenant_b_list.text
         assert tenant_b_list.json()["items"] == []
-        assert {
-            item["id"] for item in tenant_a_list.json()["items"]
-        } == {tenant_a.json()["id"]}
+        assert {item["id"] for item in tenant_a_list.json()["items"]} == {tenant_a.json()["id"]}
         assert "tenant-b" not in str(tenant_a_list.json())
     finally:
         bundle.engine.close()

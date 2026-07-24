@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -7,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from modules.opsboard.application.store_ops import (
     StoreOpsConflict,
+    StoreOpsLiveDataUnavailable,
     StoreOpsNotFound,
     StoreOpsPolicyError,
     StoreOpsService,
@@ -43,10 +45,31 @@ class StoreOpsCameraPurposePayload(BaseModel):
     actorName: str | None = None
 
 
+def _live_data_required(explicit: bool | None) -> bool:
+    if explicit is not None:
+        return explicit
+    flag = os.environ.get("ODP_REQUIRE_LIVE_DATA", "").strip().lower()
+    deployment = (
+        os.environ.get(
+            "ODP_DEPLOY_ENV",
+            os.environ.get("APP_ENV", "development"),
+        )
+        .strip()
+        .lower()
+    )
+    return flag in {"1", "true", "yes", "on"} or deployment in {
+        "staging",
+        "stage",
+        "prod",
+        "production",
+    }
+
+
 def create_operator_store_ops_router(
     *,
     repository: Any = None,
     audit_log: InMemoryAuditLog | None = None,
+    require_live_data: bool | None = None,
 ) -> APIRouter:
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
@@ -60,15 +83,31 @@ def create_operator_store_ops_router(
     read_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
     )
-    write_guard = require_operator_permission(
-        "intervention", Action.CREATE, engine=authz_engine
+    write_guard = require_operator_permission("intervention", Action.CREATE, engine=authz_engine)
+    live_required = _live_data_required(require_live_data)
+    service = StoreOpsService(
+        repository=repository,
+        audit_log=active_audit_log,
+        require_live_data=live_required,
     )
-    service = StoreOpsService(repository=repository, audit_log=active_audit_log)
     router = APIRouter(prefix="/operator/store-ops", tags=["operator-store-ops"])
+
+    def call_service(operation: str, method: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(*args, **kwargs)
+        except StoreOpsLiveDataUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "STORE_OPS_LIVE_DATA_UNAVAILABLE",
+                    "operation": operation,
+                    "message": str(exc),
+                },
+            ) from exc
 
     @router.get("/summary", dependencies=[Depends(read_guard)])
     def get_summary(request: Request) -> dict[str, Any]:
-        snapshot = service.snapshot()
+        snapshot = call_service("store_ops.summary", service.snapshot)
         return {
             "fourLightSummary": snapshot["fourLightSummary"],
             "stores": snapshot["stores"],
@@ -87,7 +126,9 @@ def create_operator_store_ops_router(
         light: Literal["demand", "operations", "staffing", "margin"] | None = None,
         lightStatus: Literal["green", "yellow", "red"] | None = None,
     ) -> dict[str, Any]:
-        snapshot = service.snapshot(
+        snapshot = call_service(
+            "store_ops.issues",
+            service.snapshot,
             query=query,
             statuses=statuses or (),
             sources=sources or (),
@@ -104,7 +145,11 @@ def create_operator_store_ops_router(
     def get_issue(issue_id: str, request: Request) -> dict[str, Any]:
         try:
             return {
-                "issue": service.get_issue(issue_id),
+                "issue": call_service(
+                    "store_ops.issue",
+                    service.get_issue,
+                    issue_id,
+                ),
                 "correlation_id": request.state.correlation_id,
             }
         except StoreOpsNotFound as exc:
@@ -113,7 +158,11 @@ def create_operator_store_ops_router(
     @router.get("/issues/{issue_id}/evidence", dependencies=[Depends(read_guard)])
     def get_issue_evidence(issue_id: str, request: Request) -> dict[str, Any]:
         try:
-            result = service.issue_evidence(issue_id)
+            result = call_service(
+                "store_ops.issue_evidence",
+                service.issue_evidence,
+                issue_id,
+            )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         result["correlation_id"] = request.state.correlation_id
@@ -132,7 +181,9 @@ def create_operator_store_ops_router(
     ) -> dict[str, Any]:
         try:
             if action_type == "camera-purpose":
-                return service.record_camera_purpose(
+                return call_service(
+                    "store_ops.camera_purpose",
+                    service.record_camera_purpose,
                     issue_id=issue_id,
                     payload=body.model_dump(exclude_none=True),
                     idempotency_key=idempotency_key,
@@ -140,7 +191,9 @@ def create_operator_store_ops_router(
                     actor_role_id=body.actorRoleId or "opsLead",
                     actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
                 )
-            return service.transition_issue(
+            return call_service(
+                "store_ops.transition",
+                service.transition_issue,
                 issue_id=issue_id,
                 action_type=action_type,
                 payload=body.model_dump(exclude_none=True),
@@ -167,7 +220,9 @@ def create_operator_store_ops_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.record_camera_purpose(
+            return call_service(
+                "store_ops.camera_purpose",
+                service.record_camera_purpose,
                 issue_id=issue_id,
                 payload=body.model_dump(exclude_none=True),
                 idempotency_key=idempotency_key,

@@ -51,8 +51,19 @@ def create_network_scoring_sub_router(
     require_view_permission_fn: Callable[..., Any],
     require_write_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-scoring")
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network scoring reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
@@ -70,7 +81,13 @@ def create_network_scoring_sub_router(
                 detail=exc.to_detail(),
             ) from exc
 
-    @router.post("/reset", dependencies=[Depends(require_write_permission_fn)])
+    @router.post(
+        "/reset",
+        dependencies=[
+            Depends(require_write_permission_fn),
+            Depends(require_reset_allowed),
+        ],
+    )
     def reset_network_scoring(request: Request) -> dict[str, Any]:
         return resolve_service(request, service, service_resolver).reset()
 
@@ -86,9 +103,7 @@ def create_network_scoring_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(
-                request, service, service_resolver
-            ).score_candidate(
+            return resolve_service(request, service, service_resolver).score_candidate(
                 candidate_id=candidate_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
@@ -138,9 +153,7 @@ def create_network_scoring_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(
-                request, service, service_resolver
-            ).set_compare_set(
+            return resolve_service(request, service, service_resolver).set_compare_set(
                 candidate_ids=body.candidateIds,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
