@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
+from models.shared_ml import (
+    ModelBinding,
+    ProductionModelInputError,
+    ProductionModelRuntime,
+    ProductionModelRuntimeError,
+    ScoringInputUnavailableError,
+    production_model_execution_required,
+    require_live_inputs,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -46,6 +54,8 @@ else:
         realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        require_production_model: bool | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -66,7 +76,16 @@ else:
             decision_workflow = workflow
             if active_realization_hook not in decision_workflow.hooks:
                 decision_workflow.register_hook(active_realization_hook)
-        service = SiteScoreReportService(repository=site_repository)
+        production_model_required = (
+            production_model_execution_required()
+            if require_production_model is None
+            else require_production_model
+        )
+        service = SiteScoreReportService(
+            repository=site_repository,
+            model_runtime=model_runtime,
+            require_production_model=production_model_required,
+        )
         idempotency_index: dict[str, str] = {}
         jobs: dict[str, dict[str, Any]] = {}
 
@@ -91,17 +110,34 @@ else:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
 
-            reports = service.score_candidates(
-                body.features,
-                prediction_origin_time=_parse_origin(body.prediction_origin_time),
+            try:
+                execution = service.score_candidates_with_execution(
+                    body.features,
+                    prediction_origin_time=_parse_origin(body.prediction_origin_time),
+                )
+            except ProductionModelInputError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            except ProductionModelRuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            reports = list(execution.reports)
+            executed_binding = (
+                execution.model_inference.binding
+                if execution.model_inference is not None
+                else model_binding
             )
             job_id = f"sitescore-score-{uuid4()}"
             metadata: dict[str, Any] = {
                 "idempotency_key": effective_key,
                 "candidate_count": len(reports),
             }
-            if model_binding is not None:
-                metadata["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                metadata["model_binding"] = executed_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="sitescore.scored.v1",
@@ -123,8 +159,8 @@ else:
                 "correlation_id": request.state.correlation_id,
                 "created": True,
             }
-            if model_binding is not None:
-                payload["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                payload["model_binding"] = executed_binding.to_audit_metadata()
             jobs[job_id] = payload
             if effective_key:
                 idempotency_index[effective_key] = job_id

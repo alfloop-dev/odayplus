@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
+from models.shared_ml import (
+    ModelBinding,
+    ProductionModelInputError,
+    ProductionModelRuntime,
+    ProductionModelRuntimeError,
+    ScoringInputUnavailableError,
+    production_model_execution_required,
+    require_live_inputs,
+    require_production_runtime,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -11,7 +20,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
-    from modules.forecastops.application import ForecastOpsService
+    from modules.forecastops.application import (
+        ForecastOpsService,
+        RegisteredEstimatorForecastEngine,
+    )
     from modules.forecastops.domain import ForecastOpsError, ForecastOpsNotFoundError
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.forecastops.workers import ForecastOpsBatchResult, run_forecastops_batch_forecast
@@ -72,6 +84,8 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         job_store: ForecastOpsJobStore | None = None,
         model_binding: ModelBinding | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        require_production_model: bool | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -82,6 +96,11 @@ else:
         authz_engine = build_engine(audit_log=active_audit_log)
         jobs = job_store or ForecastOpsJobStore()
         service = ForecastOpsService(repository=forecast_repository)
+        production_model_required = (
+            production_model_execution_required()
+            if require_production_model is None
+            else require_production_model
+        )
 
         @router.post("/timeseries", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))])
         def ingest_timeseries(body: ForecastOpsTimeseriesPayload) -> dict[str, Any]:
@@ -105,6 +124,7 @@ else:
             effective_key = body.idempotency_key or idempotency_key
             result = jobs.get_by_idempotency_key(effective_key)
             created = result is None
+            executed_binding = model_binding
             if result is None:
                 # Fail closed: refuse a fresh run when live inputs are absent.
                 try:
@@ -113,21 +133,46 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result, created = jobs.put(
-                    run_forecastops_batch_forecast(
-                        inputs=body.inputs,
-                        prediction_origin_time=body.prediction_origin_time,
-                        repository=forecast_repository,
-                    ),
-                    idempotency_key=effective_key,
-                )
+                try:
+                    registered_engine = None
+                    if production_model_required:
+                        registered_engine = RegisteredEstimatorForecastEngine(
+                            require_production_runtime(
+                                model_runtime,
+                                service="forecastops",
+                            )
+                        )
+                    result, created = jobs.put(
+                        run_forecastops_batch_forecast(
+                            inputs=body.inputs,
+                            prediction_origin_time=body.prediction_origin_time,
+                            repository=forecast_repository,
+                            engine=registered_engine,
+                        ),
+                        idempotency_key=effective_key,
+                    )
+                    if (
+                        registered_engine is not None
+                        and registered_engine.last_inference is not None
+                    ):
+                        executed_binding = registered_engine.last_inference.binding
+                except ProductionModelInputError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
+                except ProductionModelRuntimeError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
             metadata: dict[str, Any] = {
                 "idempotency_key": effective_key,
                 "store_count": len(body.inputs),
                 "created": created,
             }
-            if model_binding is not None:
-                metadata["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                metadata["model_binding"] = executed_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="forecastops.forecasted.v1",
@@ -144,8 +189,8 @@ else:
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
-            if model_binding is not None:
-                payload["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                payload["model_binding"] = executed_binding.to_audit_metadata()
             return payload
 
         @router.get("/forecast-jobs/{job_id}", dependencies=[Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))])

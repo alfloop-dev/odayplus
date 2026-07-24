@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -7,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlparse
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 
@@ -323,6 +325,19 @@ class MlflowRegistryAdapter:
                 f"immutable run lineage conflict for {model_version.model_id}: "
                 f"{existing_source_run_id!r} != {model_version.run_id!r}"
             )
+        existing_artifact_sha256 = mlflow_version.tags.get(
+            self._tag("artifact_sha256")
+        )
+        requested_artifact_sha256 = self._artifact_sha256(model_version)
+        if (
+            existing_artifact_sha256
+            and requested_artifact_sha256
+            and existing_artifact_sha256 != requested_artifact_sha256
+        ):
+            raise ValueError(
+                f"immutable artifact digest conflict for {model_version.model_id}: "
+                f"{existing_artifact_sha256!r} != {requested_artifact_sha256!r}"
+            )
 
     def _lineage_tags(
         self,
@@ -330,10 +345,12 @@ class MlflowRegistryAdapter:
         *,
         mlflow_run_id: str,
     ) -> dict[str, str]:
+        artifact_sha256 = self._artifact_sha256(model_version)
         return {
             self._tag("schema_version"): _TAG_SCHEMA_VERSION,
             self._tag("domain_version"): model_version.version,
             self._tag("artifact_uri"): model_version.artifact_uri,
+            self._tag("artifact_sha256"): artifact_sha256 or "",
             self._tag("dataset_snapshot_id"): model_version.dataset_snapshot_id,
             self._tag("feature_schema_version"): model_version.feature_schema_version,
             self._tag("label_version"): model_version.label_version,
@@ -350,6 +367,27 @@ class MlflowRegistryAdapter:
             self._tag("rollback_target"): model_version.rollback_target or "",
             self._tag("monitoring_config"): self._json(model_version.monitoring_config),
         }
+
+    @staticmethod
+    def _artifact_sha256(model_version: ModelVersion) -> str | None:
+        configured = (
+            model_version.monitoring_config.get("artifact_sha256")
+            or model_version.monitoring_config.get("artifact_digest")
+        )
+        if configured:
+            value = str(configured).lower()
+            return value if value.startswith("sha256:") else f"sha256:{value}"
+
+        uri = model_version.artifact_uri
+        if uri.startswith("odp-artifact://sha256/"):
+            return f"sha256:{uri.removeprefix('odp-artifact://sha256/')}"
+        parsed = urlparse(uri)
+        if parsed.scheme not in {"", "file"}:
+            return None
+        path = Path(unquote(parsed.path if parsed.scheme else uri))
+        if not path.is_file():
+            return None
+        return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
     def _to_domain(self, mlflow_version: MlflowModelVersion) -> ModelVersion:
         tags = mlflow_version.tags

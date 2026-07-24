@@ -47,6 +47,15 @@ class Interval:
 
 
 @dataclass(frozen=True)
+class RevenuePredictionBand:
+    """Model-produced mature monthly revenue prediction."""
+
+    p10: float
+    p50: float
+    p90: float
+
+
+@dataclass(frozen=True)
 class SiteScoreFeatureInput:
     """Feature vector for scoring one candidate site."""
 
@@ -219,6 +228,39 @@ def score_sites(
     ]
 
 
+def score_sites_from_model_predictions(
+    features: Iterable[SiteScoreFeatureInput | Mapping[str, Any]],
+    predictions: Iterable[RevenuePredictionBand],
+    *,
+    model_version: str,
+    prediction_origin_time: datetime | None = None,
+    scored_at: datetime | None = None,
+) -> list[SiteScoreReport]:
+    """Build SiteScore reports from executable model revenue predictions.
+
+    Business decisions and payback policy remain in the SiteScore domain, but
+    the revenue trajectory is supplied by the registered model rather than the
+    deterministic POC baseline.
+    """
+
+    origin = prediction_origin_time or datetime.now(UTC)
+    scored_time = scored_at or datetime.now(UTC)
+    feature_rows = [_coerce_feature(feature) for feature in features]
+    prediction_rows = list(predictions)
+    if len(feature_rows) != len(prediction_rows):
+        raise ValueError("SiteScore feature and model prediction counts differ")
+    return [
+        _score_feature(
+            feature,
+            prediction_origin_time=origin,
+            scored_at=scored_time,
+            mature_revenue_prediction=prediction,
+            model_version=model_version,
+        )
+        for feature, prediction in zip(feature_rows, prediction_rows, strict=True)
+    ]
+
+
 def score_site(
     feature: SiteScoreFeatureInput | Mapping[str, Any],
     *,
@@ -235,13 +277,28 @@ def _score_feature(
     *,
     prediction_origin_time: datetime,
     scored_at: datetime,
+    mature_revenue_prediction: RevenuePredictionBand | None = None,
+    model_version: str = SITESCORE_MODEL_VERSION,
 ) -> SiteScoreReport:
     demand = _bounded(feature.heat_zone_score / 100.0) if feature.heat_zone_score else feature.poi_demand_index
-    mature_p50 = _mature_revenue(feature, demand)
     confidence = _confidence(feature)
-    spread = (1.0 - confidence) * 0.40 + 0.12
-
-    horizons = {key: _interval(mature_p50 * ramp, spread) for key, ramp in HORIZON_RAMP.items()}
+    if mature_revenue_prediction is None:
+        mature_p50 = _mature_revenue(feature, demand)
+        spread = (1.0 - confidence) * 0.40 + 0.12
+        horizons = {
+            key: _interval(mature_p50 * ramp, spread)
+            for key, ramp in HORIZON_RAMP.items()
+        }
+    else:
+        mature_p50 = max(0.0, float(mature_revenue_prediction.p50))
+        horizons = {
+            key: Interval(
+                p10=round(max(0.0, mature_revenue_prediction.p10 * ramp), 2),
+                p50=round(max(0.0, mature_revenue_prediction.p50 * ramp), 2),
+                p90=round(max(0.0, mature_revenue_prediction.p90 * ramp), 2),
+            )
+            for key, ramp in HORIZON_RAMP.items()
+        }
     payback, payback_p50 = _payback(horizons["m12"], feature)
     rent_reasonableness = _rent_reasonableness(feature.monthly_rent, mature_p50)
     cannibalization = _bounded(feature.own_store_count_nearby / 3.0)
@@ -279,7 +336,7 @@ def _score_feature(
         key_positive_factors=positives,
         key_negative_factors=negatives,
         confidence=round(confidence, 4),
-        model_version=SITESCORE_MODEL_VERSION,
+        model_version=model_version,
         feature_version=feature.view_version,
         feature_snapshot_time=feature.feature_snapshot_time,
         prediction_origin_time=prediction_origin_time,
@@ -450,9 +507,11 @@ __all__ = [
     "SITESCORE_FEATURE_VERSION",
     "SITESCORE_MODEL_VERSION",
     "Interval",
+    "RevenuePredictionBand",
     "SiteScoreFeatureInput",
     "SiteScoreRecommendation",
     "SiteScoreReport",
     "score_site",
     "score_sites",
+    "score_sites_from_model_predictions",
 ]

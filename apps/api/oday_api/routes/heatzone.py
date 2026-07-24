@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
+from models.shared_ml import (
+    ModelBinding,
+    ProductionModelInputError,
+    ProductionModelRuntime,
+    ProductionModelRuntimeError,
+    ScoringInputUnavailableError,
+    production_model_execution_required,
+    require_live_inputs,
+)
 from modules.heatzone.infrastructure import HeatZoneResultStore
 from shared.audit import AuditEvent, InMemoryAuditLog
 
@@ -26,6 +34,8 @@ else:
         store: HeatZoneResultStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        require_production_model: bool | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -34,6 +44,11 @@ else:
         result_store = store or HeatZoneResultStore()
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
+        production_model_required = (
+            production_model_execution_required()
+            if require_production_model is None
+            else require_production_model
+        )
 
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def list_heatzones(limit: int = 100) -> dict[str, Any]:
@@ -71,20 +86,38 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result, created = result_store.put(
-                    run_heatzone_batch_score(
-                        features=body.features,
-                        prediction_origin_time=body.prediction_origin_time,
-                    ),
-                    idempotency_key=effective_idempotency_key,
-                )
+                try:
+                    result, created = result_store.put(
+                        run_heatzone_batch_score(
+                            features=body.features,
+                            prediction_origin_time=body.prediction_origin_time,
+                            model_runtime=model_runtime,
+                            require_production_model=production_model_required,
+                        ),
+                        idempotency_key=effective_idempotency_key,
+                    )
+                except ProductionModelInputError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
+                except ProductionModelRuntimeError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
+            executed_binding = (
+                result.model_inference.binding
+                if result.model_inference is not None
+                else model_binding
+            )
             metadata: dict[str, Any] = {
                 "idempotency_key": effective_idempotency_key,
                 "feature_count": len(body.features),
                 "created": created,
             }
-            if model_binding is not None:
-                metadata["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                metadata["model_binding"] = executed_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.scored.v1",
@@ -101,8 +134,8 @@ else:
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
-            if model_binding is not None:
-                payload["model_binding"] = model_binding.to_audit_metadata()
+            if executed_binding is not None:
+                payload["model_binding"] = executed_binding.to_audit_metadata()
             return payload
 
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])

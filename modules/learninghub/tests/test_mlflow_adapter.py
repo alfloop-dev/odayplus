@@ -160,6 +160,12 @@ def test_registration_is_idempotent_but_rejects_lineage_rewrites(
             model_version._replace(artifact_uri=conflicting_artifact.as_uri())
         )
 
+    Path(model_version.artifact_uri.removeprefix("file://")).write_bytes(
+        b"same-uri-different-content"
+    )
+    with pytest.raises(ValueError, match="immutable artifact digest conflict"):
+        adapter.register_model_version(model_version)
+
 
 def test_unknown_domain_version_and_alias_are_reported_without_repository_fallback(
     tracking_uri: str,
