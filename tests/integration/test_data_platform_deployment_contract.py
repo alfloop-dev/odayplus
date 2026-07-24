@@ -278,6 +278,8 @@ def test_no_manifest_contains_secret_material_and_receipts_are_capturable() -> N
         assert container["terminationMessagePath"] == "/var/run/oday/termination.log"
         assert container["resources"]["requests"]
         assert container["resources"]["limits"]
+        if container["args"] != ["migrate"]:
+            assert _environment(container)["TMPDIR"]["value"] == "/var/lib/oday"
 
 
 def test_renderer_rejects_tags_short_sha_and_unbounded_manual_windows() -> None:

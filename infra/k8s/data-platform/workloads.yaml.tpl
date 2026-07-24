@@ -259,6 +259,8 @@ spec:
                   value: /var/run/oday/status/status_mapping.json
                 - name: ODP_TERMINATION_RECEIPT_PATH
                   value: /var/run/oday/termination.log
+                - name: TMPDIR
+                  value: /var/lib/oday
               resources:
                 requests:
                   cpu: 100m
@@ -407,6 +409,7 @@ spec:
               value: "__ORDERS_HISTORY_END__"
             - name: ODP_TERMINATION_RECEIPT_PATH
               value: /var/run/oday/termination.log
+            - {name: TMPDIR, value: /var/lib/oday}
           resources:
             requests: {cpu: 100m, memory: 1Gi}
             limits: {cpu: "2", memory: 4Gi}
@@ -533,6 +536,7 @@ spec:
             - {name: ODP_MANUAL_START, value: "__MANUAL_START__"}
             - {name: ODP_MANUAL_END, value: "__MANUAL_END__"}
             - {name: ODP_TERMINATION_RECEIPT_PATH, value: /var/run/oday/termination.log}
+            - {name: TMPDIR, value: /var/lib/oday}
           resources:
             requests: {cpu: 100m, memory: 1Gi}
             limits: {cpu: "2", memory: 4Gi}
@@ -658,6 +662,7 @@ spec:
             - {name: ODP_MANUAL_START, value: "__MANUAL_START__"}
             - {name: ODP_MANUAL_END, value: "__MANUAL_END__"}
             - {name: ODP_TERMINATION_RECEIPT_PATH, value: /var/run/oday/termination.log}
+            - {name: TMPDIR, value: /var/lib/oday}
           resources:
             requests: {cpu: 100m, memory: 1Gi}
             limits: {cpu: "2", memory: 4Gi}
