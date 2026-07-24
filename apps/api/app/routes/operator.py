@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from modules.opsboard.application.growth import GrowthService
@@ -87,6 +87,9 @@ def create_operator_router(
     listing_repository: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    require_live_data: bool = False,
+    persistence_mode: str = "memory",
+    provider_mode: str = "fixture",
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -120,8 +123,22 @@ def create_operator_router(
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
 
-    # Shared state service — one instance per router lifetime.
-    svc = state_service or OperatorStateService()
+    # Shared state service — one instance per router lifetime. There is no live
+    # operator-state repository in this composition root yet, so the
+    # require-live branch must not reuse an injected fixture service.
+    svc = (
+        OperatorStateService(
+            require_live_data=True,
+            persistence_mode=persistence_mode,
+            provider_mode=provider_mode,
+        )
+        if require_live_data
+        else state_service
+        or OperatorStateService(
+            persistence_mode=persistence_mode,
+            provider_mode=provider_mode,
+        )
+    )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -164,6 +181,84 @@ def create_operator_router(
     operator_write_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
     )
+
+    if require_live_data:
+        # A live operator repository is not implemented in this codebase. Keep
+        # the read envelope available so clients can inspect provenance and
+        # readiness, but never mount fixture-backed product modules or seed
+        # mutation routes. Any other operator operation fails closed.
+        def _context(
+            request: Request,
+            *,
+            x_operator_role: str | None,
+            x_subject_id: str | None,
+            x_roles: str | None,
+            x_correlation_id: str | None,
+        ) -> dict[str, str | None]:
+            return {
+                "role_id": getattr(request.state, "operator_role_id", None)
+                or x_operator_role,
+                "subject_id": getattr(request.state, "operator_subject_id", None)
+                or x_subject_id,
+                "system_roles": getattr(request.state, "operator_system_roles", None)
+                or x_roles,
+                "correlation_id": getattr(request.state, "correlation_id", None)
+                or x_correlation_id,
+            }
+
+        @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
+        @router.get("/today", dependencies=[Depends(operator_view_guard)])
+        def unavailable_envelope(
+            request: Request,
+            x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        ) -> dict[str, Any]:
+            return svc.get_today(
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                )
+            )
+
+        @router.get("/search", dependencies=[Depends(operator_view_guard)])
+        def unavailable_search(
+            request: Request,
+            q: str = Query(default=""),
+            x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        ) -> dict[str, Any]:
+            return svc.search(
+                q,
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                ),
+            )
+
+        @router.post(
+            "/seed/reset",
+            dependencies=[Depends(operator_view_guard)],
+            include_in_schema=False,
+        )
+        def seed_reset_disabled() -> None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Operator seed/reset is disabled because live data is required."
+                ),
+            )
+
+        return router
 
     # Shell — protected read envelope plus the product-shell surface.
     #

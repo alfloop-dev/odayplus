@@ -20,6 +20,18 @@ from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 
 API_VERSION = "0.1.0"
+_LIVE_REQUIRED_DEPLOYMENTS = {"staging", "stage", "prod", "production"}
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUE_VALUES
+
+
+def _provider_mode_label(provider_validation: Any) -> str:
+    mode = getattr(provider_validation, "mode", None)
+    value = getattr(mode, "value", mode)
+    return str(value).strip().lower() if value is not None else "unknown"
 
 
 def health_payload() -> dict[str, str]:
@@ -96,7 +108,37 @@ else:
 
         telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
+        requested_persistence_mode = os.environ.get(
+            "ODP_PERSISTENCE", "memory"
+        ).strip().lower()
+        if persistence is None and requested_persistence_mode not in {
+            "memory",
+            "durable",
+            "sqlite",
+        }:
+            raise ValueError(
+                "Unsupported ODP_PERSISTENCE mode "
+                f"{requested_persistence_mode!r}; supported runtime modes are "
+                "memory, durable, and sqlite."
+            )
         bundle = persistence or build_persistence()
+        deployment_mode = os.environ.get(
+            "ODP_DEPLOY_ENV", os.environ.get("APP_ENV", "development")
+        ).strip().lower()
+        require_live_data = _env_flag("ODP_REQUIRE_LIVE_DATA") or (
+            deployment_mode in _LIVE_REQUIRED_DEPLOYMENTS
+        )
+        persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
+        configured_persistence_mode = os.environ.get(
+            "ODP_PERSISTENCE", persistence_mode
+        ).strip().lower()
+        provider_mode = _provider_mode_label(provider_validation)
+        production_model_bindings_ready = False
+        model_binding_mode = (
+            "approved-registry-unverified"
+            if require_live_data
+            else "local-baseline-seed"
+        )
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
@@ -116,6 +158,106 @@ else:
         # their call sites.
         install_error_handlers(api)
         install_deprecation_headers(api)
+
+        def database_health() -> tuple[bool, str]:
+            if not bundle.is_durable:
+                return True, "healthy (in-memory)"
+            try:
+                bundle.engine.query("SELECT 1")
+            except Exception as exc:
+                return False, f"unhealthy: {exc}"
+            return True, "healthy"
+
+        def provider_health() -> tuple[bool, tuple[Any, ...]]:
+            if hasattr(provider_validation, "ok"):
+                return bool(provider_validation.ok), tuple(
+                    getattr(provider_validation, "errors", ())
+                )
+            if callable(provider_validation):
+                try:
+                    provider_validation()
+                except Exception as exc:
+                    return False, (str(exc),)
+            return True, ()
+
+        def runtime_modes(
+            *,
+            provider_ok: bool,
+            persistence_reachable: bool,
+        ) -> dict[str, Any]:
+            # The current factory supports memory and SQLite only. SQLite is a
+            # durable local/test backend, not a supported production
+            # persistence runtime. Unknown values such as "postgres" currently
+            # fall back to memory in the factory, so both requested and actual
+            # modes are exposed and neither can pass this gate.
+            production_persistence_supported = False
+            provider_live_ready = provider_ok and provider_mode == "live"
+            # No production operator-state repository/connector is wired in
+            # this composition root. Keep this false until one is explicitly
+            # injected and verified; durable SQLite alone is not a live data
+            # source and must not be presented as Cloud SQL support.
+            operator_repository_ready = False
+            live_ready = (
+                production_persistence_supported
+                and provider_live_ready
+                and operator_repository_ready
+            )
+            blocking_reasons: list[str] = []
+            if require_live_data:
+                if not bundle.is_durable:
+                    blocking_reasons.append("MEMORY_PERSISTENCE")
+                else:
+                    blocking_reasons.append("SQLITE_NOT_PRODUCTION_PERSISTENCE")
+                if configured_persistence_mode not in {
+                    "memory",
+                    "durable",
+                    "sqlite",
+                }:
+                    blocking_reasons.append("UNSUPPORTED_PERSISTENCE_MODE")
+                if not provider_live_ready:
+                    blocking_reasons.append("PROVIDER_NOT_LIVE")
+                if not operator_repository_ready:
+                    blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
+                if not production_model_bindings_ready:
+                    blocking_reasons.append(
+                        "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+                    )
+            return {
+                "requireLiveData": require_live_data,
+                "deploymentMode": deployment_mode,
+                "persistence": {
+                    "configuredMode": configured_persistence_mode,
+                    "runtimeMode": persistence_mode,
+                    "durable": bool(bundle.is_durable),
+                    "reachable": persistence_reachable,
+                    "production_persistence_supported": (
+                        production_persistence_supported
+                    ),
+                },
+                "provider": {
+                    "mode": provider_mode,
+                    "configurationValid": provider_ok,
+                    "healthy": (
+                        provider_ok
+                        if not require_live_data
+                        else provider_live_ready
+                    ),
+                    "live": provider_live_ready,
+                },
+                "models": {
+                    "mode": model_binding_mode,
+                    "productionBindingsReady": production_model_bindings_ready,
+                    "autoSeeded": (
+                        not require_live_data and production_model_bindings_ready
+                    ),
+                },
+                "data": {
+                    "mode": "unavailable" if require_live_data else "fixture",
+                    "origin": None if require_live_data else "r4-seed",
+                    "liveReady": live_ready,
+                    "blockingReasons": blocking_reasons,
+                },
+            }
 
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
@@ -151,20 +293,51 @@ else:
 
         @api.get("/readiness", tags=["system"])
         def readiness(response: Response) -> dict[str, Any]:
-            # Readiness: check database connectivity
-            db_ok = True
-            details = {}
-            if bundle.is_durable:
-                try:
-                    bundle.engine.query("SELECT 1")
-                    details["database"] = "healthy"
-                except Exception as exc:
-                    db_ok = False
-                    details["database"] = f"unhealthy: {exc}"
-            else:
-                details["database"] = "healthy (in-memory)"
+            db_ok, db_details = database_health()
+            provider_ok, provider_errors = provider_health()
+            modes = runtime_modes(
+                provider_ok=provider_ok,
+                persistence_reachable=db_ok,
+            )
+            persistence_ok = db_ok and (
+                not require_live_data
+                or bool(
+                    modes["persistence"][
+                        "production_persistence_supported"
+                    ]
+                )
+            )
+            provider_ready = provider_ok and (
+                not require_live_data or bool(modes["provider"]["live"])
+            )
+            live_gate_ok = (
+                not require_live_data or bool(modes["data"]["liveReady"])
+            )
+            overall_ok = persistence_ok and provider_ready and live_gate_ok
+            if require_live_data and not modes["persistence"][
+                "production_persistence_supported"
+            ]:
+                db_details = (
+                    "unsupported for production live data: "
+                    f"runtime mode {persistence_mode}"
+                )
+            provider_details = (
+                "healthy"
+                if provider_ready
+                else (
+                    "unsupported for production live data: "
+                    f"mode {provider_mode}"
+                    if require_live_data and provider_ok
+                    else f"unhealthy: {provider_errors}"
+                )
+            )
+            details = {
+                "database": db_details,
+                "external_providers": provider_details,
+                **modes,
+            }
 
-            if not db_ok:
+            if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
                 return {"status": "unhealthy", "service": "oday-api", "details": details}
             return {"status": "ok", "service": "oday-api", "details": details}
@@ -173,32 +346,20 @@ else:
         @api.get("/platform/health", tags=["platform"])
         def health(request: Request, response: Response) -> dict[str, Any]:
             # Detailed health: check database, job queue, and external providers
-            db_ok = True
-            db_details = "healthy (in-memory)"
-            if bundle.is_durable:
-                try:
-                    bundle.engine.query("SELECT 1")
-                    db_details = "healthy"
-                except Exception as exc:
-                    db_ok = False
-                    db_details = f"unhealthy: {exc}"
-
-            if hasattr(provider_validation, "ok"):
-                provider_ok = provider_validation.ok
-                provider_errors = getattr(provider_validation, "errors", ())
-            elif callable(provider_validation):
-                try:
-                    provider_validation()
-                    provider_ok = True
-                    provider_errors = ()
-                except Exception as exc:
-                    provider_ok = False
-                    provider_errors = (str(exc),)
-            else:
-                provider_ok = True
-                provider_errors = ()
-
-            provider_details = "healthy" if provider_ok else f"unhealthy: {provider_errors}"
+            db_ok, db_details = database_health()
+            provider_ok, provider_errors = provider_health()
+            provider_details = (
+                "healthy"
+                if provider_ok and (
+                    not require_live_data or provider_mode == "live"
+                )
+                else (
+                    "unsupported for production live data: "
+                    f"mode {provider_mode}"
+                    if require_live_data and provider_ok
+                    else f"unhealthy: {provider_errors}"
+                )
+            )
 
             queue_ok = True
             queue_details = "healthy"
@@ -209,7 +370,37 @@ else:
                 queue_ok = False
                 queue_details = f"unhealthy: {exc}"
 
-            overall_ok = db_ok and provider_ok and queue_ok
+            modes = runtime_modes(
+                provider_ok=provider_ok,
+                persistence_reachable=db_ok,
+            )
+            persistence_ok = db_ok and (
+                not require_live_data
+                or bool(
+                    modes["persistence"][
+                        "production_persistence_supported"
+                    ]
+                )
+            )
+            provider_ready = provider_ok and (
+                not require_live_data or bool(modes["provider"]["live"])
+            )
+            live_gate_ok = (
+                not require_live_data or bool(modes["data"]["liveReady"])
+            )
+            if require_live_data and not modes["persistence"][
+                "production_persistence_supported"
+            ]:
+                db_details = (
+                    "unsupported for production live data: "
+                    f"runtime mode {persistence_mode}"
+                )
+            overall_ok = (
+                persistence_ok
+                and provider_ready
+                and queue_ok
+                and live_gate_ok
+            )
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
@@ -223,7 +414,8 @@ else:
                     "database": db_details,
                     "job_queue": queue_details,
                     "external_providers": provider_details,
-                }
+                },
+                "modes": modes,
             }
 
 
@@ -359,7 +551,18 @@ else:
             or os.environ.get("GITHUB_SHA")
             or os.environ.get("COMMIT_SHA")
         )
-        scoring_bindings = seed_scoring_models(learning_repo, git_sha=release_sha)
+        if require_live_data:
+            # Production model bindings must be resolved from an approved
+            # registry together with verified training and live-input lineage.
+            # No such resolver exists in this runtime yet, so do not create or
+            # promote a baseline model implicitly.
+            scoring_bindings: dict[str, Any] = {}
+        else:
+            scoring_bindings = seed_scoring_models(
+                learning_repo,
+                git_sha=release_sha,
+            )
+            production_model_bindings_ready = bool(scoring_bindings)
 
         # Every product router is mounted through mount_versioned: once under
         # /api/v1 (the contract the OpenAPI artifact and generated client
@@ -452,6 +655,9 @@ else:
                 listing_repository=listing_repository,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
+                require_live_data=require_live_data,
+                persistence_mode=persistence_mode,
+                provider_mode=provider_mode,
             ),
         )
 
@@ -479,6 +685,9 @@ else:
         api.state.operator_document_store = operator_document_store
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
+        api.state.require_live_data = require_live_data
+        api.state.persistence_mode = persistence_mode
+        api.state.provider_mode = provider_mode
         return api
 
     app = create_app()

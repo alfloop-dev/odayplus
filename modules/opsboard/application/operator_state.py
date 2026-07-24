@@ -11,7 +11,10 @@ approvals, evidence, seed) and the in-memory R4 seed store.  It owns:
 - confirm_evidence_purpose() → evidence unlock write + audit
 - reset_to_seed() → deterministic seed reset
 
-Not changing: persistence layer, auth/RBAC, external DB adapters.
+Production note: this module does not implement a live operator repository.
+When live data is required it deliberately starts with no operational records
+and reports that state in the response envelope. Fixtures remain available for
+local development and tests only.
 Composes with: operator_modules/* sub-routers via create_operator_router().
 """
 
@@ -224,9 +227,60 @@ class OperatorStateService:
     for in-memory state).
     """
 
-    def __init__(self) -> None:
-        self._state: dict[str, Any] = load_r4_seed()
+    def __init__(
+        self,
+        *,
+        require_live_data: bool = False,
+        persistence_mode: str = "memory",
+        provider_mode: str = "fixture",
+    ) -> None:
+        self._require_live_data = require_live_data
+        self._persistence_mode = persistence_mode
+        self._provider_mode = provider_mode
+        self._live_ready = False
+        self._state: dict[str, Any] = {} if require_live_data else load_r4_seed()
         self._idempotency_cache: dict[str, Any] = {}
+
+    @property
+    def live_ready(self) -> bool:
+        """Whether this service is backed by a verified live repository."""
+        return self._live_ready
+
+    @property
+    def data_origin(self) -> dict[str, Any]:
+        """Return machine-verifiable provenance for the operator read model."""
+        if self._require_live_data:
+            return {
+                "kind": "unavailable",
+                "sourceId": None,
+                "persistenceMode": self._persistence_mode,
+                "providerMode": self._provider_mode,
+            }
+        return {
+            "kind": "fixture",
+            "sourceId": "r4-seed",
+            "persistenceMode": self._persistence_mode,
+            "providerMode": self._provider_mode,
+        }
+
+    @property
+    def live_readiness(self) -> dict[str, Any]:
+        """Return the live-data gate state without implying connector support."""
+        return {
+            "required": self._require_live_data,
+            "ready": self._live_ready,
+            "reasonCode": (
+                "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
+                if self._require_live_data
+                else "LIVE_DATA_NOT_REQUIRED"
+            ),
+        }
+
+    def _require_writable_data(self) -> None:
+        if self._require_live_data and not self._live_ready:
+            raise RuntimeError(
+                "Operator live data is required, but no live operator repository is configured."
+            )
 
     # ------------------------------------------------------------------
     # Read paths
@@ -352,6 +406,7 @@ class OperatorStateService:
         correlation_id: str | None,
     ) -> IssueTransitionResponse:
         """Transition an issue through its lifecycle, appending an audit event."""
+        self._require_writable_data()
         if idempotency_key and idempotency_key in self._idempotency_cache:
             return self._idempotency_cache[idempotency_key]  # type: ignore[return-value]
 
@@ -395,6 +450,7 @@ class OperatorStateService:
         correlation_id: str | None,
     ) -> ApprovalDecisionResponse:
         """Record an approval decision, appending an audit event."""
+        self._require_writable_data()
         if idempotency_key and idempotency_key in self._idempotency_cache:
             return self._idempotency_cache[idempotency_key]  # type: ignore[return-value]
 
@@ -435,6 +491,7 @@ class OperatorStateService:
         workflow state in its own service. This method only makes that pending
         approval visible through /operator/approvals and the shell envelope.
         """
+        self._require_writable_data()
         approval = deepcopy(approval)
         decisions = self._state.setdefault("decisions", [])
         for index, existing in enumerate(decisions):
@@ -465,6 +522,7 @@ class OperatorStateService:
         correlation_id: str | None,
     ) -> EvidencePurposeResponse:
         """Unlock a locked evidence item by purpose declaration."""
+        self._require_writable_data()
         if idempotency_key and idempotency_key in self._idempotency_cache:
             return self._idempotency_cache[idempotency_key]  # type: ignore[return-value]
 
@@ -495,6 +553,7 @@ class OperatorStateService:
 
         Clears the idempotency cache as well so tests get a clean slate.
         """
+        self._require_writable_data()
         self._state = load_r4_seed()
         self._idempotency_cache = {}
 
@@ -531,18 +590,33 @@ class OperatorStateService:
             "critical": sum(1 for item in queue if item.get("tone") == "danger"),
             "search": len(search_items),
         }
-        kpis = self._build_kpis(role=role, counts=counts, queue=queue)
+        kpis = (
+            self._build_kpis(role=role, counts=counts, queue=queue)
+            if not self._require_live_data
+            else []
+        )
+        response_role = deepcopy(role)
+        response_roles = deepcopy(ROLES)
+        if self._require_live_data:
+            response_role.pop("heroName", None)
+            for available_role in response_roles:
+                available_role.pop("heroName", None)
 
         envelope = {
             "meta": {
                 "generatedAt": datetime.now(UTC).isoformat(),
                 "correlationId": correlation_id,
-                "role": deepcopy(role),
+                "role": response_role,
                 "counts": counts,
                 "source": "operator-shell-api-envelope",
+                "dataMode": (
+                    "unavailable" if self._require_live_data else "fixture"
+                ),
+                "dataOrigin": self.data_origin,
+                "liveReadiness": self.live_readiness,
             },
             "navigation": {
-                "roles": deepcopy(ROLES),
+                "roles": response_roles,
                 "workspaces": [
                     {
                         **deepcopy(workspace),
@@ -558,10 +632,22 @@ class OperatorStateService:
             },
             "today": {
                 "hero": {
-                    "name": role.get("heroName", role["label"]),
+                    "name": (
+                        role["label"]
+                        if self._require_live_data
+                        else role.get("heroName", role["label"])
+                    ),
                     "roleLabel": role["label"],
-                    "scope": self._scope_label(role_id),
-                    "dateLabel": "2026/07/05 ・週日",
+                    "scope": (
+                        "Live operator data unavailable"
+                        if self._require_live_data
+                        else self._scope_label(role_id)
+                    ),
+                    "dateLabel": (
+                        datetime.now(UTC).date().isoformat()
+                        if self._require_live_data
+                        else "2026/07/05 ・週日"
+                    ),
                 },
                 "kpis": kpis,
                 "queue": queue,
