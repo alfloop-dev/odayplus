@@ -1,0 +1,67 @@
+{
+  "blocking_findings": 0,
+  "drill": "migration_reconciliation",
+  "environment": "staging-surrogate",
+  "finished_at": "2026-07-23T13:22:23.712763+00:00",
+  "passed": true,
+  "rollback_proof": {
+    "other_tenant_rows_untouched": 8,
+    "rows_after": 0,
+    "rows_before": 8,
+    "rows_deleted": 113,
+    "scoped_to_tenant": "00000000-0000-0000-0000-0000000000b2",
+    "staging_record_untouched": 8
+  },
+  "staging_db": "/tmp/intake-release-drill-mj6csst3/migration/migration-staging.sqlite3",
+  "staging_db_sha256": "a48b90efbb57d6436e82efbaa3274a8899c4fac4d014c7ba98c2799860b46edf",
+  "started_at": "2026-07-23T13:22:23.453772+00:00",
+  "tenant_isolation": {
+    "cross_tenant_id_overlap": 0,
+    "distinct_tenants": [
+      "00000000-0000-0000-0000-0000000000a1",
+      "00000000-0000-0000-0000-0000000000b2"
+    ]
+  },
+  "tenants": {
+    "00000000-0000-0000-0000-0000000000a1": {
+      "backfill_counts": {
+        "candidates_processed": 8,
+        "findings": 0,
+        "intakes_processed": 8,
+        "listings_processed": 8,
+        "quarantined": 0,
+        "skipped_due_to_resume": 0
+      },
+      "verification": {
+        "blocking_findings": 0,
+        "candidate_count": 8,
+        "candidate_sha256": "82a14294a42a05883000d83637a1961bc1c3f3ffbc90e740b24eb93983364ba2",
+        "intake_count": 8,
+        "intake_sha256": "46c19ba3c31c31f4c6b4f9539793b41010b999dbfe4d32562be10db4e0fc140d",
+        "listing_count": 8,
+        "listing_sha256": "f3f0f81485c2b7012470fe1a68798b084920cb4bb0c42b0a54411a1358d51154",
+        "passed": false
+      }
+    },
+    "00000000-0000-0000-0000-0000000000b2": {
+      "backfill_counts": {
+        "candidates_processed": 8,
+        "findings": 0,
+        "intakes_processed": 8,
+        "listings_processed": 8,
+        "quarantined": 0,
+        "skipped_due_to_resume": 0
+      },
+      "verification": {
+        "blocking_findings": 0,
+        "candidate_count": 8,
+        "candidate_sha256": "9c9d9a9d11748b08e96b9043326f97ebd87621636df4c8b7c69dfb6fa5d33b66",
+        "intake_count": 8,
+        "intake_sha256": "13172c92dd205efd21c52f9e08ca1a87b866ea2ff8d6aefedba6c21e2685b7c7",
+        "listing_count": 8,
+        "listing_sha256": "8d7cdf41910ffc99f7bec4838a462cb8e140ca146b5703095e743424b3197049",
+        "passed": false
+      }
+    }
+  }
+}

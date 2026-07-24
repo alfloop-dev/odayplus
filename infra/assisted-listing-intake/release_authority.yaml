@@ -1,0 +1,80 @@
+# Assisted Listing Intake v1 — section 12 release-authority approval register.
+#
+# Mirror of docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md §12.
+# The release harness treats this file as the machine-readable approval record:
+# a gate row moves to `approved` only when a human owner records it here with
+# approver + approved_at + evidence_ref. While ANY row is `pending`, its
+# fail_closed_effect is enforced and governed cutover is BLOCKED.
+#
+# DO NOT flip a status in this file from automation. Approval recording is a
+# human release-authority action (see docs/runbooks/assisted-listing-intake-release.md).
+
+register_version: 1
+task_ref: ODP-INTAKE-RELEASE-001
+design_ref: "ODP-SD-INTAKE-001 v0.2.1"
+cutover_rule: "governed cutover requires every gate below approved AND live staging runtime evidence"
+
+gates:
+  - owner: "Product / Expansion Ops"
+    status: pending
+    approval_scope: "States, review SLA, capacity, webhook exclusion"
+    fail_closed_effect: "No production write/promotion"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Security"
+    status: pending
+    approval_scope: "Authorization, KMS, WORM, break glass"
+    fail_closed_effect: "High-risk mutations disabled"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Privacy"
+    status: pending
+    approval_scope: "Retention, purge, hold, residency, restricted export"
+    fail_closed_effect: "Purge/export/APAC DR disabled"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Legal / Commercial"
+    status: pending
+    approval_scope: "Source retrieval/license/residency"
+    fail_closed_effect: "Source assisted-entry-only/blocked"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Data owner"
+    status: pending
+    approval_scope: "Schema, identity, parser/reconciliation"
+    fail_closed_effect: "No authoritative migration"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Platform / SRE"
+    status: pending
+    approval_scope: "HA, jobs, SLO/RPO/RTO, restores"
+    fail_closed_effect: "Production storage/async off"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Expansion Engineering"
+    status: pending
+    approval_scope: "API/state/promotion feasibility"
+    fail_closed_effect: "Handlers cannot invent contracts"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "QA"
+    status: pending
+    approval_scope: "Validator and contract/recovery/E2E plan"
+    fail_closed_effect: "No release candidate"
+    approver: null
+    approved_at: null
+    evidence_ref: null
+  - owner: "Release authority"
+    status: pending
+    approval_scope: "Canary/cutover/rollback evidence"
+    fail_closed_effect: "All production flags off"
+    approver: null
+    approved_at: null
+    evidence_ref: null
