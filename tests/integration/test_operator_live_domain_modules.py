@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
+import pytest
+import uvloop
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -32,6 +35,16 @@ SEED_IDS = {
     "seg-metro-dinner",
     "ap-store-1042",
 }
+
+
+@pytest.fixture(autouse=True)
+def _use_production_event_loop_policy() -> Any:
+    previous = asyncio.get_event_loop_policy()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop_policy(previous)
 
 
 class _UnusedModelRuntime:

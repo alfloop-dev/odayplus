@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+import uvloop
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.avm.application import AVMProductionExecutor
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+
+
+@pytest.fixture(autouse=True)
+def _use_production_event_loop_policy() -> Any:
+    previous = asyncio.get_event_loop_policy()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop_policy(previous)
 
 
 class RecordingProductionRuntime:
