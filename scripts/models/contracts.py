@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+_CLOUD_SQL_SOCKET_RE = re.compile(
+    r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$"
+)
 _PLACEHOLDER_TOKENS = (
     "<",
     ">",
@@ -420,7 +424,15 @@ def _require_remote_url(value: str, *, field: str, schemes: set[str]) -> None:
         raise ModelTrainingConfigurationError(
             f"{field} must use {', '.join(sorted(schemes))}"
         )
-    if (parsed.hostname or "").lower() in _LOCAL_HOSTS:
+    socket_hosts = parse_qs(parsed.query).get("host", ())
+    cloud_sql_socket = (
+        field == "ODAY_DATABASE_URL"
+        and parsed.hostname is None
+        and parsed.username is not None
+        and len(socket_hosts) == 1
+        and bool(_CLOUD_SQL_SOCKET_RE.fullmatch(socket_hosts[0]))
+    )
+    if not cloud_sql_socket and (parsed.hostname or "").lower() in _LOCAL_HOSTS:
         raise ModelTrainingConfigurationError(f"{field} rejects localhost")
     if field == "ODAY_DATABASE_URL" and (not parsed.path or parsed.path == "/"):
         raise ModelTrainingConfigurationError(f"{field} must name a database")

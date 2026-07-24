@@ -17,6 +17,7 @@ from scripts.models.contracts import (
     ModelTrainingConfigurationError,
     ProductionTrainingSettings,
     require_approval_document,
+    require_production_database_url,
 )
 from scripts.models.install_views import (
     MODEL_READY_SQL_PATH,
@@ -217,6 +218,28 @@ def _production_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("ODP_RELEASE_COMMIT_SHA", "0123456789abcdef")
     monkeypatch.setenv("ODP_MODEL_TRAINING_ACTOR", "ml-training-operator")
+
+
+def test_production_database_url_accepts_only_a_named_cloud_sql_socket() -> None:
+    cloud_sql_url = (
+        "postgresql://oday_app:secret@/oday_app"
+        "?host=/cloudsql/alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+    )
+    assert require_production_database_url(cloud_sql_url) == cloud_sql_url
+
+    with pytest.raises(
+        ModelTrainingConfigurationError,
+        match="rejects localhost",
+    ):
+        require_production_database_url("postgresql://oday_app:secret@/oday_app")
+
+    with pytest.raises(
+        ModelTrainingConfigurationError,
+        match="rejects localhost",
+    ):
+        require_production_database_url(
+            "postgresql://oday_app:secret@/oday_app?host=/tmp/postgres.sock"
+        )
 
 
 def _approval(**changes: str) -> dict[str, object]:
