@@ -13,16 +13,20 @@ from .dependencies import (
     AuthorizationError,
     authorize_request,
     build_engine,
+    default_boundary,
     principal_from_headers,
     require_feature_flag,
     require_permission,
+    reset_default_boundary,
 )
 
 __all__ = [
     "AuthorizationError",
     "authorize_request",
     "build_engine",
+    "default_boundary",
     "principal_from_headers",
     "require_feature_flag",
     "require_permission",
+    "reset_default_boundary",
 ]

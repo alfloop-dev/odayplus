@@ -53,7 +53,9 @@ def start_staging_server() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://{host}:{port}"
 
 
-def test_remote_staging_checker_fails_closed_when_configuration_is_missing(tmp_path, monkeypatch) -> None:
+def test_remote_staging_checker_fails_closed_when_configuration_is_missing(
+    tmp_path, monkeypatch
+) -> None:
     for name in ("ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL", "ODP_STAGING_SECRET_OWNER"):
         monkeypatch.delenv(name, raising=False)
 
@@ -126,6 +128,6 @@ def test_deploy_staging_workflow_fails_closed_through_remote_checker() -> None:
     assert "ODP_STAGING_API_URL" in workflow
     assert "ODP_STAGING_SECRET_OWNER" in workflow
     assert "scripts/e2e/check_remote_staging_proof.py" in workflow
-    assert "--expected-sha \"$ODAY_RELEASE_SHA\"" in workflow
+    assert '--expected-sha "$ODAY_RELEASE_SHA"' in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "TODO: replace with real deploy" not in workflow

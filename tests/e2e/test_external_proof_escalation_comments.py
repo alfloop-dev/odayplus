@@ -27,7 +27,7 @@ def queue_entry() -> dict:
         ],
         "handback_commands": [
             "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>",
-            "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+            'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
         ],
         "fleet_routing": {
             "escalation": "Platform/Ops owns staging tile endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."

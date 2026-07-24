@@ -491,8 +491,8 @@ def canonical_agent_name(name: str | None) -> str:
     trimmed = str(name).strip()
     if not trimmed:
         return ""
-    canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
     lowered = trimmed.lower()
+    canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
     if lowered in canonical_by_lower:
         return canonical_by_lower[lowered]
     alias_target = AGENT_ALIASES.get(lowered)
@@ -1211,9 +1211,20 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
     return result.returncode == 0
 
 
+def get_gh_executable() -> str:
+    gh_path = shutil.which("gh")
+    if gh_path:
+        if ".orchestrator/bin/gh" in gh_path:
+            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
+                if os.path.exists(p):
+                    return p
+        return gh_path
+    return "gh"
+
+
 def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
     result = subprocess.run(
-        ["gh", *args],
+        [get_gh_executable(), *args],
         cwd=cwd or ROOT,
         capture_output=True,
         text=True,
@@ -4102,6 +4113,170 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
+def resolve_task_sha(task_id: str) -> str | None:
+    # 1. Try gh pr view for task/TASK-ID
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                sha = data.get("headRefOid")
+                if sha:
+                    return sha
+            except Exception:
+                pass
+
+    # 2. Try git rev-parse for local branches
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+
+    # 3. Try git rev-parse for remote branches
+    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+
+    # 4. Fallback to current HEAD if current branch matches task_id
+    current_branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+    )
+    if current_branch_result.returncode == 0:
+        current_branch = current_branch_result.stdout.strip()
+        if task_id.lower() in current_branch.lower():
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ROOT,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+    return None
+
+
+def get_repository_slug_safe() -> str:
+    # 1. Try env variable
+    env_slug = os.environ.get("GITHUB_REPOSITORY")
+    if env_slug:
+        return env_slug
+    # 2. Try loading config
+    try:
+        config = load_config()
+        slug = repository_slug(config, "pantheon")
+        if slug:
+            return slug
+    except Exception:
+        pass
+    # 3. Try reading from git remote
+    try:
+        remote_url = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=ROOT,
+        ).strip()
+        match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", remote_url)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return "alfloop-dev/odayplus"  # Fallback
+
+
+def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+    task_id = task.get("id")
+    if not task_id:
+        return
+
+    sha = resolve_task_sha(task_id)
+    if not sha:
+        print(f"Warning: Could not resolve git SHA for task {task_id}. Skipping status emission.", file=sys.stderr)
+        return
+
+    repo = get_repository_slug_safe()
+    context = "task-review-gate"
+
+    if state_status == "review_approved":
+        state = "success"
+        description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
+    elif state_status == "review":
+        state = "pending"
+        description = f"Pending review by {task.get('reviewer', 'Codex')}"
+    else:
+        state = "failure"
+        description = f"Review rejected or reopened. Task status is {state_status}"
+
+    print(f"Emitting GitHub status check '{context}'={state} on {repo}@{sha}...")
+
+    cmd = [
+        get_gh_executable(), "api",
+        "-X", "POST",
+        f"repos/{repo}/statuses/{sha}",
+        "-F", f"state={state}",
+        "-F", f"context={context}",
+        "-F", f"description={description}"
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
+        if result.returncode == 0:
+            print(f"Successfully emitted status check '{context}'={state} to GitHub API.", file=sys.stdout)
+        else:
+            err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
+            print(err_msg, file=sys.stderr)
+            if "gh auth login" in result.stderr or "authentication token" in result.stderr or os.environ.get("ALLOW_EMISSION_FAILURE") == "1":
+                print("Warning: Skipping status check emission due to unauthenticated environment.", file=sys.stderr)
+                return
+            raise RuntimeError(err_msg)
+    except Exception as exc:
+        err_msg = f"Error during status emission: {exc}"
+        print(err_msg, file=sys.stderr)
+        if not isinstance(exc, RuntimeError):
+            raise RuntimeError(err_msg) from exc
+        raise
+
+
+def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
+    before_statuses = {t["id"]: t for t in state_before.get("tasks", []) if "id" in t}
+    after_tasks = {t["id"]: t for t in state_after.get("tasks", []) if "id" in t}
+
+    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start"}) else None
+
+    for task_id, after_task in after_tasks.items():
+        before_task = before_statuses.get(task_id)
+        before_status = before_task.get("status") if before_task else None
+        after_status = after_task.get("status")
+
+        is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
+        if after_status != before_status or is_target:
+            emit_task_review_status_check(after_task, after_status)
+
+
 def main(argv: list[str]) -> int:
     state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
@@ -4140,6 +4315,8 @@ def main(argv: list[str]) -> int:
     commands[command](state, args)
     try:
         sync_all(state)
+        # Emit status checks for any modified task status
+        emit_status_checks_for_changed_tasks(state_before, state, command, args)
     except Exception:
         save_state(state_before)
         raise

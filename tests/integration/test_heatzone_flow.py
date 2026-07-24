@@ -125,7 +125,7 @@ def test_heatzone_mapping_coercion_preserves_explicit_zero_quality_values() -> N
                 "average_confidence": 0.8,
                 "data_quality": 0,
                 "source_snapshot_ids": ["geo"],
-            }
+            },
         ],
         prediction_origin_time=PREDICTION_TIME,
     )
@@ -203,5 +203,4 @@ def test_heatzone_api_fails_closed_on_absent_features() -> None:
         },
     )
     assert response.status_code == 422
-    assert "cannot run score job with absent live inputs" in response.json()["detail"]
-
+    assert "fail-closed" in response.json()["detail"]

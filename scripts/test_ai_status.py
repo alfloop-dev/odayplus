@@ -2765,5 +2765,91 @@ class ActivityLogRotationTests(unittest.TestCase):
         self.assertEqual(len(archives), 1)
 
 
+class StatusCheckEmissionTests(unittest.TestCase):
+    def test_get_repository_slug_safe_env(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "test-owner/test-repo"}):
+            self.assertEqual(ai_status.get_repository_slug_safe(), "test-owner/test-repo")
+
+    def test_get_repository_slug_safe_config(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(ai_status, "load_config", return_value={"repository": "foo/bar"}), \
+                 mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
+                self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
+
+    def test_resolve_task_sha_gh_pr_view(self) -> None:
+        mock_result = mock.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"headRefOid": "abc12345"}'
+
+        with mock.patch("subprocess.run", return_value=mock_result) as mock_run, \
+             mock.patch.object(ai_status, "get_gh_executable", return_value="gh"):
+            sha = ai_status.resolve_task_sha("ODP-001")
+            self.assertEqual(sha, "abc12345")
+            mock_run.assert_any_call(
+                ["gh", "pr", "view", "task/ODP-001", "--json", "headRefOid"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ai_status.ROOT,
+            )
+
+    def test_resolve_task_sha_git_rev_parse(self) -> None:
+        def side_effect(cmd, **kwargs):
+            res = mock.Mock()
+            if "gh" in cmd:
+                res.returncode = 1
+                res.stdout = ""
+            elif "rev-parse" in cmd:
+                res.returncode = 0
+                res.stdout = "xyz789\n"
+            return res
+
+        with mock.patch("subprocess.run", side_effect=side_effect):
+            sha = ai_status.resolve_task_sha("ODP-001")
+            self.assertEqual(sha, "xyz789")
+
+    def test_emit_task_review_status_check_approved(self) -> None:
+        task = {"id": "ODP-001", "reviewer": "Codex"}
+        mock_run = mock.Mock()
+        mock_run.returncode = 0
+
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="sha123"), \
+             mock.patch.object(ai_status, "get_repository_slug_safe", return_value="owner/repo"), \
+             mock.patch.object(ai_status, "get_gh_executable", return_value="gh"), \
+             mock.patch("subprocess.run", return_value=mock_run) as mock_subprocess:
+            ai_status.emit_task_review_status_check(task, "review_approved")
+            mock_subprocess.assert_called_once_with(
+                [
+                    "gh", "api",
+                    "-X", "POST",
+                    "repos/owner/repo/statuses/sha123",
+                    "-F", "state=success",
+                    "-F", "context=task-review-gate",
+                    "-F", "description=Approved by assigned reviewer Codex"
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ai_status.ROOT,
+            )
+
+    def test_emit_status_checks_for_changed_tasks(self) -> None:
+        state_before = {
+            "tasks": [{"id": "ODP-001", "status": "review"}]
+        }
+        state_after = {
+            "tasks": [{"id": "ODP-001", "status": "review_approved"}]
+        }
+
+        with mock.patch.object(ai_status, "emit_task_review_status_check") as mock_emit:
+            ai_status.emit_status_checks_for_changed_tasks(
+                state_before, state_after, "approve", ["ODP-001"]
+            )
+            mock_emit.assert_called_once_with(
+                {"id": "ODP-001", "status": "review_approved"},
+                "review_approved"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

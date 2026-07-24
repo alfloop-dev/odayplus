@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.forecastops import (
     AlertLevel,
     ForecastInput,
+    ForecastOpsError,
+    ForecastOpsNotFoundError,
     ForecastOpsService,
     InMemoryForecastOpsRepository,
     StoreDayObservation,
@@ -174,7 +177,9 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
     assert handoffs.json()["count"] == 1
 
     audit = client.get("/audit/events", params={"correlation_id": "corr-forecast-1"})
-    assert any(event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"])
+    assert any(
+        event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"]
+    )
 
 
 def test_forecastops_prediction_run_replay() -> None:
@@ -220,3 +225,156 @@ def test_forecastops_prediction_run_replay() -> None:
     assert output_body["store_id"] == "store-replay-001"
     assert output_body["prediction_run_id"] == prediction_run_id
 
+
+def _declining_result(repository: InMemoryForecastOpsRepository):
+    service = ForecastOpsService(repository=repository)
+    observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
+    return service, service.forecast(
+        [
+            ForecastInput(
+                store_id="store-001",
+                observations=observations,
+                prediction_origin_time=PREDICTION_TIME,
+            )
+        ],
+        scored_at=PREDICTION_TIME,
+    )
+
+
+def test_acknowledge_alert_persists_and_rejects_double_ack() -> None:
+    repository = InMemoryForecastOpsRepository()
+    service, result = _declining_result(repository)
+    alert = result.alerts[0]
+    assert alert.status == "open"
+
+    acknowledged = service.acknowledge_alert(
+        alert.alert_id, actor="ops-manager-01", note="triaged; machine downtime suspected"
+    )
+    assert acknowledged.status == "acknowledged"
+    assert acknowledged.acknowledged_by == "ops-manager-01"
+    assert acknowledged.acknowledged_at is not None
+    assert acknowledged.acknowledgement_note == "triaged; machine downtime suspected"
+    # Persisted, not just returned.
+    assert repository.get_alert(alert.alert_id).status == "acknowledged"
+
+    # Acknowledgement is a once-only action.
+    with pytest.raises(ForecastOpsError):
+        service.acknowledge_alert(alert.alert_id, actor="ops-manager-01")
+    # Empty actor is rejected.
+    with pytest.raises(ForecastOpsError):
+        repository2 = InMemoryForecastOpsRepository()
+        service2, result2 = _declining_result(repository2)
+        service2.acknowledge_alert(result2.alerts[0].alert_id, actor="  ")
+    # Unknown id → not-found.
+    with pytest.raises(ForecastOpsNotFoundError):
+        service.acknowledge_alert("forecast-alert-does-not-exist", actor="ops-manager-01")
+
+
+def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
+    repository = InMemoryForecastOpsRepository()
+    service, result = _declining_result(repository)
+    handoff = result.handoffs[0]
+    assert handoff.status == "proposed"
+
+    executed = service.execute_handoff(
+        handoff.handoff_id,
+        actor="ops-dispatcher-01",
+        intervention_id="intervention-linked-001",
+    )
+    assert executed.status == "dispatched"
+    assert executed.executed_by == "ops-dispatcher-01"
+    assert executed.executed_at is not None
+    assert executed.intervention_id == "intervention-linked-001"
+    assert repository.get_handoff(handoff.handoff_id).status == "dispatched"
+
+    # A handoff cannot be dispatched twice.
+    with pytest.raises(ForecastOpsError):
+        service.execute_handoff(handoff.handoff_id, actor="ops-dispatcher-01")
+    # Unknown id → not-found.
+    with pytest.raises(ForecastOpsNotFoundError):
+        service.execute_handoff("intervention-handoff-missing", actor="ops-dispatcher-01")
+
+
+def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
+    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    corr = {"x-correlation-id": "corr-forecast-ack-exec"}
+    payload = {
+        "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        "inputs": [
+            {
+                "store_id": "store-ack-001",
+                "observations": [
+                    {
+                        "business_date": "2026-06-25",
+                        "actual_revenue": 120_000,
+                        "site_score_baseline_p50": 120_000,
+                    },
+                    {
+                        "business_date": "2026-06-26",
+                        "actual_revenue": 84_000,
+                        "site_score_baseline_p50": 120_000,
+                    },
+                ],
+            }
+        ],
+    }
+    created = client.post("/forecastops/forecast-jobs", json=payload, headers=corr)
+    assert created.status_code == 202
+    assert created.json()["alerts"][0]["status"] == "open"
+
+    # Acknowledge the persisted alert.
+    alert_id = client.get("/forecastops/alerts").json()["items"][0]["alert_id"]
+    ack = client.post(
+        f"/forecastops/alerts/{alert_id}/acknowledge",
+        json={"actor": "ops-manager-api", "note": "reviewed on ops board"},
+        headers=corr,
+    )
+    assert ack.status_code == 200
+    assert ack.json()["status"] == "acknowledged"
+    assert ack.json()["acknowledged_by"] == "ops-manager-api"
+
+    # Acknowledgement persists to the collection read.
+    persisted = client.get("/forecastops/alerts").json()["items"][0]
+    assert persisted["status"] == "acknowledged"
+    assert persisted["acknowledged_at"] is not None
+
+    # Double acknowledge is rejected with a domain 422.
+    replay = client.post(
+        f"/forecastops/alerts/{alert_id}/acknowledge",
+        json={"actor": "ops-manager-api"},
+        headers=corr,
+    )
+    assert replay.status_code == 422
+
+    # Execute the handoff — the intervention handoff is executable.
+    handoff_id = client.get("/forecastops/intervention-handoffs").json()["items"][0]["handoff_id"]
+    execute = client.post(
+        f"/forecastops/intervention-handoffs/{handoff_id}/execute",
+        json={"actor": "ops-dispatcher-api", "intervention_id": "intervention-from-alert-001"},
+        headers=corr,
+    )
+    assert execute.status_code == 200
+    assert execute.json()["status"] == "dispatched"
+    assert execute.json()["intervention_id"] == "intervention-from-alert-001"
+    assert (
+        client.get("/forecastops/intervention-handoffs").json()["items"][0]["status"]
+        == "dispatched"
+    )
+
+    # Unknown ids fail closed.
+    assert (
+        client.post(
+            "/forecastops/alerts/missing/acknowledge",
+            json={"actor": "ops-manager-api"},
+            headers=corr,
+        ).status_code
+        == 404
+    )
+
+    # Both lifecycle actions are audited under the correlation id.
+    events = client.get(
+        "/audit/events", params={"correlation_id": "corr-forecast-ack-exec"}
+    ).json()["events"]
+    event_types = {event["event_type"] for event in events}
+    assert "forecastops.alert.acknowledged.v1" in event_types
+    assert "forecastops.handoff.executed.v1" in event_types

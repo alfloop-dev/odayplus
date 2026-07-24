@@ -4,11 +4,12 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from modules.listing.application.pipeline import ListingPipeline
+if TYPE_CHECKING:
+    from modules.listing.application.pipeline import ListingPipeline
 
 
 class ListingFeedClientError(Exception):

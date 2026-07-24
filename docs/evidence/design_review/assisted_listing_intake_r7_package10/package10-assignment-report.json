@@ -1,0 +1,36 @@
+{
+  "transferInputs": [
+    {
+      "tag": "SELECT",
+      "label": "轉交對象",
+      "value": "吳孟哲（展店主管）"
+    },
+    {
+      "tag": "INPUT",
+      "label": "恢復時間",
+      "value": ""
+    },
+    {
+      "tag": "TEXTAREA",
+      "label": "Handoff note（必填 — 寫入 Audit 與指派歷程）",
+      "value": ""
+    }
+  ],
+  "transferHasResume": 1,
+  "conflictVisible": 1,
+  "noteAfterConflict": "交由主管完成矛盾識別覆核",
+  "transferDialogClosed": true,
+  "transferReceipt": true,
+  "pauseInputs": [
+    {
+      "tag": "TEXTAREA",
+      "label": "核准原因（必填 — 顯示於 SLA 歷程）",
+      "value": ""
+    }
+  ],
+  "pauseHasTarget": 0,
+  "pauseHasResume": 0,
+  "pauseReceipt": false,
+  "bodyWormMarkers": 11,
+  "errors": []
+}

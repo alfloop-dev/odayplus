@@ -34,18 +34,23 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
         ProviderCategory.ADMIN_BOUNDARY,
         ProviderCategory.COMPETITOR_MANUAL,
     }
-    assert {env for provider in providers for env in provider.required_env_vars} == REQUIRED_ENV_VARS
     assert {
-        provider.source_contract_id for provider in providers
-    } == {
+        env for provider in providers for env in provider.required_env_vars
+    } == REQUIRED_ENV_VARS
+    assert {provider.source_contract_id for provider in providers} == {
         "listing_raw_snapshot",
         "poi_snapshot",
         "geocode_result_snapshot",
         "admin_boundary_snapshot",
         "competitor_store_snapshot",
     }
-    assert all(provider.connector_class.startswith("modules.external_data.") for provider in providers)
-    assert all(provider.provider_class.startswith("modules.external_data.providers.") for provider in providers)
+    assert all(
+        provider.connector_class.startswith("modules.external_data.") for provider in providers
+    )
+    assert all(
+        provider.provider_class.startswith("modules.external_data.providers.")
+        for provider in providers
+    )
     assert all(provider.license.attribution for provider in providers)
     assert all(provider.license.downstream_use_flags for provider in providers)
 
@@ -55,9 +60,7 @@ def test_secret_inventory_contains_names_and_auth_modes_without_values() -> None
     rendered = repr(inventory)
 
     assert REQUIRED_ENV_VARS <= {
-        env_var
-        for provider in inventory.values()
-        for env_var in provider["env_vars"]
+        env_var for provider in inventory.values() for env_var in provider["env_vars"]
     }
     assert "super-secret" not in rendered
     for provider in inventory.values():

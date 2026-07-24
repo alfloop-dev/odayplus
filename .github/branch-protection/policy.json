@@ -1,0 +1,9 @@
+{
+  "required_status_checks": [
+    "orchestrator",
+    "product",
+    "product-e2e-gate",
+    "task-review-gate"
+  ],
+  "enforce_admins": true
+}

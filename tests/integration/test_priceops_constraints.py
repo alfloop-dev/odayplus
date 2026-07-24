@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 from modules.priceops import (
     PRICEOPS_SOLVER_VERSION,
+    ApprovalBlockedError,
     InMemoryPriceOpsRepository,
     InvalidTransitionError,
     MissingRollbackPlanError,
@@ -168,9 +169,7 @@ def test_plan_simulation_reports_per_item_intervals() -> None:
 
 def test_full_pilot_lifecycle_records_complete_status_history() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     assert plan.status is PlanStatus.CANDIDATE
 
     simulation = service.simulate(plan.plan_id, generated_at=MOMENT)
@@ -198,9 +197,7 @@ def test_full_pilot_lifecycle_records_complete_status_history() -> None:
     assert result.plan.status is PlanStatus.CONTINUE
     assert result.evaluation.rollback.recommended is False
 
-    transitions = [
-        (t.from_status, t.to_status) for t in result.plan.status_history
-    ]
+    transitions = [(t.from_status, t.to_status) for t in result.plan.status_history]
     assert transitions == [
         (PlanStatus.CANDIDATE, PlanStatus.SIMULATED),
         (PlanStatus.SIMULATED, PlanStatus.OPTIMIZED),
@@ -215,11 +212,31 @@ def test_full_pilot_lifecycle_records_complete_status_history() -> None:
     assert all(t.actor and t.reason and t.correlation_id for t in result.plan.status_history)
 
 
+def test_plan_comparison_snapshot_covers_approval_and_rollback_readiness() -> None:
+    service = PriceOpsService()
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
+    service.simulate(plan.plan_id, generated_at=MOMENT)
+    service.optimize(plan.plan_id, optimized_at=MOMENT)
+
+    comparison = service.get_plan_comparison(plan.plan_id)
+
+    assert comparison.plan_status is PlanStatus.OPTIMIZED
+    assert comparison.rollback_ready is True
+    assert comparison.is_approvable is True
+    assert comparison.approval_status == "not_submitted"
+    assert comparison.requires_approval is True
+    assert comparison.total_candidate_gross_margin > comparison.total_current_gross_margin
+    item = comparison.items[0]
+    assert item.current_price == 5.0
+    assert item.candidate_price > item.current_price
+    assert item.constraint_status == "SOFT_WARNING"
+    assert item.baseline_simulation.demand.p10 <= item.baseline_simulation.demand.p90
+    assert item.candidate_simulation.gross_margin.p50 > item.baseline_simulation.gross_margin.p50
+
+
 def test_rejected_plan_moves_to_stop() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     service.simulate(plan.plan_id, generated_at=MOMENT)
     service.optimize(plan.plan_id, optimized_at=MOMENT)
     service.submit_for_approval(plan.plan_id)
@@ -235,11 +252,39 @@ def test_rejected_plan_moves_to_stop() -> None:
     assert service.repository.get_plan(plan.plan_id).status is PlanStatus.STOP
 
 
-def test_invalid_transition_is_rejected() -> None:
+def test_hard_constraint_failure_cannot_be_approved() -> None:
     service = PriceOpsService()
     plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
+        tenant_id="tenant-1",
+        items=[_item(constraints=_constraints(unit_cost=10.0, max_increase_pct=0.1))],
+        correlation_id="corr-1",
     )
+    service.simulate(plan.plan_id, generated_at=MOMENT)
+    service.optimize(plan.plan_id, optimized_at=MOMENT)
+    service.submit_for_approval(plan.plan_id)
+
+    try:
+        service.approve(
+            plan.plan_id,
+            actor_id="ops-manager",
+            reason="should not pass hard constraints",
+            decision="APPROVE",
+            approved_at=MOMENT,
+        )
+    except ApprovalBlockedError as exc:
+        assert "hard pricing constraint region is infeasible" in str(exc)
+    else:  # pragma: no cover - guard must fire
+        raise AssertionError("expected ApprovalBlockedError")
+
+    comparison = service.get_plan_comparison(plan.plan_id)
+    assert comparison.is_approvable is False
+    assert comparison.items[0].constraint_status == "HARD_CONSTRAINT_FAILED"
+    assert service.repository.get_plan(plan.plan_id).status is PlanStatus.PENDING_APPROVAL
+
+
+def test_invalid_transition_is_rejected() -> None:
+    service = PriceOpsService()
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     # cannot approve a plan that was never simulated/optimized/submitted
     try:
         service.approve(plan.plan_id, actor_id="ops-manager", reason="skip ahead")
@@ -254,9 +299,7 @@ def test_invalid_transition_is_rejected() -> None:
 
 def test_observation_window_has_stop_conditions() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     service.simulate(plan.plan_id, generated_at=MOMENT)
     service.optimize(plan.plan_id, optimized_at=MOMENT)
     service.submit_for_approval(plan.plan_id)
@@ -281,9 +324,7 @@ def test_observation_window_has_stop_conditions() -> None:
 
 def test_negative_impact_recommends_rollback_and_moves_to_rollback() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     simulation = service.simulate(plan.plan_id, generated_at=MOMENT)
     service.optimize(plan.plan_id, optimized_at=MOMENT)
     service.submit_for_approval(plan.plan_id)
@@ -312,9 +353,7 @@ def test_negative_impact_recommends_rollback_and_moves_to_rollback() -> None:
 
 def test_optimize_creates_rollback_plan_before_execution() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     service.simulate(plan.plan_id, generated_at=MOMENT)
 
     # no rollback plan before optimization
@@ -334,9 +373,7 @@ def test_activation_requires_a_rollback_plan() -> None:
     # guard fires rather than silently executing.
     repository = InMemoryPriceOpsRepository()
     service = PriceOpsService(repository=repository)
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
     service.simulate(plan.plan_id, generated_at=MOMENT)
     service.optimize(plan.plan_id, optimized_at=MOMENT)
     service.submit_for_approval(plan.plan_id)
@@ -359,9 +396,7 @@ def test_optimization_marks_high_delta_plan_as_requiring_approval() -> None:
         constraints=_constraints(max_increase_pct=0.3),
         confidence=0.55,
     )
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[item], correlation_id="corr-1"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[item], correlation_id="corr-1")
     service.simulate(plan.plan_id, generated_at=MOMENT)
     optimization = service.optimize(plan.plan_id, optimized_at=MOMENT)
 
@@ -374,9 +409,7 @@ def test_optimization_marks_high_delta_plan_as_requiring_approval() -> None:
 
 def test_activation_hands_off_treatment_to_intervention_and_label_registry() -> None:
     service = PriceOpsService()
-    plan = service.create_plan(
-        tenant_id="tenant-1", items=[_item()], correlation_id="corr-xyz"
-    )
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-xyz")
     service.simulate(plan.plan_id, generated_at=MOMENT)
     service.optimize(plan.plan_id, optimized_at=MOMENT)
     service.submit_for_approval(plan.plan_id)

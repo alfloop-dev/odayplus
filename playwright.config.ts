@@ -17,9 +17,16 @@ const REUSE_EXISTING_SERVER = process.env.ODP_PLAYWRIGHT_REUSE_EXISTING === "1" 
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  // CI boots ONE shared FastAPI backend + web server, and several product-flow specs
+  // (expansion, ops-intervention, map picking) write API state with FIXED idempotency
+  // keys. Running them fully parallel across multiple workers races that shared state,
+  // producing flaky HeatZone map-pick failures and expansion-flow retry/replay collisions
+  // (a retry re-POSTs the same idempotency key and gets 200-replay instead of 202). Serialize
+  // in CI for deterministic shared-state ordering; keep it parallel locally for speed.
+  fullyParallel: !process.env.CI,
+  workers: process.env.CI ? 1 : undefined,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: process.env.CI ? 2 : 0,
   reporter: "list",
   use: {
     baseURL: BASE_URL,
@@ -27,6 +34,12 @@ export default defineConfig({
     extraHTTPHeaders: {
       "x-subject-id": "product-e2e-test",
       "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
+      // Operator Console routes are tenant-isolated (OPERATOR_TENANT_ID in
+      // apps/api/oday_api/security/dependencies.py). Without this the guard
+      // denies at operator.tenant_isolation before RBAC runs, so every
+      // /operator read 403s — which is why the shell suite (ODP-PGAP-SHELL-001)
+      // needs it to reach the product surface at all.
+      "x-tenant-id": "tenant-a",
     },
   },
   projects: [

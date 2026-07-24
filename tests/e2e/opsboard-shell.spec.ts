@@ -46,11 +46,26 @@ test("design tokens are applied as CSS variables", async ({ page }) => {
   expect(canvas).toBe("#F8FAFC");
 });
 
+/**
+ * The franchisee portal is deliberately rendered outside the OpsBoard chrome
+ * (ODP-PGAP-SHELL-001): the operator sidebar would show a franchisee the
+ * operator navigation, and its fixed desktop width is wrong for a mobile-first
+ * surface. It is still a reachable work-area route with its own h1 — it just
+ * does not mount `app-shell`.
+ */
+const FRAMELESS_ROUTES = new Set(["franchisee"]);
+
 test("all 14 work-area routes are reachable", async ({ page }) => {
+  // Each route compiles on first hit in dev; 14 of them do not fit the default
+  // per-test budget.
+  test.slow();
+
   for (const route of ROUTES) {
     const res = await page.goto(route.path);
     expect(res?.status(), `GET ${route.path}`).toBeLessThan(400);
-    await expect(page.getByTestId("app-shell")).toBeVisible();
+    if (!FRAMELESS_ROUTES.has(route.key)) {
+      await expect(page.getByTestId("app-shell")).toBeVisible();
+    }
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   }
 });

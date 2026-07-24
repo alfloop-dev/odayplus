@@ -1,0 +1,11 @@
+{
+  "scenario": "A - Database recovery drill",
+  "started_at": "2026-07-15T13:06:13.323302+00:00",
+  "data_last_consistent_at": "2026-07-15T13:06:13.285843+00:00",
+  "measured_rpo_minutes": 0.0006226500000000001,
+  "measured_rto_minutes": 1.0384332078198592e-05,
+  "target_rpo_minutes": 60.0,
+  "target_rto_minutes": 240.0,
+  "within_target": true,
+  "status": "success"
+}

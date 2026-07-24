@@ -1,0 +1,88 @@
+# Assisted Listing Intake v1 — production feature flag manifest.
+#
+# Normative sources:
+#   docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md (§4 Phase 0)
+#   docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md (§12 fail-closed gates)
+#
+# HARD RULE (ODP-INTAKE-RELEASE-001 acceptance): every production flag stays
+# `enabled: false` until ALL section 12 owner approvals in
+# infra/assisted-listing-intake/release_authority.yaml are `approved` AND exact
+# runtime evidence is recorded. The release harness
+# (scripts/release/assisted_listing_intake/run.py) fails closed on any drift.
+#
+# Flags are high-risk surfaces under shared/auth/feature_flags.py governance:
+# enabling any of them requires a recorded dual approval (>= 2 approvers);
+# the FeatureFlag dataclass rejects enabled-without-dual-approval at load time.
+
+manifest_version: 1
+task_ref: ODP-INTAKE-RELEASE-001
+governance:
+  engine: shared/auth/feature_flags.py
+  high_risk: true
+  dual_approval_minimum: 2
+  fail_closed: true
+
+production_environment_requirements:
+  # Production configuration must reject staging surrogates. The release
+  # harness proves each of these rejections at runtime (production-readiness
+  # phase) before any canary evidence is accepted.
+  - key: ODP_PERSISTENCE
+    requirement: "must be Cloud SQL PostgreSQL 16 DSN-backed; `memory` and `sqlite`/`durable` (SQLite) are staging/CI surrogates only"
+  - key: ODP_OBJECT_STORE
+    requirement: "must be `gcs`; `in_memory` is staging/CI surrogate only; gcs without credentials must raise (fail closed)"
+  - key: ODP_RESIDENCY_APPROVED_BUCKETS
+    requirement: "must list only TW_ONLY-approved buckets"
+  - key: GOOGLE_OAUTH_ACCESS_TOKEN / ODP_AUDIT_WORM_GCS_TOKEN
+    requirement: "WORM GCS writes require runtime credentials; absence disables high-risk mutations"
+
+flags:
+  - key: assisted_intake_v1_read
+    description: "Target-path read (Listing Inbox / detail projections) authoritative for a tenant"
+    owner: "Expansion Engineering"
+    enabled: false
+    readiness: experimental
+    high_risk: true
+    scope: per-tenant
+    enable_requires:
+      - release_authority: ["Product / Expansion Ops", "QA"]
+      - phase: "runbook §4 Phase 1 exit (schema checks, RLS/ABAC tests, backup/PITR proof)"
+  - key: assisted_intake_v1_shadow
+    description: "Shadow processing canary: target path runs side by side, legacy stays authoritative, no external events, no candidate creation"
+    owner: "Product / Expansion Ops"
+    enabled: false
+    readiness: experimental
+    high_risk: true
+    scope: per-tenant-per-source
+    enable_requires:
+      - release_authority: ["Product / Expansion Ops", "Data owner", "QA"]
+      - phase: "runbook §4 Phase 4 entry (backfill proofs complete, blocking findings = 0)"
+  - key: assisted_intake_v1_write
+    description: "Target Intake/Listing authoritative writes for a tenant/source; legacy writes disabled for that unit"
+    owner: "Release authority"
+    enabled: false
+    readiness: experimental
+    high_risk: true
+    scope: per-tenant-per-source
+    enable_requires:
+      - release_authority: ["Release authority", "Platform / SRE", "Security", "Product / Expansion Ops"]
+      - phase: "runbook §4 Phase 5 ladder order (internal → low-volume → 5/25/50/100%)"
+  - key: assisted_intake_v1_events
+    description: "Transactional outbox publication to Pub/Sub consumers"
+    owner: "Platform / SRE"
+    enabled: false
+    readiness: experimental
+    high_risk: true
+    scope: global-per-tenant
+    enable_requires:
+      - release_authority: ["Platform / SRE", "Security"]
+      - phase: "runbook §4 Phase 6 (replay/DLQ tests green)"
+  - key: assisted_intake_v1_promotion
+    description: "Candidate promotion saga (request → independent review → execution) enabled"
+    owner: "Expansion Product"
+    enabled: false
+    readiness: experimental
+    high_risk: true
+    scope: per-tenant
+    enable_requires:
+      - release_authority: ["Expansion Product", "Security", "QA", "Release authority"]
+      - phase: "runbook §4 Phase 6 (two-person review, duplicate-candidate constraint, lost-response replay, SiteScore compensation tests pass)"

@@ -14,7 +14,9 @@ EXPECTED_SHA = "89d0ccc19c983a3e8f8e908459c65939a62d4dfb"
 
 
 def load_artifact_test_module():
-    spec = importlib.util.spec_from_file_location("test_external_proof_handback_artifact", ARTIFACT_TEST)
+    spec = importlib.util.spec_from_file_location(
+        "test_external_proof_handback_artifact", ARTIFACT_TEST
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -96,7 +98,9 @@ def test_update_external_proof_handback_status_board_rejects_submitted_wrong_tas
     assert entry["status"] == "pending_external_handback"
 
 
-def test_update_external_proof_handback_status_board_rejects_submitted_wrong_expected_sha(tmp_path) -> None:
+def test_update_external_proof_handback_status_board_rejects_submitted_wrong_expected_sha(
+    tmp_path,
+) -> None:
     status_board = copy_status_board(tmp_path)
     handback = tmp_path / "handback.json"
     write_valid_handback(handback)
@@ -120,7 +124,9 @@ def test_update_external_proof_handback_status_board_rejects_submitted_wrong_exp
     assert entry["status"] == "pending_external_handback"
 
 
-def test_update_external_proof_handback_status_board_rejects_submitted_invalid_json(tmp_path) -> None:
+def test_update_external_proof_handback_status_board_rejects_submitted_invalid_json(
+    tmp_path,
+) -> None:
     status_board = copy_status_board(tmp_path)
     handback = tmp_path / "handback.json"
     handback.write_text("{not-json", encoding="utf-8")
@@ -171,7 +177,9 @@ def test_update_external_proof_handback_status_board_accepts_valid_handback(tmp_
     assert entry["accepted_at"] == "2026-06-30T02:40:00Z"
 
 
-def test_update_external_proof_handback_status_board_rejects_invalid_accepted_handback(tmp_path) -> None:
+def test_update_external_proof_handback_status_board_rejects_invalid_accepted_handback(
+    tmp_path,
+) -> None:
     status_board = copy_status_board(tmp_path)
     handback = tmp_path / "handback.json"
     write_valid_handback(handback)

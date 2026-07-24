@@ -12,6 +12,16 @@ from models.shared_ml.artifact_store import (
     compute_content_digest,
     make_artifact_id,
 )
+from models.shared_ml.backtest import run_rolling_backtest
+from models.shared_ml.drift import calculate_psi, monitor_drift
+from models.shared_ml.feature_registry import (
+    FeatureLineageEvent,
+    FeatureRegistry,
+    FeatureRegistryError,
+    FeatureStatus,
+    FeatureViewBinding,
+    create_feature_registry,
+)
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
 from models.shared_ml.registry import (
     FeatureDefinition,
@@ -24,9 +34,21 @@ from models.shared_ml.registry import (
     ModelVersion,
     RegisteredModel,
 )
+from models.shared_ml.scoring_binding import (
+    SCORING_MODEL_SPECS,
+    SCORING_MODEL_SPECS_BY_SERVICE,
+    ModelBinding,
+    ProductionModelUnavailableError,
+    ScoringInputUnavailableError,
+    ScoringModelSpec,
+    require_live_inputs,
+    resolve_production_binding,
+    seed_scoring_models,
+)
 from models.shared_ml.validation import (
     MetricThreshold,
     SegmentMetric,
+    SegmentMetricThreshold,
     ValidationRuleFailure,
     ValidationRun,
     ValidationStatus,
@@ -49,6 +71,7 @@ __all__ = [
     "ModelVersion",
     "RegisteredModel",
     "SegmentMetric",
+    "SegmentMetricThreshold",
     "ValidationRuleFailure",
     "ValidationRun",
     "ValidationStatus",
@@ -57,9 +80,28 @@ __all__ = [
     "compute_content_digest",
     "make_artifact_id",
     "validate_model_candidate",
+    "run_rolling_backtest",
+    "calculate_psi",
+    "monitor_drift",
     "LocalModelArtifactStore",
     "FeatureDefinition",
     "LabelDefinition",
     "FeatureSet",
     "LabelSet",
+    # Feature Registry
+    "FeatureLineageEvent",
+    "FeatureRegistry",
+    "FeatureRegistryError",
+    "FeatureStatus",
+    "FeatureViewBinding",
+    "create_feature_registry",
+    "ModelBinding",
+    "ProductionModelUnavailableError",
+    "SCORING_MODEL_SPECS",
+    "SCORING_MODEL_SPECS_BY_SERVICE",
+    "ScoringInputUnavailableError",
+    "ScoringModelSpec",
+    "require_live_inputs",
+    "resolve_production_binding",
+    "seed_scoring_models",
 ]

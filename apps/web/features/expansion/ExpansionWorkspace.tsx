@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
+import type { DataStatus } from "@oday-plus/domain-types";
+import type { SourceFreshnessEvidence } from "@oday-plus/openapi-client";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import { AccessibleDrawer } from "./AccessibleDrawer.tsx";
 import { HeatZoneMap } from "../map/HeatZoneMap.tsx";
+import { AssistedIntakeSection } from "../operator/network/intake/AssistedIntakeSection.tsx";
+import type { OperatorRoleId } from "../operator/navigation.ts";
 import {
   candidates,
   decisionTone,
@@ -19,11 +25,33 @@ import styles from "./expansion.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+type FreshnessBinding = ApiBinding<SourceFreshnessEvidence>;
+
 type ExpansionWorkspaceProps = {
   view?: ExpansionRouteKey;
   reportId?: string;
   searchParams?: SearchParams;
+  liveFreshness?: FreshnessBinding;
 };
+
+/**
+ * Resolve the freshness/lineage shown in the evidence panel. When the backend
+ * actually served a persisted ingestion run (`source === "api"`), its snapshot
+ * id, observation/ingest times, and correlation id replace the bundled
+ * fixture; otherwise the documented fixture is rendered unchanged.
+ */
+function resolveFreshness(binding?: FreshnessBinding): typeof freshness {
+  const live = binding && binding.source === "api" ? binding.items[0] : undefined;
+  if (!live) return freshness;
+  return {
+    ...freshness,
+    status: (live.data_status as DataStatus) ?? freshness.status,
+    sourceSnapshotId: live.source_snapshot_id ?? freshness.sourceSnapshotId,
+    providerObservedAt: live.provider_observed_at ?? freshness.providerObservedAt,
+    ingestedAt: live.ingested_at ?? freshness.ingestedAt,
+    correlationId: live.correlation_id ?? freshness.correlationId,
+  };
+}
 
 const pages = [
   { key: "heatzone", label: "HeatZone Radar", href: "/w/expansion/heatzone" },
@@ -36,16 +64,17 @@ export function ExpansionWorkspace({
   view = "overview",
   reportId,
   searchParams = {},
+  liveFreshness,
 }: ExpansionWorkspaceProps) {
   if (view === "heatzone") return <HeatZonePage searchParams={searchParams} />;
   if (view === "listings") return <ListingsPage searchParams={searchParams} />;
   if (view === "candidates") return <CandidatesPage searchParams={searchParams} />;
   if (view === "sitescore") return <SiteScoreListPage searchParams={searchParams} />;
   if (view === "sitescoreDetail") return <SiteScoreDetailPage reportId={reportId} />;
-  return <ExpansionOverview />;
+  return <ExpansionOverview liveFreshness={liveFreshness} />;
 }
 
-function ExpansionOverview() {
+function ExpansionOverview({ liveFreshness }: { liveFreshness?: FreshnessBinding }) {
   return (
     <>
       <Header
@@ -65,7 +94,7 @@ function ExpansionOverview() {
           ))}
         </section>
         <section className={styles.twoColumn}>
-          <StatusCard />
+          <StatusCard liveFreshness={liveFreshness} />
           <DecisionSeparation />
         </section>
       </section>
@@ -331,6 +360,11 @@ function HeatZoneScoreCard({ zone }: { zone: (typeof heatZones)[number] }) {
 function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
   const selected = selectedFromQuery(searchParams.selected) ?? listings[0].id;
   const listing = listings.find((item) => item.id === selected) ?? listings[0];
+  const requestedRole = selectedFromQuery(searchParams.role);
+  const activeRoleId: OperatorRoleId = isOperatorRoleId(requestedRole)
+    ? requestedRole
+    : "expansion-manager";
+  const selectedHeatZoneId = selectedFromQuery(searchParams.heatZone);
   return (
     <>
       <Header
@@ -340,6 +374,10 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       />
       <section aria-label="Listing inbox workspace" className="odp-content" data-testid="exp-listings-page">
         <WorkspaceNav active="listings" />
+        <AssistedIntakeSection
+          activeRoleId={activeRoleId}
+          selectedHeatZoneId={selectedHeatZoneId}
+        />
         <ImportSummary />
         <FilterBar>
           <label>
@@ -381,6 +419,17 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       </section>
     </>
   );
+}
+
+function isOperatorRoleId(value: string | undefined): value is OperatorRoleId {
+  return value !== undefined && [
+    "expansion-manager",
+    "ops-lead",
+    "cs-lead",
+    "field-lead",
+    "marketing-manager",
+    "pm-audit",
+  ].includes(value);
 }
 
 function CandidatesPage({ searchParams }: { searchParams: SearchParams }) {
@@ -782,7 +831,8 @@ function AuditSection({ report }: { report: SiteScoreReport }) {
   );
 }
 
-function StatusCard() {
+function StatusCard({ liveFreshness }: { liveFreshness?: FreshnessBinding }) {
+  const resolved = resolveFreshness(liveFreshness);
   return (
     <section className={styles.reportSection}>
       <h2>Shared page contract</h2>
@@ -791,17 +841,20 @@ function StatusCard() {
         <Badge label="empty" tone="gray" marker="◫" />
         <Badge label="error + correlation_id" tone="red" marker="▧" />
         <Badge label="read-only permission" tone="blue" marker="▣" />
+        {liveFreshness ? (
+          <DataSourceBadge binding={liveFreshness} testId="external-freshness-source" />
+        ) : null}
       </div>
       <p>Filter、sort、page、selected entity 與 drawer state 皆以 URL query 還原。</p>
       <dl className={styles.metaGrid} data-testid="external-freshness-lineage">
         <dt>source snapshot</dt>
-        <dd className={styles.mono}>{freshness.sourceSnapshotId}</dd>
+        <dd className={styles.mono}>{resolved.sourceSnapshotId}</dd>
         <dt>provider observed</dt>
-        <dd className={styles.mono}>{freshness.providerObservedAt}</dd>
+        <dd className={styles.mono}>{resolved.providerObservedAt}</dd>
         <dt>ingested at</dt>
-        <dd className={styles.mono}>{freshness.ingestedAt}</dd>
+        <dd className={styles.mono}>{resolved.ingestedAt}</dd>
         <dt>correlation_id</dt>
-        <dd className={styles.mono}>{freshness.correlationId}</dd>
+        <dd className={styles.mono}>{resolved.correlationId}</dd>
       </dl>
     </section>
   );

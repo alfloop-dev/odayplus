@@ -10,6 +10,7 @@ baseline.
 | Cloud Run | API runtime container. |
 | Cloud SQL PostgreSQL 16 | Transactional canonical store; PostGIS extension is created by migration. |
 | Cloud Storage | Snapshots, evidence packages, model artifacts, and release artifacts. |
+| Audit WORM Storage | Versioned retention-policy bucket plus separated writer/retention service accounts for immutable governance evidence. |
 | Pub/Sub | Async job topic and dead-letter topic. |
 | Service Account | Runtime identity for deployable services. |
 

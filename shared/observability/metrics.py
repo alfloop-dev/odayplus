@@ -65,6 +65,9 @@ class _Series:
     def snapshot(self) -> dict[str, Any]:
         data: dict[str, Any] = {"type": self.definition.type.value}
         if self.definition.type is MetricType.HISTOGRAM:
+            sorted_buckets = sorted(self.buckets)
+            p95_idx = int(len(sorted_buckets) * 0.95)
+            p95 = sorted_buckets[p95_idx] if sorted_buckets else 0.0
             data.update(
                 {
                     "count": self.count,
@@ -72,11 +75,13 @@ class _Series:
                     "avg": round(self.sum / self.count, 6) if self.count else 0.0,
                     "min": round(min(self.buckets), 6) if self.buckets else 0.0,
                     "max": round(max(self.buckets), 6) if self.buckets else 0.0,
+                    "p95": round(p95, 6),
                 }
             )
         else:
             data["value"] = round(self.value, 6)
         return data
+
 
 
 class MetricsRegistry:
@@ -154,6 +159,10 @@ class MetricsRegistry:
             entry["category"] = series.definition.category.value
             out.setdefault(name, []).append(entry)
         return out
+
+    def clear(self) -> None:
+        """Clear all recorded metric series values."""
+        self._series.clear()
 
 
 class _Timer:
@@ -235,10 +244,14 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
 )
 
 
+_cached_registry = None
+
+
 def default_registry() -> MetricsRegistry:
     """Return a registry seeded with the full platform metric catalog."""
-
-    registry = MetricsRegistry()
-    for definition in PLATFORM_METRICS:
-        registry.register(definition)
-    return registry
+    global _cached_registry
+    if _cached_registry is None:
+        _cached_registry = MetricsRegistry()
+        for definition in PLATFORM_METRICS:
+            _cached_registry.register(definition)
+    return _cached_registry

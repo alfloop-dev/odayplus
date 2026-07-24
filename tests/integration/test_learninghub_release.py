@@ -19,8 +19,11 @@ from modules.learninghub import (
     LearningHubError,
     LearningHubService,
     MlflowRegistryAdapter,
+    MonitorStatus,
+    RecommendedAction,
     ReleaseType,
     run_learninghub_release,
+    run_learninghub_release_monitor,
 )
 from shared.audit import InMemoryAuditLog
 
@@ -217,6 +220,98 @@ def test_learninghub_validates_releases_and_rolls_back_model_aliases() -> None:
     assert repository.get_alias(v2.model_name, ModelAlias.PRODUCTION).version == "1.0.0"
     assert repository.get_model_version(v2.model_name, "1.1.0").stage is ModelStage.ROLLED_BACK
     assert any(event.action == "rollback" for event in audit_log.list_events())
+
+
+def _release_full(service: LearningHubService, *, version: str, rollback_target: str):
+    return service.request_release(
+        model_name="forecast_revenue_interval",
+        version=version,
+        release_type=ReleaseType.FULL,
+        reason="promote validated champion",
+        approval_id=f"approval-full-{version}",
+        rollback_target=rollback_target,
+        monitoring_window="48h",
+        success_criteria=("p80_coverage >= 0.80",),
+        fail_criteria=("p80_coverage < 0.75",),
+        affected_modules=("ForecastOps",),
+        requested_by="ml-owner",
+        correlation_id="corr-monitor-release",
+    )
+
+
+def test_release_monitor_healthy_records_audit_without_recommending_rollback() -> None:
+    repository = InMemoryLearningHubRepository()
+    audit_log = InMemoryAuditLog()
+    service = LearningHubService(repository=repository, audit_log=audit_log)
+    _prepare_candidate(service, "1.0.0")
+    v2 = _prepare_candidate(service, "1.1.0")
+    decision = _release_full(service, version=v2.version, rollback_target="1.0.0")
+
+    assessment = service.monitor_release(
+        release_id=decision.release_id,
+        observed_metrics={"w4_smape": 0.10, "p80_coverage": 0.83},
+        guardrails=(
+            MetricThreshold("w4_smape", max_value=0.12),
+            MetricThreshold("p80_coverage", min_value=0.75),
+        ),
+        correlation_id="corr-monitor-1",
+    )
+
+    assert assessment.status is MonitorStatus.HEALTHY
+    assert assessment.recommended_action is RecommendedAction.NONE
+    assert assessment.breaches == ()
+    assert assessment.audit_event_id is not None
+    monitor_events = [
+        event
+        for event in audit_log.list_events()
+        if event.event_type == "learninghub.release_monitor.v1"
+    ]
+    assert len(monitor_events) == 1
+    assert monitor_events[0].outcome == "healthy"
+
+
+def test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged() -> None:
+    repository = InMemoryLearningHubRepository()
+    audit_log = InMemoryAuditLog()
+    service = LearningHubService(repository=repository, audit_log=audit_log)
+    from models.shared_ml.registry import ModelAlias
+
+    _prepare_candidate(service, "1.0.0")
+    v2 = _prepare_candidate(service, "1.1.0")
+    decision = _release_full(service, version=v2.version, rollback_target="1.0.0")
+
+    assessment = run_learninghub_release_monitor(
+        {
+            "release_id": decision.release_id,
+            "observed_metrics": {"p80_coverage": 0.70},
+            "guardrails": [{"metric_name": "p80_coverage", "min_value": 0.75}],
+            "evaluated_by": "on-call-monitor",
+            "correlation_id": "corr-monitor-2",
+        },
+        service=service,
+    )
+
+    assert assessment.status is MonitorStatus.BREACHED
+    assert assessment.recommended_action is RecommendedAction.ROLLBACK
+    assert [breach.metric_name for breach in assessment.breaches] == ["p80_coverage"]
+    # Monitor is never optimistic: it recommends, it does not mutate the alias.
+    assert (
+        repository.get_alias("forecast_revenue_interval", ModelAlias.PRODUCTION).version == "1.1.0"
+    )
+    assert any(
+        event.event_type == "learninghub.release_monitor.v1" and event.outcome == "breached"
+        for event in audit_log.list_events()
+    )
+
+
+def test_release_monitor_rejects_unknown_release() -> None:
+    service = LearningHubService()
+    with pytest.raises(LearningHubError, match="unknown release"):
+        service.monitor_release(
+            release_id="does-not-exist",
+            observed_metrics={"p80_coverage": 0.9},
+            guardrails=(MetricThreshold("p80_coverage", min_value=0.75),),
+        )
 
 
 def test_learninghub_blocks_release_without_passed_validation_or_model_card() -> None:

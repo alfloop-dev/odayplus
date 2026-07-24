@@ -33,6 +33,9 @@ class Role(StrEnum):
     PRICING_MANAGER = "pricing_manager"
     MARKETING_MANAGER = "marketing_manager"
     FINANCE_LEGAL = "finance_legal"
+    COMPLIANCE_OFFICER = "compliance_officer"
+    RECORDS_MANAGER = "records_manager"
+    RETENTION_MANAGER = "retention_manager"
     EXECUTIVE = "executive"
     FRANCHISEE = "franchisee"
     AUDITOR = "auditor"
@@ -74,6 +77,8 @@ class Scope:
     brand_ids: frozenset[str] = frozenset()
     region_ids: frozenset[str] = frozenset()
     store_ids: frozenset[str] = frozenset()
+    assigned_area_ids: frozenset[str] = frozenset()
+    heat_zone_ids: frozenset[str] = frozenset()
     modules: frozenset[str] = frozenset()
     clearance: DataClassification = DataClassification.CONFIDENTIAL
 
@@ -92,6 +97,12 @@ class Scope:
 
     def permits_store(self, store_id: str | None) -> bool:
         return self._axis_allows(self.store_ids, store_id)
+
+    def permits_assigned_area(self, assigned_area_id: str | None) -> bool:
+        return self._axis_allows(self.assigned_area_ids, assigned_area_id)
+
+    def permits_heat_zone(self, heat_zone_id: str | None) -> bool:
+        return self._axis_allows(self.heat_zone_ids, heat_zone_id)
 
     def permits_module(self, module: str | None) -> bool:
         return self._axis_allows(self.modules, module)

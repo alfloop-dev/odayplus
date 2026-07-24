@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from modules.listing.domain.identity_graph import IdentityGraph, IdentityLineage, SourceIdentity
+
 ODAY_ID_NAMESPACE = "https://oday.plus/source-identity"
 
 
@@ -97,11 +99,30 @@ class InMemoryIdentityResolver:
         return self._canonical_by_fingerprint.get(key.fingerprint)
 
 
+class IdentityGraphResolver:
+    """Read adapter exposing deterministic current and historical identity queries."""
+
+    def __init__(self, graph: IdentityGraph) -> None:
+        self.graph = graph
+
+    def resolve_source(self, key: IdentityKey, *, as_of: Any = None) -> IdentityLineage:
+        return self.graph.resolve_source(
+            SourceIdentity(key.tenant_id, key.source_id, key.source_entity_id), as_of=as_of
+        )
+
+    def resolve_listing(self, tenant_id: str, listing_id: str) -> IdentityLineage:
+        return self.graph.resolve_reference("listing", listing_id, tenant_id)
+
+    def resolve_candidate(self, tenant_id: str, candidate_id: str) -> IdentityLineage:
+        return self.graph.resolve_reference("candidate", candidate_id, tenant_id)
+
+
 __all__ = [
     "IdentityKey",
     "IdentityResolution",
     "IdentityResolutionError",
     "InMemoryIdentityResolver",
+    "IdentityGraphResolver",
     "deterministic_canonical_id",
     "source_key_from_payload",
 ]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.shared_ml import ModelBinding, ScoringInputUnavailableError, require_live_inputs
+from modules.heatzone.infrastructure import HeatZoneResultStore
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -10,7 +12,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
-    from modules.heatzone.workers import HeatZoneBatchScoreResult, run_heatzone_batch_score
+    from modules.heatzone.workers import run_heatzone_batch_score
 
 
     class HeatZoneScoreJobPayload(BaseModel):
@@ -19,47 +21,11 @@ else:
         idempotency_key: str | None = None
 
 
-    class HeatZoneResultStore:
-        def __init__(self) -> None:
-            self._latest: HeatZoneBatchScoreResult | None = None
-            self._jobs: dict[str, HeatZoneBatchScoreResult] = {}
-            self._idempotency_index: dict[str, str] = {}
-
-        def put(
-            self,
-            result: HeatZoneBatchScoreResult,
-            *,
-            idempotency_key: str | None = None,
-        ) -> tuple[HeatZoneBatchScoreResult, bool]:
-            if idempotency_key and idempotency_key in self._idempotency_index:
-                existing = self._jobs[self._idempotency_index[idempotency_key]]
-                return existing, False
-            self._jobs[result.job_id] = result
-            self._latest = result
-            if idempotency_key:
-                self._idempotency_index[idempotency_key] = result.job_id
-            return result, True
-
-        def list_scores(self) -> list[dict[str, Any]]:
-            if self._latest is None:
-                return []
-            return [score.to_dict() for score in self._latest.scores]
-
-        def map_features(self) -> list[dict[str, Any]]:
-            if self._latest is None:
-                return []
-            return [score.to_map_feature() for score in self._latest.scores]
-
-        def snapshot(self, snapshot_id: str) -> HeatZoneBatchScoreResult | None:
-            if self._latest and snapshot_id == "latest":
-                return self._latest
-            return self._jobs.get(snapshot_id)
-
-
     def create_heatzone_router(
         *,
         store: HeatZoneResultStore | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        model_binding: ModelBinding | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -93,23 +59,18 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
-            if not body.features:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="features are required; cannot run score job with absent live inputs",
-                )
             effective_idempotency_key = body.idempotency_key or idempotency_key
-            existing_job_id = (
-                result_store._idempotency_index.get(effective_idempotency_key)
-                if effective_idempotency_key
-                else None
-            )
-            if existing_job_id is not None:
-                result, created = result_store.put(
-                    result_store._jobs[existing_job_id],
-                    idempotency_key=effective_idempotency_key,
-                )
+            existing = result_store.find_by_idempotency_key(effective_idempotency_key)
+            if existing is not None:
+                result, created = existing, False
             else:
+                # Fail closed: refuse a fresh run when live inputs are absent.
+                try:
+                    require_live_inputs(body.features, service="heatzone")
+                except ScoringInputUnavailableError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    ) from exc
                 result, created = result_store.put(
                     run_heatzone_batch_score(
                         features=body.features,
@@ -117,6 +78,13 @@ else:
                     ),
                     idempotency_key=effective_idempotency_key,
                 )
+            metadata: dict[str, Any] = {
+                "idempotency_key": effective_idempotency_key,
+                "feature_count": len(body.features),
+                "created": created,
+            }
+            if model_binding is not None:
+                metadata["model_binding"] = model_binding.to_audit_metadata()
             audit_event = active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.scored.v1",
@@ -126,17 +94,15 @@ else:
                     outcome="accepted" if created else "idempotent_replay",
                     correlation_id=request.state.correlation_id,
                     job_id=result.job_id,
-                    metadata={
-                        "idempotency_key": effective_idempotency_key,
-                        "feature_count": len(body.features),
-                        "created": created,
-                    },
+                    metadata=metadata,
                 )
             )
             payload = result.to_dict()
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
+            if model_binding is not None:
+                payload["model_binding"] = model_binding.to_audit_metadata()
             return payload
 
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
