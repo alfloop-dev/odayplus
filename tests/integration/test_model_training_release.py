@@ -711,5 +711,12 @@ def test_documented_package_contains_no_embedded_credentials() -> None:
     assert "token" not in approval_example
 
 
+def test_mlflow_image_installs_its_postgresql_runtime_driver() -> None:
+    requirements = Path("infra/mlflow/requirements.txt").read_text(encoding="utf-8")
+    dockerfile = Path("infra/mlflow/Dockerfile").read_text(encoding="utf-8")
+    assert "psycopg2-binary==2.9.10" in requirements
+    assert 'python -c "import mlflow, psycopg2"' in dockerfile
+
+
 def np_is_finite(value: float) -> bool:
     return value == value and value not in {float("inf"), float("-inf")}
