@@ -21,7 +21,14 @@ from modules.sitescore.domain.scoring import (
     score_sites,
     score_sites_from_model_predictions,
 )
-from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+from modules.sitescore.infrastructure.repositories import (
+    InMemorySiteScoreRepository,
+    SiteScoreRepository,
+)
+from modules.sitescore.runtime import (
+    SiteScoreRuntimeConfigurationError,
+    sitescore_production_required,
+)
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
 
 
@@ -43,16 +50,24 @@ class SiteScoreReportService:
     def __init__(
         self,
         *,
-        repository: InMemorySiteScoreRepository | None = None,
+        repository: SiteScoreRepository | None = None,
         model_runtime: ProductionModelRuntime | None = None,
         require_production_model: bool | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = sitescore_production_required(runtime_mode)
+        if self.production_required and (
+            repository is None or isinstance(repository, InMemorySiteScoreRepository)
+        ):
+            raise SiteScoreRuntimeConfigurationError(
+                "SiteScore production requires an injected durable repository"
+            )
         self.repository = repository or InMemorySiteScoreRepository()
         self.model_runtime = model_runtime
         self.require_production_model = (
-            production_model_execution_required()
+            self.production_required or production_model_execution_required()
             if require_production_model is None
-            else require_production_model
+            else self.production_required or require_production_model
         )
 
     def score_candidates(
@@ -113,9 +128,7 @@ class SiteScoreReportService:
         saved_reports = self._persist_reports(
             reports,
             prediction_origin_time=prediction_origin_time,
-            model_version_id=(
-                inference.binding.model_id if inference else SITESCORE_MODEL_VERSION
-            ),
+            model_version_id=(inference.binding.model_id if inference else SITESCORE_MODEL_VERSION),
         )
         return SiteScoreExecution(
             reports=tuple(saved_reports),
@@ -194,16 +207,18 @@ def _feature_mapping(
 def run_sitescore_reports(
     features: Iterable[SiteScoreFeatureInput | Mapping[str, Any]],
     *,
-    repository: InMemorySiteScoreRepository | None = None,
+    repository: SiteScoreRepository | None = None,
     prediction_origin_time: datetime | None = None,
     scored_at: datetime | None = None,
     model_runtime: ProductionModelRuntime | None = None,
     require_production_model: bool | None = None,
+    runtime_mode: str | None = None,
 ) -> list[SiteScoreReport]:
     return SiteScoreReportService(
         repository=repository,
         model_runtime=model_runtime,
         require_production_model=require_production_model,
+        runtime_mode=runtime_mode,
     ).score_candidates(
         features,
         prediction_origin_time=prediction_origin_time,

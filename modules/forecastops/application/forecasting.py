@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from models.shared_ml.production_runtime import ProductionModelRuntime
+from modules.forecastops.application.production_model import (
+    RegisteredEstimatorForecastEngine,
+)
 from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastEngine,
@@ -18,7 +22,14 @@ from modules.forecastops.domain.forecasting import (
     forecast_stores,
 )
 from modules.forecastops.infrastructure.forecast_engines import create_forecast_engine
-from modules.forecastops.infrastructure.repositories import InMemoryForecastOpsRepository
+from modules.forecastops.infrastructure.repositories import (
+    ForecastOpsRepository,
+    InMemoryForecastOpsRepository,
+)
+from modules.forecastops.runtime import (
+    ForecastOpsRuntimeConfigurationError,
+    forecastops_production_required,
+)
 
 
 @dataclass(frozen=True)
@@ -39,16 +50,35 @@ class ForecastOpsService:
     def __init__(
         self,
         *,
-        repository: InMemoryForecastOpsRepository | None = None,
-        engine: str | ForecastEngine = "baseline",
+        repository: ForecastOpsRepository | None = None,
+        engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = forecastops_production_required(runtime_mode)
+        if self.production_required and (
+            repository is None or isinstance(repository, InMemoryForecastOpsRepository)
+        ):
+            raise ForecastOpsRuntimeConfigurationError(
+                "ForecastOps production requires an injected durable repository"
+            )
         self.repository = repository or InMemoryForecastOpsRepository()
+        self.model_runtime = model_runtime
+        selected_engine: str | ForecastEngine | None = engine
+        if selected_engine is None and self.production_required and model_runtime is not None:
+            selected_engine = RegisteredEstimatorForecastEngine(model_runtime)
+        if selected_engine is None and not self.production_required:
+            selected_engine = "baseline"
         self.engine = _resolve_engine(
-            engine,
+            selected_engine,
             model_name=model_name,
             engine_options=engine_options,
+        )
+        _require_production_engine(
+            self.engine,
+            production_required=self.production_required,
         )
 
     def ingest_timeseries(
@@ -81,6 +111,10 @@ class ForecastOpsService:
                 model_name=model_name,
                 engine_options=engine_options,
             )
+        )
+        _require_production_engine(
+            selected_engine,
+            production_required=self.production_required,
         )
         run_id = f"pred-run-forecast-{uuid4()}"
         forecasts, alerts, handoffs = forecast_stores(
@@ -180,11 +214,13 @@ class ForecastOpsService:
 
 
 def _resolve_engine(
-    engine: str | ForecastEngine,
+    engine: str | ForecastEngine | None,
     *,
     model_name: str | None,
     engine_options: Mapping[str, Any] | None,
 ) -> ForecastEngine | None:
+    if engine is None:
+        return None
     if isinstance(engine, str):
         return create_forecast_engine(
             engine,
@@ -196,6 +232,29 @@ def _resolve_engine(
             "model_name and engine_options are only valid when engine is selected by name"
         )
     return engine
+
+
+def _require_production_engine(
+    engine: ForecastEngine | None,
+    *,
+    production_required: bool,
+) -> None:
+    if not production_required:
+        return
+    if engine is None:
+        raise ForecastOpsRuntimeConfigurationError(
+            "ForecastOps production requires StatsForecast, MLForecast, or an "
+            "approved registered OSS model runtime"
+        )
+    engine_name = str(getattr(engine, "engine_name", "")).strip().lower()
+    if engine_name not in {
+        "statsforecast",
+        "mlforecast",
+        "mlflow_registered_oss",
+    }:
+        raise ForecastOpsRuntimeConfigurationError(
+            f"ForecastOps production engine {engine_name or '<missing>'!r} is not approved"
+        )
 
 
 __all__ = ["ForecastOpsResult", "ForecastOpsService"]

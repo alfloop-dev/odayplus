@@ -53,9 +53,9 @@ class EvidentlyDriftMonitor:
         if set(reference.columns) != set(current.columns):
             raise ValueError("reference and current drift datasets must have identical columns")
 
-        evaluation = Report(
-            [DataDriftPreset(drift_share=drift_share_threshold)]
-        ).run(current, reference)
+        evaluation = Report([DataDriftPreset(drift_share=drift_share_threshold)]).run(
+            current, reference
+        )
         payload = evaluation.dict()
         summary = next(
             (

@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.production_runtime import ProductionModelRuntime
 from modules.forecastops.application.forecasting import ForecastOpsService
 from modules.forecastops.domain.forecasting import ForecastEngine, ForecastInput
-from modules.forecastops.infrastructure.repositories import InMemoryForecastOpsRepository
+from modules.forecastops.infrastructure.repositories import ForecastOpsRepository
 
 
 @dataclass(frozen=True)
@@ -32,18 +33,22 @@ class ForecastOpsForecastWorker:
     def __init__(
         self,
         *,
-        repository: InMemoryForecastOpsRepository | None = None,
+        repository: ForecastOpsRepository | None = None,
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
-        selected_engine = engine or os.getenv("ODP_FORECAST_ENGINE", "baseline")
+        selected_engine = engine if engine is not None else os.getenv("ODP_FORECAST_ENGINE") or None
         selected_model = model_name or os.getenv("ODP_FORECAST_MODEL") or None
         self.service = ForecastOpsService(
             repository=repository,
             engine=selected_engine,
             model_name=selected_model,
             engine_options=engine_options,
+            model_runtime=model_runtime,
+            runtime_mode=runtime_mode,
         )
 
     def run(
@@ -80,16 +85,20 @@ def run_forecastops_batch_forecast(
     inputs: Iterable[ForecastInput | Mapping[str, Any]],
     job_id: str | None = None,
     prediction_origin_time: datetime | str | None = None,
-    repository: InMemoryForecastOpsRepository | None = None,
+    repository: ForecastOpsRepository | None = None,
     engine: str | ForecastEngine | None = None,
     model_name: str | None = None,
     engine_options: Mapping[str, Any] | None = None,
+    model_runtime: ProductionModelRuntime | None = None,
+    runtime_mode: str | None = None,
 ) -> ForecastOpsBatchResult:
     return ForecastOpsForecastWorker(
         repository=repository,
         engine=engine,
         model_name=model_name,
         engine_options=engine_options,
+        model_runtime=model_runtime,
+        runtime_mode=runtime_mode,
     ).run(
         inputs=inputs,
         job_id=job_id,

@@ -24,11 +24,13 @@ from modules.forecastops.domain import (
     forecast_stores,
 )
 from modules.forecastops.infrastructure import (
+    ForecastOpsRepository,
     InMemoryForecastOpsRepository,
     MLForecastSklearnAdapter,
     StatsForecastAdapter,
     create_forecast_engine,
 )
+from modules.forecastops.runtime import ForecastOpsRuntimeConfigurationError
 from modules.forecastops.workers import (
     ForecastOpsBatchResult,
     ForecastOpsForecastWorker,
@@ -52,7 +54,9 @@ __all__ = [
     "ForecastOpsError",
     "ForecastOpsForecastWorker",
     "ForecastOpsNotFoundError",
+    "ForecastOpsRepository",
     "ForecastOpsResult",
+    "ForecastOpsRuntimeConfigurationError",
     "ForecastOpsService",
     "ForecastOutput",
     "ForecastSeries",

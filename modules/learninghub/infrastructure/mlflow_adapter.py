@@ -12,6 +12,10 @@ from urllib.parse import unquote, urlparse
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 
+from ..runtime import (
+    LearningHubRuntimeConfigurationError,
+    learninghub_production_required,
+)
 from .repositories import InMemoryLearningHubRepository, LearningHubRepository
 
 if TYPE_CHECKING:
@@ -47,6 +51,7 @@ class MlflowRegistryAdapter:
     tracking_uri: str | None = None
     experiment_name: str = "oday-plus-learninghub"
     client: MlflowClient | None = field(default=None, repr=False)
+    runtime_mode: str | None = None
     _local_tracking_dir: TemporaryDirectory[str] | None = field(
         default=None,
         init=False,
@@ -54,10 +59,13 @@ class MlflowRegistryAdapter:
     )
 
     def __post_init__(self) -> None:
+        production_required = learninghub_production_required(self.runtime_mode)
+        configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
+        if production_required:
+            _require_remote_tracking_uri(configured_uri)
         if self.client is None:
             from mlflow.tracking import MlflowClient
 
-            configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
             if configured_uri is None:
                 storage_path = getattr(self.repository, "storage_path", None)
                 if storage_path is not None:
@@ -66,9 +74,7 @@ class MlflowRegistryAdapter:
                         f"{repository_database.stem}.mlflow.sqlite3"
                     )
                 elif isinstance(self.repository, InMemoryLearningHubRepository):
-                    self._local_tracking_dir = TemporaryDirectory(
-                        prefix="oday-plus-mlflow-"
-                    )
+                    self._local_tracking_dir = TemporaryDirectory(prefix="oday-plus-mlflow-")
                     database = Path(self._local_tracking_dir.name) / "mlflow.db"
                 else:
                     raise RuntimeError(
@@ -79,8 +85,23 @@ class MlflowRegistryAdapter:
 
             self.tracking_uri = configured_uri
             self.client = MlflowClient(tracking_uri=configured_uri)
+        elif configured_uri is not None:
+            self.tracking_uri = configured_uri
+
+    def require_production_binding(self) -> None:
+        _require_remote_tracking_uri(self.tracking_uri)
+        if self.client is None:
+            raise LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected MLflow client"
+            )
+
+    def validate_production_model_version(self, model_version: ModelVersion) -> None:
+        self.require_production_binding()
+        _validate_production_model_lineage(model_version)
 
     def register_model_version(self, model_version: ModelVersion) -> ModelVersion:
+        if learninghub_production_required(self.runtime_mode):
+            self.validate_production_model_version(model_version)
         client = self._require_client()
         self._ensure_registered_model(model_version.model_name)
 
@@ -325,9 +346,7 @@ class MlflowRegistryAdapter:
                 f"immutable run lineage conflict for {model_version.model_id}: "
                 f"{existing_source_run_id!r} != {model_version.run_id!r}"
             )
-        existing_artifact_sha256 = mlflow_version.tags.get(
-            self._tag("artifact_sha256")
-        )
+        existing_artifact_sha256 = mlflow_version.tags.get(self._tag("artifact_sha256"))
         requested_artifact_sha256 = self._artifact_sha256(model_version)
         if (
             existing_artifact_sha256
@@ -370,10 +389,9 @@ class MlflowRegistryAdapter:
 
     @staticmethod
     def _artifact_sha256(model_version: ModelVersion) -> str | None:
-        configured = (
-            model_version.monitoring_config.get("artifact_sha256")
-            or model_version.monitoring_config.get("artifact_digest")
-        )
+        configured = model_version.monitoring_config.get(
+            "artifact_sha256"
+        ) or model_version.monitoring_config.get("artifact_digest")
         if configured:
             value = str(configured).lower()
             return value if value.startswith("sha256:") else f"sha256:{value}"
@@ -454,6 +472,52 @@ class MlflowRegistryAdapter:
             return None if optional else datetime.now(UTC)
         parsed = datetime.fromisoformat(value)
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _require_remote_tracking_uri(tracking_uri: str | None) -> None:
+    if not tracking_uri:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production requires MLFLOW_TRACKING_URI"
+        )
+    parsed = urlparse(tracking_uri)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme.lower() in {"", "file", "sqlite"} or hostname in {
+        "",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production rejects local file or SQLite MLflow tracking"
+        )
+
+
+def _validate_production_model_lineage(model_version: ModelVersion) -> None:
+    missing = [
+        name
+        for name, value in {
+            "artifact_uri": model_version.artifact_uri,
+            "dataset_snapshot_id": model_version.dataset_snapshot_id,
+            "feature_schema_version": model_version.feature_schema_version,
+            "label_version": model_version.label_version,
+            "run_id": model_version.run_id,
+            "git_sha": model_version.git_sha,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production model lineage is incomplete: " + ", ".join(sorted(missing))
+        )
+    parsed = urlparse(model_version.artifact_uri)
+    if parsed.scheme.lower() in {"", "file"}:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production rejects local model artifact URIs"
+        )
+    if not MlflowRegistryAdapter._artifact_sha256(model_version):
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production model artifacts require an immutable SHA-256 digest"
+        )
 
 
 __all__ = ["MlflowRegistryAdapter"]

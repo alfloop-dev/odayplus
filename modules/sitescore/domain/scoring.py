@@ -95,9 +95,15 @@ class SiteScoreFeatureInput:
             ),
             view_version=str(data.get("view_version") or SITESCORE_FEATURE_VERSION),
             heat_zone_id=str(data.get("heat_zone_id") or ""),
-            heat_zone_score=float(_first_present(data, "heat_zone_score", "heatZoneScore", default=0.0)),
-            poi_demand_index=_bounded(_first_present(data, "poi_demand_index", "poiDemandIndex", default=0.0)),
-            monthly_rent=float(_first_present(data, "monthly_rent", "rent_amount", "rent", default=0.0)),
+            heat_zone_score=float(
+                _first_present(data, "heat_zone_score", "heatZoneScore", default=0.0)
+            ),
+            poi_demand_index=_bounded(
+                _first_present(data, "poi_demand_index", "poiDemandIndex", default=0.0)
+            ),
+            monthly_rent=float(
+                _first_present(data, "monthly_rent", "rent_amount", "rent", default=0.0)
+            ),
             area_ping=float(_first_present(data, "area_ping", "area", default=0.0)),
             frontage_m=float(_first_present(data, "frontage_m", "frontage", default=0.0)),
             competitor_count=int(_first_present(data, "competitor_count", default=0)),
@@ -108,14 +114,22 @@ class SiteScoreFeatureInput:
                 _first_present(data, "comparable_store_count", "comparable_stores", default=0)
             ),
             comparable_monthly_revenue_p50=float(
-                _first_present(data, "comparable_monthly_revenue_p50", "comparable_revenue", default=0.0)
+                _first_present(
+                    data, "comparable_monthly_revenue_p50", "comparable_revenue", default=0.0
+                )
             ),
-            buildout_capex=float(_first_present(data, "buildout_capex", "capex", default=2_500_000.0)),
+            buildout_capex=float(
+                _first_present(data, "buildout_capex", "capex", default=2_500_000.0)
+            ),
             gross_margin_ratio=_bounded(
                 _first_present(data, "gross_margin_ratio", "gross_margin", default=0.55)
             ),
-            average_confidence=_bounded(_first_present(data, "average_confidence", "confidence", default=1.0)),
-            data_quality_score=_bounded(_first_present(data, "data_quality_score", "data_quality", default=1.0)),
+            average_confidence=_bounded(
+                _first_present(data, "average_confidence", "confidence", default=1.0)
+            ),
+            data_quality_score=_bounded(
+                _first_present(data, "data_quality_score", "data_quality", default=1.0)
+            ),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
         )
 
@@ -160,7 +174,9 @@ class SiteScoreReport:
         return {key: interval.p50 for key, interval in self.horizons.items()}
 
     def with_version(self, *, report_version: int, report_id: str) -> SiteScoreReport:
-        return SiteScoreReport(**{**self.__dict__, "report_version": report_version, "report_id": report_id})
+        return SiteScoreReport(
+            **{**self.__dict__, "report_version": report_version, "report_id": report_id}
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -223,7 +239,9 @@ def score_sites(
     origin = prediction_origin_time or datetime.now(UTC)
     scored_time = scored_at or datetime.now(UTC)
     return [
-        _score_feature(_coerce_feature(feature), prediction_origin_time=origin, scored_at=scored_time)
+        _score_feature(
+            _coerce_feature(feature), prediction_origin_time=origin, scored_at=scored_time
+        )
         for feature in features
     ]
 
@@ -280,15 +298,16 @@ def _score_feature(
     mature_revenue_prediction: RevenuePredictionBand | None = None,
     model_version: str = SITESCORE_MODEL_VERSION,
 ) -> SiteScoreReport:
-    demand = _bounded(feature.heat_zone_score / 100.0) if feature.heat_zone_score else feature.poi_demand_index
+    demand = (
+        _bounded(feature.heat_zone_score / 100.0)
+        if feature.heat_zone_score
+        else feature.poi_demand_index
+    )
     confidence = _confidence(feature)
     if mature_revenue_prediction is None:
         mature_p50 = _mature_revenue(feature, demand)
         spread = (1.0 - confidence) * 0.40 + 0.12
-        horizons = {
-            key: _interval(mature_p50 * ramp, spread)
-            for key, ramp in HORIZON_RAMP.items()
-        }
+        horizons = {key: _interval(mature_p50 * ramp, spread) for key, ramp in HORIZON_RAMP.items()}
     else:
         mature_p50 = max(0.0, float(mature_revenue_prediction.p50))
         horizons = {

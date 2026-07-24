@@ -73,11 +73,7 @@ def _feature_row(
     revenues = [float(item.actual_revenue) for item in observations]
     cycles = [float(item.machine_cycles) for item in observations]
     source_snapshot_ids = sorted(
-        {
-            snapshot_id
-            for item in observations
-            for snapshot_id in item.source_snapshot_ids
-        }
+        {snapshot_id for item in observations for snapshot_id in item.source_snapshot_ids}
     )
     elapsed_days = max(
         1,
@@ -94,9 +90,7 @@ def _feature_row(
         "revenue_trend_per_day": (revenues[-1] - revenues[0]) / elapsed_days,
         "latest_machine_cycles": cycles[-1],
         "trailing_mean_machine_cycles": fmean(cycles),
-        "data_quality_score": min(
-            float(item.data_quality_score) for item in observations
-        ),
+        "data_quality_score": min(float(item.data_quality_score) for item in observations),
         "site_score_baseline_p50": latest.site_score_baseline_p50,
         "observation_count": len(observations),
         "feature_snapshot_time": latest_date.isoformat(),
