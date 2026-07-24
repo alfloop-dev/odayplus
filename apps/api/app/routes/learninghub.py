@@ -291,6 +291,21 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
+        @router.get(
+            "/models",
+            dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))],
+        )
+        def list_models() -> dict[str, Any]:
+            versions = active_repository.list_all_model_versions()
+            rows = sorted(
+                (version.to_dict() for version in versions),
+                key=lambda item: (
+                    str(item.get("model_name", "")),
+                    str(item.get("version", "")),
+                ),
+            )
+            return {"items": rows, "count": len(rows)}
+
         @router.get("/models/{model_name}", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def get_model(model_name: str) -> dict[str, Any]:
             versions = active_repository.list_model_versions(model_name)

@@ -8,9 +8,11 @@ import type {
   AvmCase,
   CandidateSiteCard,
   ForecastAlert,
+  ForecastOutputSummary,
   HeatZoneScore,
   InterventionSummary,
   ModelReleaseSummary,
+  ModelVersionSummary,
   NetPlanScenarioSummary,
   ShellHomeResponse,
   SourceFreshnessEvidence,
@@ -75,6 +77,47 @@ describe("non-Operator production data removal", () => {
     expect(screen.queryByTestId("alert-drawer")).not.toBeInTheDocument();
   });
 
+  it("renders persisted ForecastOps rows in production", () => {
+    const forecast: ForecastOutputSummary = {
+      forecast_output_id: "forecast-live-901",
+      forecast_version: 3,
+      store_id: "store-live-901",
+      prediction_run_id: "prediction-live-901",
+      p10: 90_000,
+      p50: 100_000,
+      p90: 112_000,
+      w4: { horizon: "w4", p10: 90_000, p50: 100_000, p90: 112_000 },
+      w8: { horizon: "w8", p10: 92_000, p50: 103_000, p90: 116_000 },
+      w12: { horizon: "w12", p10: 94_000, p50: 106_000, p90: 119_000 },
+      w24: { horizon: "w24", p10: 97_000, p50: 110_000, p90: 124_000 },
+      trajectory_class: "growing",
+      turning_point_probability: 0.2,
+      sitescore_gap_ratio: -0.08,
+      actual_revenue: 98_000,
+      sitescore_baseline_p50: 108_000,
+      model_version: "4.0.0",
+      engine_name: "statsforecast",
+      model_name: "forecastops",
+      feature_version: "store-machine-timeseries-view-v1",
+      policy_version: "four-light-policy-v1",
+      prediction_origin_time: "2026-07-24T08:00:00Z",
+      scored_at: "2026-07-24T08:05:00Z",
+      source_snapshot_ids: ["pos-live-20260724"],
+    };
+
+    render(
+      <OperationsWorkspace
+        isProduction
+        liveForecasts={binding([forecast])}
+        view="forecast"
+      />,
+    );
+
+    expect(screen.getByText("store-live-901")).toBeInTheDocument();
+    expect(screen.getByText("statsforecast · store-machine-timeseries-view-v1")).toBeInTheDocument();
+    expect(screen.queryByText("Store forecasts")).not.toBeInTheDocument();
+  });
+
   it.each([
     ["empty", undefined],
     ["error", "upstream timeout"],
@@ -135,6 +178,35 @@ describe("non-Operator production data removal", () => {
 
     expect(screen.getByText("live-release-44")).toBeInTheDocument();
     expect(screen.queryByText("Release decisions")).not.toBeInTheDocument();
+  });
+
+  it("renders persisted Learning Hub model versions without bundled models", () => {
+    const model: ModelVersionSummary = {
+      model_name: "forecastops-live",
+      version: "4.0.0",
+      artifact_uri: "gs://model-artifacts/forecastops-live/4.0.0/model.bin",
+      dataset_snapshot_id: "dataset-live-20260724",
+      feature_schema_version: "store-machine-timeseries-view-v1",
+      label_version: "forecast-label-v1",
+      metrics: { smape: 0.08 },
+      stage: "production",
+      aliases: ["production"],
+      run_id: "mlflow-live-4",
+      approved_by: "model-review-board",
+      approved_at: "2026-07-24T07:00:00Z",
+    };
+
+    render(
+      <LearningHubWorkspace
+        isProduction
+        liveModels={binding([model])}
+        view="models"
+      />,
+    );
+
+    expect(screen.getByText("forecastops-live")).toBeInTheDocument();
+    expect(screen.getByText("model-review-board")).toBeInTheDocument();
+    expect(screen.queryByText("sitescore-propensity")).not.toBeInTheDocument();
   });
 
   it("renders live Intervention rows and omits fixed workflow cases", () => {

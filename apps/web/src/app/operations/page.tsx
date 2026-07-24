@@ -7,9 +7,16 @@ import { loadApiBinding } from "../../lib/api/binding.ts";
 export const dynamic = "force-dynamic";
 
 export default async function OperationsPage() {
-  const liveAlerts = await loadApiBinding({
-    client: await getServerApiClient(),
-    fetcher: (client) => client.listForecastAlerts().then((response) => response.items),
-  });
-  return <OperationsWorkspace liveAlerts={liveAlerts} />;
+  const client = await getServerApiClient();
+  const [liveAlerts, liveForecasts] = await Promise.all([
+    loadApiBinding({
+      client,
+      fetcher: (api) => api.listForecastAlerts().then((response) => response.items),
+    }),
+    loadApiBinding({
+      client,
+      fetcher: (api) => api.listForecasts().then((response) => response.items),
+    }),
+  ]);
+  return <OperationsWorkspace liveAlerts={liveAlerts} liveForecasts={liveForecasts} />;
 }

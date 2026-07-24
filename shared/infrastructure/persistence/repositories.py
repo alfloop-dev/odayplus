@@ -579,6 +579,9 @@ class DurableLearningHubRepository:
     def list_model_versions(self, model_name: str) -> list[ModelVersion]:
         return self._store.list_by_group(self._VERSIONS, model_name)
 
+    def list_all_model_versions(self) -> list[ModelVersion]:
+        return self._store.list_all(self._VERSIONS)
+
     # -- model cards ------------------------------------------------------
 
     def save_model_card(self, model_card: ModelCard) -> ModelCard:
