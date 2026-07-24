@@ -65,4 +65,34 @@ describe("GovernanceWorkspace high-risk failures", () => {
       expect(screen.queryByTestId("evidence-package-result")).not.toBeInTheDocument(),
     );
   });
+
+  it("blocks seed governance payloads instead of rendering local approvals", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        ...snapshot,
+        source: "fixture-governance-replay",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+
+    render(<GovernanceWorkspace roleId="ops-lead" />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "seed");
+    expect(screen.queryByTestId("governance-workspace")).not.toBeInTheDocument();
+    expect(screen.queryByText("Close escalated service issue")).not.toBeInTheDocument();
+  });
+
+  it("retains governance fixtures in local mode when the API is unavailable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    render(<GovernanceWorkspace roleId="ops-lead" />);
+
+    expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
+    expect(screen.getAllByText("Close escalated service issue").length).toBeGreaterThan(0);
+  });
 });

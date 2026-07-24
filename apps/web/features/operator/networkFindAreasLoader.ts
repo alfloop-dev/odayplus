@@ -22,6 +22,7 @@ import type { OdpApiClient } from "@oday-plus/openapi-client";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "./types.ts";
+import { payloadContainsSeedData } from "./operatorDataMode.ts";
 
 // ---------------------------------------------------------------------------
 // Re-exported binding types used by NetworkFindAreasWorkspace
@@ -153,6 +154,9 @@ export async function loadNetworkFindAreasBindings(
       client,
       fetcher: async (c) => {
         const response = await c.listHeatzones();
+        if (payloadContainsSeedData(response)) {
+          throw new Error("HeatZone API returned seed, fixture, or mock data");
+        }
         return response.items.map((item) =>
           adaptHeatZone(item as unknown as Record<string, unknown>),
         );
@@ -162,6 +166,9 @@ export async function loadNetworkFindAreasBindings(
       client,
       fetcher: async (c) => {
         const response = await c.listCandidates();
+        if (payloadContainsSeedData(response)) {
+          throw new Error("Candidate API returned seed, fixture, or mock data");
+        }
         return response.candidates.map((item) =>
           adaptCandidate(item as unknown as Record<string, unknown>),
         );
@@ -175,6 +182,9 @@ export async function loadNetworkFindAreasBindings(
   if (client && rawCandidateBinding.source === "api" && rawCandidateBinding.items.length > 0) {
     try {
       const reportResponse = await client.listSiteScoreReports();
+      if (payloadContainsSeedData(reportResponse)) {
+        throw new Error("SiteScore API returned seed, fixture, or mock data");
+      }
       const reportByCandidateId = new Map(
         (reportResponse.items ?? []).map(
           (r) => [r.candidateSiteId as string, r as unknown as Record<string, unknown>],

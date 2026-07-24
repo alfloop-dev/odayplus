@@ -16,6 +16,7 @@ import {
   exportEvidencePackage,
   fetchGovernanceSnapshot,
   submitGovernanceDecision,
+  type GovernanceSnapshot,
   type GovernanceStatusBoard,
   type GovernanceStatusRow,
 } from "./governance/governanceLoader";
@@ -23,6 +24,7 @@ import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
   operatorFixturesAllowed,
+  payloadContainsSeedData,
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
 } from "./operatorDataMode";
@@ -266,6 +268,44 @@ const baseAuditCategories: GovernanceAuditCategory[] = [
   "system",
 ];
 
+export function inspectGovernanceSnapshot(
+  snapshot: GovernanceSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) {
+    return "seed";
+  }
+
+  const statusBoard = snapshot.statusBoard;
+  const statusGroups = statusBoard
+    ? [
+        statusBoard.dataQuality,
+        statusBoard.models,
+        statusBoard.connectors,
+        statusBoard.sla,
+        statusBoard.users,
+      ]
+    : [];
+  const hasRequiredShape =
+    typeof snapshot.source === "string" &&
+    snapshot.source.trim().length > 0 &&
+    Array.isArray(snapshot.approvals) &&
+    Array.isArray(snapshot.decisions) &&
+    Array.isArray(snapshot.auditRows) &&
+    Array.isArray(snapshot.evidencePackages) &&
+    statusGroups.length === 5 &&
+    statusGroups.every(Array.isArray);
+  const hasRows = [
+    snapshot.approvals,
+    snapshot.decisions,
+    snapshot.auditRows,
+    snapshot.evidencePackages,
+    ...statusGroups,
+  ].some((rows) => rows.length > 0);
+
+  return hasRequiredShape && hasRows ? "ready" : "empty";
+}
+
 export function GovernanceWorkspace({
   approvals,
   decisions,
@@ -288,8 +328,8 @@ export function GovernanceWorkspace({
 
   // When the Govern API answers, it becomes the source of truth: approvals,
   // decisions, audit trail, status board and evidence history all come from
-  // /api/v1/operator/governance/snapshot.  Until then the embedded fixtures
-  // render (SSR / offline / unit tests never break).
+  // /api/v1/operator/governance/snapshot. Local/POC may render fixtures while
+  // production waits for a verified live response.
   const [apiActive, setApiActive] = useState(false);
   const [apiStatusBoard, setApiStatusBoard] = useState<GovernanceStatusBoard | null>(null);
   const [apiLoadState, setApiLoadState] = useState<OperatorDataAvailability>(
@@ -338,6 +378,22 @@ export function GovernanceWorkspace({
       setApiLoadError("Governance snapshot API 無法完成讀取。");
       return false;
     }
+    const inspection = inspectGovernanceSnapshot(snapshot);
+    if (!fixturesAllowed && inspection !== "ready") {
+      setLocalApprovals([]);
+      setLocalDecisions([]);
+      setLocalAuditRows([]);
+      setApiStatusBoard(null);
+      setEvdHist([]);
+      setApiActive(false);
+      setApiLoadState(inspection);
+      setApiLoadError(
+        inspection === "seed"
+          ? "Governance snapshot API 回傳 seed、fixture 或 mock 資料。"
+          : "Governance snapshot API 回傳空白或不完整資料。",
+      );
+      return false;
+    }
     const statusRows = snapshot.statusBoard
       ? Object.values(snapshot.statusBoard).flatMap((rows) => rows ?? [])
       : [];
@@ -369,7 +425,7 @@ export function GovernanceWorkspace({
         : snapshot.approvals[0]?.id ?? "",
     );
     setApiActive(true);
-    if (isSeedDataSource(snapshot.source)) {
+    if (inspection === "seed") {
       setApiLoadState(fixturesAllowed ? "fixture" : "seed");
     } else {
       setApiLoadState(hasData ? "ready" : fixturesAllowed ? "fixture" : "empty");
@@ -378,7 +434,7 @@ export function GovernanceWorkspace({
   }, [fixturesAllowed, roleId]);
 
   useEffect(() => {
-    // Bind to the Govern API on mount / role change; fixtures stay until it answers.
+    // Bind on mount / role change; only local/POC keeps fixtures while pending.
     void refreshSnapshot();
   }, [refreshSnapshot]);
 

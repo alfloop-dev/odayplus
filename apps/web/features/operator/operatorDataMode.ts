@@ -65,6 +65,42 @@ export function isSeedDataSource(source: unknown): boolean {
   );
 }
 
+export function payloadContainsSeedData(
+  value: unknown,
+  visited: WeakSet<object> = new WeakSet<object>(),
+): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => payloadContainsSeedData(item, visited));
+  }
+
+  const record = asRecord(value);
+  if (!record || visited.has(record)) return false;
+  visited.add(record);
+
+  for (const [key, nestedValue] of Object.entries(record)) {
+    const normalizedKey = key.replace(/[_-]/g, "").toLowerCase();
+    if (
+      [
+        "source",
+        "datasource",
+        "datamode",
+        "origin",
+        "kind",
+      ].includes(normalizedKey) &&
+      isSeedDataSource(nestedValue)
+    ) {
+      return true;
+    }
+    if (payloadContainsSeedData(nestedValue, visited)) return true;
+  }
+
+  return false;
+}
+
+function hasText(record: Record<string, unknown> | null, key: string): boolean {
+  return typeof record?.[key] === "string" && record[key].trim().length > 0;
+}
+
 export function inspectOperatorShellPayload(payload: unknown): ShellInspection {
   const root = asRecord(payload);
   if (!root) return { status: "empty" };
@@ -83,6 +119,7 @@ export function inspectOperatorShellPayload(payload: unknown): ShellInspection {
     typeof fixtureMeta?.description === "string" ? fixtureMeta.description : undefined;
 
   if (
+    payloadContainsSeedData(payload) ||
     dataMode === "fixture" ||
     originKind === "fixture" ||
     isSeedDataSource(fixtureDescription)
@@ -98,15 +135,27 @@ export function inspectOperatorShellPayload(payload: unknown): ShellInspection {
     dataMode === "production" ||
     originKind === "live" ||
     originKind === "production" ||
-    liveReady;
-  if (!explicitlyLive && isSeedDataSource(source)) {
-    return { status: "seed", source };
-  }
+    liveReady ||
+    source?.toLowerCase().includes("live") ||
+    source?.toLowerCase().includes("production");
 
   const navigation = asRecord(root.navigation);
   const today = asRecord(root.today);
+  const hero = asRecord(today?.hero);
+  const role = asRecord(meta?.role);
   const search = asRecord(root.search);
-  const hasNavigation = asArray(navigation?.workspaces).length > 0;
+  const hasNavigation =
+    asArray(navigation?.workspaces).length > 0 &&
+    asArray(navigation?.allowedWorkspaces).length > 0;
+  const hasRole =
+    hasText(role, "id") &&
+    hasText(role, "label") &&
+    asArray(role?.allowedWorkspaces).length > 0;
+  const hasHero =
+    hasText(hero, "name") &&
+    hasText(hero, "roleLabel") &&
+    hasText(hero, "scope") &&
+    hasText(hero, "dateLabel");
   const hasOperationalRows = [
     today?.kpis,
     today?.queue,
@@ -119,7 +168,14 @@ export function inspectOperatorShellPayload(payload: unknown): ShellInspection {
     search?.items,
   ].some((value) => asArray(value).length > 0);
 
-  if (!source || !hasNavigation || !hasOperationalRows) {
+  if (
+    !source ||
+    !explicitlyLive ||
+    !hasNavigation ||
+    !hasRole ||
+    !hasHero ||
+    !hasOperationalRows
+  ) {
     return { status: "empty", source };
   }
 

@@ -48,10 +48,9 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 //                deep link), and every write through the typed client.
 // Not changing : the surrounding Listing Radar panel's own data flow.
 //
-// There is deliberately NO fixture fallback here. The other network panels
-// fall back to bundled fixtures when the API is down, which is right for
-// read-only analytics — but an intake queue is a record of real human
-// submissions and real governance decisions. Showing synthetic rows in its
+// There is deliberately NO fixture fallback here. Other network panels may
+// fall back to bundled fixtures in local/POC mode, but an intake queue records
+// real human submissions and governance decisions. Showing synthetic rows in its
 // place would present fabricated evidence, so an unreachable backend renders
 // an explicit error state instead.
 

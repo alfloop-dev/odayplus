@@ -8,9 +8,28 @@ import {
 } from "../operatorDataMode";
 
 const livePayload = {
-  meta: { source: "operator-shell-production" },
-  navigation: { workspaces: [{ id: "today" }] },
-  today: { kpis: [{ label: "Live KPI", value: "1" }] },
+  meta: {
+    source: "operator-shell-production",
+    dataMode: "live",
+    role: {
+      id: "ops-lead",
+      label: "Live operator",
+      allowedWorkspaces: ["today"],
+    },
+  },
+  navigation: {
+    allowedWorkspaces: ["today"],
+    workspaces: [{ id: "today" }],
+  },
+  today: {
+    hero: {
+      name: "Live operator",
+      roleLabel: "Operations",
+      scope: "Live tenant",
+      dateLabel: "2026-07-24",
+    },
+    kpis: [{ label: "Live KPI", value: "1" }],
+  },
 };
 
 describe("operator data mode", () => {
@@ -65,7 +84,7 @@ describe("operator data mode", () => {
           liveReadiness: { ready: true },
         },
       }).status,
-    ).toBe("ready");
+    ).toBe("seed");
     expect(
       inspectOperatorShellPayload({
         ...livePayload,
@@ -76,7 +95,25 @@ describe("operator data mode", () => {
           liveReadiness: { ready: false },
         },
       }).status,
+    ).toBe("seed");
+  });
+
+  it("fails closed for incomplete or nested seed business payloads", () => {
+    expect(
+      inspectOperatorShellPayload({
+        ...livePayload,
+        today: { kpis: [{ label: "Incomplete KPI", value: "1" }] },
+      }).status,
     ).toBe("empty");
+    expect(
+      inspectOperatorShellPayload({
+        ...livePayload,
+        today: {
+          ...livePayload.today,
+          kpis: [{ label: "Mock KPI", value: "999", source: "fixture-replay" }],
+        },
+      }).status,
+    ).toBe("seed");
   });
 
   it("normalizes fixture status to a blocked seed gate", () => {

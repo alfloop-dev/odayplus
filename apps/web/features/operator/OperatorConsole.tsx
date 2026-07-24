@@ -42,6 +42,7 @@ import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   inspectOperatorShellPayload,
   operatorFixturesAllowed,
+  payloadContainsSeedData,
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
 } from "./operatorDataMode";
@@ -319,7 +320,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [taskCenterLoadState, setTaskCenterLoadState] = useState<TaskCenterLoadState>("idle");
-  const [taskCenterSource, setTaskCenterSource] = useState<TaskCenterSource>("fixture");
+  const [taskCenterSource, setTaskCenterSource] = useState<TaskCenterSource>(
+    fixturesAllowed ? "fixture" : "api",
+  );
   const [liveTasks, setLiveTasks] = useState<OperatorTask[]>(fixturesAllowed ? taskCenterFixtures : []);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
@@ -330,7 +333,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
-  const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() => normalizeShellEnvelope());
+  const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() =>
+    normalizeShellEnvelope(undefined, { allowFixtureFallback: fixturesAllowed }),
+  );
   const [shellDataStatus, setShellDataStatus] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
@@ -353,7 +358,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   };
 
   const applyOperatorEnvelope = (payload: unknown) => {
-    const nextEnvelope = normalizeShellEnvelope(payload);
+    const nextEnvelope = normalizeShellEnvelope(payload, {
+      allowFixtureFallback: fixturesAllowed,
+    });
     const record = getRecord(payload);
     setShellEnvelope(nextEnvelope);
     setLiveNotifications(
@@ -384,16 +391,30 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           label: role.label,
           subtitle: role.subtitle,
         }))
-      : OPERATOR_ROLES;
-  }, [shellEnvelope.navigation.roles]);
+      : fixturesAllowed
+        ? OPERATOR_ROLES
+        : [];
+  }, [fixturesAllowed, shellEnvelope.navigation.roles]);
 
   const activeRole = useMemo(() => {
-    return rolesForShell.find((role) => role.id === activeRoleId) ?? getOperatorRole(activeRoleId);
-  }, [activeRoleId, rolesForShell]);
+    return rolesForShell.find((role) => role.id === activeRoleId) ??
+      (fixturesAllowed
+        ? getOperatorRole(activeRoleId)
+        : {
+            allowedWorkspaces: [],
+            id: activeRoleId,
+            label: "",
+            subtitle: "",
+          });
+  }, [activeRoleId, fixturesAllowed, rolesForShell]);
 
   const workspaceNavItems = useMemo(() => {
-    return shellEnvelope.navigation.workspaces.length ? shellEnvelope.navigation.workspaces : WORKSPACES;
-  }, [shellEnvelope.navigation.workspaces]);
+    return shellEnvelope.navigation.workspaces.length
+      ? shellEnvelope.navigation.workspaces
+      : fixturesAllowed
+        ? WORKSPACES
+        : [];
+  }, [fixturesAllowed, shellEnvelope.navigation.workspaces]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const isNetworkWorkspace = activeWorkspaceId === "network";
@@ -493,6 +514,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         if (!res.ok) throw new Error(`Task center API returned ${res.status}`);
 
         const data = await res.json();
+        if (!fixturesAllowed && payloadContainsSeedData(data)) {
+          throw new Error("Task center API returned seed, fixture, or mock data");
+        }
         const tasks = normalizeTasksPayload(data, "api");
         if (cancelled) return;
 
@@ -697,7 +721,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       keywords: ["reset", "demo", "session"],
       execute: () => handleReset(),
     },
-    ...OPERATOR_ROLES.map((role) => ({
+    ...rolesForShell.map((role) => ({
       id: `role-${role.id}`,
       group: "actions" as CommandGroup,
       title: `切換角色：${role.label}`,

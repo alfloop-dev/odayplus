@@ -1,13 +1,13 @@
 /**
  * Growth workspace (營收成長) view model.
  *
- * Dual-mode: runtime API client + embedded fixture fallback.
+ * Dual-mode: runtime API client + local/test fixture fallback.
  *
  * Read path  — fetchGrowthViewModel({ segmentId, itemId, draftId })
  *   1. Calls /api/v1/operator/growth/{freshness,segments,recommendations,actions}
  *      with Idempotency-Key and X-Correlation-Id.
- *   2. On any network/parse error, silently falls back to embedded fixtures so
- *      the workspace never breaks.
+ *   2. POC/local callers may fall back to embedded fixtures after an API error.
+ *      Production callers fail closed and never expose those fixtures.
  *
  * Write path — apiClient.createGrowthDraft() / apiClient.writeGrowthOutcome()
  *   • POST /api/v1/operator/growth/actions           (create draft)
@@ -33,7 +33,10 @@ import type {
   StatusTone,
 } from "@oday-plus/domain-types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
-import { operatorFixturesAllowed } from "./operatorDataMode";
+import {
+  operatorFixturesAllowed,
+  payloadContainsSeedData,
+} from "./operatorDataMode";
 
 export type ConfidenceLevel = Confidence["level"];
 
@@ -703,7 +706,7 @@ export type GrowthApiData = {
   items: GrowthItem[];
   /** true when data came from the live API; false when falling back to fixtures */
   fromApi: boolean;
-  availability: "ready" | "fixture" | "empty" | "error";
+  availability: "ready" | "fixture" | "seed" | "empty" | "error";
   error?: string;
 };
 
@@ -744,18 +747,48 @@ export async function fetchGrowthApiData(params: {
     ]);
 
     if (freshnessRes && segmentsRes && recommendationsRes && actionsRes) {
-      const isEmpty =
-        segmentsRes.items.length === 0 &&
-        recommendationsRes.items.length === 0 &&
-        actionsRes.items.length === 0;
-      return {
-        freshness: freshnessRes,
-        segments: segmentsRes.items,
-        recommendations: recommendationsRes.items,
-        items: actionsRes.items,
-        fromApi: true,
-        availability: isEmpty ? "empty" : "ready",
-      };
+      const containsSeedData = payloadContainsSeedData([
+        freshnessRes,
+        segmentsRes,
+        recommendationsRes,
+        actionsRes,
+      ]);
+      const hasCompleteWorkspaceData =
+        segmentsRes.items.length > 0 &&
+        recommendationsRes.items.length > 0 &&
+        actionsRes.items.length > 0;
+      if (containsSeedData && !allowFixtureFallback) {
+        return {
+          freshness: null,
+          segments: [],
+          recommendations: [],
+          items: [],
+          fromApi: false,
+          availability: "seed",
+          error: "Growth API returned seed, fixture, or mock data.",
+        };
+      }
+      if (!hasCompleteWorkspaceData && !allowFixtureFallback) {
+        return {
+          freshness: null,
+          segments: [],
+          recommendations: [],
+          items: [],
+          fromApi: false,
+          availability: "empty",
+          error: "Growth API returned an incomplete or empty workspace payload.",
+        };
+      }
+      if (!containsSeedData && hasCompleteWorkspaceData) {
+        return {
+          freshness: freshnessRes,
+          segments: segmentsRes.items,
+          recommendations: recommendationsRes.items,
+          items: actionsRes.items,
+          fromApi: true,
+          availability: "ready",
+        };
+      }
     }
   } catch {
     // Classified below; production callers fail closed.

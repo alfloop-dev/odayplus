@@ -195,6 +195,59 @@ const fallbackEnvelope: OperatorShellEnvelope = {
   workQueue: [],
 };
 
+const emptyEnvelope: OperatorShellEnvelope = {
+  meta: {
+    role: {
+      id: "",
+      label: "",
+      subtitle: "",
+      allowedWorkspaces: [],
+    },
+    counts: {
+      approvals: 0,
+      critical: 0,
+      notifications: 0,
+      search: 0,
+      taskCenter: 0,
+    },
+  },
+  navigation: {
+    allowedWorkspaces: [],
+    roles: [],
+    workspaces: [],
+  },
+  header: {
+    counts: {
+      approvals: 0,
+      critical: 0,
+      notifications: 0,
+      search: 0,
+      taskCenter: 0,
+    },
+  },
+  today: {
+    hero: {
+      dateLabel: "",
+      name: "",
+      roleLabel: "",
+      scope: "",
+    },
+    auditFeed: [],
+    decisions: [],
+    kpis: [],
+    queue: [],
+    riskRows: [],
+  },
+  approvals: [],
+  auditFeed: [],
+  decisions: [],
+  kpis: [],
+  notifications: [],
+  riskRows: [],
+  search: { count: 0, items: [] },
+  workQueue: [],
+};
+
 function isObject(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
 }
@@ -209,15 +262,18 @@ function normalizeTarget(value: unknown, fallbackWorkspace: WorkspaceId = "today
   };
 }
 
-function normalizeRole(value: unknown): ShellRole {
-  if (!isObject(value)) return fallbackEnvelope.meta.role;
+function normalizeRole(
+  value: unknown,
+  fallbackRole: ShellRole = fallbackEnvelope.meta.role,
+): ShellRole {
+  if (!isObject(value)) return fallbackRole;
   return {
     allowedWorkspaces: Array.isArray(value.allowedWorkspaces)
       ? (value.allowedWorkspaces.filter((item: unknown) => typeof item === "string") as WorkspaceId[])
-      : fallbackEnvelope.meta.role.allowedWorkspaces,
+      : fallbackRole.allowedWorkspaces,
     heroName: typeof value.heroName === "string" ? value.heroName : undefined,
-    id: typeof value.id === "string" ? value.id : fallbackEnvelope.meta.role.id,
-    label: typeof value.label === "string" ? value.label : fallbackEnvelope.meta.role.label,
+    id: typeof value.id === "string" ? value.id : fallbackRole.id,
+    label: typeof value.label === "string" ? value.label : fallbackRole.label,
     subtitle: typeof value.subtitle === "string" ? value.subtitle : "",
   };
 }
@@ -311,9 +367,17 @@ function normalizeList<T>(value: unknown, normalizer: (item: unknown) => T | nul
   return value.map(normalizer).filter((item): item is T => item !== null);
 }
 
-export function normalizeShellEnvelope(payload?: unknown): OperatorShellEnvelope {
-  if (!isObject(payload)) return fallbackEnvelope;
-  const role = normalizeRole(isObject(payload.meta) ? payload.meta.role : undefined);
+export function normalizeShellEnvelope(
+  payload?: unknown,
+  options: { allowFixtureFallback?: boolean } = {},
+): OperatorShellEnvelope {
+  const baseEnvelope =
+    options.allowFixtureFallback === false ? emptyEnvelope : fallbackEnvelope;
+  if (!isObject(payload)) return baseEnvelope;
+  const role = normalizeRole(
+    isObject(payload.meta) ? payload.meta.role : undefined,
+    baseEnvelope.meta.role,
+  );
   const counts = isObject(payload.meta) && isObject(payload.meta.counts) ? payload.meta.counts : {};
   const today = isObject(payload.today) ? payload.today : {};
   const navigation = isObject(payload.navigation) ? payload.navigation : {};
@@ -356,7 +420,9 @@ export function normalizeShellEnvelope(payload?: unknown): OperatorShellEnvelope
       allowedWorkspaces: Array.isArray(navigation.allowedWorkspaces)
         ? (navigation.allowedWorkspaces.filter((item: unknown) => typeof item === "string") as WorkspaceId[])
         : role.allowedWorkspaces,
-      roles: normalizeList(navigation.roles, normalizeRole),
+      roles: normalizeList(navigation.roles, (item) =>
+        normalizeRole(item, baseEnvelope.meta.role),
+      ),
       workspaces: normalizeList(navigation.workspaces, (item) => {
         if (!isObject(item) || typeof item.id !== "string") return null;
         return {
@@ -375,10 +441,10 @@ export function normalizeShellEnvelope(payload?: unknown): OperatorShellEnvelope
       auditFeed,
       decisions,
       hero: {
-        dateLabel: isObject(today.hero) && typeof today.hero.dateLabel === "string" ? today.hero.dateLabel : fallbackEnvelope.today.hero.dateLabel,
-        name: isObject(today.hero) && typeof today.hero.name === "string" ? today.hero.name : role.heroName ?? fallbackEnvelope.today.hero.name,
+        dateLabel: isObject(today.hero) && typeof today.hero.dateLabel === "string" ? today.hero.dateLabel : baseEnvelope.today.hero.dateLabel,
+        name: isObject(today.hero) && typeof today.hero.name === "string" ? today.hero.name : role.heroName ?? baseEnvelope.today.hero.name,
         roleLabel: isObject(today.hero) && typeof today.hero.roleLabel === "string" ? today.hero.roleLabel : role.label,
-        scope: isObject(today.hero) && typeof today.hero.scope === "string" ? today.hero.scope : fallbackEnvelope.today.hero.scope,
+        scope: isObject(today.hero) && typeof today.hero.scope === "string" ? today.hero.scope : baseEnvelope.today.hero.scope,
       },
       kpis,
       queue,

@@ -7,6 +7,7 @@ import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
   operatorFixturesAllowed,
+  payloadContainsSeedData,
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
 } from "./operatorDataMode";
@@ -69,6 +70,50 @@ type StoreOpsApiState = {
   count: number;
   source?: string;
 };
+
+const EMPTY_STORE_OPS_ISSUE: Issue = {
+  id: "",
+  title: "",
+  storeId: "",
+  storeName: "",
+  status: "new",
+  severity: "low",
+  source: "multiSignal",
+  ownerRoleId: "opsLead",
+  ownerName: "",
+  slaDueAt: "",
+  createdAt: "",
+  updatedAt: "",
+  evidenceIds: [],
+  summary: "",
+};
+
+export function inspectStoreOpsApiPayload(
+  payload: unknown,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "empty";
+  const record = payload as Record<string, unknown>;
+  if (payloadContainsSeedData(payload) || isSeedDataSource(record.source)) return "seed";
+
+  const source = typeof record.source === "string" ? record.source.trim() : "";
+  const issues = Array.isArray(record.issues) ? record.issues : null;
+  const stores = Array.isArray(record.stores) ? record.stores : null;
+  const evidence = Array.isArray(record.evidence) ? record.evidence : null;
+  const auditEvents = Array.isArray(record.auditEvents) ? record.auditEvents : null;
+
+  if (
+    !source ||
+    !issues ||
+    !stores ||
+    !evidence ||
+    !auditEvents ||
+    issues.length === 0 ||
+    stores.length === 0
+  ) {
+    return "empty";
+  }
+  return "ready";
+}
 
 const lightStatusOrder: StoreLightStatus[] = ["red", "yellow"];
 
@@ -237,6 +282,10 @@ export function DesignTodayWorkspace({
   riskStores: propRiskStores,
   auditFeed: propAuditFeed,
 }: DesignTodayWorkspaceProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
+  if (!fixturesAllowed) {
+    return <OperatorDataUnavailableGate status="empty" />;
+  }
   const activeKpis = propKpis || kpis;
   const activeTodayRows = propTodayRows || todayRows;
   const activeDecisions = propDecisions || decisions;
@@ -440,14 +489,19 @@ export function DesignStoreOpsWorkspace({
         }
         const data = (await response.json()) as StoreOpsApiState;
         if (!cancelled) {
-          setApiState(data);
-          if (isSeedDataSource(data.source)) {
-            setStoreOpsLoadState(fixturesAllowed ? "fixture" : "seed");
-          } else if (!Array.isArray(data.issues) || data.issues.length === 0) {
-            setStoreOpsLoadState(fixturesAllowed ? "fixture" : "empty");
-          } else {
-            setStoreOpsLoadState("ready");
-          }
+          const inspection = inspectStoreOpsApiPayload(data);
+          setApiState(
+            inspection === "ready" || fixturesAllowed
+              ? data
+              : null,
+          );
+          setStoreOpsLoadState(
+            inspection === "ready"
+              ? "ready"
+              : fixturesAllowed
+                ? "fixture"
+                : inspection,
+          );
         }
       } catch (error) {
         console.error("Error loading Store Ops issues:", error);
@@ -496,8 +550,10 @@ export function DesignStoreOpsWorkspace({
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
-    return filteredIssues.find((i) => i.id === selectedIssueId) ?? filteredIssues[0] ?? ISSUE_FIXTURES[0];
-  }, [filteredIssues, selectedIssueId]);
+    return filteredIssues.find((i) => i.id === selectedIssueId) ??
+      filteredIssues[0] ??
+      (fixturesAllowed ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
+  }, [filteredIssues, fixturesAllowed, selectedIssueId]);
 
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
