@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 from models.shared_ml import (
     ModelBinding,
@@ -13,6 +12,12 @@ from models.shared_ml import (
     require_live_inputs,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.infrastructure.persistence.job_receipts import (
+    JobQueue,
+    JobReceiptIncompleteError,
+    TenantScopedJobReceiptStore,
+)
+from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -29,23 +34,19 @@ else:
         SiteScoreDecisionWorkflow,
     )
 
-
     class SiteScoreScoreJobPayload(BaseModel):
         features: list[dict[str, Any]] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         idempotency_key: str | None = None
 
-
     class OpenDecisionPayload(BaseModel):
         report_id: str
         created_by: str = Field(min_length=1)
-
 
     class DecisionPayload(BaseModel):
         action: str
         actor: str = Field(min_length=1)
         reason: str = ""
-
 
     def create_sitescore_router(
         *,
@@ -56,6 +57,8 @@ else:
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
         require_production_model: bool | None = None,
+        job_queue: JobQueue | None = None,
+        require_durable_jobs: bool | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -86,21 +89,81 @@ else:
             model_runtime=model_runtime,
             require_production_model=production_model_required,
         )
-        idempotency_index: dict[str, str] = {}
-        jobs: dict[str, dict[str, Any]] = {}
+        local_job_queue = InMemoryJobQueue()
+        durable_jobs_required = (
+            production_model_execution_required()
+            if require_durable_jobs is None
+            else require_durable_jobs
+        )
 
-        @router.post("/score-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
-        @router.post("/reports", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
+        def receipt_store(request: Request) -> TenantScopedJobReceiptStore:
+            active_queue = job_queue
+            if active_queue is None:
+                app = request.scope.get("app")
+                active_queue = getattr(getattr(app, "state", None), "job_queue", None)
+            active_queue = active_queue or local_job_queue
+            store = TenantScopedJobReceiptStore(
+                queue=active_queue,
+                service="sitescore.score",
+            )
+            if durable_jobs_required and not store.is_durable:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "DURABLE_JOB_RECEIPT_STORE_REQUIRED",
+                        "message": "SiteScore production jobs require durable persistence",
+                    },
+                )
+            return store
+
+        def tenant_id(request: Request) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            scope = getattr(principal, "scope", None)
+            value = getattr(scope, "tenant_id", None)
+            if value:
+                return str(value)
+            if durable_jobs_required:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "SiteScore production jobs require tenant scope",
+                    },
+                )
+            return "__local__"
+
+        @router.post(
+            "/score-jobs",
+            status_code=status.HTTP_202_ACCEPTED,
+            dependencies=[
+                Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))
+            ],
+        )
+        @router.post(
+            "/reports",
+            status_code=status.HTTP_202_ACCEPTED,
+            dependencies=[
+                Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))
+            ],
+        )
         def create_score_job(
             body: SiteScoreScoreJobPayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            if effective_key and effective_key in idempotency_index:
-                payload = dict(jobs[idempotency_index[effective_key]])
-                payload["created"] = False
-                return payload
+            active_tenant_id = tenant_id(request)
+            active_receipts = receipt_store(request)
+            try:
+                replay = active_receipts.get_by_idempotency_key(active_tenant_id, effective_key)
+            except JobReceiptIncompleteError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "JOB_RECEIPT_INCOMPLETE", "message": str(exc)},
+                ) from exc
+            if replay is not None:
+                replay["created"] = False
+                return replay
 
             # Fail closed: refuse a fresh run when live inputs are absent.
             try:
@@ -131,42 +194,61 @@ else:
                 if execution.model_inference is not None
                 else model_binding
             )
-            job_id = f"sitescore-score-{uuid4()}"
-            metadata: dict[str, Any] = {
-                "idempotency_key": effective_key,
-                "candidate_count": len(reports),
-            }
-            if executed_binding is not None:
-                metadata["model_binding"] = executed_binding.to_audit_metadata()
-            audit_event = active_audit_log.record(
-                AuditEvent(
-                    event_type="sitescore.scored.v1",
-                    actor="system",
-                    action="run_model",
-                    resource="sitescore/score-job",
-                    outcome="accepted",
-                    correlation_id=request.state.correlation_id,
-                    job_id=job_id,
-                    metadata=metadata,
+
+            def build_receipt(job_id: str) -> dict[str, Any]:
+                metadata: dict[str, Any] = {
+                    "idempotency_key": effective_key,
+                    "candidate_count": len(reports),
+                    "tenant_id": active_tenant_id,
+                }
+                if executed_binding is not None:
+                    metadata["model_binding"] = executed_binding.to_audit_metadata()
+                audit_event = active_audit_log.record(
+                    AuditEvent(
+                        event_type="sitescore.scored.v1",
+                        actor="system",
+                        action="run_model",
+                        resource="sitescore/score-job",
+                        outcome="accepted",
+                        correlation_id=request.state.correlation_id,
+                        job_id=job_id,
+                        metadata=metadata,
+                    )
                 )
-            )
-            payload = {
-                "job_id": job_id,
-                "status": "succeeded",
-                "reports": [report.to_dict() for report in reports],
-                "summaries": [report.to_summary_dict() for report in reports],
-                "audit_event_id": audit_event.event_id,
-                "correlation_id": request.state.correlation_id,
-                "created": True,
-            }
-            if executed_binding is not None:
-                payload["model_binding"] = executed_binding.to_audit_metadata()
-            jobs[job_id] = payload
-            if effective_key:
-                idempotency_index[effective_key] = job_id
+                payload = {
+                    "job_id": job_id,
+                    "status": "succeeded",
+                    "reports": [report.to_dict() for report in reports],
+                    "summaries": [report.to_summary_dict() for report in reports],
+                    "audit_event_id": audit_event.event_id,
+                    "correlation_id": request.state.correlation_id,
+                    "created": True,
+                }
+                if executed_binding is not None:
+                    payload["model_binding"] = executed_binding.to_audit_metadata()
+                return payload
+
+            try:
+                payload, created = active_receipts.put_completed(
+                    tenant_id=active_tenant_id,
+                    idempotency_key=effective_key,
+                    correlation_id=request.state.correlation_id,
+                    build_receipt=build_receipt,
+                )
+            except JobReceiptIncompleteError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "JOB_RECEIPT_INCOMPLETE", "message": str(exc)},
+                ) from exc
+            payload["created"] = created
             return payload
 
-        @router.get("/reports", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
+        @router.get(
+            "/reports",
+            dependencies=[
+                Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
+            ],
+        )
         def list_reports() -> dict[str, Any]:
             reports = site_repository.list_latest()
             return {
@@ -174,11 +256,18 @@ else:
                 "count": len(reports),
             }
 
-        @router.get("/reports/{candidate_site_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
+        @router.get(
+            "/reports/{candidate_site_id}",
+            dependencies=[
+                Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
+            ],
+        )
         def candidate_reports(candidate_site_id: str) -> dict[str, Any]:
             latest = site_repository.latest(candidate_site_id)
             if latest is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
+                )
             history = site_repository.history(candidate_site_id)
             return {
                 "latest": latest.to_dict(),
@@ -186,11 +275,19 @@ else:
                 "version_count": len(history),
             }
 
-        @router.post("/decisions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))])
+        @router.post(
+            "/decisions",
+            status_code=status.HTTP_201_CREATED,
+            dependencies=[
+                Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))
+            ],
+        )
         def open_decision(body: OpenDecisionPayload, request: Request) -> dict[str, Any]:
             report = site_repository.get_report(body.report_id)
             if report is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
+                )
             decision = decision_workflow.open_decision(
                 report,
                 created_by=body.created_by,
@@ -203,7 +300,12 @@ else:
             )
             return decision.to_dict()
 
-        @router.post("/decisions/{decision_id}/decision", dependencies=[Depends(require_permission("sitescore", Action.APPROVE, engine=authz_engine))])
+        @router.post(
+            "/decisions/{decision_id}/decision",
+            dependencies=[
+                Depends(require_permission("sitescore", Action.APPROVE, engine=authz_engine))
+            ],
+        )
         def decide(decision_id: str, body: DecisionPayload, request: Request) -> dict[str, Any]:
             try:
                 action = DecisionAction(body.action)
@@ -227,14 +329,26 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.get("/decisions/{decision_id}", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
+        @router.get(
+            "/decisions/{decision_id}",
+            dependencies=[
+                Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
+            ],
+        )
         def get_decision(decision_id: str) -> dict[str, Any]:
             decision = decision_workflow.get(decision_id)
             if decision is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="decision not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="decision not found"
+                )
             return decision.to_dict()
 
-        @router.get("/realized", dependencies=[Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))])
+        @router.get(
+            "/realized",
+            dependencies=[
+                Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
+            ],
+        )
         def list_realized() -> dict[str, Any]:
             realized = active_realization_hook.list_realized()
             return {
@@ -273,7 +387,7 @@ else:
                         "confidence": p.confidence,
                     }
                     for p in predictions
-                ]
+                ],
             }
 
         @router.get("/runs/{sitescore_run_id}")
