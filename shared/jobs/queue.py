@@ -6,6 +6,17 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES = (
+    ".receipt",
+    ".command-receipt",
+)
+
+
+def is_non_executable_receipt_job_type(job_type: str) -> bool:
+    """Return whether a durable queue row is evidence rather than worker work."""
+
+    return job_type.endswith(NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES)
+
 
 class JobStatus(StrEnum):
     QUEUED = "queued"
@@ -78,6 +89,7 @@ class InMemoryJobQueue:
             1
             for job in self._jobs.values()
             if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            and not is_non_executable_receipt_job_type(job.job_type)
             and (
                 tenant_id is None
                 or str(job.payload.get("tenant_id") or "") == tenant_id
@@ -111,6 +123,8 @@ class InMemoryJobQueue:
 
         # Sort by creation time to act as a FIFO queue
         for record in sorted(self._jobs.values(), key=lambda r: r.created_at):
+            if is_non_executable_receipt_job_type(record.job_type):
+                continue
             is_eligible = record.status == JobStatus.QUEUED or (
                 record.status == JobStatus.RUNNING
                 and record.leased_until is not None
@@ -212,7 +226,10 @@ class InMemoryJobQueue:
 
     def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
         for job_id, record in self._jobs.items():
-            if record.status == JobStatus.QUEUED:
+            if (
+                record.status == JobStatus.QUEUED
+                and not is_non_executable_receipt_job_type(record.job_type)
+            ):
                 updated = JobRecord(
                     job_type=record.job_type,
                     payload=record.payload,

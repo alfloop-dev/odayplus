@@ -13,7 +13,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
-from shared.jobs.queue import JobRecord, JobRequest, JobStatus
+from shared.jobs.queue import (
+    NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
+    JobRecord,
+    JobRequest,
+    JobStatus,
+)
 
 
 class JobFenceRejectedError(ValueError):
@@ -34,6 +39,7 @@ class DurableJobQueue:
             params: list[str] = [
                 JobStatus.QUEUED.value,
                 JobStatus.RUNNING.value,
+                *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
             ]
             if tenant_id is not None:
                 if str(getattr(self._engine, "dialect", "")).lower() == "postgresql":
@@ -46,7 +52,8 @@ class DurableJobQueue:
             # tenant_clause is one of two fixed SQL fragments; the value is bound.
             row = self._engine.query_one(
                 "SELECT COUNT(*) as count FROM durable_jobs "
-                "WHERE (status = ? OR status = ?)"
+                "WHERE (status = ? OR status = ?) "
+                "AND job_type NOT LIKE ? AND job_type NOT LIKE ?"
                 + tenant_clause,  # nosec B608
                 tuple(params),
             )
@@ -113,8 +120,19 @@ class DurableJobQueue:
             while True:
                 # Find the oldest eligible job
                 row = self._engine.query_one(
-                    "SELECT * FROM durable_jobs WHERE status = ? OR (status = ? AND leased_until < ?) ORDER BY created_at ASC LIMIT 1",
-                    (JobStatus.QUEUED.value, JobStatus.RUNNING.value, now_str)
+                    "SELECT * FROM durable_jobs "
+                    "WHERE (status = ? OR (status = ? AND leased_until < ?)) "
+                    "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
+                    "ORDER BY created_at ASC LIMIT 1",
+                    (
+                        JobStatus.QUEUED.value,
+                        JobStatus.RUNNING.value,
+                        now_str,
+                        *(
+                            f"%{suffix}"
+                            for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES
+                        ),
+                    ),
                 )
                 if row is None:
                     return None
@@ -189,8 +207,20 @@ class DurableJobQueue:
             now = datetime.now(UTC).isoformat()
             # Claim either standard queued jobs, or expired running jobs (timeout lease expiration)
             row = self._engine.query_one(
-                "SELECT * FROM durable_jobs WHERE status = ? OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?) ORDER BY created_at LIMIT 1",
-                (JobStatus.QUEUED.value, JobStatus.RUNNING.value, now),
+                "SELECT * FROM durable_jobs "
+                "WHERE (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
+                "AND lease_expires_at < ?)) "
+                "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
+                "ORDER BY created_at LIMIT 1",
+                (
+                    JobStatus.QUEUED.value,
+                    JobStatus.RUNNING.value,
+                    now,
+                    *(
+                        f"%{suffix}"
+                        for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES
+                    ),
+                ),
             )
             if row is None:
                 return None

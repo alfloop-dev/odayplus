@@ -19,7 +19,7 @@ from shared.infrastructure.persistence.command_receipts import (
     TenantScopedCommandReceiptStore,
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.jobs.queue import InMemoryJobQueue
+from shared.jobs.queue import InMemoryJobQueue, JobRequest
 from tests.integration._authz import (
     ADLIFT_HEADERS,
     AVM_HEADERS,
@@ -31,6 +31,72 @@ from tests.integration._authz import (
 
 TENANT_A = "tenant-a"
 TENANT_B = "tenant-b"
+
+
+def _assert_receipts_are_not_worker_jobs(queue, claim) -> None:
+    for index, job_type in enumerate(
+        ("priceops.command-receipt", "forecastops.receipt"),
+        start=1,
+    ):
+        queue.enqueue(
+            JobRequest(
+                job_type=job_type,
+                payload={"tenant_id": TENANT_A},
+                idempotency_key=f"receipt-{index}",
+            ),
+            correlation_id=f"corr-receipt-{index}",
+        )
+
+    assert queue.count_active_jobs(tenant_id=TENANT_A) == 0
+    assert claim() is None
+
+    queue.enqueue(
+        JobRequest(
+            job_type="forecast",
+            payload={"tenant_id": TENANT_A, "store_id": "store-live-1"},
+            idempotency_key="forecast-live-1",
+        ),
+        correlation_id="corr-forecast-live-1",
+    )
+    assert queue.count_active_jobs(tenant_id=TENANT_A) == 1
+    claimed = claim()
+    assert claimed is not None
+    assert claimed.job_type == "forecast"
+    assert claim() is None
+
+
+def test_in_memory_worker_claims_and_leases_skip_durable_receipts() -> None:
+    claim_queue = InMemoryJobQueue()
+    _assert_receipts_are_not_worker_jobs(
+        claim_queue,
+        lambda: claim_queue.claim_next(worker_id="test-worker"),
+    )
+
+    lease_queue = InMemoryJobQueue()
+    _assert_receipts_are_not_worker_jobs(
+        lease_queue,
+        lambda: lease_queue.lease(lease_duration_seconds=45),
+    )
+
+
+def test_durable_worker_claims_and_leases_skip_durable_receipts(tmp_path) -> None:
+    claim_bundle = _durable_bundle(tmp_path / "claim-receipts.sqlite3")
+    try:
+        _assert_receipts_are_not_worker_jobs(
+            claim_bundle.job_queue,
+            lambda: claim_bundle.job_queue.claim_next(worker_id="test-worker"),
+        )
+    finally:
+        claim_bundle.engine.close()
+
+    lease_bundle = _durable_bundle(tmp_path / "lease-receipts.sqlite3")
+    try:
+        _assert_receipts_are_not_worker_jobs(
+            lease_bundle.job_queue,
+            lambda: lease_bundle.job_queue.lease(lease_duration_seconds=45),
+        )
+    finally:
+        lease_bundle.engine.close()
 
 
 def _headers(base: dict[str, str], tenant_id: str, key: str) -> dict[str, str]:
