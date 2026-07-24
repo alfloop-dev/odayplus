@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
+from importlib.metadata import version
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +28,10 @@ CONTINUE_IROMI = 1.0
 
 # Two-sided confidence level for the matched-pair DiD effect interval (90% CI).
 DID_EFFECT_CI_ALPHA = 0.10
+
+
+class AdLiftProductionExecutionError(RuntimeError):
+    """Raised when production DiD data or the statsmodels runtime is unavailable."""
 
 
 class EvidenceLevel(StrEnum):
@@ -520,11 +525,29 @@ def run_incrementality(
     pre_trend_threshold: float = DEFAULT_PRE_TREND_THRESHOLD,
     scale_iromi: float = SCALE_IROMI,
     continue_iromi: float = CONTINUE_IROMI,
+    require_statsmodels: bool = False,
 ) -> IncrementalityReport:
     campaign = _coerce_campaign(campaign)
     generated = generated_at or datetime.now(UTC)
+    if require_statsmodels:
+        if not campaign.candidate_control_store_ids:
+            raise AdLiftProductionExecutionError(
+                "production AdLift requires an eligible control group; "
+                "before/after fallback is prohibited"
+            )
+        missing_lineage = [
+            f"{metric.store_id}:{metric.business_date.isoformat()}"
+            for metric in campaign.observations
+            if not metric.source_snapshot_ids
+        ]
+        if missing_lineage:
+            raise AdLiftProductionExecutionError(
+                "production AdLift observations are missing source snapshot lineage"
+            )
 
     matches, by_store = match_controls(campaign)
+    if require_statsmodels and not matches:
+        raise AdLiftProductionExecutionError("production AdLift could not create matched controls")
     control_store_ids = tuple(match.control_store_id for match in matches)
     treatment_store_ids = campaign.treatment_store_ids
 
@@ -542,9 +565,23 @@ def run_incrementality(
         control_store_ids=control_store_ids,
     )
 
-    estimate = _estimate_incrementality(
-        campaign, by_store=by_store, matches=matches, treatment_store_ids=treatment_store_ids
-    )
+    try:
+        estimate = _estimate_incrementality(
+            campaign,
+            by_store=by_store,
+            matches=matches,
+            treatment_store_ids=treatment_store_ids,
+        )
+    except Exception as exc:
+        if require_statsmodels:
+            raise AdLiftProductionExecutionError(
+                "production statsmodels DiD execution failed"
+            ) from exc
+        raise
+    if require_statsmodels and estimate.estimator_metadata.get("library") != "statsmodels":
+        raise AdLiftProductionExecutionError(
+            "production AdLift did not execute the statsmodels DiD contract"
+        )
     iromi = (
         round(estimate.incremental_gross_margin / campaign.ad_spend, 4)
         if campaign.ad_spend > 0
@@ -620,7 +657,16 @@ def run_incrementality(
         policy_version=ADLIFT_EVIDENCE_POLICY_VERSION,
         generated_at=generated,
         source_snapshot_ids=source_snapshot_ids,
-        estimator_metadata=estimate.estimator_metadata,
+        estimator_metadata=(
+            {
+                **estimate.estimator_metadata,
+                "execution_mode": "production_oss",
+                "library_version": version("statsmodels"),
+                "model_version": ADLIFT_MODEL_VERSION,
+            }
+            if require_statsmodels
+            else estimate.estimator_metadata
+        ),
     )
 
 

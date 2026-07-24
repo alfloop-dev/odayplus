@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.production_runtime import production_model_execution_required
+from modules.netplan.application.production import NetPlanProductionExecutor
 from modules.netplan.domain.planning import (
     ApprovalRecord,
     CandidateSiteInput,
@@ -45,8 +47,14 @@ class ScenarioBuildRequest:
 
 
 class NetPlanService:
-    def __init__(self, *, repository: InMemoryNetPlanRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: InMemoryNetPlanRepository | None = None,
+        production_executor: NetPlanProductionExecutor | None = None,
+    ) -> None:
         self.repository = repository or InMemoryNetPlanRepository()
+        self.production_executor = production_executor
 
     def create_scenario(
         self,
@@ -62,7 +70,9 @@ class NetPlanService:
         created_at: datetime | None = None,
     ) -> NetPlanScenario:
         parsed_constraints = (
-            constraints if isinstance(constraints, NetPlanConstraints) else NetPlanConstraints.from_mapping(constraints)
+            constraints
+            if isinstance(constraints, NetPlanConstraints)
+            else NetPlanConstraints.from_mapping(constraints)
         )
         scenario = NetPlanScenario.create(
             tenant_id=tenant_id,
@@ -90,16 +100,27 @@ class NetPlanService:
     ) -> ScenarioSolveRecord:
         scenario = self._require_scenario(scenario_id)
         now = solved_at or datetime.now(UTC)
-        result = solve_network_plan(
-            options_by_entity=scenario.options_by_entity,
-            constraints=scenario.constraints,
-            alternative_limit=alternative_limit,
-        )
+        execution_metadata: dict[str, Any] = {}
+        if production_model_execution_required():
+            executor = self.production_executor or NetPlanProductionExecutor()
+            execution = executor.execute(
+                scenario,
+                alternative_limit=alternative_limit,
+            )
+            result = execution.result
+            execution_metadata = execution.metadata
+        else:
+            result = solve_network_plan(
+                options_by_entity=scenario.options_by_entity,
+                constraints=scenario.constraints,
+                alternative_limit=alternative_limit,
+            )
         solve = self.repository.save_solve(
             ScenarioSolveRecord(
                 scenario_id=scenario.scenario_id,
                 result=result,
                 solved_at=now,
+                execution_metadata=execution_metadata,
             )
         )
         target = (
@@ -152,7 +173,11 @@ class NetPlanService:
                 policy_version=scenario.constraints.policy_version,
             )
         )
-        target = NetPlanScenarioStatus.APPROVED if approval.is_approved else NetPlanScenarioStatus.REJECTED
+        target = (
+            NetPlanScenarioStatus.APPROVED
+            if approval.is_approved
+            else NetPlanScenarioStatus.REJECTED
+        )
         self._advance(scenario, target, actor=actor_id, reason=reason, occurred_at=now)
         return approval
 

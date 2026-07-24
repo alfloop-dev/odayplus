@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from models.shared_ml.production_runtime import production_model_execution_required
 from modules.adlift.domain.incrementality import (
     AdCampaign,
     IncrementalityReport,
@@ -34,6 +35,12 @@ class AdLiftService:
         reports = tuple(
             self.repository.save_report(
                 run_incrementality(campaign, generated_at=generated_at)
+                if not production_model_execution_required()
+                else run_incrementality(
+                    campaign,
+                    generated_at=generated_at,
+                    require_statsmodels=True,
+                )
             )
             for campaign in campaigns
         )

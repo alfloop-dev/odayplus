@@ -1,6 +1,11 @@
 """DealRoomAVM public API."""
 
-from modules.avm.application import AVMService
+from modules.avm.application import (
+    AVMProductionExecutionError,
+    AVMProductionExecutor,
+    AVMService,
+    LiquidityArtifactEvidence,
+)
 from modules.avm.domain import (
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
@@ -18,6 +23,7 @@ from modules.avm.domain import (
     ValuationCaseStatus,
     ValuationInput,
     ValuationReport,
+    build_model_valuation_report,
     build_valuation_view,
     generate_data_room,
     normalize_margin,
@@ -38,6 +44,8 @@ __all__ = [
     "AVM_MODEL_VERSION",
     "AVM_POLICY_VERSION",
     "AVMBatchResult",
+    "AVMProductionExecutionError",
+    "AVMProductionExecutor",
     "AVMService",
     "AVMValuationWorker",
     "ApprovalDecision",
@@ -49,6 +57,7 @@ __all__ = [
     "LensValuation",
     "LifelinesLiquiditySurvivalAdapter",
     "LiquidityPrediction",
+    "LiquidityArtifactEvidence",
     "LiquidityTrainingRecord",
     "NormalizedMargin",
     "PriceBand",
@@ -59,6 +68,7 @@ __all__ = [
     "ValuationCaseStatus",
     "ValuationInput",
     "ValuationReport",
+    "build_model_valuation_report",
     "build_valuation_view",
     "generate_data_room",
     "normalize_margin",

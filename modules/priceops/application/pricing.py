@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.production_runtime import production_model_execution_required
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
     PRICEOPS_SOLVER_VERSION,
@@ -43,6 +44,10 @@ from modules.priceops.domain.pricing import (
     evaluate_effect,
     optimize_item,
     simulate_item,
+)
+from modules.priceops.infrastructure.oss_optimizer import (
+    PRICEOPS_OSS_SOLVER_VERSION,
+    PriceOpsProductionOptimizer,
 )
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 from solver.pricing.optimizer import STATUS_INFEASIBLE, STATUS_OPTIMAL
@@ -94,8 +99,14 @@ class EvaluationResult:
 
 
 class PriceOpsService:
-    def __init__(self, *, repository: InMemoryPriceOpsRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: InMemoryPriceOpsRepository | None = None,
+        production_optimizer: PriceOpsProductionOptimizer | None = None,
+    ) -> None:
         self.repository = repository or InMemoryPriceOpsRepository()
+        self.production_optimizer = production_optimizer
 
     # -- creation ---------------------------------------------------------
     def create_plan(
@@ -151,14 +162,21 @@ class PriceOpsService:
     ) -> PlanOptimization:
         plan = self._require_plan(plan_id)
         now = optimized_at or datetime.now(UTC)
-        pairs = tuple((item, optimize_item(item)) for item in plan.items)
+        solver_metadata: dict[str, Any] = {}
+        solver_version = PRICEOPS_SOLVER_VERSION
+        if production_model_execution_required():
+            executor = self.production_optimizer or PriceOpsProductionOptimizer()
+            execution = executor.optimize(plan)
+            pairs = execution.results
+            solver_metadata = execution.metadata
+            solver_version = PRICEOPS_OSS_SOLVER_VERSION
+        else:
+            pairs = tuple((item, optimize_item(item)) for item in plan.items)
         item_optimizations = tuple(
             ItemOptimization(item_id=item.item_id, store_id=item.store_id, result=result)
             for item, result in pairs
         )
-        total_incremental = round(
-            sum(result.incremental_gross_margin for _, result in pairs), 4
-        )
+        total_incremental = round(sum(result.incremental_gross_margin for _, result in pairs), 4)
         violation_count = count_hard_violations(pairs)
         any_infeasible = any(result.infeasible for _, result in pairs)
         requires_approval = any(result.requires_approval for _, result in pairs)
@@ -170,15 +188,14 @@ class PriceOpsService:
             hard_constraint_violation_count=violation_count,
             solver_status=solver_status,
             requires_approval=requires_approval,
-            solver_version=PRICEOPS_SOLVER_VERSION,
+            solver_version=solver_version,
             optimized_at=now,
+            solver_metadata=solver_metadata,
         )
         self.repository.save_optimization(optimization)
         # A rollback plan must exist before any price is executed (AC: rollback
         # plan exists before execution; ODP-OR-01 OR-007).
-        self.repository.save_rollback_plan(
-            build_rollback_plan(plan=plan, created_at=now)
-        )
+        self.repository.save_rollback_plan(build_rollback_plan(plan=plan, created_at=now))
         self._advance(plan, PlanStatus.OPTIMIZED, actor=actor, reason=reason, occurred_at=now)
         return optimization
 
@@ -212,9 +229,7 @@ class PriceOpsService:
         plan = self._require_plan(plan_id)
         normalized_decision = _normalize_approval_decision(decision)
         target = (
-            PlanStatus.APPROVED_FOR_PILOT
-            if normalized_decision == "approved"
-            else PlanStatus.STOP
+            PlanStatus.APPROVED_FOR_PILOT if normalized_decision == "approved" else PlanStatus.STOP
         )
         if not plan.can_transition_to(target):
             raise InvalidTransitionError(
@@ -272,9 +287,7 @@ class PriceOpsService:
                     baseline_simulation=baseline,
                     candidate_simulation=candidate,
                     expected_demand_change=result.expected_demand_change,
-                    expected_revenue_change=round(
-                        candidate.revenue.p50 - baseline.revenue.p50, 4
-                    ),
+                    expected_revenue_change=round(candidate.revenue.p50 - baseline.revenue.p50, 4),
                     expected_gross_margin_change=result.incremental_gross_margin,
                     risk_level=result.risk_level,
                     constraint_status=constraint_status,
