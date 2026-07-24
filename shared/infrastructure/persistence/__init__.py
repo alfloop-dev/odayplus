@@ -37,6 +37,12 @@ from shared.infrastructure.persistence.outbox import (
     DurableOutboxRepository,
     InMemoryOutboxRepository,
 )
+from shared.infrastructure.persistence.postgresql import (
+    PostgresDocumentStore,
+    PostgresEngine,
+    PostgreSQLConfigurationError,
+    PostgreSQLSchemaError,
+)
 from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableAdLiftRepository,
@@ -117,6 +123,10 @@ __all__ = [
     "MigrationStep",
     "MissingLiveInputError",
     "PersistenceBundle",
+    "PostgresDocumentStore",
+    "PostgresEngine",
+    "PostgreSQLConfigurationError",
+    "PostgreSQLSchemaError",
     "SnapshotSink",
     "SqliteDocumentStore",
     "SqliteEngine",

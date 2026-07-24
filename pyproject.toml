@@ -22,6 +22,7 @@ dependencies = [
     # Data
     "duckdb>=1.0",
     "sqlalchemy>=2.0",
+    "psycopg[binary,pool]>=3.2,<4",
     # HTTP client for the live listing-feed adapter (runtime code path).
     "httpx>=0.27",
     "mlflow>=3.7,<4",

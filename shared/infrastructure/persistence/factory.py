@@ -6,9 +6,11 @@ backend is chosen by environment so the *same* default code path can run either
 in-memory (unit tests, fast local boot) or against durable SQLite storage
 (Product-Grade E2E, where writes must survive a process restart):
 
-    ODP_PERSISTENCE = memory   (default) -> in-memory implementations
-    ODP_PERSISTENCE = durable | sqlite   -> SQLite-backed durable implementations
-    ODP_DB_PATH     = <path>             -> durable database file location
+    ODP_PERSISTENCE = memory              -> in-memory implementations
+    ODP_PERSISTENCE = durable | sqlite    -> SQLite local/test implementations
+    ODP_PERSISTENCE = postgresql | postgres -> PostgreSQL production runtime
+    ODP_DB_PATH     = <path>              -> local SQLite database file
+    ODAY_DATABASE_URL = postgresql://...  -> production PostgreSQL database
 
 In ``memory`` mode the bundle holds exactly the implementations the API used
 before this task, so default behaviour is unchanged.
@@ -26,7 +28,8 @@ from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
 _MEMORY_MODES = {"memory"}
-_SUPPORTED_MODES = _MEMORY_MODES | _DURABLE_MODES
+_POSTGRES_MODES = {"postgres", "postgresql"}
+_SUPPORTED_MODES = _MEMORY_MODES | _DURABLE_MODES | _POSTGRES_MODES
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -73,6 +76,12 @@ class PersistenceBundle:
     @property
     def is_durable(self) -> bool:
         return self.engine is not None
+
+    @property
+    def is_production(self) -> bool:
+        return self.mode == "postgresql" and bool(
+            getattr(self.engine, "is_production", False)
+        )
 
 
 def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
@@ -224,6 +233,88 @@ def _durable_bundle(
     )
 
 
+def _postgres_bundle(
+    database_url: str,
+    *,
+    worm_sink: AuditWormSink | None = None,
+) -> PersistenceBundle:
+    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.notifications import DurableNotificationRepository
+    from modules.opsboard.application.store_ops import DurableStoreOpsRepository
+    from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
+    from shared.infrastructure.persistence.postgresql import (
+        PostgresDocumentStore,
+        PostgresEngine,
+    )
+    from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
+        DurableAdLiftRepository,
+        DurableArtifactStore,
+        DurableAVMRepository,
+        DurableBrandRepository,
+        DurableDecisionStore,
+        DurableForecastOpsRepository,
+        DurableHeatZoneResultStore,
+        DurableInterventionRepository,
+        DurableLabelRegistry,
+        DurableLearningHubRepository,
+        DurableListingRepository,
+        DurableMachineCycleRepository,
+        DurableMachineRepository,
+        DurableNetPlanRepository,
+        DurablePriceOpsRepository,
+        DurableRealizedSiteStore,
+        DurableSiteScoreRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+        DurableTransactionRepository,
+    )
+
+    engine = PostgresEngine(database_url)
+    store = PostgresDocumentStore(engine)
+    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    return PersistenceBundle(
+        mode="postgresql",
+        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        evidence_store=DurableEvidenceBundleStore(
+            engine,
+            worm_sink=resolved_worm_sink,
+        ),
+        job_queue=DurableJobQueue(engine),
+        avm_repository=DurableAVMRepository(store),
+        forecastops_repository=DurableForecastOpsRepository(store),
+        netplan_repository=DurableNetPlanRepository(store),
+        learninghub_repository=DurableLearningHubRepository(store),
+        artifact_store=DurableArtifactStore(store),
+        priceops_repository=DurablePriceOpsRepository(store),
+        sitescore_repository=DurableSiteScoreRepository(store),
+        adlift_repository=DurableAdLiftRepository(store),
+        store_ops_repository=DurableStoreOpsRepository(store),
+        intervention_repository=DurableInterventionRepository(store),
+        intervention_label_registry=DurableLabelRegistry(store),
+        ingestion_run_store=DurableIngestionRunStore(store),
+        heatzone_store=DurableHeatZoneResultStore(store),
+        listing_repository=DurableListingRepository(store),
+        sitescore_decision_store=DurableDecisionStore(store),
+        sitescore_realized_store=DurableRealizedSiteStore(store),
+        tenant_repository=DurableTenantRepository(engine),
+        brand_repository=DurableBrandRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(engine),
+        store_repository=DurableStoreRepository(engine),
+        machine_repository=DurableMachineRepository(engine),
+        transaction_repository=DurableTransactionRepository(engine),
+        machine_cycle_repository=DurableMachineCycleRepository(engine),
+        external_fetch_state_store=DurableExternalFetchStateStore(store),
+        notification_repository=DurableNotificationRepository(engine),
+        outbox_repository=DurableOutboxRepository(engine),
+        engine=engine,
+    )
+
+
 def build_persistence(
     *,
     mode: str | None = None,
@@ -241,15 +332,31 @@ def build_persistence(
     if resolved_mode not in _SUPPORTED_MODES:
         raise ValueError(
             "Unsupported ODP_PERSISTENCE mode "
-            f"{resolved_mode!r}; supported modes are memory, durable, and sqlite."
+            f"{resolved_mode!r}; supported modes are memory, durable, sqlite, "
+            "postgres, and postgresql."
         )
-    if require_live_data:
+    if require_live_data and resolved_mode not in _POSTGRES_MODES:
         raise RuntimeError(
             "ODP_REQUIRE_LIVE_DATA=true requires a production PostgreSQL "
-            "persistence adapter. The current memory and SQLite backends are "
-            "local/test surrogates and cannot serve a live-data runtime."
+            "persistence bundle; memory and SQLite are local/test surrogates."
         )
     worm_sink = build_audit_worm_sink_from_env()
+    if resolved_mode in _POSTGRES_MODES:
+        if db_path is not None:
+            raise ValueError("db_path is only valid for SQLite persistence")
+        resolved_url = os.environ.get("ODAY_DATABASE_URL", "").strip()
+        if not resolved_url:
+            raise RuntimeError(
+                "ODAY_DATABASE_URL is required for PostgreSQL persistence"
+            )
+        bundle = _postgres_bundle(resolved_url, worm_sink=worm_sink)
+        if require_live_data and not bundle.is_production:
+            bundle.engine.close()
+            raise RuntimeError(
+                "ODP_REQUIRE_LIVE_DATA=true requires a verified production "
+                "PostgreSQL persistence bundle"
+            )
+        return bundle
     if resolved_mode in _DURABLE_MODES:
         resolved_path = db_path or os.environ.get("ODP_DB_PATH", DEFAULT_DB_PATH)
         return _durable_bundle(resolved_path, worm_sink=worm_sink)
