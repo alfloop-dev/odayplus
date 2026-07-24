@@ -226,7 +226,7 @@ spec:
                 - name: ODP_DATA_MONGO_URI
                   valueFrom:
                     secretKeyRef:
-                      name: oday-plus-dev-mongodb-uri
+                      name: oday-data-platform-runtime
                       key: mongodb-uri
                 - name: ODP_POSTGRES_HOST
                   value: "127.0.0.1"
@@ -377,7 +377,7 @@ spec:
             - {name: ODP_DATA_MONGO_DATABASE, value: fongniao_prod}
             - name: ODP_DATA_MONGO_URI
               valueFrom:
-                secretKeyRef: {name: oday-plus-dev-mongodb-uri, key: mongodb-uri}
+                secretKeyRef: {name: oday-data-platform-runtime, key: mongodb-uri}
             - {name: ODP_POSTGRES_HOST, value: "127.0.0.1"}
             - {name: ODP_POSTGRES_PORT, value: "5432"}
             - {name: ODP_POSTGRES_USER, value: "__POSTGRES_USER__"}
@@ -502,7 +502,7 @@ spec:
             - {name: ODP_DATA_MONGO_DATABASE, value: fongniao_prod}
             - name: ODP_DATA_MONGO_URI
               valueFrom:
-                secretKeyRef: {name: oday-plus-dev-mongodb-uri, key: mongodb-uri}
+                secretKeyRef: {name: oday-data-platform-runtime, key: mongodb-uri}
             - {name: ODP_POSTGRES_HOST, value: "127.0.0.1"}
             - {name: ODP_POSTGRES_PORT, value: "5432"}
             - {name: ODP_POSTGRES_USER, value: "__POSTGRES_USER__"}

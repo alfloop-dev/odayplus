@@ -135,7 +135,7 @@ def test_backfill_is_receipt_gated_and_uses_real_secret_inputs() -> None:
     assert container["args"] == ["scheduled"]
     env = _environment(container)
     assert env["ODP_DATA_MONGO_URI"]["valueFrom"]["secretKeyRef"] == {
-        "name": "oday-plus-dev-mongodb-uri",
+        "name": "oday-data-platform-runtime",
         "key": "mongodb-uri",
     }
     assert env["ODP_DATA_MONGO_DATABASE"]["value"] == "fongniao_prod"

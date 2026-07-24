@@ -8,13 +8,13 @@ source, or permits a backfill before the database migration receipt is complete.
 
 - Kubernetes ServiceAccount `oday-data-platform`, mapped to a Google service
   account with `roles/cloudsql.client`.
-- Secret `oday-plus-dev-mongodb-uri`, key `mongodb-uri`.
-- Secret `oday-data-platform-runtime`, key `postgres-password`.
+- Secret `oday-data-platform-runtime`, keys `mongodb-uri` and
+  `postgres-password`.
 - Secret `oday-data-platform-status-mapping`, key `status_mapping.json`, containing
   the owner-approved mapping contract.
 - Cloud SQL instance connection name and database/user selected by the operator.
 
-The Mongo and runtime Secrets are present in `oday-dev`. The governed
+The Mongo and PostgreSQL runtime Secret keys are present in `oday-dev`. The governed
 `oday-data-platform-status-mapping` Secret was not present when this package was
 authored; it remains a deployment prerequisite and is never synthesized from a
 default mapping.
