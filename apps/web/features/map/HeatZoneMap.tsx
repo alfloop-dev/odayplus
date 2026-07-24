@@ -7,6 +7,7 @@ import DeckGL from "@deck.gl/react";
 import { cellToBoundary } from "h3-js";
 import maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "../expansion/data.ts";
+import { resolveProductionMode } from "../operations/ProductionDataState.tsx";
 import styles from "./map.module.css";
 
 type Freshness = {
@@ -37,6 +38,8 @@ type HeatZoneMapProps = {
   selectedZoneId: string;
   freshness: Freshness;
   layerQuery?: string;
+  productionMode?: boolean;
+  dataSource?: "api" | "fixture";
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
@@ -81,7 +84,10 @@ export function HeatZoneMap({
   selectedZoneId,
   freshness,
   layerQuery,
+  productionMode: productionModeProp,
+  dataSource = "fixture",
 }: HeatZoneMapProps) {
+  const productionMode = resolveProductionMode(productionModeProp);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [viewState, setViewState] = useState({
@@ -95,7 +101,15 @@ export function HeatZoneMap({
   const [runtimeError, setRuntimeError] = useState("");
   const [evidenceZoneId, setEvidenceZoneId] = useState(selectedZoneId);
   const previousSelectedZoneId = useRef(selectedZoneId);
-  const boundaryConfig = useMemo(readMapBoundaryConfig, []);
+  const boundaryConfig = useMemo(() => readMapBoundaryConfig(productionMode), [productionMode]);
+  const liveProviderConfigured =
+    Boolean(boundaryConfig.tileUrl) &&
+    Boolean(boundaryConfig.geocoderUrl) &&
+    !boundaryConfig.tileUrl.startsWith("mock://") &&
+    !boundaryConfig.geocoderUrl.startsWith("mock://") &&
+    !boundaryConfig.tileFault &&
+    !boundaryConfig.geocoderFault;
+  const productionMapReady = liveProviderConfigured && dataSource === "api" && !runtimeError;
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
   const visibleZones = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zones;
@@ -118,6 +132,7 @@ export function HeatZoneMap({
   );
 
   useEffect(() => {
+    if (productionMode && !productionMapReady) return;
     if (!mapContainerRef.current || mapRef.current) return;
 
     const map = new maplibregl.Map({
@@ -214,7 +229,15 @@ export function HeatZoneMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [boundaryConfig, selectedZoneId, visibleZoneFeatures, visibleZones, zones]);
+  }, [
+    boundaryConfig,
+    productionMapReady,
+    productionMode,
+    selectedZoneId,
+    visibleZoneFeatures,
+    visibleZones,
+    zones,
+  ]);
 
   useEffect(() => {
     setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
@@ -249,6 +272,31 @@ export function HeatZoneMap({
     const href = nearestPickHref(point, { zones, listings, candidates, layers, map });
     if (href) window.location.assign(href);
   };
+
+  if (productionMode && !productionMapReady) {
+    return (
+      <section
+        aria-live="polite"
+        className={styles.statePanel}
+        data-source={dataSource}
+        data-testid="heat-zone-map-unavailable"
+        role={runtimeError ? "alert" : "status"}
+      >
+        <strong>地圖暫不可用</strong>
+        <span>
+          {!boundaryConfig.tileUrl || boundaryConfig.tileUrl.startsWith("mock://")
+            ? "Live tile provider 未設定。 "
+            : ""}
+          {!boundaryConfig.geocoderUrl || boundaryConfig.geocoderUrl.startsWith("mock://")
+            ? "Live geocoder 未設定。 "
+            : ""}
+          {dataSource !== "api" ? "HeatZone 圖層不是 API 資料。 " : ""}
+          {runtimeError || ""}
+        </span>
+        <span>Production 不會渲染 local map、mock layer 或 fixture 點位。</span>
+      </section>
+    );
+  }
 
   return (
     <section
@@ -347,16 +395,28 @@ export function HeatZoneMap({
   );
 }
 
-function readMapBoundaryConfig(): MapBoundaryConfig {
+function readMapBoundaryConfig(productionMode: boolean): MapBoundaryConfig {
   if (typeof window === "undefined") {
     return {
       tileUrl: process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL ?? "",
       geocoderUrl: process.env.NEXT_PUBLIC_ODP_GEOCODER_URL ?? "",
-      attribution: process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? "ODay Plus local fixture",
+      attribution: process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? (productionMode ? "" : "ODay Plus local fixture"),
       termsUrl: process.env.NEXT_PUBLIC_ODP_MAP_TERMS_URL ?? "",
       tileFault: false,
       geocoderFault: false,
       correlationId: "corr-map-boundary-server",
+      stateFixture: "normal",
+    };
+  }
+  if (productionMode) {
+    return {
+      tileUrl: process.env.NEXT_PUBLIC_ODP_MAP_TILE_URL ?? "",
+      geocoderUrl: process.env.NEXT_PUBLIC_ODP_GEOCODER_URL ?? "",
+      attribution: process.env.NEXT_PUBLIC_ODP_MAP_ATTRIBUTION ?? "",
+      termsUrl: process.env.NEXT_PUBLIC_ODP_MAP_TERMS_URL ?? "",
+      tileFault: false,
+      geocoderFault: false,
+      correlationId: "corr-map-boundary-production",
       stateFixture: "normal",
     };
   }

@@ -6,6 +6,12 @@ import type { ForecastAlert } from "@oday-plus/openapi-client";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "./ProductionDataState.tsx";
+import {
   alerts,
   formatMoney,
   formatPercent,
@@ -26,6 +32,7 @@ type OperationsWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /forecastops/alerts` binding; supplied by the server route. */
   liveAlerts?: ApiBinding<ForecastAlert>;
+  isProduction?: boolean;
 };
 
 const navItems = [
@@ -59,11 +66,55 @@ export function OperationsWorkspace({
   storeId,
   searchParams = {},
   liveAlerts,
+  isProduction: isProductionProp,
 }: OperationsWorkspaceProps) {
+  const isProduction = resolveProductionMode(isProductionProp);
+  if (isProduction) {
+    return (
+      <ProductionOperationsWorkspace
+        binding={view === "overview" || view === "alerts" ? liveAlerts : undefined}
+        view={view}
+      />
+    );
+  }
   if (view === "forecast") return <ForecastPage searchParams={searchParams} />;
   if (view === "alerts") return <AlertsPage searchParams={searchParams} liveAlerts={liveAlerts} />;
   if (view === "storeDetail") return <StoreDetailPage store={selectedStore(storeId)} />;
   return <OperationsOverview liveAlerts={liveAlerts} />;
+}
+
+function ProductionOperationsWorkspace({
+  binding,
+  view,
+}: {
+  binding?: ApiBinding<ForecastAlert>;
+  view: OperationsView;
+}) {
+  const supportsLiveRows = view === "overview" || view === "alerts";
+  const resource = supportsLiveRows ? "ForecastOps alerts" : "Store forecast data";
+  const state = productionBindingState(binding);
+
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "營運 Operations", href: "/operations" }, { label: view }]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="ForecastOps production workspace. Only persisted API data is rendered."
+        title={view === "alerts" ? "四燈預警佇列" : view === "forecast" ? "Forecast 總覽" : "營運 Operations"}
+      />
+      <main className="odp-content" data-testid={`ops-${view}-production-page`}>
+        <WorkspaceNav active={view} />
+        <ProductionDataState binding={binding} resource={resource} testId="ops-production-data-state">
+          {binding ? <LiveAlertQueue binding={binding} productionMode /> : null}
+        </ProductionDataState>
+      </main>
+    </>
+  );
 }
 
 function OperationsOverview({ liveAlerts }: { liveAlerts?: ApiBinding<ForecastAlert> }) {
@@ -491,16 +542,26 @@ function AlertsTable() {
   );
 }
 
-function LiveAlertQueue({ binding }: { binding: ApiBinding<ForecastAlert> }) {
+function LiveAlertQueue({
+  binding,
+  productionMode = false,
+}: {
+  binding: ApiBinding<ForecastAlert>;
+  productionMode?: boolean;
+}) {
   return (
     <section className={styles.panel} data-testid="ops-live-alerts" aria-label="API-bound four-light alerts">
       <div className={styles.badgeRow}>
         <h2>四燈預警（API live）</h2>
-        <DataSourceBadge binding={binding} testId="ops-alert-data-source" />
+        {productionMode ? (
+          <ProductionDataBadge binding={binding} testId="ops-alert-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="ops-alert-data-source" />
+        )}
       </div>
       <p>
-        本區直接讀取 <code>GET /forecastops/alerts</code> 的持久化狀態（含 acknowledged 確認軌跡）；
-        下方固定佇列為 documented non-product fallback。
+        本區直接讀取 <code>GET /forecastops/alerts</code> 的持久化狀態（含 acknowledged 確認軌跡）。
+        {!productionMode ? " 下方固定佇列為 documented non-product fixture。" : null}
       </p>
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>
