@@ -47,7 +47,6 @@ OPSBOARD_PORT="$WEB_PORT" \
 ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
 npx playwright test \
   tests/e2e/e2e-api-bound-ui.spec.ts \
-  tests/e2e/e2e-map.spec.ts \
   tests/e2e/e2e-expansion-product.spec.ts \
   tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts \
   tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts \
@@ -56,6 +55,23 @@ npx playwright test \
   --retries=0 \
   --project=chromium
 test_status=$?
+
+# MapLibre + DeckGL allocate multiple WebGL contexts per navigation. Run their
+# pixel/picking suite in a fresh browser process so contexts from the product
+# workflow suite cannot exhaust Chromium's per-process WebGL budget.
+ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
+OPSBOARD_PORT="$WEB_PORT" \
+ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
+npx playwright test \
+  tests/e2e/e2e-map.spec.ts \
+  --workers=1 \
+  --retries=0 \
+  --project=chromium
+map_test_status=$?
+
+if [[ "$map_test_status" -ne 0 ]]; then
+  test_status="$map_test_status"
+fi
 set -e
 
 "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"
