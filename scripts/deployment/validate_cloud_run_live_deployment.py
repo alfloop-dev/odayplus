@@ -76,9 +76,10 @@ REQUIRED_PUBLIC_CONFIG = (
     PRODUCTION_PROVIDER_IDS_ENV,
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
+    "ODP_AUTH_JWKS_URI",
+    "ODP_WEB_OIDC_ISSUER",
+    "ODP_WEB_OIDC_CLIENT_ID",
     "ODP_OPERATOR_SMOKE_ROLE",
-    "ODP_OPERATOR_SMOKE_SUBJECT",
-    "ODP_OPERATOR_SMOKE_TENANT",
 )
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
@@ -86,7 +87,8 @@ REQUIRED_SECRET_REFERENCES = (
     "ODP_POI_PROVIDER_API_KEY_SECRET",
     "ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
     "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
-    "ODP_AUTH_HS256_KEYS_SECRET",
+    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+    "ODP_WEB_SESSION_SECRET_SECRET",
 )
 REQUIRED_SECRET_VALUES = ("ODP_OPERATOR_SMOKE_BEARER_TOKEN",)
 REQUIRED_RUNTIME_VALUES = {
@@ -612,6 +614,26 @@ def _request(
         )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+def _request_without_redirect(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> tuple[int, str | None]:
+    request = urllib.request.Request(url, headers=dict(headers))
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+            return response.status, response.headers.get("location")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get("location")
+
+
 def _json_request(
     url: str,
     *,
@@ -787,8 +809,6 @@ def smoke_checks(
         **base_headers,
         "authorization": f"Bearer {bearer_token}",
         "x-operator-role": operator_role,
-        "x-subject-id": operator_subject,
-        "x-tenant-id": operator_tenant,
     }
     try:
         status, bootstrap = _json_request(
@@ -826,17 +846,23 @@ def smoke_checks(
         checks.append(CheckResult(False, "smoke:/api/v1/operator/bootstrap:http", str(exc)))
 
     try:
-        web_status, _, web_body = _request(
+        web_status, location = _request_without_redirect(
             f"{web_url.rstrip('/')}/operator",
             headers=base_headers,
             timeout=timeout,
         )
-        stale_static_shell = "operator-design/index.html" in web_body
+        expected_login_prefix = f"{web_url.rstrip('/')}/login?"
+        auth_redirect = (
+            web_status in {302, 303, 307, 308}
+            and isinstance(location, str)
+            and location.startswith(expected_login_prefix)
+            and "returnTo=" in location
+        )
         checks.append(
             CheckResult(
-                ok=web_status == 200 and not stale_static_shell,
+                ok=auth_redirect,
                 name="smoke:web:/operator",
-                detail=f"status={web_status} stale_static_shell={str(stale_static_shell).lower()}",
+                detail=f"status={web_status} protected_redirect={str(auth_redirect).lower()}",
             )
         )
     except (OSError, TimeoutError, urllib.error.URLError) as exc:

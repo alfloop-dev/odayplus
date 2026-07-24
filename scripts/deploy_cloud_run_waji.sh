@@ -98,6 +98,7 @@ keys = (
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
+    "ODP_AUTH_JWKS_URI",
 )
 payload = {key: os.environ[key] for key in keys}
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
@@ -139,7 +140,8 @@ API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_K
 API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
 API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
 API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
-API_SECRET_BINDINGS+=",ODP_AUTH_HS256_KEYS=${ODP_AUTH_HS256_KEYS_SECRET}"
+WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
 
 capture_job_proof() {
   local kind="$1"
@@ -328,6 +330,9 @@ payload = {
     "NEXT_PUBLIC_ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
     "ODP_API_BASE_URL": sys.argv[2],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
+    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
+    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
+    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
 }
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
@@ -359,6 +364,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --port=3000 \
   --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
   --env-vars-file="${WEB_ENV_FILE}" \
+  --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --allow-unauthenticated \
   --quiet

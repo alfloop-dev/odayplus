@@ -182,12 +182,12 @@ class LiveRuntimeHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/operator":
-            body = b"<!doctype html><html><body>ODay Plus Operator</body></html>"
-            self.send_response(200)
-            self.send_header("content-type", "text/html")
-            self.send_header("content-length", str(len(body)))
+            self.send_response(307)
+            self.send_header(
+                "location",
+                f"http://{self.headers['host']}/login?returnTo=%2Foperator",
+            )
             self.end_headers()
-            self.wfile.write(body)
             return
         self.send_response(404)
         self.end_headers()
@@ -281,6 +281,10 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
         assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
+        assert "ODP_AUTH_JWKS_URI" in text
+        assert "ODP_WEB_OIDC_CLIENT_ID" in text
+        assert "ODP_WEB_OIDC_CLIENT_SECRET_SECRET" in text
+        assert "ODP_WEB_SESSION_SECRET_SECRET" in text
 
 
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
@@ -301,7 +305,10 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "jobs-smoke" in text
     assert "validate_cloud_run_live_deployment.py smoke" in text
     assert "--set-secrets=\"${API_SECRET_BINDINGS}\"" in text
+    assert "--set-secrets=\"${WEB_SECRET_BINDINGS}\"" in text
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
+    assert "ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}" in text
+    assert "ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}" in text
     assert "ODAY_RELEASE_SHA" in text
     assert "ODP_REQUIRE_LIVE_DATA" in text
     assert "ODP_DATA_BINDING_MODE" in text
