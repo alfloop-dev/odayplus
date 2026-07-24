@@ -10,7 +10,8 @@
  * Strategy:
  *   1. Attempt to fetch from /heatzones, /listings/candidates, /sitescore/reports.
  *   2. Return ApiBinding<T> envelopes — `state` = "ready" | "empty" | "error" | "unconfigured".
- *   3. Workspace falls back to bundled fixtures for any non-"ready" binding.
+ *   3. Production renders a data-unavailable gate for non-ready bindings;
+ *      local and test modes may use bundled fixtures.
  *
  * NOTE: Rebalance is now loaded directly by NetworkFindAreasWorkspace from
  * /operator/network-rebalance because it owns an interactive AVM/NetPlan
@@ -142,7 +143,7 @@ export type NetworkFindAreasBindings = {
  * /operator/network-rebalance so scenario selection can persist/reload.
  *
  * Pass `client: null` (e.g. when `ODP_API_BASE_URL` is unset) to get
- * `unconfigured` envelopes that tell the workspace to use fixture data.
+   * `unconfigured` envelopes. Production callers fail closed on that state.
  */
 export async function loadNetworkFindAreasBindings(
   client: OdpApiClient | null,

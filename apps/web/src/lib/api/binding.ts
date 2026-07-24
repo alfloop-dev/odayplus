@@ -5,9 +5,9 @@ import { headers } from "next/headers";
  * Outcome of attempting to bind a workspace region to live backend data.
  *
  * - `ready`        — the API responded with one or more rows (render live).
- * - `empty`        — the API responded but the store is cold (fixture fallback).
- * - `error`        — the API was unreachable or returned a non-2xx (fallback).
- * - `unconfigured` — no API base URL is set (fixture-only build).
+ * - `empty`        — the API responded but the store is cold.
+ * - `error`        — the API was unreachable or returned a non-2xx.
+ * - `unconfigured` — no API base URL is set.
  */
 export type BindingState = "ready" | "empty" | "error" | "unconfigured";
 
@@ -23,9 +23,9 @@ export type ApiBinding<T> = {
 };
 
 /**
- * Fetch a list from the backend and classify the result. Never throws —
- * a cold store, an unreachable API, or a missing base URL all degrade to a
- * `fixture` source so the workspace keeps rendering its documented fallback.
+ * Fetch a list from the backend and classify the result. Never throws.
+ * Non-ready results are always marked as `fixture`; production callers must
+ * render a data-unavailable state instead of treating the binding as live.
  */
 export async function loadApiBinding<T>(options: {
   client: OdpApiClient | null;
@@ -33,15 +33,11 @@ export async function loadApiBinding<T>(options: {
 }): Promise<ApiBinding<T>> {
   const fetchedAt = new Date().toISOString();
   const { client, fetcher } = options;
-  const isProduction =
-    process.env.NODE_ENV === "production" ||
-    process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true";
-
   if (!client) {
     return {
       state: "unconfigured",
       items: [],
-      source: isProduction ? "api" : "fixture",
+      source: "fixture",
       fetchedAt,
     };
   }
@@ -52,7 +48,7 @@ export async function loadApiBinding<T>(options: {
       return {
         state: "empty",
         items: [],
-        source: isProduction ? "api" : "fixture",
+        source: "fixture",
         baseUrl: client.baseUrl,
         fetchedAt,
       };
@@ -68,7 +64,7 @@ export async function loadApiBinding<T>(options: {
     return {
       state: "error",
       items: [],
-      source: isProduction ? "api" : "fixture",
+      source: "fixture",
       error: error instanceof Error ? error.message : String(error),
       baseUrl: client.baseUrl,
       fetchedAt,

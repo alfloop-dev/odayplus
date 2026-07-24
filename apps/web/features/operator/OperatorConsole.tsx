@@ -38,6 +38,13 @@ import {
   loadNetworkFindAreasBindings,
   type NetworkFindAreasBindings,
 } from "./networkFindAreasLoader";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  inspectOperatorShellPayload,
+  operatorFixturesAllowed,
+  toUnavailableOperatorStatus,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
 import styles from "./operator.module.css";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
@@ -78,7 +85,7 @@ const notifications = [
   },
 ];
 
-type TaskCenterLoadState = "idle" | "loading" | "ready" | "fallback";
+type TaskCenterLoadState = "idle" | "loading" | "ready" | "fallback" | "empty" | "error";
 type TaskCenterSource = "api" | "fixture";
 
 type OperatorTask = {
@@ -300,6 +307,7 @@ function toDomSafeId(value: string): string {
 }
 
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
+  const fixturesAllowed = operatorFixturesAllowed();
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
   const [activeTabId, setActiveTabId] = useState("overview");
@@ -312,7 +320,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [taskCenterLoadState, setTaskCenterLoadState] = useState<TaskCenterLoadState>("idle");
   const [taskCenterSource, setTaskCenterSource] = useState<TaskCenterSource>("fixture");
-  const [liveTasks, setLiveTasks] = useState<OperatorTask[]>(taskCenterFixtures);
+  const [liveTasks, setLiveTasks] = useState<OperatorTask[]>(fixturesAllowed ? taskCenterFixtures : []);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
@@ -323,8 +331,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const commandInputRef = useRef<HTMLInputElement>(null);
 
   const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() => normalizeShellEnvelope());
-  const [liveNotifications, setLiveNotifications] = useState<any[]>(notifications);
-  const [liveIssues, setLiveIssues] = useState<Issue[]>(ISSUE_FIXTURES);
+  const [shellDataStatus, setShellDataStatus] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [shellLoadError, setShellLoadError] = useState<string | null>(null);
+  const [shellReloadToken, setShellReloadToken] = useState(0);
+  const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
+  const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
   const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
@@ -343,11 +356,17 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     const nextEnvelope = normalizeShellEnvelope(payload);
     const record = getRecord(payload);
     setShellEnvelope(nextEnvelope);
-    setLiveNotifications(nextEnvelope.notifications.length ? nextEnvelope.notifications : notifications);
+    setLiveNotifications(
+      nextEnvelope.notifications.length || !fixturesAllowed
+        ? nextEnvelope.notifications
+        : notifications,
+    );
     setLiveApprovals(nextEnvelope.approvals);
 
     if (Array.isArray(record?.issues)) {
       setLiveIssues(record.issues as Issue[]);
+    } else if (!fixturesAllowed) {
+      setLiveIssues([]);
     }
     if (Array.isArray(record?.governanceDecisions)) {
       setLiveGovernanceDecisions(record.governanceDecisions);
@@ -380,6 +399,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const isNetworkWorkspace = activeWorkspaceId === "network";
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
+  const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -414,20 +434,51 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   useEffect(() => {
     if (!hasHydratedPreferences) return;
 
+    let cancelled = false;
     async function loadShellEnvelope() {
+      if (!fixturesAllowed) {
+        setShellDataStatus("loading");
+      }
+      setShellLoadError(null);
       try {
         const headers = getSecurityHeaders(activeRoleId);
         const bootstrapRes = await fetch("/api/v1/operator/bootstrap", { headers });
-        if (bootstrapRes.ok) {
-          applyOperatorEnvelope(await bootstrapRes.json());
+        if (!bootstrapRes.ok) {
+          throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
         }
+        const payload = await bootstrapRes.json();
+        if (cancelled) return;
+        const inspection = inspectOperatorShellPayload(payload);
+
+        if (!fixturesAllowed && inspection.status !== "ready") {
+          setShellDataStatus(inspection.status);
+          setShellLoadError(
+            inspection.status === "seed"
+              ? `Blocked non-production source: ${inspection.source ?? "unknown"}`
+              : null,
+          );
+          return;
+        }
+
+        applyOperatorEnvelope(payload);
+        setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
       } catch (err) {
         console.error("Error loading operator shell envelope:", err);
+        if (cancelled) return;
+        if (fixturesAllowed) {
+          setShellDataStatus("fixture");
+        } else {
+          setShellDataStatus("error");
+          setShellLoadError(err instanceof Error ? err.message : "Operator bootstrap failed");
+        }
       }
     }
 
-    loadShellEnvelope();
-  }, [activeRoleId, hasHydratedPreferences]);
+    void loadShellEnvelope();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoleId, fixturesAllowed, hasHydratedPreferences, shellReloadToken]);
 
   useEffect(() => {
     if (!isTaskCenterOpen) return undefined;
@@ -436,7 +487,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     async function loadTasks() {
       setTaskCenterLoadState("loading");
       try {
-        const res = await fetch("/api/v1/tasks", {
+        const res = await fetch("/api/v1/operator/shell/tasks", {
           headers: getSecurityHeaders(activeRoleId),
         });
         if (!res.ok) throw new Error(`Task center API returned ${res.status}`);
@@ -449,6 +500,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           setLiveTasks(tasks);
           setTaskCenterSource("api");
           setTaskCenterLoadState("ready");
+        } else if (!fixturesAllowed) {
+          setLiveTasks([]);
+          setTaskCenterSource("api");
+          setTaskCenterLoadState("empty");
         } else {
           setLiveTasks(taskCenterFixtures);
           setTaskCenterSource("fixture");
@@ -456,9 +511,15 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         }
       } catch {
         if (cancelled) return;
-        setLiveTasks(taskCenterFixtures);
-        setTaskCenterSource("fixture");
-        setTaskCenterLoadState("fallback");
+        if (fixturesAllowed) {
+          setLiveTasks(taskCenterFixtures);
+          setTaskCenterSource("fixture");
+          setTaskCenterLoadState("fallback");
+        } else {
+          setLiveTasks([]);
+          setTaskCenterSource("api");
+          setTaskCenterLoadState("error");
+        }
       }
     }
 
@@ -466,7 +527,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, isTaskCenterOpen]);
+  }, [activeRoleId, fixturesAllowed, isTaskCenterOpen]);
 
   useEffect(() => {
     if (activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
@@ -860,9 +921,17 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     const freshRes = await fetch("/api/v1/operator/bootstrap", {
       headers: getSecurityHeaders(activeRoleId),
     });
-    if (freshRes.ok) {
-      applyOperatorEnvelope(await freshRes.json());
+    if (!freshRes.ok) {
+      throw new Error(`Operator bootstrap refresh returned ${freshRes.status}`);
     }
+    const payload = await freshRes.json();
+    const inspection = inspectOperatorShellPayload(payload);
+    if (!fixturesAllowed && inspection.status !== "ready") {
+      setShellDataStatus(inspection.status);
+      throw new Error(`Operator bootstrap refresh was ${inspection.status}`);
+    }
+    applyOperatorEnvelope(payload);
+    setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
   }
 
   async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
@@ -889,9 +958,12 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       if (res.ok) {
         showToast("決策已送出");
         await refreshOperatorEnvelope();
+      } else {
+        showToast(`決策未送出（HTTP ${res.status}）`);
       }
     } catch (err) {
       console.error("Error submitting approval decision:", err);
+      showToast("決策未送出，請重新整理後再試");
     }
   }
 
@@ -907,7 +979,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             <strong>Oday Plus</strong>
             <small>Operator Console</small>
           </span>
-          <Chip tone="accent">POC DEMO</Chip>
+          <Chip tone={fixturesAllowed ? "accent" : "neutral"}>
+            {fixturesAllowed ? "LOCAL FIXTURE" : "PRODUCTION"}
+          </Chip>
         </div>
 
         <nav className={styles.workspaceNav} aria-label="Operator workspaces">
@@ -1062,7 +1136,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                   </span>
                 </div>
                 <div className={styles.taskList}>
-                  {liveTasks.slice(0, 8).map((task) => (
+                  {taskCenterLoadState === "empty" || taskCenterLoadState === "error" ? (
+                    <div className={styles.commandEmpty} data-testid="operator-task-center-unavailable">
+                      {taskCenterLoadState === "empty"
+                        ? "Task API 已回應，但目前沒有可用任務。"
+                        : "Task API 暫時無法取得，未顯示 fixture 任務。"}
+                    </div>
+                  ) : liveTasks.slice(0, 8).map((task) => (
                     <button
                       className={styles.taskRow}
                       key={task.id}
@@ -1089,7 +1169,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                   <button type="button" onClick={() => window.location.assign("/tasks")}>
                     Open full tasks page
                   </button>
-                  <span>{taskCenterLoadState === "fallback" ? "/api/v1/tasks fallback active" : "/api/v1/tasks live"}</span>
+                  <span>
+                    {taskCenterLoadState === "fallback"
+                      ? "/api/v1/operator/shell/tasks local fixture active"
+                      : "/api/v1/operator/shell/tasks"}
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -1158,9 +1242,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <div className={styles.pocBanner}>
         <div>
-          <strong>API-backed</strong>
+          <strong>{shellDataStatus === "ready" ? "Live API" : fixturesAllowed ? "Local fixture mode" : "API required"}</strong>
           <span>
-            Shell、Today、通知與核准數字由 Operator API envelope 驅動；寫入後即時刷新本 session。
+            Production 只顯示可驗證的 Operator API 資料；loading、seed、empty 或 error 均會 fail closed。
           </span>
         </div>
         <Button onClick={handleReset} size="sm" variant="secondary">
@@ -1169,7 +1253,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       </div>
 
       <main className={styles.shell}>
-        {activeWorkspaceId === "today" ? (
+        {!canRenderWorkspace ? (
+          <OperatorDataUnavailableGate
+            detail={shellLoadError}
+            onRetry={() => setShellReloadToken((token) => token + 1)}
+            status={toUnavailableOperatorStatus(shellDataStatus)}
+          />
+        ) : activeWorkspaceId === "today" ? (
           <ApiTodayWorkspace
             envelope={shellEnvelope}
             onApprovalDecision={(approvalId, status, payload) => handleApprovalDecision(approvalId, status, payload)}
@@ -1202,13 +1292,11 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
               approvals={liveApprovals.length ? liveApprovals : undefined}
               auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
               callbacks={{
-                onApprove: (payload) => handleApprovalDecision(payload.approvalId, "approved", payload),
-                onReject: (payload) => handleApprovalDecision(payload.approvalId, "rejected", payload),
-                onReturn: (payload) => handleApprovalDecision(payload.approvalId, "returned", payload),
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
               decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
               role={activeRole.label}
+              roleId={activeRoleId}
             />
           </WorkspaceChrome>
         ) : activeWorkspaceId === "growth" ? (
@@ -1222,52 +1310,6 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
       <StoreOpsWorkflowDialogs
         activeDialog={activeStoreOpsDialog}
-        callbacks={{
-          onSubmit: async (event) => {
-            showToast(`${event.payload.issueId} ${event.type} submitted to POC shell`);
-            const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
-            const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
-            let endpoint = "";
-            if (event.type === "triage") endpoint = "triage";
-            else if (event.type === "assign") endpoint = "assign";
-            else if (event.type === "action") endpoint = "actions";
-            else if (event.type === "fieldReport") endpoint = "field-report";
-            else if (event.type === "outcome") endpoint = "outcome";
-            else if (event.type === "escalate") endpoint = "escalate";
-            else if (event.type === "cameraPurpose") endpoint = "purpose";
-
-            let path = "";
-            if (endpoint === "purpose") {
-              path = `/api/v1/operator/evidence/EVD-101/purpose`;
-            } else if (endpoint) {
-              path = `/api/v1/operator/issues/${event.payload.issueId}/${endpoint}`;
-            }
-
-            if (path) {
-              try {
-                const res = await fetch(path, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Idempotency-Key": idempotencyKey,
-                    "X-Correlation-Id": correlationId,
-                    ...getSecurityHeaders(activeRoleId),
-                  },
-                  body: JSON.stringify({
-                    actorName: shellEnvelope.today.hero.name,
-                    actorRoleId: activeRoleId,
-                    ...event.payload,
-                  }),
-                });
-                if (res.ok) {
-                  await refreshOperatorEnvelope();
-                }
-              } catch (err) {
-                console.error("Error submitting workflow write:", err);
-              }
-            }
-          },
-        }}
         issue={selectedStoreOpsIssue}
         onClose={() => setActiveStoreOpsDialog(null)}
       />
@@ -1371,7 +1413,9 @@ function WorkspaceChrome({
         </div>
         <div className={styles.workspaceMeta}>
           <Chip tone="info">{activeRoleLabel}</Chip>
-          <Chip tone="success">Fixture healthy</Chip>
+          <Chip tone={operatorFixturesAllowed() ? "neutral" : "success"}>
+            {operatorFixturesAllowed() ? "Local fixture mode" : "Live API"}
+          </Chip>
           <Chip tone="neutral">Taipei / UTC+8 view</Chip>
         </div>
       </div>

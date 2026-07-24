@@ -2,6 +2,7 @@
 
 import { Button, Chip, EvidenceCard, MetricCard, QueueRow, SectionPanel, StatusBadge, type Tone } from "./components";
 import type { WorkspaceId } from "./navigation";
+import { operatorFixturesAllowed } from "./operatorDataMode";
 import styles from "./operator.module.css";
 
 export type ShellTarget = {
@@ -396,6 +397,7 @@ export function TodayWorkspace({
   onApprovalDecision: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
   onTargetSelect: (target: ShellTarget, label: string) => void;
 }) {
+  const fixturesAllowed = operatorFixturesAllowed();
   const today = envelope.today;
 
   return (
@@ -470,17 +472,23 @@ export function TodayWorkspace({
             </SectionPanel>
 
             <SectionPanel eyebrow="Evidence health" title="Operational signals">
-              <div className={styles.evidenceGrid}>
-                <EvidenceCard label="Data freshness" tone="success" value="06:00">
-                  ForecastOps, payment, review connectors refreshed.
-                </EvidenceCard>
-                <EvidenceCard label="Camera privacy" tone="warning" value="Locked">
-                  Purpose flow required before any media surface.
-                </EvidenceCard>
-                <EvidenceCard label="Model confidence" tone="info" value="0.84">
-                  {envelope.meta.counts.search} deep-linked entities indexed.
-                </EvidenceCard>
-              </div>
+              {fixturesAllowed ? (
+                <div className={styles.evidenceGrid}>
+                  <EvidenceCard label="Data freshness" tone="success" value="06:00">
+                    ForecastOps, payment, review connectors refreshed.
+                  </EvidenceCard>
+                  <EvidenceCard label="Camera privacy" tone="warning" value="Locked">
+                    Purpose flow required before any media surface.
+                  </EvidenceCard>
+                  <EvidenceCard label="Model confidence" tone="info" value="0.84">
+                    {envelope.meta.counts.search} deep-linked entities indexed.
+                  </EvidenceCard>
+                </div>
+              ) : (
+                <p className={styles.auditLine} data-testid="operator-signals-unavailable">
+                  OPERATOR_SIGNAL_DATA_UNAVAILABLE · API 未提供 freshness、privacy 與 model confidence。
+                </p>
+              )}
             </SectionPanel>
           </div>
         </div>
