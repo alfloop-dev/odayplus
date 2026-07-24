@@ -132,6 +132,16 @@ def test_workloads_fit_the_observed_gke_scheduling_budget() -> None:
         assert proxy_request["memory"] == "64Mi"
 
 
+def test_mongo_workloads_use_the_atlas_reachable_private_pool() -> None:
+    migration, *mongo_workloads = _documents()
+
+    assert "nodeSelector" not in _pod_spec(migration)
+    for document in mongo_workloads:
+        assert _pod_spec(document)["nodeSelector"] == {
+            "cloud.google.com/gke-nodepool": "private-pool"
+        }
+
+
 def test_migration_job_is_independent_and_produces_verified_receipt() -> None:
     migration = _documents()[0]
     container = _main_container(migration)

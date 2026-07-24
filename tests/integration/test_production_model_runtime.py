@@ -35,6 +35,7 @@ from models.shared_ml import (
     production_model_execution_required,
 )
 from models.shared_ml.oss_estimators import train_oss_estimator
+from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from modules.forecastops.application import RegisteredEstimatorForecastEngine
 from modules.forecastops.domain import ForecastInput
 from modules.heatzone.workers import run_heatzone_batch_score
@@ -46,6 +47,9 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 
 NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+SITESCORE_MODEL_NAME = (
+    PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
+)
 
 
 def _training_rows() -> list[dict[str, Any]]:
@@ -103,7 +107,7 @@ def _registered_runtime(
     )
     adapter.register_model_version(
         ModelVersion(
-            model_name="sitescore",
+            model_name=SITESCORE_MODEL_NAME,
             version="2026.07.24",
             artifact_uri=artifact_path.as_uri(),
             dataset_snapshot_id="sitescore-training-live-20260724",
@@ -143,7 +147,7 @@ def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -
     assert inference.binding.artifact_sha256
     assert inference.lower[0] <= inference.point[0] <= inference.upper[0]
     assert report.m12.p50 == round(max(0.0, inference.point[0]), 2)
-    assert report.model_version == "sitescore:2026.07.24"
+    assert report.model_version == f"{SITESCORE_MODEL_NAME}:2026.07.24"
     assert report.m12.p50 != baseline.m12.p50
 
 
@@ -178,7 +182,10 @@ def test_production_sitescore_route_executes_registered_artifact(tmp_path: Path)
 
     assert payload["model_binding"]["model_engine"] == "lightgbm.LGBMRegressor"
     assert payload["model_binding"]["model_approved_by"] == "model-risk-reviewer"
-    assert payload["reports"][0]["model_version"] == "sitescore:2026.07.24"
+    assert (
+        payload["reports"][0]["model_version"]
+        == f"{SITESCORE_MODEL_NAME}:2026.07.24"
+    )
 
 
 def test_production_runtime_fails_closed_without_registry_configuration(

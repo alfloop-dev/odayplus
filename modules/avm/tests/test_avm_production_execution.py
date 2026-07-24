@@ -15,6 +15,7 @@ pytest.importorskip("mlflow")
 import modules.avm.application.valuation as valuation_service
 from models.shared_ml import ModelAlias, ModelStage, ModelVersion
 from models.shared_ml.oss_estimators import LoadedOSSEstimator, train_oss_estimator
+from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from models.shared_ml.production_runtime import MlflowProductionModelRuntime
 from modules.avm import (
     AVMProductionExecutionError,
@@ -201,7 +202,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     )
     registry.register_model_version(
         ModelVersion(
-            model_name="avm",
+            model_name=PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "",
             version="2026.07.24",
             artifact_uri=artifact_path.as_uri(),
             dataset_snapshot_id="avm-training-live",

@@ -25,6 +25,7 @@ from models.shared_ml.oss_estimators import (
     OSSEstimatorError,
     load_estimator_artifact,
 )
+from models.shared_ml.production_contracts import production_model_names
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 from models.shared_ml.scoring_binding import ModelBinding
 
@@ -143,7 +144,9 @@ class MlflowProductionModelRuntime:
                 ) from exc
         self.client = client
         self.artifact_loader = artifact_loader or _download_artifact_bytes
-        self.model_names = dict(model_names or {})
+        self.model_names = dict(
+            production_model_names() if model_names is None else model_names
+        )
         self._cache: dict[tuple[str, str, str], _ResolvedExecutableModel] = {}
 
     @classmethod

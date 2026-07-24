@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from urllib.parse import parse_qs, urlparse
 
+from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
 _CLOUD_SQL_SOCKET_RE = re.compile(
     r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$"
@@ -127,7 +129,7 @@ class ModelSpec:
 MODEL_SPECS: dict[str, ModelSpec] = {
     "forecastops": ModelSpec(
         key="forecastops",
-        model_name="forecast_revenue_interval",
+        model_name=PRODUCTION_MODEL_CONTRACTS["forecastops"].model_name or "",
         relation="model_ready.forecast_training_view",
         expected_view_version="forecast-training-view-v2",
         kind=ModelKind.REGRESSION,
@@ -162,7 +164,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     "avm": ModelSpec(
         key="avm",
-        model_name="dealroom_avm",
+        model_name=PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "",
         relation="model_ready.valuation_view",
         expected_view_version="valuation-view-v1",
         kind=ModelKind.REGRESSION,
@@ -201,7 +203,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     "sitescore": ModelSpec(
         key="sitescore",
-        model_name="sitescore_propensity",
+        model_name=PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or "",
         relation="model_ready.candidate_site_view",
         expected_view_version="candidate-site-view-v1",
         kind=ModelKind.REGRESSION,

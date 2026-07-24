@@ -13,6 +13,11 @@ from typing import Any
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
+from models.shared_ml.production_contracts import (
+    PRODUCTION_MODEL_CONTRACTS,
+    production_model_names,
+    required_production_model_services,
+)
 from modules.external_data.connectors import validate_external_providers_or_raise
 from shared.api.errors import ApiError, error_response_body, install_error_handlers
 from shared.api.versioning import install_deprecation_headers, mount_versioned
@@ -42,17 +47,28 @@ def health_detail_payload(*, correlation_id: str) -> dict[str, str]:
     }
 
 
-def release_version_payload(*, correlation_id: str) -> dict[str, str]:
-    release_sha = (
+def release_sha_from_environment() -> str:
+    """Resolve the exact runtime release identity.
+
+    ``ODAY_RELEASE_SHA`` remains the deployment contract. The training stack
+    and existing Cloud Run revision use ``ODP_RELEASE_COMMIT_SHA``, so runtime
+    probes accept it as the first compatibility fallback.
+    """
+
+    return (
         os.environ.get("ODAY_RELEASE_SHA")
+        or os.environ.get("ODP_RELEASE_COMMIT_SHA")
         or os.environ.get("GITHUB_SHA")
         or os.environ.get("COMMIT_SHA")
         or "local"
     )
+
+
+def release_version_payload(*, correlation_id: str) -> dict[str, str]:
     return {
         **health_payload(),
         "api_version": API_VERSION,
-        "release_sha": release_sha,
+        "release_sha": release_sha_from_environment(),
         "time": datetime.now(UTC).isoformat(),
         "correlation_id": correlation_id,
     }
@@ -126,6 +142,27 @@ else:
         production_model_bindings_ready = False
         production_model_error: str | None = None
         model_runtime: Any | None = None
+        required_model_services = required_production_model_services()
+        production_model_capabilities: dict[str, dict[str, Any]] = {
+            service: {
+                "service": service,
+                "modelName": contract.model_name,
+                "trainingSpecKey": contract.training_spec_key,
+                "trainable": contract.trainable,
+                "requiredForPlatformReadiness": (
+                    contract.required_for_platform_readiness
+                ),
+                "outcomeContractRequired": contract.outcome_contract_required,
+                "available": False,
+                "reasonCode": (
+                    contract.unavailable_reason
+                    if not contract.trainable
+                    else "PRODUCTION_BINDING_NOT_RESOLVED"
+                ),
+                "error": None,
+            }
+            for service, contract in PRODUCTION_MODEL_CONTRACTS.items()
+        }
         model_binding_mode = (
             "mlflow-production-unverified"
             if require_live_data
@@ -277,6 +314,8 @@ else:
                 "models": {
                     "mode": model_binding_mode,
                     "productionBindingsReady": production_model_bindings_ready,
+                    "requiredServices": sorted(required_model_services),
+                    "capabilities": production_model_capabilities,
                     "error": production_model_error,
                     "autoSeeded": (
                         not require_live_data and production_model_bindings_ready
@@ -667,11 +706,7 @@ else:
             PriceOpsProductionOptimizer,
         )
 
-        release_sha = (
-            os.environ.get("ODAY_RELEASE_SHA")
-            or os.environ.get("GITHUB_SHA")
-            or os.environ.get("COMMIT_SHA")
-        )
+        release_sha = release_sha_from_environment()
         learninghub_registry: Any | None = None
         avm_production_executor: Any | None = None
         netplan_production_executor: Any | None = None
@@ -682,42 +717,47 @@ else:
             try:
                 from modules.avm.domain import AVM_FEATURE_VERSION
                 from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
-                from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
                 model_runtime = MlflowProductionModelRuntime.from_environment(
-                    model_names={
-                        "avm": os.environ.get("ODP_AVM_MODEL_NAME", "avm"),
-                        "forecastops": os.environ.get(
-                            "ODP_FORECASTOPS_MODEL_NAME",
-                            "forecastops",
-                        ),
-                        "heatzone": os.environ.get(
-                            "ODP_HEATZONE_MODEL_NAME",
-                            "heatzone",
-                        ),
-                        "sitescore": os.environ.get(
-                            "ODP_SITESCORE_MODEL_NAME",
-                            "sitescore",
-                        ),
-                    }
+                    model_names=production_model_names()
                 )
-                for service, feature_schema_version in {
+            except ProductionModelRuntimeError as exc:
+                for service, capability in production_model_capabilities.items():
+                    if capability["trainable"]:
+                        capability["reasonCode"] = exc.code
+                        capability["error"] = str(exc)
+                        if service in required_model_services:
+                            production_composition_errors.append(
+                                f"{service}: {exc.code}: {exc}"
+                            )
+                model_runtime = None
+            if model_runtime is not None:
+                feature_schema_versions = {
                     "avm": AVM_FEATURE_VERSION,
                     "forecastops": FORECASTOPS_FEATURE_VERSION,
-                    "heatzone": HEATZONE_FEATURE_VERSION,
                     "sitescore": SITESCORE_FEATURE_VERSION,
-                }.items():
-                    executable = model_runtime.resolve(
-                        service=service,
-                        expected_feature_schema_version=feature_schema_version,
-                    )
-                    scoring_bindings[service] = executable.binding
-            except ProductionModelRuntimeError as exc:
-                production_composition_errors.append(f"{exc.code}: {exc}")
-                model_runtime = None
-                scoring_bindings = {}
-            if model_runtime is not None:
+                }
+                for service, feature_schema_version in feature_schema_versions.items():
+                    try:
+                        executable = model_runtime.resolve(
+                            service=service,
+                            expected_feature_schema_version=feature_schema_version,
+                        )
+                    except ProductionModelRuntimeError as exc:
+                        capability = production_model_capabilities[service]
+                        capability["reasonCode"] = exc.code
+                        capability["error"] = str(exc)
+                        if service in required_model_services:
+                            production_composition_errors.append(
+                                f"{service}: {exc.code}: {exc}"
+                            )
+                    else:
+                        scoring_bindings[service] = executable.binding
+                        capability = production_model_capabilities[service]
+                        capability["available"] = True
+                        capability["reasonCode"] = None
+                        capability["error"] = None
                 try:
                     learninghub_registry = MlflowRegistryAdapter(
                         learning_repo,
@@ -731,15 +771,24 @@ else:
                         f"LEARNINGHUB_PRODUCTION_BINDING_REQUIRED: {exc}"
                     )
                     learninghub_registry = None
-                try:
-                    avm_production_executor = AVMProductionExecutor.from_environment(
-                        model_runtime=model_runtime
-                    )
-                except AVMProductionExecutionError as exc:
-                    production_composition_errors.append(
-                        f"AVM_PRODUCTION_EXECUTION_UNAVAILABLE: {exc}"
-                    )
-                    avm_production_executor = None
+                if production_model_capabilities["avm"]["available"]:
+                    try:
+                        avm_production_executor = AVMProductionExecutor.from_environment(
+                            model_runtime=model_runtime
+                        )
+                    except AVMProductionExecutionError as exc:
+                        capability = production_model_capabilities["avm"]
+                        capability["available"] = False
+                        capability["reasonCode"] = (
+                            "AVM_PRODUCTION_EXECUTION_UNAVAILABLE"
+                        )
+                        capability["error"] = str(exc)
+                        production_composition_errors.append(
+                            "avm: AVM_PRODUCTION_EXECUTION_UNAVAILABLE: "
+                            f"{exc}"
+                        )
+                        scoring_bindings.pop("avm", None)
+                        avm_production_executor = None
             netplan_production_executor = NetPlanProductionExecutor()
             priceops_production_optimizer = PriceOpsProductionOptimizer()
             production_model_error = (
@@ -748,10 +797,12 @@ else:
                 else None
             )
             production_model_bindings_ready = (
-                len(scoring_bindings) == 4
+                all(
+                    production_model_capabilities[service]["available"]
+                    for service in required_model_services
+                )
                 and model_runtime is not None
                 and learninghub_registry is not None
-                and avm_production_executor is not None
             )
             if production_model_bindings_ready:
                 model_binding_mode = "mlflow-production"
@@ -773,7 +824,7 @@ else:
                 store=heatzone_store,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
-                model_runtime=model_runtime,
+                model_runtime=None,
                 require_production_model=require_live_data,
             ),
         )
@@ -997,6 +1048,7 @@ else:
         api.state.priceops_production_optimizer = priceops_production_optimizer
         api.state.domain_runtime_mode = domain_runtime_mode
         api.state.production_model_error = production_model_error
+        api.state.production_model_capabilities = production_model_capabilities
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository

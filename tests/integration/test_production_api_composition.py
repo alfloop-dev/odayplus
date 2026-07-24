@@ -11,6 +11,11 @@ import uvloop
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from models.shared_ml.production_contracts import (
+    PRODUCTION_MODEL_CONTRACTS,
+    production_model_names,
+)
+from models.shared_ml.production_runtime import ProductionModelRegistryError
 from modules.avm.application import AVMProductionExecutor
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
@@ -48,6 +53,27 @@ class RecordingProductionRuntime:
     def infer(self, **kwargs: Any) -> Any:
         self.inferences.append(kwargs)
         raise AssertionError("composition test does not execute an HTTP scoring job")
+
+
+class SelectiveProductionRuntime(RecordingProductionRuntime):
+    def __init__(self, *unavailable_services: str) -> None:
+        super().__init__()
+        self.unavailable_services = frozenset(unavailable_services)
+
+    def resolve(
+        self,
+        *,
+        service: str,
+        expected_feature_schema_version: str,
+    ) -> Any:
+        if service in self.unavailable_services:
+            raise ProductionModelRegistryError(
+                f"{service}: mature production alias is unavailable"
+            )
+        return super().resolve(
+            service=service,
+            expected_feature_schema_version=expected_feature_schema_version,
+        )
 
 
 def _live_provider() -> Any:
@@ -162,15 +188,9 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert {service for service, _version in runtime.resolutions} == {
         "avm",
         "forecastops",
-        "heatzone",
         "sitescore",
     }
-    assert captured["model_runtime_factory"]["model_names"] == {
-        "avm": "oday-avm",
-        "forecastops": "oday-forecastops",
-        "heatzone": "oday-heatzone",
-        "sitescore": "oday-sitescore",
-    }
+    assert captured["model_runtime_factory"]["model_names"] == production_model_names()
     assert captured["avm_executor_factory"]["model_runtime"] is runtime
 
     for name in (
@@ -215,6 +235,100 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     )
     assert app.state.domain_runtime_mode == "production"
     assert app.state.production_model_error is None
+    assert app.state.production_model_capabilities["heatzone"] == {
+        "service": "heatzone",
+        "modelName": None,
+        "trainingSpecKey": None,
+        "trainable": False,
+        "requiredForPlatformReadiness": False,
+        "outcomeContractRequired": True,
+        "available": False,
+        "reasonCode": "NO_PRODUCTION_TRAINER_OR_DATA_CONTRACT",
+        "error": None,
+    }
+
+
+def test_model_aliases_resolve_independently_while_platform_stays_fail_closed(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    runtime = SelectiveProductionRuntime("avm", "sitescore")
+    from models.shared_ml import MlflowProductionModelRuntime
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setattr(
+        MlflowProductionModelRuntime,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: runtime),
+    )
+
+    bundle = _production_backed_bundle(tmp_path / "partial-models.sqlite3")
+    try:
+        app = create_app(
+            persistence=bundle,
+            external_provider_validation=_live_provider(),
+        )
+    finally:
+        bundle.engine.close()
+
+    capabilities = app.state.production_model_capabilities
+    assert app.state.scoring_bindings.keys() == {"forecastops"}
+    assert capabilities["forecastops"]["available"] is True
+    assert capabilities["avm"]["available"] is False
+    assert capabilities["sitescore"]["available"] is False
+    assert capabilities["heatzone"]["available"] is False
+    assert (
+        capabilities["avm"]["reasonCode"]
+        == "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
+    )
+    assert app.state.production_model_error is not None
+    assert "avm: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
+        app.state.production_model_error
+    )
+    assert "sitescore: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
+        app.state.production_model_error
+    )
+
+
+def test_forecastops_alias_remains_a_required_fail_closed_binding(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    runtime = SelectiveProductionRuntime("forecastops", "avm", "sitescore")
+    from models.shared_ml import MlflowProductionModelRuntime
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setattr(
+        MlflowProductionModelRuntime,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: runtime),
+    )
+
+    bundle = _production_backed_bundle(tmp_path / "forecast-required.sqlite3")
+    try:
+        app = create_app(
+            persistence=bundle,
+            external_provider_validation=_live_provider(),
+        )
+    finally:
+        bundle.engine.close()
+
+    assert app.state.scoring_bindings == {}
+    assert app.state.production_model_capabilities["forecastops"]["available"] is False
+    assert "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
+        app.state.production_model_error or ""
+    )
+
+
+def test_training_and_runtime_share_canonical_production_model_names() -> None:
+    from scripts.models.contracts import MODEL_SPECS
+
+    assert {
+        service: MODEL_SPECS[contract.training_spec_key].model_name
+        for service, contract in PRODUCTION_MODEL_CONTRACTS.items()
+        if contract.training_spec_key is not None
+    } == production_model_names()
+    assert PRODUCTION_MODEL_CONTRACTS["heatzone"].trainable is False
 
 
 def test_live_routes_fail_closed_when_production_dependencies_are_missing(

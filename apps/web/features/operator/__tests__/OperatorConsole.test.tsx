@@ -132,7 +132,9 @@ describe("OperatorConsole production data gate", () => {
     render(<OperatorConsole searchParams={{ ws: "store" }} />);
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "error");
+    await waitFor(() => {
+      expect(gate).toHaveAttribute("data-status", "error");
+    });
     expect(document.querySelector('[data-screen-label="Store Ops 門市營運"]')).not.toBeInTheDocument();
   });
 

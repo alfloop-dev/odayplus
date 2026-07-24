@@ -42,6 +42,39 @@ def test_platform_version_exposes_release_sha(monkeypatch) -> None:
     assert "time" in body
 
 
+def test_platform_version_accepts_training_release_commit_sha_fallback(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ODAY_RELEASE_SHA", raising=False)
+    monkeypatch.setenv(
+        "ODP_RELEASE_COMMIT_SHA",
+        "3afe385bd4e5fe2fba2001b1bc5da1b932301c1b",
+    )
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/platform/version",
+        headers={"x-correlation-id": "corr-version-training-release"},
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["release_sha"]
+        == "3afe385bd4e5fe2fba2001b1bc5da1b932301c1b"
+    )
+
+
+def test_platform_version_prefers_deployment_release_sha(monkeypatch) -> None:
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "canonical-deploy-sha")
+    monkeypatch.setenv("ODP_RELEASE_COMMIT_SHA", "training-compatibility-sha")
+    client = TestClient(create_app())
+
+    response = client.get("/platform/version")
+
+    assert response.status_code == 200
+    assert response.json()["release_sha"] == "canonical-deploy-sha"
+
+
 def test_job_enqueue_is_idempotent_and_audited() -> None:
     client = TestClient(create_app())
     headers = {"x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}

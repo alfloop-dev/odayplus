@@ -90,10 +90,13 @@ class AVMProductionExecutor:
     ) -> AVMProductionExecutor:
         try:
             if model_runtime is None:
+                from models.shared_ml.production_contracts import (
+                    production_model_names,
+                )
                 from models.shared_ml.production_runtime import MlflowProductionModelRuntime
 
                 model_runtime = MlflowProductionModelRuntime.from_environment(
-                    model_names={"avm": os.getenv("ODP_AVM_MODEL_NAME", "avm")}
+                    model_names=production_model_names(("avm",))
                 )
             liquidity_runtime, liquidity_evidence = _load_liquidity_artifact()
         except Exception as exc:

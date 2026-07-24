@@ -169,6 +169,8 @@ spec:
         spec:
           serviceAccountName: oday-data-platform
           automountServiceAccountToken: true
+          nodeSelector:
+            cloud.google.com/gke-nodepool: private-pool
           restartPolicy: Never
           terminationGracePeriodSeconds: 30
           securityContext:
@@ -334,6 +336,8 @@ spec:
     spec:
       serviceAccountName: oday-data-platform
       automountServiceAccountToken: true
+      nodeSelector:
+        cloud.google.com/gke-nodepool: private-pool
       restartPolicy: Never
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -471,6 +475,8 @@ spec:
     spec:
       serviceAccountName: oday-data-platform
       automountServiceAccountToken: true
+      nodeSelector:
+        cloud.google.com/gke-nodepool: private-pool
       restartPolicy: Never
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -597,6 +603,8 @@ spec:
     spec:
       serviceAccountName: oday-data-platform
       automountServiceAccountToken: true
+      nodeSelector:
+        cloud.google.com/gke-nodepool: private-pool
       restartPolicy: Never
       terminationGracePeriodSeconds: 30
       securityContext:
