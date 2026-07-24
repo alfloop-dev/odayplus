@@ -43,7 +43,7 @@ spec:
           restartPolicy: Always
           args:
             - "--structured-logs"
-            - "--address=127.0.0.1"
+            - "--address=0.0.0.0"
             - "--port=5432"
             - "__CLOUD_SQL_INSTANCE__"
           securityContext:
@@ -185,7 +185,7 @@ spec:
               restartPolicy: Always
               args:
                 - "--structured-logs"
-                - "--address=127.0.0.1"
+                - "--address=0.0.0.0"
                 - "--port=5432"
                 - "__CLOUD_SQL_INSTANCE__"
               securityContext:
@@ -348,7 +348,7 @@ spec:
           restartPolicy: Always
           args:
             - "--structured-logs"
-            - "--address=127.0.0.1"
+            - "--address=0.0.0.0"
             - "--port=5432"
             - "__CLOUD_SQL_INSTANCE__"
           securityContext:
@@ -484,7 +484,7 @@ spec:
           restartPolicy: Always
           args:
             - "--structured-logs"
-            - "--address=127.0.0.1"
+            - "--address=0.0.0.0"
             - "--port=5432"
             - "__CLOUD_SQL_INSTANCE__"
           securityContext:
@@ -609,7 +609,7 @@ spec:
           restartPolicy: Always
           args:
             - "--structured-logs"
-            - "--address=127.0.0.1"
+            - "--address=0.0.0.0"
             - "--port=5432"
             - "__CLOUD_SQL_INSTANCE__"
           securityContext:

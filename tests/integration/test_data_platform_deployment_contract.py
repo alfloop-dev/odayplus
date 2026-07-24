@@ -105,6 +105,7 @@ def test_all_workloads_share_immutable_release_image_and_cloud_sql_sidecar() -> 
         assert proxy["name"] == "cloud-sql-auth-proxy"
         assert proxy["restartPolicy"] == "Always"
         assert proxy["image"] == PROXY_IMAGE
+        assert "--address=0.0.0.0" in proxy["args"]
         assert proxy["startupProbe"]["tcpSocket"]["port"] == 5432
         assert proxy["resources"]["requests"]
         assert proxy["resources"]["limits"]
