@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from modules.avm.application import AVMProductionExecutor
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+from tests.integration._authz import EXTERNAL_DATA_HEADERS
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +55,14 @@ def _live_provider() -> Any:
         mode=SimpleNamespace(value="live"),
         ok=True,
         errors=(),
+    )
+
+
+def _unavailable_provider() -> Any:
+    return SimpleNamespace(
+        mode=SimpleNamespace(value="fixture"),
+        ok=False,
+        errors=("production provider credentials are unavailable",),
     )
 
 
@@ -210,24 +219,100 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
 
 def test_live_routes_fail_closed_when_production_dependencies_are_missing(
     monkeypatch: Any,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    bundle = _production_backed_bundle(tmp_path / "model-gate.sqlite3")
     app = create_app(
-        persistence=_memory_bundle(),
+        persistence=bundle,
         external_provider_validation=_live_provider(),
     )
 
+    try:
+        with TestClient(app) as client:
+            for path in (
+                "/api/v1/forecastops/timeseries",
+                "/api/v1/learninghub/models",
+                "/api/v1/sitescore/reports",
+                "/api/v1/avm/cases",
+            ):
+                response = client.get(path)
+                assert response.status_code == 503, (path, response.text)
+                assert "BINDING_REQUIRED" in response.text
+    finally:
+        bundle.engine.close()
+
+
+def test_production_routes_gate_only_the_dependency_they_use(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    bundle = _production_backed_bundle(tmp_path / "scoped-gate.sqlite3")
+    app = create_app(
+        persistence=bundle,
+        external_provider_validation=_unavailable_provider(),
+    )
+    operator_headers = {
+        "x-subject-id": "production-operator",
+        "x-roles": "operations_manager",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "ops-lead",
+    }
+
+    try:
+        with TestClient(app) as client:
+            operator = client.get(
+                "/api/v1/operator/bootstrap",
+                headers=operator_headers,
+            )
+            assert operator.status_code == 200, operator.text
+            assert operator.json()["meta"]["dataMode"] == "live"
+            assert "r4-seed" not in operator.text
+
+            history = client.get(
+                "/api/v1/external-data/ingestion-runs",
+                headers=EXTERNAL_DATA_HEADERS,
+            )
+            assert history.status_code == 200
+            assert history.json() == {"items": [], "count": 0}
+
+            provider_route = client.post(
+                "/api/v1/external-data/ingestion-runs",
+                headers=EXTERNAL_DATA_HEADERS,
+                json={"provider_id": "listing.partner_feed"},
+            )
+            assert provider_route.status_code == 503
+            assert (
+                provider_route.json()["error"]["code"]
+                == "external_provider_unavailable"
+            )
+
+            model_route = client.get("/api/v1/forecastops/timeseries")
+            assert model_route.status_code == 503
+            assert "BINDING_REQUIRED" in model_route.text
+    finally:
+        bundle.engine.close()
+
+
+def test_non_production_fixture_ingestion_is_unchanged(monkeypatch: Any) -> None:
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "test")
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "fixture")
+    app = create_app(persistence=_memory_bundle())
+
     with TestClient(app) as client:
-        for path in (
-            "/api/v1/forecastops/timeseries",
-            "/api/v1/learninghub/models",
-            "/api/v1/sitescore/reports",
-            "/api/v1/avm/cases",
-            "/api/v1/netplan/scenarios",
-            "/api/v1/priceops/plans",
-            "/api/v1/adlift/reports",
-        ):
-            response = client.get(path)
-            assert response.status_code == 503, (path, response.text)
-            assert "BINDING_REQUIRED" in response.text
+        response = client.post(
+            "/api/v1/external-data/ingestion-runs",
+            headers={
+                **EXTERNAL_DATA_HEADERS,
+                "Idempotency-Key": "local-fixture-regression",
+            },
+            json={"provider_id": "listing.partner_feed"},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["created"] is True
+    assert response.json()["accepted_count"] == 2

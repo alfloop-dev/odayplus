@@ -14,7 +14,7 @@ from typing import Any
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
 from modules.external_data.connectors import validate_external_providers_or_raise
-from shared.api.errors import error_response_body, install_error_handlers
+from shared.api.errors import ApiError, error_response_body, install_error_handlers
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
@@ -172,6 +172,50 @@ else:
                     return False, (str(exc),)
             return True, ()
 
+        def require_live_external_provider() -> None:
+            if not require_live_data:
+                return
+            provider_ok, provider_errors = provider_health()
+            if provider_ok and provider_mode == "live":
+                return
+            raise ApiError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "The required production external provider is unavailable; "
+                "fixture providers are disabled.",
+                code="external_provider_unavailable",
+                next_action=(
+                    "Restore an approved live provider configuration, then retry."
+                ),
+                details=[
+                    {
+                        "dependency": "external_provider",
+                        "provider_mode": provider_mode,
+                        "configuration_valid": provider_ok,
+                        "errors": [str(error) for error in provider_errors],
+                    }
+                ],
+            )
+
+        def production_persistence_blocking_reasons(
+            *, persistence_reachable: bool
+        ) -> list[str]:
+            reasons: list[str] = []
+            if not bundle.is_durable:
+                reasons.append("MEMORY_PERSISTENCE")
+            elif not production_persistence_supported:
+                reasons.append("SQLITE_NOT_PRODUCTION_PERSISTENCE")
+            if not persistence_reachable:
+                reasons.append("PERSISTENCE_UNREACHABLE")
+            if configured_persistence_mode not in {
+                "memory",
+                "durable",
+                "sqlite",
+                "postgres",
+                "postgresql",
+            }:
+                reasons.append("UNSUPPORTED_PERSISTENCE_MODE")
+            return reasons
+
         def runtime_modes(
             *,
             provider_ok: bool,
@@ -195,20 +239,11 @@ else:
             )
             blocking_reasons: list[str] = []
             if require_live_data:
-                if not bundle.is_durable:
-                    blocking_reasons.append("MEMORY_PERSISTENCE")
-                elif not production_persistence_supported:
-                    blocking_reasons.append("SQLITE_NOT_PRODUCTION_PERSISTENCE")
-                if not persistence_reachable:
-                    blocking_reasons.append("PERSISTENCE_UNREACHABLE")
-                if configured_persistence_mode not in {
-                    "memory",
-                    "durable",
-                    "sqlite",
-                    "postgres",
-                    "postgresql",
-                }:
-                    blocking_reasons.append("UNSUPPORTED_PERSISTENCE_MODE")
+                blocking_reasons.extend(
+                    production_persistence_blocking_reasons(
+                        persistence_reachable=persistence_reachable
+                    )
+                )
                 if not provider_live_ready:
                     blocking_reasons.append("PROVIDER_NOT_LIVE")
                 if not operator_repository_ready:
@@ -304,14 +339,12 @@ else:
                     "/redoc",
                 }:
                     db_ok, _ = database_health()
-                    provider_ok, _ = provider_health()
-                    modes = runtime_modes(
-                        provider_ok=provider_ok,
-                        persistence_reachable=db_ok,
+                    blocking_reasons = production_persistence_blocking_reasons(
+                        persistence_reachable=db_ok
                     )
-                    if not modes["data"]["liveReady"]:
+                    if blocking_reasons:
                         message = (
-                            "Production runtime dependencies are unavailable; "
+                            "Production persistence is unavailable; "
                             "fixture, seed, and in-memory fallback are disabled."
                         )
                         response = JSONResponse(
@@ -320,15 +353,14 @@ else:
                                 code="production_runtime_unavailable",
                                 message=message,
                                 next_action=(
-                                    "Restore the required live persistence, provider, "
-                                    "and approved model bindings, then retry."
+                                    "Restore the required production PostgreSQL "
+                                    "persistence, then retry."
                                 ),
                                 correlation_id=context.correlation_id,
                                 details=[
                                     {
-                                        "blocking_reasons": modes["data"][
-                                            "blockingReasons"
-                                        ],
+                                        "dependency": "persistence",
+                                        "blocking_reasons": blocking_reasons,
                                         "deployment_mode": active_deployment_mode,
                                     }
                                 ],
@@ -751,7 +783,9 @@ else:
         mount_versioned(
             api,
             create_external_data_router(
-                ingestion_service=ingestion_service, audit_log=audit_log
+                ingestion_service=ingestion_service,
+                audit_log=audit_log,
+                require_provider=require_live_external_provider,
             ),
         )
         mount_versioned(

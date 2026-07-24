@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -47,6 +48,7 @@ else:
         *,
         ingestion_service: ExternalIngestionService | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        require_provider: Callable[[], None] | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -61,6 +63,9 @@ else:
 
         view_guard = Depends(require_permission("integration", Action.VIEW, engine=authz_engine))
         create_guard = Depends(require_permission("integration", Action.CREATE, engine=authz_engine))
+        ingestion_dependencies = [create_guard]
+        if require_provider is not None:
+            ingestion_dependencies.append(Depends(require_provider))
 
         @router.get("/freshness", dependencies=[view_guard])
         def list_external_data_freshness(request: Request) -> dict[str, Any]:
@@ -124,7 +129,7 @@ else:
         @router.post(
             "/ingestion-runs",
             status_code=status.HTTP_202_ACCEPTED,
-            dependencies=[create_guard],
+            dependencies=ingestion_dependencies,
         )
         def trigger_ingestion_run(
             body: IngestionRunPayload,
