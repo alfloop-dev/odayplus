@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
@@ -11,7 +11,7 @@ from uuid import uuid4
 import numpy as np
 
 # Versions (output-contract principle §5.1 of ODP-MOD-07).
-ADLIFT_MODEL_VERSION = "adlift-did-v1"
+ADLIFT_MODEL_VERSION = "adlift-statsmodels-matched-did-v2"
 ADLIFT_FEATURE_VERSION = "matched-control-view-v1"
 ADLIFT_EVIDENCE_POLICY_VERSION = "causal-evidence-level-v1"
 ADLIFT_MEASUREMENT_METHOD = "DID"  # difference-in-differences (ODP-ML-05 §9)
@@ -263,6 +263,7 @@ class IncrementalityEstimate:
     incremental_revenue: float
     incremental_gross_margin: float
     effect_interval: EffectInterval
+    estimator_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -294,6 +295,7 @@ class IncrementalityReport:
     policy_version: str
     generated_at: datetime
     source_snapshot_ids: tuple[str, ...] = ()
+    estimator_metadata: dict[str, Any] = field(default_factory=dict)
     report_version: int = 1
 
     def with_version(self, *, report_version: int, report_id: str) -> IncrementalityReport:
@@ -332,6 +334,7 @@ class IncrementalityReport:
             "incremental_revenue": self.incremental_revenue,
             "incremental_gross_margin": self.incremental_gross_margin,
             "effect_interval": self.effect_interval.to_dict(),
+            "estimator_metadata": self.estimator_metadata,
             "iromi": self.iromi,
             "ad_spend": self.ad_spend,
             "evidence_level": self.evidence_level.value,
@@ -617,6 +620,7 @@ def run_incrementality(
         policy_version=ADLIFT_EVIDENCE_POLICY_VERSION,
         generated_at=generated,
         source_snapshot_ids=source_snapshot_ids,
+        estimator_metadata=estimate.estimator_metadata,
     )
 
 
@@ -663,11 +667,17 @@ def _estimate_incrementality(
             effect_interval=EffectInterval(
                 metric="before_after_gm_per_store_day", low=point, point=point, high=point
             ),
+            estimator_metadata={
+                "library": None,
+                "estimator": "before_after_difference",
+                "causal": False,
+                "sample_size": store_days,
+            },
         )
 
-    incremental_revenue = 0.0
-    incremental_gross_margin = 0.0
+    revenue_effects: list[float] = []
     gm_effects: list[float] = []
+    treated_campaign_days: list[int] = []
     for match in matches:
         t_pre = _period_metrics(campaign, by_store, [match.treatment_store_id], "pre")
         t_post = _period_metrics(campaign, by_store, [match.treatment_store_id], "campaign")
@@ -681,50 +691,98 @@ def _estimate_incrementality(
             _mean(_margin_values(c_post)) - _mean(_margin_values(c_pre))
         )
         campaign_days = len(t_post)
-        incremental_revenue += rev_did * campaign_days
-        incremental_gross_margin += gm_did * campaign_days
+        revenue_effects.append(rev_did)
         gm_effects.append(gm_did)
+        treated_campaign_days.append(campaign_days)
+
+    revenue_fit = _fit_statsmodels_matched_did(
+        revenue_effects,
+        treated_campaign_days,
+        metric="did_revenue_per_store_day",
+    )
+    margin_fit = _fit_statsmodels_matched_did(
+        gm_effects,
+        treated_campaign_days,
+        metric="did_gm_per_store_day",
+    )
 
     return IncrementalityEstimate(
         surface_revenue=surface_revenue,
         surface_gross_margin=surface_gross_margin,
-        incremental_revenue=round(incremental_revenue, 2),
-        incremental_gross_margin=round(incremental_gross_margin, 2),
-        effect_interval=_did_effect_interval(gm_effects),
+        incremental_revenue=round(revenue_fit.total_effect, 2),
+        incremental_gross_margin=round(margin_fit.total_effect, 2),
+        effect_interval=margin_fit.interval,
+        estimator_metadata={
+            "library": "statsmodels",
+            "estimator": "WLS",
+            "design": "matched_pair_difference_in_differences",
+            "formula": "pair_did_effect ~ 1",
+            "weights": "treated_campaign_days",
+            "pair_count": len(gm_effects),
+            "treated_campaign_days": sum(treated_campaign_days),
+        },
     )
 
 
-def _did_effect_interval(effects: Sequence[float]) -> EffectInterval:
-    """Confidence interval for the mean matched-pair DiD gross-margin effect.
+@dataclass(frozen=True)
+class _StatsmodelsDiDFit:
+    total_effect: float
+    interval: EffectInterval
 
-    The per-pair effects are a sample of the per-store-day treatment effect.
-    Regressing them on a constant with ``statsmodels`` OLS yields the mean
-    (point estimate — identical to the previous simple average), its standard
-    error and a t-based confidence interval. This is proper DiD inference rather
-    than reporting the raw min/max spread. With fewer than two pairs the standard
-    error is not identified, so the interval degenerates to the point estimate.
-    """
-    point = round(_mean(effects), 4)
-    n = len(effects)
-    if n < 2:
-        return EffectInterval(
-            metric="did_gm_per_store_day",
-            low=point,
-            point=point,
-            high=point,
-            standard_error=0.0,
+
+def _fit_statsmodels_matched_did(
+    effects: Sequence[float],
+    treated_campaign_days: Sequence[int],
+    *,
+    metric: str,
+) -> _StatsmodelsDiDFit:
+    """Estimate the weighted matched-pair DiD effect with statsmodels WLS."""
+    try:
+        import statsmodels.api as sm
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("statsmodels is required for matched-control DiD estimation") from exc
+
+    usable = [
+        (float(effect), int(days))
+        for effect, days in zip(effects, treated_campaign_days, strict=True)
+        if days > 0
+    ]
+    if not usable:
+        interval = EffectInterval(metric=metric, low=0.0, point=0.0, high=0.0)
+        return _StatsmodelsDiDFit(total_effect=0.0, interval=interval)
+
+    outcome = np.asarray([effect for effect, _days in usable], dtype=float)
+    weights = np.asarray([days for _effect, days in usable], dtype=float)
+    fit = sm.WLS(outcome, np.ones((len(usable), 1)), weights=weights).fit()
+    point_value = float(fit.params[0])
+    total_effect = point_value * float(np.sum(weights))
+    point = round(point_value, 4)
+    if len(usable) < 2:
+        return _StatsmodelsDiDFit(
+            total_effect=total_effect,
+            interval=EffectInterval(metric=metric, low=point, point=point, high=point),
         )
-    import statsmodels.api as sm
 
-    outcome = np.asarray(effects, dtype=float)
-    fit = sm.OLS(outcome, np.ones(n)).fit()
-    low, high = (float(bound) for bound in fit.conf_int(alpha=DID_EFFECT_CI_ALPHA)[0])
-    return EffectInterval(
-        metric="did_gm_per_store_day",
-        low=round(low, 4),
-        point=point,
-        high=round(high, 4),
-        standard_error=round(float(fit.bse[0]), 6),
+    standard_error_value = float(fit.bse[0])
+    if not np.isfinite(standard_error_value):
+        standard_error_value = 0.0
+    standard_error = round(standard_error_value, 6)
+    if standard_error == 0.0:
+        low = high = point
+    else:
+        low_value, high_value = (
+            float(bound) for bound in fit.conf_int(alpha=DID_EFFECT_CI_ALPHA)[0]
+        )
+        low, high = round(low_value, 4), round(high_value, 4)
+    return _StatsmodelsDiDFit(
+        total_effect=total_effect,
+        interval=EffectInterval(
+            metric=metric,
+            low=low,
+            point=point,
+            high=high,
+            standard_error=standard_error,
+        ),
     )
 
 

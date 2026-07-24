@@ -1,3 +1,8 @@
+from modules.avm.domain.liquidity import (
+    LiquidityPrediction,
+    LiquidityTrainingRecord,
+    SurvivalModelCapability,
+)
 from modules.avm.domain.valuation import (
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
@@ -26,8 +31,11 @@ __all__ = [
     "DataRoom",
     "DataRoomDocument",
     "LensValuation",
+    "LiquidityPrediction",
+    "LiquidityTrainingRecord",
     "NormalizedMargin",
     "PriceBand",
+    "SurvivalModelCapability",
     "ValuationCase",
     "ValuationCaseStatus",
     "ValuationInput",

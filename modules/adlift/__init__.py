@@ -26,7 +26,16 @@ from modules.adlift.domain import (
     recommend,
     run_incrementality,
 )
-from modules.adlift.infrastructure import InMemoryAdLiftRepository
+from modules.adlift.infrastructure import (
+    CausalChallengerAdapter,
+    CausalChallengerCapability,
+    CausalChallengerEstimate,
+    CausalChallengerRequest,
+    ChallengerUnavailableError,
+    DoubleMLStyleAdapter,
+    EconMLStyleAdapter,
+    InMemoryAdLiftRepository,
+)
 from modules.adlift.workers import (
     AdLiftBatchResult,
     AdLiftIncrementalityWorker,
@@ -43,7 +52,14 @@ __all__ = [
     "AdLiftIncrementalityWorker",
     "AdLiftResult",
     "AdLiftService",
+    "CausalChallengerAdapter",
+    "CausalChallengerCapability",
+    "CausalChallengerEstimate",
+    "CausalChallengerRequest",
+    "ChallengerUnavailableError",
     "ContaminationFinding",
+    "DoubleMLStyleAdapter",
+    "EconMLStyleAdapter",
     "EffectInterval",
     "EvidenceLevel",
     "InMemoryAdLiftRepository",

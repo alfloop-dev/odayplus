@@ -9,8 +9,11 @@ from modules.avm.domain import (
     DataRoom,
     DataRoomDocument,
     LensValuation,
+    LiquidityPrediction,
+    LiquidityTrainingRecord,
     NormalizedMargin,
     PriceBand,
+    SurvivalModelCapability,
     ValuationCase,
     ValuationCaseStatus,
     ValuationInput,
@@ -20,7 +23,14 @@ from modules.avm.domain import (
     normalize_margin,
     value_store,
 )
-from modules.avm.infrastructure import InMemoryAVMRepository
+from modules.avm.infrastructure import (
+    LIFELINES_ARTIFACT_SCHEMA_VERSION,
+    LIFELINES_LIQUIDITY_MODEL_VERSION,
+    InMemoryAVMRepository,
+    LifelinesLiquiditySurvivalAdapter,
+    SurvivalDependencyUnavailableError,
+    SurvivalModelNotFittedError,
+)
 from modules.avm.workers import AVMBatchResult, AVMValuationWorker, run_avm_batch_valuation
 
 __all__ = [
@@ -34,9 +44,17 @@ __all__ = [
     "DataRoom",
     "DataRoomDocument",
     "InMemoryAVMRepository",
+    "LIFELINES_ARTIFACT_SCHEMA_VERSION",
+    "LIFELINES_LIQUIDITY_MODEL_VERSION",
     "LensValuation",
+    "LifelinesLiquiditySurvivalAdapter",
+    "LiquidityPrediction",
+    "LiquidityTrainingRecord",
     "NormalizedMargin",
     "PriceBand",
+    "SurvivalDependencyUnavailableError",
+    "SurvivalModelCapability",
+    "SurvivalModelNotFittedError",
     "ValuationCase",
     "ValuationCaseStatus",
     "ValuationInput",
