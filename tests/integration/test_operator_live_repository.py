@@ -206,7 +206,7 @@ def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None
         reopened.engine.close()
 
 
-def test_create_app_injects_and_probes_postgresql_live_repository(
+def test_create_app_rejects_sqlite_bundle_relabelled_as_postgresql(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -226,16 +226,19 @@ def test_create_app_injects_and_probes_postgresql_live_repository(
         response = Response()
         readiness = _route_for(app, "/readiness").endpoint(response)
 
-        assert app.state.operator_live_repository is not None
+        assert app.state.operator_live_repository is None
+        assert response.status_code == 503
         assert readiness["details"]["persistence"][
             "production_persistence_supported"
-        ] is True
-        assert readiness["details"]["data"]["operatorRepositoryReady"] is True
-        assert readiness["details"]["data"]["operatorRepositoryProbe"]["ready"] is True
-        assert (
-            "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
-            not in readiness["details"]["data"]["blockingReasons"]
-        )
+        ] is False
+        assert readiness["details"]["data"]["operatorRepositoryReady"] is False
+        assert readiness["details"]["data"]["operatorRepositoryProbe"] is None
+        assert "SQLITE_NOT_PRODUCTION_PERSISTENCE" in readiness[
+            "details"
+        ]["data"]["blockingReasons"]
+        assert "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE" in readiness[
+            "details"
+        ]["data"]["blockingReasons"]
         assert "/api/v1/operator/seed/reset" not in app.openapi()["paths"]
         assert "/api/v1/operator/shell/tasks" in app.openapi()["paths"]
         assert "/api/v1/operator/shell/notifications" in app.openapi()["paths"]

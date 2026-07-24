@@ -121,7 +121,7 @@ else:
         provider_mode = _provider_mode_label(provider_validation)
         production_persistence_supported = (
             persistence_mode in {"postgres", "postgresql"}
-            and bool(bundle.is_durable)
+            and bool(bundle.is_production)
         )
         operator_live_repository: Any | None = None
         if require_live_data and production_persistence_supported:
@@ -553,7 +553,7 @@ else:
         store_ops_repo = store_ops_repository or bundle.store_ops_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
-        if persistence_mode in {"postgres", "postgresql"}:
+        if bundle.is_production:
             operator_document_store = PostgresDocumentStore(bundle.engine)
         elif bundle.is_durable:
             operator_document_store = SqliteDocumentStore(bundle.engine)
