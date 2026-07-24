@@ -68,11 +68,11 @@ def test_preflight_imports_every_registry_provider_adapter() -> None:
 
     assert by_name["repository:provider_adapter:listing.partner_feed"].ok is True
     assert by_name["repository:provider_adapter:geocode.primary_api"].ok is True
-    assert by_name["repository:provider_adapter:poi.commercial_api"].ok is False
+    assert by_name["repository:provider_adapter:poi.commercial_api"].ok is True
     assert "PoiCommercialApiProvider" in by_name[
         "repository:provider_adapter:poi.commercial_api"
     ].detail
-    assert by_name["repository:provider_adapter:admin_boundary.official_dataset"].ok is False
+    assert by_name["repository:provider_adapter:admin_boundary.official_dataset"].ok is True
     assert "AdminBoundaryDatasetProvider" in by_name[
         "repository:provider_adapter:admin_boundary.official_dataset"
     ].detail
