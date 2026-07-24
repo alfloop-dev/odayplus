@@ -51,6 +51,7 @@ def render(
     end = _manual_instant(manual_end)
     if end - start <= timedelta(0) or end - start > timedelta(days=1):
         raise ValueError("manual window must be positive and at most one day")
+    orders_history_start = end - timedelta(days=62)
 
     replacements = {
         "__RELEASE_SHA__": release_sha,
@@ -62,6 +63,10 @@ def render(
         "__POSTGRES_DATABASE__": postgres_database,
         "__MANUAL_START__": start.isoformat().replace("+00:00", "Z"),
         "__MANUAL_END__": end.isoformat().replace("+00:00", "Z"),
+        "__ORDERS_HISTORY_START__": orders_history_start.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "__ORDERS_HISTORY_END__": end.isoformat().replace("+00:00", "Z"),
     }
     output = TEMPLATE.read_text(encoding="utf-8")
     for token, value in replacements.items():

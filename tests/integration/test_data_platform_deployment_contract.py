@@ -24,6 +24,14 @@ def _render_module():
     return module
 
 
+def _runtime_module():
+    spec = importlib.util.spec_from_file_location("data_platform_runtime", RUNTIME)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _documents() -> list[dict]:
     rendered = _render_module().render(
         release_sha=RELEASE_SHA,
@@ -67,6 +75,7 @@ def test_manifest_has_migration_then_bounded_and_manual_workloads() -> None:
     assert [(doc["kind"], doc["metadata"]["name"]) for doc in documents] == [
         ("Job", f"oday-data-platform-migrate-{RELEASE_SHA[:12]}"),
         ("CronJob", "oday-data-platform-bounded-daily"),
+        ("Job", f"oday-data-platform-orders-history-{RELEASE_SHA[:12]}"),
         ("Job", f"oday-data-platform-trade-manual-{RELEASE_SHA[:12]}"),
         ("Job", f"oday-data-platform-device-log-manual-{RELEASE_SHA[:12]}"),
     ]
@@ -78,6 +87,7 @@ def test_manifest_has_migration_then_bounded_and_manual_workloads() -> None:
     ] == "true"
     assert documents[2]["spec"]["suspend"] is True
     assert documents[3]["spec"]["suspend"] is True
+    assert documents[4]["spec"]["suspend"] is True
 
 
 def test_all_workloads_share_immutable_release_image_and_cloud_sql_sidecar() -> None:
@@ -200,8 +210,39 @@ def test_committed_status_mapping_covers_observed_scheduled_dimension_codes() ->
     assert "trade" not in payload["mappings"]
 
 
+def test_orders_history_is_receipt_gated_bounded_and_real(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _documents()[2]
+    assert history["metadata"]["annotations"]["oday.plus/manual-only"] == "true"
+    assert history["metadata"]["annotations"]["oday.plus/hard-limit"] == (
+        "62-days,one-day-partitions,max-250000-per-partition"
+    )
+    container = _main_container(history)
+    assert container["args"] == ["orders-history"]
+    env = _environment(container)
+    assert env["ODP_ORDERS_HISTORY_START"]["value"] == "2026-05-23T00:00:00Z"
+    assert env["ODP_ORDERS_HISTORY_END"]["value"] == "2026-07-24T00:00:00Z"
+    assert env["ODP_DATA_MONGO_DATABASE"]["value"] == "fongniao_prod"
+
+    runtime = _runtime_module()
+    monkeypatch.setenv("ODP_ORDERS_HISTORY_START", "2026-05-23T00:00:00Z")
+    monkeypatch.setenv("ODP_ORDERS_HISTORY_END", "2026-07-24T00:00:00Z")
+    command = runtime._backfill_command("orders-history")
+    assert command.count("--kind") == 1
+    assert command[command.index("--kind") + 1] == "orders"
+    assert command[command.index("--max-partitions") + 1] == "62"
+    assert command[command.index("--partition-days") + 1] == "1"
+    assert "--allow-trade" not in command
+    assert "--allow-device-log" not in command
+
+    monkeypatch.setenv("ODP_ORDERS_HISTORY_START", "2026-05-22T00:00:00Z")
+    with pytest.raises(runtime.DeploymentContractError, match="<= 62 days"):
+        runtime._backfill_command("orders-history")
+
+
 def test_trade_and_device_log_are_manual_one_day_hard_limited_jobs() -> None:
-    trade, device_log = _documents()[2:]
+    trade, device_log = _documents()[3:]
     for document, command in ((trade, "trade"), (device_log, "device-log")):
         assert document["metadata"]["annotations"]["oday.plus/manual-only"] == "true"
         assert document["metadata"]["annotations"]["oday.plus/hard-limit"] == (

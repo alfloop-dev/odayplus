@@ -52,6 +52,7 @@ SCHEDULED_KINDS = (
     "ai_consumer_kmeans_v1",
 )
 MANUAL_HARD_LIMIT = 100_000
+ORDERS_HISTORY_MAX_DAYS = 62
 
 
 class DeploymentContractError(RuntimeError):
@@ -351,6 +352,30 @@ def _manual_window() -> tuple[datetime, datetime]:
     return start, end
 
 
+def _orders_history_window() -> tuple[datetime, datetime]:
+    def parse(name: str) -> datetime:
+        value = _required(name).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            raise DeploymentContractError(f"{name} must include a timezone")
+        return parsed.astimezone(UTC)
+
+    start = parse("ODP_ORDERS_HISTORY_START")
+    end = parse("ODP_ORDERS_HISTORY_END")
+    duration = end - start
+    if duration <= timedelta(0) or duration > timedelta(days=ORDERS_HISTORY_MAX_DAYS):
+        raise DeploymentContractError(
+            f"Orders history window must be <= {ORDERS_HISTORY_MAX_DAYS} days"
+        )
+    if any(
+        value != 0
+        for instant in (start, end)
+        for value in (instant.hour, instant.minute, instant.second, instant.microsecond)
+    ):
+        raise DeploymentContractError("Orders history bounds must be UTC day boundaries")
+    return start, end
+
+
 def _backfill_command(mode: str) -> list[str]:
     if mode == "scheduled":
         end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -358,11 +383,19 @@ def _backfill_command(mode: str) -> list[str]:
         kinds = SCHEDULED_KINDS
         limit = 250_000
         extra: list[str] = []
+        max_partitions = 1
+    elif mode == "orders-history":
+        start, end = _orders_history_window()
+        kinds = ("orders",)
+        limit = 250_000
+        extra = []
+        max_partitions = (end - start).days
     elif mode in {"trade", "device-log"}:
         start, end = _manual_window()
         kinds = ("trade",) if mode == "trade" else ("device_log",)
         limit = MANUAL_HARD_LIMIT
         extra = ["--allow-trade"] if mode == "trade" else ["--allow-device-log"]
+        max_partitions = 1
     else:
         raise DeploymentContractError(f"Unsupported backfill mode: {mode}")
 
@@ -382,7 +415,7 @@ def _backfill_command(mode: str) -> list[str]:
             "--partition-days",
             "1",
             "--max-partitions",
-            "1",
+            str(max_partitions),
             "--max-records",
             str(limit),
             *extra,
@@ -437,7 +470,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=("migrate", "scheduled", "trade", "device-log"),
+        choices=("migrate", "scheduled", "orders-history", "trade", "device-log"),
     )
     args = parser.parse_args()
     try:
