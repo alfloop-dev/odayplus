@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -508,6 +509,11 @@ class DurableLearningHubRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def storage_path(self) -> Path:
+        """Stable location used by colocated durable OSS service adapters."""
+        return self._store.engine.path
 
     # -- datasets ---------------------------------------------------------
 

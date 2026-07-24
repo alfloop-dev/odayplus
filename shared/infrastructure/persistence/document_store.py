@@ -31,6 +31,10 @@ class SqliteDocumentStore:
     def __init__(self, engine: SqliteEngine) -> None:
         self._engine = engine
 
+    @property
+    def engine(self) -> SqliteEngine:
+        return self._engine
+
     # -- writes -----------------------------------------------------------
 
     def put(

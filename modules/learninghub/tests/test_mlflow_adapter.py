@@ -179,3 +179,31 @@ def test_unknown_domain_version_and_alias_are_reported_without_repository_fallba
         )
         is None
     )
+
+
+def test_default_in_memory_adapters_use_isolated_real_mlflow_stores(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    first = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+    second = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+
+    first_model = _model_version(tmp_path / "first")
+    second_model = _model_version(tmp_path / "second")
+    first.register_model_version(first_model)
+    second.register_model_version(second_model)
+
+    assert first.tracking_uri
+    assert second.tracking_uri
+    assert first.tracking_uri != second.tracking_uri
+    assert isinstance(first.client, MlflowClient)
+    assert isinstance(second.client, MlflowClient)
+    assert first.get_by_alias(
+        model_name=first_model.model_name,
+        alias=ModelAlias.CHALLENGER,
+    )
+    assert second.get_by_alias(
+        model_name=second_model.model_name,
+        alias=ModelAlias.CHALLENGER,
+    )

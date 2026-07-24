@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 
-from .repositories import LearningHubRepository
+from .repositories import InMemoryLearningHubRepository, LearningHubRepository
 
 if TYPE_CHECKING:
     from mlflow.entities.model_registry import ModelVersion as MlflowModelVersion
@@ -42,12 +45,38 @@ class MlflowRegistryAdapter:
     tracking_uri: str | None = None
     experiment_name: str = "oday-plus-learninghub"
     client: MlflowClient | None = field(default=None, repr=False)
+    _local_tracking_dir: TemporaryDirectory[str] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.client is None:
             from mlflow.tracking import MlflowClient
 
-            self.client = MlflowClient(tracking_uri=self.tracking_uri)
+            configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
+            if configured_uri is None:
+                storage_path = getattr(self.repository, "storage_path", None)
+                if storage_path is not None:
+                    repository_database = Path(storage_path)
+                    database = repository_database.with_name(
+                        f"{repository_database.stem}.mlflow.sqlite3"
+                    )
+                elif isinstance(self.repository, InMemoryLearningHubRepository):
+                    self._local_tracking_dir = TemporaryDirectory(
+                        prefix="oday-plus-mlflow-"
+                    )
+                    database = Path(self._local_tracking_dir.name) / "mlflow.db"
+                else:
+                    raise RuntimeError(
+                        "MLFLOW_TRACKING_URI is required when the Learning Hub "
+                        "repository has no stable storage_path"
+                    )
+                configured_uri = f"sqlite:///{database}"
+
+            self.tracking_uri = configured_uri
+            self.client = MlflowClient(tracking_uri=configured_uri)
 
     def register_model_version(self, model_version: ModelVersion) -> ModelVersion:
         client = self._require_client()
