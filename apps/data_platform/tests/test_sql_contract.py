@@ -139,3 +139,27 @@ def test_ai_and_domain_upsert_bindings_match_control_schema(
         ),
     )
     assert len(connection.statements) == 3
+
+
+def test_place_upsert_casts_nullable_geography_parameters() -> None:
+    connection = _CaptureConnection()
+    PsycopgCanonicalStore._upsert_place(
+        connection,
+        SimpleNamespace(
+            address_id=UUID("00000000-0000-4000-8000-000000000010"),
+            raw_address="台北市測試路 1 號",
+            latitude=None,
+            longitude=None,
+            store_id=UUID("00000000-0000-4000-8000-000000000011"),
+            tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
+            brand_id=UUID("00000000-0000-4000-8000-000000000002"),
+            source_id="place-1",
+            store_name="測試門市",
+            store_status="open",
+            store_format_code="source_type_1",
+            effective_from="2026-07-23T00:00:00Z",
+        ),
+    )
+    geography_sql = connection.statements[0][0]
+    assert geography_sql.count("::double precision") == 6
+    assert "ST_MakePoint" in geography_sql

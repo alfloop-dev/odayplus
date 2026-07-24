@@ -512,11 +512,22 @@ class PsycopgCanonicalStore:
                 ) VALUES (
                     %s, %s, %s, %s, %s,
                     CASE
-                        WHEN %s IS NULL OR %s IS NULL THEN NULL
-                        ELSE ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+                        WHEN %s::double precision IS NULL
+                          OR %s::double precision IS NULL THEN NULL
+                        ELSE ST_SetSRID(
+                            ST_MakePoint(
+                                %s::double precision,
+                                %s::double precision
+                            ),
+                            4326
+                        )
                     END,
                     'source',
-                    CASE WHEN %s IS NULL OR %s IS NULL THEN NULL ELSE 1.00 END,
+                    CASE
+                        WHEN %s::double precision IS NULL
+                          OR %s::double precision IS NULL THEN NULL
+                        ELSE 1.00
+                    END,
                     FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (address_id) DO UPDATE SET
