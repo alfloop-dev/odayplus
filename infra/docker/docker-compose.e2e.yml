@@ -7,6 +7,7 @@ services:
     environment:
       CI: "1"
       ODP_ENV: e2e
+      ODP_PRODUCT_MODE: poc
       ODP_PERSISTENCE: durable
       ODP_DB_PATH: /data/product-e2e.sqlite3
     ports:
@@ -28,6 +29,8 @@ services:
         ODP_API_BASE_URL: http://api:8000
         ODP_DATA_BINDING_MODE: fixture
         ODP_PRODUCT_MODE: poc
+        ODP_DEPLOY_ENV: e2e
+        ODP_E2E_MODE: "true"
     image: odayplus/web:e2e
     environment:
       NODE_ENV: production
@@ -36,7 +39,11 @@ services:
       ODP_API_BASE_URL: http://api:8000
       ODP_DATA_BINDING_MODE: fixture
       ODP_PRODUCT_MODE: poc
+      ODP_DEPLOY_ENV: e2e
+      ODP_E2E_MODE: "true"
       NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+      NEXT_PUBLIC_ODP_DEPLOY_ENV: e2e
+      NEXT_PUBLIC_ODP_E2E_MODE: "true"
       NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
       NEXT_PUBLIC_API_URL: http://localhost:${ODP_E2E_API_PORT:-8099}
     ports:

@@ -127,8 +127,9 @@ class DurableAuditLog:
             else:
                 clauses.append("json_extract(metadata_json, '$.tenant_id') = ?")
             params.append(tenant_id)
+        # Clause names are fixed above; caller values remain bound parameters.
         rows = self._engine.query(
-            "SELECT * FROM durable_audit_events WHERE "
+            "SELECT * FROM durable_audit_events WHERE "  # nosec B608
             + " AND ".join(clauses)
             + " ORDER BY seq",
             tuple(params),

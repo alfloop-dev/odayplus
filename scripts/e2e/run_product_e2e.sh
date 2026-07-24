@@ -39,6 +39,7 @@ python3 scripts/e2e/seed_product_e2e_data.py \
   --wait \
   --api-url "http://127.0.0.1:${API_PORT}" \
   --source-stub-url "http://127.0.0.1:${SOURCE_STUB_PORT}" \
+  --web-url "http://127.0.0.1:${WEB_PORT}" \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
 
 set +e

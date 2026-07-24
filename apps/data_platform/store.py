@@ -257,7 +257,7 @@ class PsycopgCanonicalStore:
                     status = 'RUNNING',
                     error_type = NULL,
                     error_message = NULL
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (run_id, source_kind.value, partition_key, resumed_from, started_at),
             )
 
@@ -456,7 +456,7 @@ class PsycopgCanonicalStore:
                 reason_detail = EXCLUDED.reason_detail,
                 quarantined_at = CURRENT_TIMESTAMP,
                 resolved_at = NULL
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 envelope.source_kind.value,
@@ -477,7 +477,7 @@ class PsycopgCanonicalStore:
             UPDATE {self._schema}.quarantined_records
             SET resolved_at = CURRENT_TIMESTAMP
             WHERE source_snapshot_id = %s AND resolved_at IS NULL
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (envelope.source_snapshot_id,),
         )
 
@@ -627,7 +627,7 @@ class PsycopgCanonicalStore:
                 longitude = EXCLUDED.longitude,
                 run_id = EXCLUDED.run_id,
                 observed_at = EXCLUDED.observed_at
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -679,7 +679,7 @@ class PsycopgCanonicalStore:
             WHERE EXCLUDED.authority_rank <=
                   {self._schema}.transaction_authority.authority_rank
             RETURNING source_kind, authority_rank
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 projection.transaction_id,
                 projection.source_id,
@@ -706,7 +706,7 @@ class PsycopgCanonicalStore:
                 SELECT source_kind, authority_rank
                 FROM {self._schema}.transaction_authority
                 WHERE transaction_id = %s
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (projection.transaction_id,),
             ).fetchone()
             raise SourceContractError(
@@ -809,7 +809,7 @@ class PsycopgCanonicalStore:
                 gross_amount = EXCLUDED.gross_amount,
                 transaction_count = EXCLUDED.transaction_count,
                 gateway = EXCLUDED.gateway
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -844,7 +844,7 @@ class PsycopgCanonicalStore:
                 predicted_value = EXCLUDED.predicted_value,
                 source_freshness_at = EXCLUDED.source_freshness_at,
                 observed_at = EXCLUDED.observed_at
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -876,7 +876,7 @@ class PsycopgCanonicalStore:
                 input_payload = EXCLUDED.input_payload,
                 source_freshness_at = EXCLUDED.source_freshness_at,
                 observed_at = EXCLUDED.observed_at
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -912,7 +912,7 @@ class PsycopgCanonicalStore:
                 segment_labels = EXCLUDED.segment_labels,
                 source_freshness_at = EXCLUDED.source_freshness_at,
                 observed_at = EXCLUDED.observed_at
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -973,7 +973,7 @@ class PsycopgCanonicalStore:
                 observation_time = EXCLUDED.observation_time,
                 source_freshness_at = EXCLUDED.source_freshness_at,
                 run_id = EXCLUDED.run_id
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 projection.source_id,
@@ -1008,7 +1008,7 @@ class PsycopgCanonicalStore:
                 tenant_id = EXCLUDED.tenant_id,
                 content_sha256 = EXCLUDED.content_sha256,
                 projected_at = CURRENT_TIMESTAMP
-            """,
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
                 envelope.source_kind.value,
@@ -1028,7 +1028,7 @@ class PsycopgCanonicalStore:
                 SELECT source_cursor
                 FROM {self._schema}.checkpoints
                 WHERE source_kind = %s AND partition_key = %s
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (source_kind.value, partition_key),
             ).fetchone()
         return None if row is None else str(row[0])
@@ -1054,7 +1054,7 @@ class PsycopgCanonicalStore:
                     run_id = EXCLUDED.run_id,
                     processed_count = EXCLUDED.processed_count,
                     updated_at = CURRENT_TIMESTAMP
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (
                     source_kind.value,
                     partition_key,
@@ -1092,7 +1092,7 @@ class PsycopgCanonicalStore:
                     SELECT source_snapshot_id::text, content_sha256
                     FROM {raw_relation}
                     WHERE run_id = %s
-                    """,
+                    """,  # nosec B608 -- SourceKind and schema identifiers are validated.
                     (run_id,),
                 ).fetchall()
             canonical_rows = connection.execute(
@@ -1100,7 +1100,7 @@ class PsycopgCanonicalStore:
                 SELECT DISTINCT source_snapshot_id::text, content_sha256
                 FROM {self._schema}.canonical_lineage
                 WHERE run_id = %s AND source_kind = %s
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (run_id, source_kind.value),
             ).fetchall()
             quarantine_rows = connection.execute(
@@ -1109,7 +1109,7 @@ class PsycopgCanonicalStore:
                 FROM {self._schema}.quarantined_records
                 WHERE run_id = %s AND source_kind = %s AND resolved_at IS NULL
                 GROUP BY reason_code
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (run_id, source_kind.value),
             ).fetchall()
         raw_checksum = aggregate_checksum([f"{row[0]}:{row[1]}" for row in raw_rows])
@@ -1155,7 +1155,7 @@ class PsycopgCanonicalStore:
                     canonical_checksum = %s,
                     finished_at = %s
                 WHERE run_id = %s
-                """,
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (
                     status,
                     final_cursor,
@@ -1190,7 +1190,7 @@ class PsycopgCanonicalStore:
                         error_message = %s,
                         finished_at = %s
                     WHERE run_id = %s
-                    """,
+                    """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                     (type(error).__name__, str(error), datetime.now(UTC), run_id),
                 )
                 connection.execute(
@@ -1199,7 +1199,7 @@ class PsycopgCanonicalStore:
                         failure_id, run_id, source_kind, partition_key,
                         source_snapshot_ids, error_type, error_message, retryable
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
+                    """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                     (
                         uuid4(),
                         run_id,

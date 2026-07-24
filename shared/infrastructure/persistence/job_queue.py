@@ -43,10 +43,11 @@ class DurableJobQueue:
                         " AND json_extract(payload_json, '$.tenant_id') = ?"
                     )
                 params.append(tenant_id)
+            # tenant_clause is one of two fixed SQL fragments; the value is bound.
             row = self._engine.query_one(
                 "SELECT COUNT(*) as count FROM durable_jobs "
                 "WHERE (status = ? OR status = ?)"
-                + tenant_clause,
+                + tenant_clause,  # nosec B608
                 tuple(params),
             )
             return row["count"] if row else 0

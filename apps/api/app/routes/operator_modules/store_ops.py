@@ -59,6 +59,7 @@ def create_operator_store_ops_router(
 ) -> APIRouter:
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
+        OPERATOR_TENANT_ID,
         build_engine,
         require_operator_permission,
     )
@@ -66,11 +67,20 @@ def create_operator_store_ops_router(
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
-    read_guard = require_operator_permission(
-        OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
-    )
-    write_guard = require_operator_permission("intervention", Action.CREATE, engine=authz_engine)
     live_required = _live_data_required(require_live_data)
+    guard_tenant_id = None if live_required else OPERATOR_TENANT_ID
+    read_guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.VIEW,
+        tenant_id=guard_tenant_id,
+        engine=authz_engine,
+    )
+    write_guard = require_operator_permission(
+        "intervention",
+        Action.CREATE,
+        tenant_id=guard_tenant_id,
+        engine=authz_engine,
+    )
     service = StoreOpsService(
         repository=repository,
         audit_log=active_audit_log,

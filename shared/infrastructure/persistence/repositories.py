@@ -1014,6 +1014,7 @@ class DurableAddressLocationRepository:
             if postgres
             else (address.raw_address,)
         )
+        # geom_expression is selected from two fixed dialect-specific fragments.
         self._engine.execute(
             "INSERT INTO address_locations ("
             "  address_id, raw_address, normalized_address, city, district, village, road, "
@@ -1036,7 +1037,7 @@ class DurableAddressLocationRepository:
             "  h3_res_9 = excluded.h3_res_9, "
             "  h3_res_10 = excluded.h3_res_10, "
             "  manual_override_flag = excluded.manual_override_flag, "
-            "  updated_at = CURRENT_TIMESTAMP",
+            "  updated_at = CURRENT_TIMESTAMP",  # nosec B608
             (
                 address.address_id,
                 address.raw_address,
@@ -1239,8 +1240,9 @@ class DurableStoreRepository:
         _append_in_filter(clauses, params, "region_code", region_codes)
         _append_in_filter(clauses, params, "store_id", store_ids)
         where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # where_clause contains only fixed column predicates from this method.
         rows = self._engine.query(
-            f"SELECT * FROM stores{where_clause} ORDER BY store_id",
+            f"SELECT * FROM stores{where_clause} ORDER BY store_id",  # nosec B608
             tuple(params),
         )
         return [
@@ -1523,10 +1525,11 @@ class DurableTransactionRepository:
             store_ids,
         )
         where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # Both expressions contain only fixed table names and bound predicates.
         rows = self._engine.query(
             "SELECT transaction_row.* FROM "
             f"{table_expression}{where_clause} "
-            "ORDER BY transaction_row.event_time, transaction_row.transaction_id",
+            "ORDER BY transaction_row.event_time, transaction_row.transaction_id",  # nosec B608
             tuple(params),
         )
         return [

@@ -24,6 +24,8 @@ def main() -> int:
         "apps",
         "shared",
         "solver",
+        "-x",
+        ".venv,apps/data_platform/.venv",
         "-ll",
         "--skip",
         "B301,B310,B324,B104",

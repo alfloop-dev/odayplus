@@ -83,7 +83,7 @@ describe("OIDC authorization-code + PKCE", () => {
           expect(form.get("code")).toBe("authorization-code");
           expect(form.get("code_verifier")).toBe(transaction.codeVerifier);
           return Response.json({
-            access_token: "real-access-token",
+            access_token: "unit-token",
             token_type: "Bearer",
             expires_in: 300,
             id_token: idToken,
@@ -108,7 +108,7 @@ describe("OIDC authorization-code + PKCE", () => {
       fetchImpl: fetchMock,
     });
 
-    expect(session.accessToken).toBe("real-access-token");
+    expect(session.accessToken).toBe("unit-token");
     expect(session.subject).toBe("real-user-123");
     expect(session.expiresAt).toBe(now + 300);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -135,4 +135,3 @@ describe("OIDC authorization-code + PKCE", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
-

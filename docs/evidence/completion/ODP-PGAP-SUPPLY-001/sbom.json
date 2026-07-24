@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-44109a3d6899131a7dd9cadc28dac248",
+  "serialNumber": "urn:uuid:sha256-879b76b3a0ef49f0dd4d0ada81a761d2",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-24T12:07:52.120752+00:00",
+    "timestamp": "2026-07-24T19:59:57.104075+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "c9a363743f980f5b64d55a5c1d7e1269aedb2069"
+        "value": "4b31709b7d0f0ba410a22ae05e1ee8bc74eba5fb"
       },
       {
         "name": "sbom-hash",
-        "value": "44109a3d6899131a7dd9cadc28dac24828c56be1acc6db6af740bd6af151d3ce"
+        "value": "879b76b3a0ef49f0dd4d0ada81a761d2711dda41ae3a4cc509deb104c9848f3d"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:0a411ad0289e4e22a976be25b83b7e2bb881d3ddc6a89d68d810ccad28d7dd9b"
+        "value": "sha256:087574a57a3c91f987ec7cb604aefa79fe83569b584f0fbb6752a50d6cb3146a"
       }
     ]
   },
@@ -4094,6 +4094,13 @@
       "bom-ref": "pkg:pypi/distro@1.9.0"
     },
     {
+      "name": "dlt",
+      "version": "1.29.1",
+      "type": "library",
+      "purl": "pkg:pypi/dlt@1.29.1",
+      "bom-ref": "pkg:pypi/dlt@1.29.1"
+    },
+    {
       "name": "docker",
       "version": "7.2.0",
       "type": "library",
@@ -4213,11 +4220,60 @@
       "bom-ref": "pkg:pypi/gitpython@3.1.55"
     },
     {
+      "name": "giturlparse",
+      "version": "0.15.0",
+      "type": "library",
+      "purl": "pkg:pypi/giturlparse@0.15.0",
+      "bom-ref": "pkg:pypi/giturlparse@0.15.0"
+    },
+    {
+      "name": "google-api-core",
+      "version": "2.33.0",
+      "type": "library",
+      "purl": "pkg:pypi/google-api-core@2.33.0",
+      "bom-ref": "pkg:pypi/google-api-core@2.33.0"
+    },
+    {
       "name": "google-auth",
       "version": "2.56.2",
       "type": "library",
       "purl": "pkg:pypi/google-auth@2.56.2",
       "bom-ref": "pkg:pypi/google-auth@2.56.2"
+    },
+    {
+      "name": "google-cloud-core",
+      "version": "2.6.0",
+      "type": "library",
+      "purl": "pkg:pypi/google-cloud-core@2.6.0",
+      "bom-ref": "pkg:pypi/google-cloud-core@2.6.0"
+    },
+    {
+      "name": "google-cloud-storage",
+      "version": "3.13.0",
+      "type": "library",
+      "purl": "pkg:pypi/google-cloud-storage@3.13.0",
+      "bom-ref": "pkg:pypi/google-cloud-storage@3.13.0"
+    },
+    {
+      "name": "google-crc32c",
+      "version": "1.8.0",
+      "type": "library",
+      "purl": "pkg:pypi/google-crc32c@1.8.0",
+      "bom-ref": "pkg:pypi/google-crc32c@1.8.0"
+    },
+    {
+      "name": "google-resumable-media",
+      "version": "2.10.0",
+      "type": "library",
+      "purl": "pkg:pypi/google-resumable-media@2.10.0",
+      "bom-ref": "pkg:pypi/google-resumable-media@2.10.0"
+    },
+    {
+      "name": "googleapis-common-protos",
+      "version": "1.75.0",
+      "type": "library",
+      "purl": "pkg:pypi/googleapis-common-protos@1.75.0",
+      "bom-ref": "pkg:pypi/googleapis-common-protos@1.75.0"
     },
     {
       "name": "graphemeu",
@@ -4344,6 +4400,13 @@
       "type": "library",
       "purl": "pkg:pypi/humanfriendly@10.0",
       "bom-ref": "pkg:pypi/humanfriendly@10.0"
+    },
+    {
+      "name": "humanize",
+      "version": "4.16.0",
+      "type": "library",
+      "purl": "pkg:pypi/humanize@4.16.0",
+      "bom-ref": "pkg:pypi/humanize@4.16.0"
     },
     {
       "name": "idna",
@@ -4668,6 +4731,13 @@
       "bom-ref": "pkg:pypi/optuna@4.9.0"
     },
     {
+      "name": "orjson",
+      "version": "3.11.9",
+      "type": "library",
+      "purl": "pkg:pypi/orjson@3.11.9",
+      "bom-ref": "pkg:pypi/orjson@3.11.9"
+    },
+    {
       "name": "ortools",
       "version": "9.15.6755",
       "type": "library",
@@ -4710,11 +4780,25 @@
       "bom-ref": "pkg:pypi/pathlib-abc@0.5.2"
     },
     {
+      "name": "pathvalidate",
+      "version": "3.3.1",
+      "type": "library",
+      "purl": "pkg:pypi/pathvalidate@3.3.1",
+      "bom-ref": "pkg:pypi/pathvalidate@3.3.1"
+    },
+    {
       "name": "patsy",
       "version": "1.0.2",
       "type": "library",
       "purl": "pkg:pypi/patsy@1.0.2",
       "bom-ref": "pkg:pypi/patsy@1.0.2"
+    },
+    {
+      "name": "pendulum",
+      "version": "3.2.0",
+      "type": "library",
+      "purl": "pkg:pypi/pendulum@3.2.0",
+      "bom-ref": "pkg:pypi/pendulum@3.2.0"
     },
     {
       "name": "pillow",
@@ -4766,6 +4850,13 @@
       "bom-ref": "pkg:pypi/propcache@0.5.2"
     },
     {
+      "name": "proto-plus",
+      "version": "1.28.2",
+      "type": "library",
+      "purl": "pkg:pypi/proto-plus@1.28.2",
+      "bom-ref": "pkg:pypi/proto-plus@1.28.2"
+    },
+    {
       "name": "protobuf",
       "version": "6.33.6",
       "type": "library",
@@ -4799,6 +4890,13 @@
       "type": "library",
       "purl": "pkg:pypi/psycopg-pool@3.3.1",
       "bom-ref": "pkg:pypi/psycopg-pool@3.3.1"
+    },
+    {
+      "name": "psycopg2-binary",
+      "version": "2.9.12",
+      "type": "library",
+      "purl": "pkg:pypi/psycopg2-binary@2.9.12",
+      "bom-ref": "pkg:pypi/psycopg2-binary@2.9.12"
     },
     {
       "name": "pyarrow",
@@ -4955,6 +5053,13 @@
       "bom-ref": "pkg:pypi/requests@2.34.2"
     },
     {
+      "name": "requirements-parser",
+      "version": "0.13.1",
+      "type": "library",
+      "purl": "pkg:pypi/requirements-parser@0.13.1",
+      "bom-ref": "pkg:pypi/requirements-parser@0.13.1"
+    },
+    {
       "name": "rfc3339-validator",
       "version": "0.1.4",
       "type": "library",
@@ -4967,6 +5072,13 @@
       "type": "library",
       "purl": "pkg:pypi/rich@15.0.0",
       "bom-ref": "pkg:pypi/rich@15.0.0"
+    },
+    {
+      "name": "rich-argparse",
+      "version": "1.8.0",
+      "type": "library",
+      "purl": "pkg:pypi/rich-argparse@1.8.0",
+      "bom-ref": "pkg:pypi/rich-argparse@1.8.0"
     },
     {
       "name": "rich-click",
@@ -5018,6 +5130,13 @@
       "bom-ref": "pkg:pypi/scs@3.2.11"
     },
     {
+      "name": "semver",
+      "version": "3.0.4",
+      "type": "library",
+      "purl": "pkg:pypi/semver@3.0.4",
+      "bom-ref": "pkg:pypi/semver@3.0.4"
+    },
+    {
       "name": "setuptools",
       "version": "83.0.0",
       "type": "library",
@@ -5030,6 +5149,13 @@
       "type": "library",
       "purl": "pkg:pypi/shellingham@1.5.4",
       "bom-ref": "pkg:pypi/shellingham@1.5.4"
+    },
+    {
+      "name": "simplejson",
+      "version": "4.1.1",
+      "type": "library",
+      "purl": "pkg:pypi/simplejson@4.1.1",
+      "bom-ref": "pkg:pypi/simplejson@4.1.1"
     },
     {
       "name": "six",
@@ -5072,6 +5198,13 @@
       "type": "library",
       "purl": "pkg:pypi/sqlalchemy@2.0.51",
       "bom-ref": "pkg:pypi/sqlalchemy@2.0.51"
+    },
+    {
+      "name": "sqlglot",
+      "version": "30.13.0",
+      "type": "library",
+      "purl": "pkg:pypi/sqlglot@30.13.0",
+      "bom-ref": "pkg:pypi/sqlglot@30.13.0"
     },
     {
       "name": "sqlparse",
@@ -5296,6 +5429,13 @@
       "type": "library",
       "purl": "pkg:pypi/werkzeug@3.1.8",
       "bom-ref": "pkg:pypi/werkzeug@3.1.8"
+    },
+    {
+      "name": "win-precise-time",
+      "version": "1.4.2",
+      "type": "library",
+      "purl": "pkg:pypi/win-precise-time@1.4.2",
+      "bom-ref": "pkg:pypi/win-precise-time@1.4.2"
     },
     {
       "name": "wrapt",

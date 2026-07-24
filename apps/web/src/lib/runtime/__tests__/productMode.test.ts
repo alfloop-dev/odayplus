@@ -34,6 +34,68 @@ describe("production data mode", () => {
     expect(resolveProductMode(environment)).toBe("poc");
   });
 
+  it("allows the explicit isolated E2E runtime for a production Next build", () => {
+    expect(
+      resolveProductMode({
+        NODE_ENV: "production",
+        ODP_DEPLOY_ENV: "e2e",
+        ODP_PRODUCT_MODE: "poc",
+        ODP_E2E_MODE: "true",
+      }),
+    ).toBe("poc");
+  });
+
+  it("allows the explicit isolated E2E runtime in the browser bundle", () => {
+    expect(
+      resolveProductMode({
+        NODE_ENV: "production",
+        NEXT_PUBLIC_ODP_DEPLOY_ENV: "e2e",
+        NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc",
+        NEXT_PUBLIC_ODP_E2E_MODE: "true",
+      }),
+    ).toBe("poc");
+  });
+
+  it("does not enable E2E mode without every isolated-image marker", () => {
+    expect(
+      resolveProductMode({
+        NODE_ENV: "production",
+        ODP_DEPLOY_ENV: "e2e",
+        ODP_PRODUCT_MODE: "poc",
+      }),
+    ).toBe("production");
+  });
+
+  it.each([
+    {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_ODP_DEPLOY_ENV: "production",
+      NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc",
+      NEXT_PUBLIC_ODP_E2E_MODE: "true",
+    },
+    {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_ODP_DEPLOY_ENV: "e2e",
+      NEXT_PUBLIC_ODP_PRODUCT_MODE: "production",
+      NEXT_PUBLIC_ODP_E2E_MODE: "true",
+    },
+    {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_ODP_DEPLOY_ENV: "e2e",
+      NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc",
+      NEXT_PUBLIC_ODP_E2E_MODE: "false",
+    },
+    {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_ODP_DEPLOY_ENV: "e2e",
+      NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc",
+      NEXT_PUBLIC_ODP_E2E_MODE: "true",
+      NEXT_PUBLIC_PRODUCTION_MODE: "true",
+    },
+  ])("does not let a partial or production marker set enable E2E fixtures: %j", (environment) => {
+    expect(resolveProductMode(environment)).toBe("production");
+  });
+
   it("does not let a public POC flag downgrade an unspecified runtime", () => {
     expect(
       resolveProductMode({
