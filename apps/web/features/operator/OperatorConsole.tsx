@@ -55,18 +55,10 @@ import {
   type ShellTarget,
 } from "./TodayWorkspace";
 import type { Issue } from "./types";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
-
-const rolePermissionHeaders: Record<OperatorRoleId, string> = {
-  "cs-lead": "operations_manager",
-  "expansion-manager": "expansion_user,site_reviewer",
-  "field-lead": "regional_supervisor",
-  "marketing-manager": "marketing_manager",
-  "ops-lead": "operations_manager",
-  "pm-audit": "auditor",
-};
 
 const notifications = [
   {
@@ -349,12 +341,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
 
   const getSecurityHeaders = (roleId: OperatorRoleId) => {
-    return {
-      "X-Operator-Role": roleId,
-      "X-Roles": rolePermissionHeaders[roleId],
-      "X-Subject-Id": `operator-${roleId}`,
-      "X-Tenant-Id": "tenant-a",
-    };
+    return operatorSecurityHeaders(roleId);
   };
 
   const applyOperatorEnvelope = (payload: unknown) => {
@@ -556,15 +543,13 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   useEffect(() => {
     if (activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
     const client = createOdpApiClient({
-      env: {
-        ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
-        NEXT_PUBLIC_ODP_API_BASE_URL: process.env.NEXT_PUBLIC_ODP_API_BASE_URL,
-      },
+      baseUrl: window.location.origin,
+      defaultHeaders: getSecurityHeaders(activeRoleId),
     });
     loadNetworkFindAreasBindings(client)
       .then((bindings) => setLiveNetworkBindings(bindings))
       .catch(() => undefined);
-  }, [activeWorkspaceId, liveNetworkBindings]);
+  }, [activeRoleId, activeWorkspaceId, liveNetworkBindings]);
 
   useEffect(() => {
     if (!toast) return undefined;

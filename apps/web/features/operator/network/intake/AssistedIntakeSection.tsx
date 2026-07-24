@@ -66,6 +66,36 @@ export function AssistedIntakeSection({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [sessionSubjectId, setSessionSubjectId] = useState<string | undefined>(
+    activeSubjectId,
+  );
+
+  useEffect(() => {
+    if (activeSubjectId) {
+      setSessionSubjectId(activeSubjectId);
+      return;
+    }
+    if (process.env.NODE_ENV !== "production") return;
+
+    let cancelled = false;
+    void fetch("/auth/session", {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as { subject?: string };
+      })
+      .then((payload) => {
+        if (!cancelled && payload?.subject) {
+          setSessionSubjectId(payload.subject);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSubjectId]);
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
 
@@ -120,8 +150,8 @@ export function AssistedIntakeSection({
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
-    () => buildIntakeClient(activeRoleId, activeSubjectId),
-    [activeRoleId, activeSubjectId],
+    () => buildIntakeClient(activeRoleId, sessionSubjectId),
+    [activeRoleId, sessionSubjectId],
   );
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
@@ -851,7 +881,9 @@ export function AssistedIntakeSection({
     : null;
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
-  const canPromote = canPerform("promote", activeRoleId);
+  const currentSubjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
+  const canPromote =
+    canPerform("promote", activeRoleId) && Boolean(currentSubjectId);
   // The promotion section renders on the READY branch of the real detail
   // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
   // every later saga state so the receipt and score job remain reachable.
@@ -875,7 +907,7 @@ export function AssistedIntakeSection({
         canRequest={canPromote}
         canReview={canPromote}
         currentOperator={{
-          id: operatorSubjectId(activeRoleId, activeSubjectId),
+          id: currentSubjectId,
           name: role.label,
           role: activeRoleId,
         }}

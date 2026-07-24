@@ -48,18 +48,17 @@ export type OperatorApiResult<T> =
 export type StatusErrorSpec = { code: string; next: string; retryable: boolean };
 
 /**
- * The network UI runs in the browser, where the backend is reached same-origin
- * through the Next rewrite of `/api/v1/:path*` (apps/web/next.config.mjs) — the
- * client's paths already carry that prefix. An explicit
- * NEXT_PUBLIC_ODP_API_BASE_URL still wins when the API is served from another
- * origin. Note `createOdpApiClient` treats an empty baseUrl as "unconfigured"
- * and returns null, so same-origin must be passed as the concrete origin.
+ * Production browser requests always use the same-origin BFF. Local/test mode
+ * may opt into a direct public API URL for trusted-header testing.
  */
 export function buildOperatorNetworkClient(
   roleId?: string | null,
   subjectId?: string | null,
 ): OdpApiClient | null {
-  const configured = process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
+  const configured =
+    process.env.NODE_ENV === "production"
+      ? undefined
+      : process.env.NEXT_PUBLIC_ODP_API_BASE_URL?.trim();
   const baseUrl =
     configured || (typeof window !== "undefined" ? window.location.origin : undefined);
   if (!baseUrl) return null;

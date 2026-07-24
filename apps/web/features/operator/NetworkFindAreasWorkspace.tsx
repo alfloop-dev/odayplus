@@ -12,6 +12,7 @@ import {
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -202,15 +203,11 @@ export function inspectNetworkReviewsSnapshot(
     : "empty";
 }
 
-const NETWORK_OPERATOR_HEADERS = {
-  "X-Operator-Role": "expansion-manager",
-  "X-Roles": "expansion_user",
-  "X-Subject-Id": "operator-expansion-manager",
-  "X-Tenant-Id": "tenant-a",
-};
+const NETWORK_OPERATOR_HEADERS = operatorSecurityHeaders(
+  "expansion-manager",
+);
 
 const NETWORK_ACTOR = {
-  actorName: "王若寧",
   actorRoleId: "expansionManager",
 };
 
@@ -226,27 +223,17 @@ const NETWORK_ACTOR = {
 //   (canDecide=false). If a decide POST is still attempted it carries the
 //   role's own non-approving identity, so the API fails closed with 403 —
 //   defense in depth behind the hidden bar.
-const SITE_REVIEWER_REVIEW_HEADERS = {
-  "X-Operator-Role": "site-reviewer",
-  "X-Roles": "site_reviewer",
-  "X-Subject-Id": "operator-site-reviewer",
-  "X-Tenant-Id": "tenant-a",
-};
+const SITE_REVIEWER_REVIEW_HEADERS = operatorSecurityHeaders("site-reviewer");
 
-const EXPANSION_REVIEW_HEADERS = {
-  "X-Operator-Role": "expansion-manager",
-  "X-Roles": "expansion_user",
-  "X-Subject-Id": "operator-expansion-manager",
-  "X-Tenant-Id": "tenant-a",
-};
+const EXPANSION_REVIEW_HEADERS = operatorSecurityHeaders(
+  "expansion-manager",
+);
 
 const SITE_REVIEWER_ACTOR = {
-  actorName: "陳映辰",
   actorRoleId: "siteReviewer",
 };
 
 const EXPANSION_ACTOR = {
-  actorName: "王若寧",
   actorRoleId: "expansionManager",
 };
 
@@ -259,7 +246,7 @@ type NetworkReviewIdentity = {
   canDecide: boolean;
   readHeaders: Record<string, string>;
   decideHeaders: Record<string, string>;
-  actor: { actorName: string; actorRoleId: string };
+  actor: { actorRoleId: string };
 };
 
 function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
@@ -1502,7 +1489,7 @@ function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     district: zone.label,
     // h3 is intentionally invalid so that zoneToFeature falls back to the
     // centroid-delta polygon – a deterministic, no-network fallback.
-    h3: `operator-${zone.id}`,
+    h3: `h3-${zone.id}`,
     centroid: zone.centroid,
     h3Resolution: 9,
     score: Math.round(zone.demandGap * 100),

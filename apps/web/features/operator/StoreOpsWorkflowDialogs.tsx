@@ -3,6 +3,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button, Chip, StatusBadge, type Tone } from "./components";
 import { OPERATOR_ROLE_IDS, type OperatorRoleId, type Severity } from "./types";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./storeOpsWorkflows.module.css";
 import type {
   StoreOpsActionPayload,
@@ -114,15 +115,6 @@ const roleLabels: Record<OperatorRoleId, string> = {
 
 const roleOptions = OPERATOR_ROLE_IDS.map((roleId) => ({ label: roleLabels[roleId], value: roleId }));
 
-const roleApiRoles: Record<OperatorRoleId, string> = {
-  opsLead: "operations_manager",
-  supportLead: "operations_manager",
-  facilitiesLead: "regional_supervisor",
-  marketingManager: "marketing_manager",
-  expansionManager: "expansion_user",
-  auditPm: "auditor",
-};
-
 const workflowActionEndpoints: Partial<Record<StoreOpsWorkflowDialogType, string>> = {
   triage: "triage",
   assign: "assign",
@@ -159,9 +151,7 @@ async function submitStoreOpsWorkflow(
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
         "X-Correlation-ID": correlationId,
-        "X-Subject-Id": `operator-${roleId}`,
-        "X-Roles": roleApiRoles[roleId] ?? "operations_manager",
-        "X-Tenant-Id": "tenant-a",
+        ...operatorSecurityHeaders(roleId),
       },
       body: JSON.stringify({
         ...payload,

@@ -1,7 +1,7 @@
 const OPERATOR_ROLE_STORAGE_KEY = "oday.operator.role";
 const OPERATOR_SUBJECT_STORAGE_KEY = "oday.operator.subject";
+const OPERATOR_TENANT_STORAGE_KEY = "oday.operator.tenant";
 const DEFAULT_OPERATOR_ROLE_ID = "ops-lead";
-const OPERATOR_TENANT_ID = "tenant-a";
 
 const OPERATOR_API_ROLES: Record<string, string> = {
   "cs-lead": "operations_manager",
@@ -30,9 +30,9 @@ function currentOperatorRoleId(roleId?: string | null): string {
   return window.sessionStorage.getItem(OPERATOR_ROLE_STORAGE_KEY) || DEFAULT_OPERATOR_ROLE_ID;
 }
 
-/** Subject identity sent to the API; UI authorization hints must use this too. */
+/** Resolve the display actor; production obtains it from `/auth/session`. */
 export function operatorSubjectId(
-  roleId?: string | null,
+  _roleId?: string | null,
   subjectId?: string | null,
 ): string {
   if (subjectId?.trim()) return subjectId.trim();
@@ -40,7 +40,7 @@ export function operatorSubjectId(
     const subject = window.sessionStorage.getItem(OPERATOR_SUBJECT_STORAGE_KEY)?.trim();
     if (subject) return subject;
   }
-  return `operator-${currentOperatorRoleId(roleId)}`;
+  return "";
 }
 
 export function operatorSecurityHeaders(
@@ -48,11 +48,20 @@ export function operatorSecurityHeaders(
   subjectId?: string | null,
 ): Record<string, string> {
   const resolvedRoleId = currentOperatorRoleId(roleId);
-
-  return {
+  const headers: Record<string, string> = {
     "X-Operator-Role": resolvedRoleId,
-    "X-Roles": OPERATOR_API_ROLES[resolvedRoleId] ?? "operations_manager",
-    "X-Subject-Id": operatorSubjectId(resolvedRoleId, subjectId),
-    "X-Tenant-Id": OPERATOR_TENANT_ID,
   };
+  if (process.env.NODE_ENV !== "production") {
+    headers["X-Roles"] =
+      OPERATOR_API_ROLES[resolvedRoleId] ?? "operations_manager";
+    const subject = operatorSubjectId(resolvedRoleId, subjectId);
+    const tenant =
+      typeof window === "undefined"
+        ? ""
+        : window.sessionStorage.getItem(OPERATOR_TENANT_STORAGE_KEY)?.trim() ||
+          "";
+    if (subject) headers["X-Subject-Id"] = subject;
+    if (tenant) headers["X-Tenant-Id"] = tenant;
+  }
+  return headers;
 }

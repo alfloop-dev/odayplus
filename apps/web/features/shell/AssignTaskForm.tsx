@@ -32,7 +32,7 @@ export function AssignTaskForm({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [assigneeId, setAssigneeId] = useState(
-    currentAssigneeId ?? `operator-${assignableRoles[0]?.id ?? ""}`,
+    currentAssigneeId ?? assignableRoles[0]?.id ?? "",
   );
   const [slaDueAt, setSlaDueAt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +46,7 @@ export function AssignTaskForm({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    const assignee = assignableRoles.find((role) => `operator-${role.id}` === assigneeId);
+    const assignee = assignableRoles.find((role) => role.id === assigneeId);
     const outcome = await shellWrite<ShellTaskAssignResponse>(
       roleId,
       (client, options) =>
@@ -93,7 +93,7 @@ export function AssignTaskForm({
           data-testid={`task-assign-select-${taskId}`}
         >
           {assignableRoles.map((role) => (
-            <option key={role.id} value={`operator-${role.id}`}>
+            <option key={role.id} value={role.id}>
               {role.label}
             </option>
           ))}
