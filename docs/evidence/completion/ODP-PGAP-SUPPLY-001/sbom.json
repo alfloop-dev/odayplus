@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-5ae498353a44031c01cb8cb7eaacd26c",
+  "serialNumber": "urn:uuid:sha256-44109a3d6899131a7dd9cadc28dac248",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-24T06:31:10.990087+00:00",
+    "timestamp": "2026-07-24T12:07:52.120752+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "b5102130afd12a94e77e29a2ae648f04273bb35b"
+        "value": "c9a363743f980f5b64d55a5c1d7e1269aedb2069"
       },
       {
         "name": "sbom-hash",
-        "value": "5ae498353a44031c01cb8cb7eaacd26c2df8c25b3a0095a1d79b2969957123f7"
+        "value": "44109a3d6899131a7dd9cadc28dac24828c56be1acc6db6af740bd6af151d3ce"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:b2ea239222a8904436686662210e3d6cda686c717a73bde03a6b826a574f94e3"
+        "value": "sha256:0a411ad0289e4e22a976be25b83b7e2bb881d3ddc6a89d68d810ccad28d7dd9b"
       }
     ]
   },
@@ -4778,6 +4778,27 @@
       "type": "library",
       "purl": "pkg:pypi/psutil@7.2.2",
       "bom-ref": "pkg:pypi/psutil@7.2.2"
+    },
+    {
+      "name": "psycopg",
+      "version": "3.3.4",
+      "type": "library",
+      "purl": "pkg:pypi/psycopg@3.3.4",
+      "bom-ref": "pkg:pypi/psycopg@3.3.4"
+    },
+    {
+      "name": "psycopg-binary",
+      "version": "3.3.4",
+      "type": "library",
+      "purl": "pkg:pypi/psycopg-binary@3.3.4",
+      "bom-ref": "pkg:pypi/psycopg-binary@3.3.4"
+    },
+    {
+      "name": "psycopg-pool",
+      "version": "3.3.1",
+      "type": "library",
+      "purl": "pkg:pypi/psycopg-pool@3.3.1",
+      "bom-ref": "pkg:pypi/psycopg-pool@3.3.1"
     },
     {
       "name": "pyarrow",
