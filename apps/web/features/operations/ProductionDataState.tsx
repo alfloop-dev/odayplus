@@ -78,7 +78,11 @@ export function ProductionDataBadge<T>({
 }) {
   const state = productionBindingState(binding);
   return (
-    <span data-source="api" data-state={state} data-testid={testId}>
+    <span
+      data-source={state === "ready" ? "api" : "unavailable"}
+      data-state={state}
+      data-testid={testId}
+    >
       <Badge label={STATE_LABEL[state]} marker={state === "error" ? "!" : "◆"} tone={STATE_TONE[state]} />
     </span>
   );

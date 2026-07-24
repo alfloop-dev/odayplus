@@ -15,8 +15,8 @@ export type ApiBinding<T> = {
   state: BindingState;
   /** Live rows from the API; empty for every non-`ready` state. */
   items: T[];
-  /** `api` once the backend has actually served the rendered rows. */
-  source: "api" | "fixture";
+  /** Origin of the rendered rows, or `unavailable` when no rows were served. */
+  source: "api" | "fixture" | "unavailable";
   error?: string;
   baseUrl?: string;
   fetchedAt: string;
@@ -24,8 +24,8 @@ export type ApiBinding<T> = {
 
 /**
  * Fetch a list from the backend and classify the result. Never throws.
- * Non-ready results are always marked as `fixture`; production callers must
- * render a data-unavailable state instead of treating the binding as live.
+ * Non-ready results are marked as `unavailable`; production callers render a
+ * fail-closed state instead of treating missing API data as a fixture source.
  */
 export async function loadApiBinding<T>(options: {
   client: OdpApiClient | null;
@@ -37,7 +37,7 @@ export async function loadApiBinding<T>(options: {
     return {
       state: "unconfigured",
       items: [],
-      source: "fixture",
+      source: "unavailable",
       fetchedAt,
     };
   }
@@ -48,7 +48,7 @@ export async function loadApiBinding<T>(options: {
       return {
         state: "empty",
         items: [],
-        source: "fixture",
+        source: "unavailable",
         baseUrl: client.baseUrl,
         fetchedAt,
       };
@@ -64,7 +64,7 @@ export async function loadApiBinding<T>(options: {
     return {
       state: "error",
       items: [],
-      source: "fixture",
+      source: "unavailable",
       error: error instanceof Error ? error.message : String(error),
       baseUrl: client.baseUrl,
       fetchedAt,

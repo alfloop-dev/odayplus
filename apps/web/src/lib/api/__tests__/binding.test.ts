@@ -21,9 +21,9 @@ describe("loadApiBinding", () => {
       },
     });
 
-    expect(unconfigured).toMatchObject({ state: "unconfigured", source: "fixture", items: [] });
-    expect(empty).toMatchObject({ state: "empty", source: "fixture", items: [] });
-    expect(failed).toMatchObject({ state: "error", source: "fixture", items: [] });
+    expect(unconfigured).toMatchObject({ state: "unconfigured", source: "unavailable", items: [] });
+    expect(empty).toMatchObject({ state: "empty", source: "unavailable", items: [] });
+    expect(failed).toMatchObject({ state: "error", source: "unavailable", items: [] });
   });
 
   it("labels only rendered API rows as API data", async () => {
