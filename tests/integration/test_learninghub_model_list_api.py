@@ -1,6 +1,8 @@
 from apps.api.app.routes.learninghub import create_learninghub_router
 from models.shared_ml import ModelAlias, ModelStage, ModelVersion
 from modules.learninghub import InMemoryLearningHubRepository
+
+
 def _model_list_route(repository: InMemoryLearningHubRepository | None = None):
     router = create_learninghub_router(repository=repository)
     return next(route for route in router.routes if route.path == "/learninghub/models")
