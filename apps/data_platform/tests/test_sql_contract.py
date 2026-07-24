@@ -8,7 +8,7 @@ from uuid import UUID
 
 from apps.data_platform.contracts import SourceKind
 from apps.data_platform.serialization import aggregate_checksum
-from apps.data_platform.store import PsycopgCanonicalStore
+from apps.data_platform.store import PsycopgCanonicalStore, _PostgresLookup
 
 
 def _schema() -> str:
@@ -109,6 +109,35 @@ class _ReconcileConnection:
         if "to_regclass" in sql:
             relation = params[0] if self.raw_relation_exists else None
             return _Result(one=(relation,))
+        return _Result()
+
+
+class _LookupConnection:
+    def __init__(self) -> None:
+        self.execute_count = 0
+
+    def execute(self, _sql: str, _params: tuple[object, ...]) -> _Result:
+        self.execute_count += 1
+        return _Result(
+            one=(
+                UUID("00000000-0000-4000-8000-000000000001"),
+                UUID("00000000-0000-4000-8000-000000000002"),
+                "fongniao_merchant-1",
+            )
+        )
+
+
+class _AuthorityConnection:
+    def __init__(self, *, accepted: bool) -> None:
+        self.accepted = accepted
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, _params: tuple[object, ...]) -> _Result:
+        self.statements.append(sql)
+        if "RETURNING source_kind, authority_rank" in sql:
+            return _Result(one=("orders", 1) if self.accepted else None)
+        if "SELECT source_kind, authority_rank" in sql:
+            return _Result(one=("orders", 1))
         return _Result()
 
 
@@ -244,3 +273,43 @@ def test_non_empty_partition_requires_a_durable_raw_table() -> None:
         assert "fongniao_raw.raw_orders" in str(exc)
     else:
         raise AssertionError("A missing raw table must fail a non-empty run")
+
+
+def test_place_lookup_is_cached_within_a_projection_batch() -> None:
+    connection = _LookupConnection()
+    lookup = _PostgresLookup(connection)
+
+    first = lookup.require_place("place-1")
+    second = lookup.require_place("place-1")
+
+    assert first is second
+    assert connection.execute_count == 1
+
+
+def test_transaction_authority_check_and_upsert_share_one_round_trip(
+    envelope_factory,
+) -> None:
+    store = _store()
+    connection = _AuthorityConnection(accepted=True)
+    envelope = _envelope(envelope_factory, SourceKind.ORDERS)
+    projection = SimpleNamespace(
+        transaction_id=UUID("00000000-0000-4000-8000-000000000020"),
+        source_id="order-1",
+        store_id=UUID("00000000-0000-4000-8000-000000000011"),
+        event_time=envelope.observed_at,
+        observation_time=envelope.observed_at,
+        payment_time=envelope.observed_at,
+        gross_amount=Decimal("100.00"),
+        discount_amount=Decimal("0.00"),
+        net_amount=Decimal("100.00"),
+        currency="TWD",
+        payment_method="card",
+        transaction_status="succeeded",
+        ingested_at=envelope.observed_at,
+    )
+
+    store._upsert_transaction(connection, envelope, projection)
+
+    assert len(connection.statements) == 2
+    assert "RETURNING source_kind, authority_rank" in connection.statements[0]
+    assert "INSERT INTO core.transactions" in connection.statements[1]

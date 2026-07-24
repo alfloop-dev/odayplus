@@ -106,8 +106,14 @@ class CanonicalStore(Protocol):
 class _PostgresLookup(MappingLookup):
     def __init__(self, connection: Any) -> None:
         self._connection = connection
+        self._merchants: dict[str, MerchantIdentity] = {}
+        self._places: dict[str, StoreIdentity] = {}
+        self._devices: dict[str, MachineIdentity] = {}
 
     def require_merchant(self, source_merchant_id: str) -> MerchantIdentity:
+        cached = self._merchants.get(source_merchant_id)
+        if cached is not None:
+            return cached
         tenant_id = tenant_id_for_merchant(source_merchant_id)
         brand_id = brand_id_for_merchant(source_merchant_id)
         row = self._connection.execute(
@@ -125,9 +131,18 @@ class _PostgresLookup(MappingLookup):
                 QuarantineReason.MISSING_MERCHANT_MAPPING,
                 f"Missing merchant mapping for source merchant {source_merchant_id}"
             )
-        return MerchantIdentity(source_merchant_id, UUID(str(row[0])), UUID(str(row[1])))
+        identity = MerchantIdentity(
+            source_merchant_id,
+            UUID(str(row[0])),
+            UUID(str(row[1])),
+        )
+        self._merchants[source_merchant_id] = identity
+        return identity
 
     def require_place(self, source_place_id: str) -> StoreIdentity:
+        cached = self._places.get(source_place_id)
+        if cached is not None:
+            return cached
         store_id = store_id_for_place(source_place_id)
         row = self._connection.execute(
             """
@@ -151,15 +166,20 @@ class _PostgresLookup(MappingLookup):
                 QuarantineReason.TENANT_OWNERSHIP_MISMATCH,
                 f"Place {source_place_id} is not owned by a fongniao merchant tenant"
             )
-        return StoreIdentity(
+        identity = StoreIdentity(
             source_place_id=source_place_id,
             source_merchant_id=brand_code.removeprefix(prefix),
             tenant_id=UUID(str(row[0])),
             brand_id=UUID(str(row[1])),
             store_id=store_id,
         )
+        self._places[source_place_id] = identity
+        return identity
 
     def require_device(self, source_device_id: str) -> MachineIdentity:
+        cached = self._devices.get(source_device_id)
+        if cached is not None:
+            return cached
         machine_id = machine_id_for_device(source_device_id)
         row = self._connection.execute(
             """
@@ -175,12 +195,14 @@ class _PostgresLookup(MappingLookup):
                 QuarantineReason.MISSING_DEVICE_MAPPING,
                 f"Missing device mapping for source device {source_device_id}",
             )
-        return MachineIdentity(
+        identity = MachineIdentity(
             source_device_id=source_device_id,
             tenant_id=UUID(str(row[0])),
             store_id=UUID(str(row[1])),
             machine_id=machine_id,
         )
+        self._devices[source_device_id] = identity
+        return identity
 
 
 class PsycopgCanonicalStore:
@@ -632,18 +654,39 @@ class PsycopgCanonicalStore:
         }[envelope.source_kind]
         authority = connection.execute(
             f"""
-            SELECT source_kind, authority_rank
-            FROM {self._schema}.transaction_authority
-            WHERE transaction_id = %s
+            INSERT INTO {self._schema}.transaction_authority (
+                transaction_id, source_kind, authority_rank, source_snapshot_id
+            ) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (transaction_id) DO UPDATE SET
+                source_kind = EXCLUDED.source_kind,
+                authority_rank = EXCLUDED.authority_rank,
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE EXCLUDED.authority_rank <=
+                  {self._schema}.transaction_authority.authority_rank
+            RETURNING source_kind, authority_rank
             """,
-            (projection.transaction_id,),
+            (
+                projection.transaction_id,
+                envelope.source_kind.value,
+                authority_rank,
+                envelope.source_snapshot_id,
+            ),
         ).fetchone()
-        if authority is not None and int(authority[1]) < authority_rank:
+        if authority is None:
+            authority = connection.execute(
+                f"""
+                SELECT source_kind, authority_rank
+                FROM {self._schema}.transaction_authority
+                WHERE transaction_id = %s
+                """,
+                (projection.transaction_id,),
+            ).fetchone()
             raise SourceContractError(
                 QuarantineReason.SOURCE_SUPERSEDED,
                 (
                     f"{envelope.source_kind.value} transaction is superseded by "
-                    f"authoritative {authority[0]}"
+                    f"authoritative {authority[0] if authority else 'unknown'}"
                 ),
             )
         connection.execute(
@@ -689,27 +732,6 @@ class PsycopgCanonicalStore:
                 projection.ingested_at,
             ),
         )
-        connection.execute(
-            f"""
-            INSERT INTO {self._schema}.transaction_authority (
-                transaction_id, source_kind, authority_rank, source_snapshot_id
-            ) VALUES (%s, %s, %s, %s)
-            ON CONFLICT (transaction_id) DO UPDATE SET
-                source_kind = EXCLUDED.source_kind,
-                authority_rank = EXCLUDED.authority_rank,
-                source_snapshot_id = EXCLUDED.source_snapshot_id,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE EXCLUDED.authority_rank <=
-                  {self._schema}.transaction_authority.authority_rank
-            """,
-            (
-                projection.transaction_id,
-                envelope.source_kind.value,
-                authority_rank,
-                envelope.source_snapshot_id,
-            ),
-        )
-
     @staticmethod
     def _upsert_device(connection: Any, projection: Any) -> None:
         connection.execute(
