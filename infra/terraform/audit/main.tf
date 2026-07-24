@@ -25,9 +25,13 @@ resource "google_storage_bucket" "worm" {
     enabled = true
   }
 
+  encryption {
+    default_kms_key_name = var.kms_key_name
+  }
+
   retention_policy {
     retention_period = var.retention_period_seconds
-    is_locked        = true
+    is_locked        = var.lock_retention_policy
   }
 }
 

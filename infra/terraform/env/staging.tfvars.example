@@ -1,6 +1,50 @@
-project_id        = "oday-staging"
-environment       = "staging"
-region            = "asia-east1"
-api_image         = "asia-east1-docker.pkg.dev/oday-staging/oday/api:REPLACE_WITH_SHA"
-cloud_sql_tier    = "db-custom-2-7680"
-cloud_sql_disk_gb = 50
+# Template only. Every REPLACE_WITH value must be supplied from the governed
+# staging release packet before plan.
+project_id  = "oday-staging-123456"
+environment = "staging"
+region      = "asia-east1"
+
+api_image   = "asia-east1-docker.pkg.dev/oday-staging-123456/oday/api@sha256:REPLACE_WITH_64_HEX"
+release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"
+
+live_data_enabled = true
+
+oidc_issuer    = "https://REPLACE_WITH_IDP_ISSUER"
+oidc_audiences = ["REPLACE_WITH_API_AUDIENCE"]
+oidc_jwks_uri  = "https://REPLACE_WITH_IDP_JWKS"
+
+mlflow_tracking_uri = "https://REPLACE_WITH_MLFLOW_REGISTRY"
+
+external_provider_endpoints = {
+  ODP_ADMIN_BOUNDARY_PROVIDER_URL = "https://REPLACE_WITH_ADMIN_BOUNDARY_PROVIDER"
+  ODP_DEMOGRAPHICS_PROVIDER_URL   = "https://REPLACE_WITH_DEMOGRAPHICS_PROVIDER"
+  ODP_GEOCODE_PROVIDER_URL        = "https://REPLACE_WITH_GEOCODE_PROVIDER"
+  ODP_LISTING_PROVIDER_FEED_URL   = "https://REPLACE_WITH_LISTING_PROVIDER"
+  ODP_POI_PROVIDER_URL            = "https://REPLACE_WITH_POI_PROVIDER"
+  ODP_WEATHER_PROVIDER_URL        = "https://REPLACE_WITH_WEATHER_PROVIDER"
+}
+
+external_provider_secret_refs = {
+  ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN = { secret_id = "REPLACE_WITH_ADMIN_BOUNDARY_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+  ODP_DEMOGRAPHICS_PROVIDER_API_KEY = { secret_id = "REPLACE_WITH_DEMOGRAPHICS_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+  ODP_GEOCODE_PROVIDER_API_KEY      = { secret_id = "REPLACE_WITH_GEOCODE_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+  ODP_LISTING_PROVIDER_API_KEY      = { secret_id = "REPLACE_WITH_LISTING_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+  ODP_POI_PROVIDER_API_KEY          = { secret_id = "REPLACE_WITH_POI_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+  ODP_WEATHER_PROVIDER_API_KEY      = { secret_id = "REPLACE_WITH_WEATHER_SECRET_ID", version = "REPLACE_WITH_VERSION" }
+}
+
+model_runtime_config = {
+  ODP_AVM_LIQUIDITY_APPROVED_AT       = "REPLACE_WITH_RFC3339_APPROVAL_TIME"
+  ODP_AVM_LIQUIDITY_APPROVED_BY       = "REPLACE_WITH_APPROVER_ID"
+  ODP_AVM_LIQUIDITY_ARTIFACT_SHA256   = "REPLACE_WITH_SHA256"
+  ODP_AVM_LIQUIDITY_ARTIFACT_URI      = "REPLACE_WITH_REMOTE_ARTIFACT_URI"
+  ODP_AVM_LIQUIDITY_DATASET_SNAPSHOT_ID = "REPLACE_WITH_DATASET_SNAPSHOT"
+  ODP_AVM_LIQUIDITY_MODEL_VERSION     = "REPLACE_WITH_MODEL_VERSION"
+  ODP_AVM_MODEL_NAME                  = "REPLACE_WITH_MLFLOW_MODEL_NAME"
+  ODP_FORECAST_ENGINE                 = "statsforecast"
+  ODP_FORECAST_MODEL                  = "REPLACE_WITH_APPROVED_MODEL"
+}
+
+api_invoker_members = [
+  "group:REPLACE_WITH_STAGING_OPERATOR_GROUP",
+]

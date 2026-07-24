@@ -1,6 +1,17 @@
-project_id        = "oday-dev"
-environment       = "dev"
-region            = "asia-east1"
-api_image         = "asia-east1-docker.pkg.dev/oday-dev/oday/api:REPLACE_WITH_SHA"
+project_id  = "oday-dev-123456"
+environment = "dev"
+region      = "asia-east1"
+
+api_image  = "asia-east1-docker.pkg.dev/oday-dev-123456/oday/api:dev"
+release_sha = "0000000000000000000000000000000000000000"
+
+live_data_enabled = false
+
 cloud_sql_tier    = "db-custom-1-3840"
 cloud_sql_disk_gb = 20
+
+api_min_instances = 0
+api_max_instances = 2
+api_invoker_members = [
+  "group:oday-dev@example.org",
+]
