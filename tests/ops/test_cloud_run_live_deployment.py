@@ -58,11 +58,11 @@ def test_preflight_reports_current_repository_runtime_blockers() -> None:
     assert "memory/SQLite" in by_name["repository:production_database_adapter"].detail
     assert by_name["repository:worker_runtime"].ok is False
     assert by_name["repository:operator_bootstrap_data_source"].ok is False
-    assert any(
-        marker in by_name["repository:operator_bootstrap_data_source"].detail
-        for marker in ("canonical R4 seed", "no live operator repository")
+    assert (
+        "no live operator repository"
+        in by_name["repository:operator_bootstrap_data_source"].detail
     )
-    assert by_name["repository:provider_allowlist_runtime"].ok is False
+    assert by_name["repository:provider_allowlist_runtime"].ok is True
 
 
 def test_preflight_imports_every_registry_provider_adapter() -> None:

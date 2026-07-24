@@ -147,21 +147,40 @@ def repository_capability_checks(
 
     operator_state = root / "modules/opsboard/application/operator_state.py"
     operator_text = operator_state.read_text(encoding="utf-8") if operator_state.exists() else ""
-    bootstrap_uses_seed = bool(
-        re.search(r"self\._state[^=\n]*=\s*load_r4_seed\(\)", operator_text)
-    )
     has_live_operator_repository = bool(
         re.search(
             r"(?:self\._live_repository|operator_repository\s*:)",
             operator_text,
         )
     )
+    live_operator_seed_blocked = False
+    try:
+        operator_module = importlib.import_module(
+            "modules.opsboard.application.operator_state"
+        )
+        operator_service = operator_module.OperatorStateService(
+            require_live_data=True,
+            persistence_mode="memory",
+            provider_mode="fixture",
+        )
+        operator_payload = operator_service.get_today(role_id="ops-lead")
+        operator_meta = operator_payload.get("meta", {})
+        data_origin = operator_meta.get("dataOrigin", {})
+        live_operator_seed_blocked = (
+            operator_meta.get("dataMode") == "unavailable"
+            and data_origin.get("kind") == "unavailable"
+            and not operator_payload.get("workQueue")
+            and not operator_payload.get("approvals")
+        )
+    except Exception:  # noqa: BLE001 - failed inspection must block deployment
+        live_operator_seed_blocked = False
     provider_registry = root / "modules/external_data/connectors/provider_registry.py"
     provider_registry_text = (
         provider_registry.read_text(encoding="utf-8") if provider_registry.exists() else ""
     )
     registry_honors_production_allowlist = (
-        PRODUCTION_PROVIDER_IDS_ENV in provider_registry_text
+        "PRODUCTION_PROVIDER_IDS_ENV_VAR" in provider_registry_text
+        and "selected_provider_ids" in provider_registry_text
     )
 
     checks = [
@@ -172,8 +191,8 @@ def repository_capability_checks(
                 "supported PostgreSQL persistence adapter is wired through build_persistence"
                 if has_postgres_adapter and factory_selects_postgres
                 else (
-                    "missing: build_persistence supports only memory/SQLite and unknown modes "
-                    "fall back to memory"
+                    "missing: build_persistence supports only memory/SQLite; "
+                    "unsupported PostgreSQL modes fail closed"
                 )
             ),
         ),
@@ -187,16 +206,15 @@ def repository_capability_checks(
             ),
         ),
         CheckResult(
-            ok=not bootstrap_uses_seed and has_live_operator_repository,
+            ok=live_operator_seed_blocked and has_live_operator_repository,
             name="repository:operator_bootstrap_data_source",
             detail=(
                 "operator bootstrap is wired to a live repository"
-                if not bootstrap_uses_seed and has_live_operator_repository
+                if live_operator_seed_blocked and has_live_operator_repository
                 else (
-                    "missing: OperatorStateService initializes /api/v1/operator/bootstrap "
-                    "from canonical R4 seed data"
+                    "invalid: live-required OperatorStateService still exposes seed data"
                 )
-                if bootstrap_uses_seed
+                if not live_operator_seed_blocked
                 else (
                     "missing: OperatorStateService has no live operator repository; "
                     "an empty/unavailable response is fail-closed but is not real data"
