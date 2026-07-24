@@ -38,10 +38,14 @@ ingestion runs, 28 daily history rows, a mature label, tenant/store scope, and
 | `forecastops` | `model_ready.forecast_training_view` | `daily_net_revenue` | LightGBM quantile |
 | `avm` | `model_ready.valuation_view` | `realized_transaction_price` | LightGBM quantile |
 | `sitescore` | `model_ready.candidate_site_view` | `realized_site_success` | CatBoost |
+| `heatzone` | `model_ready.heatzone_training_view` | `realized_demand_score` | CatBoost |
 | `avm-liquidity` | `model_ready.avm_liquidity_training_view` | `duration_days` + `sold` | lifelines CoxPH |
 
-AVM, SiteScore, and AVM liquidity are intentionally non-trainable until their
-canonical outcome relations exist and can expose mature realized outcomes.
+AVM, SiteScore, HeatZone, and AVM liquidity are intentionally non-trainable
+until their canonical outcome relations exist and can expose mature realized
+outcomes. HeatZone additionally requires point-in-time geo feature history so
+later POI, competitor, listing, or store updates cannot leak into older
+training rows.
 The installer registers each missing contract as `BLOCKED` and does not create
 an empty or inferred outcome view. `asset.valuation_runs`, SiteScore
 recommendations, fixture constants, and current predictions are not accepted

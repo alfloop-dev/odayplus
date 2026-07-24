@@ -434,7 +434,29 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
     });
 
     it("renders durable receipt when decision succeeds", async () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} proposerId="OP-100" reviewerId="OP-200" />);
+      const backendReceipt = {
+        receiptId: "RCPT-MATCH-BACKEND-001",
+        actor: "Expansion Manager",
+        actorRole: "expansion-manager",
+        timestamp: "2026-07-20T10:06:00Z",
+        intakeId: sampleRecordPossibleMatch.id,
+        targetListingId: "LST-2001",
+        decisionKind: "create" as const,
+        graphMode: "merge" as const,
+        beforeVersion: "7",
+        afterVersion: "8",
+        correlationId: "CORR-BACKEND-001",
+        auditEventId: "AUD-BACKEND-001",
+      };
+      const handleSubmit = vi.fn().mockResolvedValue(backendReceipt);
+      render(
+        <IdentityDecisionPanel
+          record={sampleRecordPossibleMatch}
+          proposerId="OP-100"
+          reviewerId="OP-200"
+          onSubmitDecision={handleSubmit}
+        />,
+      );
 
       // Fill reason and tick risk
       fireEvent.change(screen.getByTestId("identity-decision-reason"), { target: { value: "確認修訂" } });
@@ -448,7 +470,9 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
 
       await waitFor(() => {
         expectAny(screen.getByTestId("identity-durable-receipt")).toBeInTheDocument();
-        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
+        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent(
+          backendReceipt.receiptId,
+        );
         expectAny(screen.getByTestId("receipt-actor-val")).toBeInTheDocument();
       });
     });

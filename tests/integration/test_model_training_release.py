@@ -422,9 +422,11 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
     assert "forecast-training-view-v2" in lowered
     assert "mature_realized_transaction_outcome_relation_missing" in lowered
     assert "mature_candidate_site_outcome_relation_missing" in lowered
+    assert "point_in_time_geo_outcome_relation_missing" in lowered
     assert "mature_liquidity_event_relation_missing" in lowered
     assert "create or replace view model_ready.valuation_view" not in lowered
     assert "create or replace view model_ready.candidate_site_view" not in lowered
+    assert "create or replace view model_ready.heatzone_training_view" not in lowered
     assert "create or replace view model_ready.avm_liquidity_training_view" not in lowered
     assert "asset.valuation_runs" not in lowered
     assert "expansion.site_score_runs" not in lowered
@@ -543,6 +545,23 @@ def test_model_ready_inventory_reports_outcome_contract_block() -> None:
         == "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING"
     )
     assert inventory.to_dict()["ready"] is False
+
+
+def test_heatzone_trainer_is_registered_but_point_in_time_data_fails_closed() -> None:
+    spec = MODEL_SPECS["heatzone"]
+    inventory = PostgresModelReadySource(
+        FakeQueryClient(
+            columns=spec.required_columns,
+            contract_trainable=False,
+            contract_version=spec.expected_view_version,
+            blocked_reason="POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING",
+        )
+    ).inventory(spec)
+
+    assert spec.algorithm == "catboost_regressor"
+    assert spec.model_name == "heatzone_priority"
+    assert not inventory.ready
+    assert inventory.blocked_reason == "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING"
 
 
 def test_postgres_source_uses_bounded_ordered_query() -> None:

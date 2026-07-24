@@ -97,6 +97,7 @@ export function ExpansionWorkspace({
         liveNetwork={liveNetwork}
         liveSiteScores={liveSiteScores}
         reportId={reportId}
+        searchParams={searchParams}
         view={view}
       />
     );
@@ -116,6 +117,7 @@ function ProductionExpansionWorkspace({
   liveNetwork,
   liveSiteScores,
   reportId,
+  searchParams,
   view,
 }: {
   liveCandidates?: ApiBinding<CandidateSiteCard>;
@@ -124,6 +126,7 @@ function ProductionExpansionWorkspace({
   liveNetwork?: ApiBinding<NetworkListingRadarSnapshot>;
   liveSiteScores?: ApiBinding<SiteScoreReportSummary>;
   reportId?: string;
+  searchParams: SearchParams;
   view: ExpansionRouteKey;
 }) {
   const activeBinding =
@@ -154,7 +157,13 @@ function ProductionExpansionWorkspace({
       <main className="odp-content" data-testid={`exp-${view}-production-page`}>
         <WorkspaceNav active={view} />
         {view === "heatzone" ? <ProductionHeatZones binding={liveHeatZones} /> : null}
-        {view === "listings" ? <ProductionNetworkListings binding={liveNetwork} /> : null}
+        {view === "listings" ? (
+          <ProductionNetworkListings
+            activeRoleId={resolveIntakeRole(searchParams)}
+            binding={liveNetwork}
+            selectedHeatZoneId={selectedFromQuery(searchParams.heatZone)}
+          />
+        ) : null}
         {view === "candidates" ? <ProductionCandidates binding={liveCandidates} /> : null}
         {view === "sitescore" || view === "sitescoreDetail" ? (
           <ProductionSiteScores binding={liveSiteScores} reportId={reportId} />
@@ -233,32 +242,42 @@ function ProductionHeatZones({ binding }: { binding?: ApiBinding<HeatZoneScore> 
 }
 
 function ProductionNetworkListings({
+  activeRoleId,
   binding,
+  selectedHeatZoneId,
 }: {
+  activeRoleId: OperatorRoleId;
   binding?: ApiBinding<NetworkListingRadarSnapshot>;
+  selectedHeatZoneId?: string;
 }) {
   const snapshot = binding?.items[0];
   return (
-    <ProductionDataState binding={binding} resource="Listing radar" testId="exp-production-data-state">
-      {binding && snapshot ? (
-        <section className={styles.reportSection} data-testid="exp-live-listings">
-          <ProductionDataBadge binding={binding} testId="exp-listing-source" />
-          <DenseTable
-            caption="Live listing radar rows"
-            headers={["Listing", "Source", "Address", "Status", "Rent", "Area", "HeatZone"]}
-            rows={snapshot.listings.map((listing) => [
-              listing.id,
-              `${listing.sourceId}:${listing.sourceListingId}`,
-              listing.address,
-              listing.status,
-              String(listing.rentPerMonth),
-              String(listing.areaPing),
-              listing.heatZoneId,
-            ])}
-          />
-        </section>
-      ) : null}
-    </ProductionDataState>
+    <>
+      <AssistedIntakeSection
+        activeRoleId={activeRoleId}
+        selectedHeatZoneId={selectedHeatZoneId}
+      />
+      <ProductionDataState binding={binding} resource="Listing radar" testId="exp-production-data-state">
+        {binding && snapshot ? (
+          <section className={styles.reportSection} data-testid="exp-live-listings">
+            <ProductionDataBadge binding={binding} testId="exp-listing-source" />
+            <DenseTable
+              caption="Live listing radar rows"
+              headers={["Listing", "Source", "Address", "Status", "Rent", "Area", "HeatZone"]}
+              rows={snapshot.listings.map((listing) => [
+                listing.id,
+                `${listing.sourceId}:${listing.sourceListingId}`,
+                listing.address,
+                listing.status,
+                String(listing.rentPerMonth),
+                String(listing.areaPing),
+                listing.heatZoneId,
+              ])}
+            />
+          </section>
+        ) : null}
+      </ProductionDataState>
+    </>
   );
 }
 
@@ -620,10 +639,7 @@ function HeatZoneScoreCard({ zone }: { zone: (typeof heatZones)[number] }) {
 function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
   const selected = selectedFromQuery(searchParams.selected) ?? listings[0].id;
   const listing = listings.find((item) => item.id === selected) ?? listings[0];
-  const requestedRole = selectedFromQuery(searchParams.role);
-  const activeRoleId: OperatorRoleId = isOperatorRoleId(requestedRole)
-    ? requestedRole
-    : "expansion-manager";
+  const activeRoleId = resolveIntakeRole(searchParams);
   const selectedHeatZoneId = selectedFromQuery(searchParams.heatZone);
   return (
     <>
@@ -679,6 +695,11 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
       </section>
     </>
   );
+}
+
+function resolveIntakeRole(searchParams: SearchParams): OperatorRoleId {
+  const requestedRole = selectedFromQuery(searchParams.role);
+  return isOperatorRoleId(requestedRole) ? requestedRole : "expansion-manager";
 }
 
 function isOperatorRoleId(value: string | undefined): value is OperatorRoleId {

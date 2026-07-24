@@ -34,7 +34,6 @@ from modules.external_data.workers.scheduled_fetch import (
     ExternalFetchJobSpec,
     ExternalFetchResiliencePolicy,
     ExternalFetchScheduler,
-    InMemoryExternalFetchStateStore,
     default_external_fetch_provider_factories,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -58,6 +57,7 @@ class ExternalIngestionService:
         self,
         *,
         store: Any | None = None,
+        state_store: Any | None = None,
         audit_log: Any | None = None,
         provider_factories: dict[str, ProviderFactory] | None = None,
         resilience_policy: ExternalFetchResiliencePolicy | None = None,
@@ -82,7 +82,7 @@ class ExternalIngestionService:
             for provider_id, factory in base_factories.items()
         }
         self.scheduler = ExternalFetchScheduler(
-            state_store=InMemoryExternalFetchStateStore(),
+            state_store=state_store,
             provider_factories=wrapped,
             resilience_policy=resilience_policy,
             env=self.env,

@@ -127,6 +127,13 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
     try:
         paths = set(app.openapi()["paths"])
         assert {
+            f"{BASE}/shell/search",
+            f"{BASE}/shell/admin",
+            f"{BASE}/shell/settings",
+            f"{BASE}/shell/franchisee",
+            f"{BASE}/shell/tasks/{{task_id}}/assignment",
+            f"{BASE}/shell/notifications/preferences",
+            f"{BASE}/shell/notifications/{{notification_id}}/acknowledgement",
             f"{BASE}/network-listings",
             f"{BASE}/network-listings/intake/submit",
             f"{BASE}/network-scoring",
@@ -142,6 +149,21 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
 
         with TestClient(app) as client:
             headers = _headers("tenant-live-empty")
+            shell_search = client.get(
+                f"{BASE}/shell/search",
+                headers=headers,
+                params={"q": ""},
+            )
+            shell_tasks = client.get(f"{BASE}/shell/tasks", headers=headers)
+            shell_notifications = client.get(
+                f"{BASE}/shell/notifications",
+                headers=headers,
+            )
+            governed_unavailable = [
+                client.get(f"{BASE}/shell/admin", headers=headers),
+                client.get(f"{BASE}/shell/settings", headers=headers),
+                client.get(f"{BASE}/shell/franchisee", headers=headers),
+            ]
             payloads = [
                 client.get(f"{BASE}/network-listings", headers=headers).json(),
                 client.get(f"{BASE}/network-scoring", headers=headers).json(),
@@ -150,6 +172,31 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
                 client.get(f"{BASE}/growth/actions", headers=headers).json(),
                 client.get(f"{BASE}/governance/snapshot", headers=headers).json(),
             ]
+
+        assert shell_search.status_code == 200
+        assert shell_tasks.status_code == 200
+        task_payload = shell_tasks.json()
+        assert task_payload["facets"]["sla"]["breached"] is None
+        assert task_payload["facets"]["assignee"]["me"] is None
+        assert task_payload["assignableRoles"] is None
+        assert task_payload["assignability"]["state"] == "unavailable"
+        assert shell_notifications.status_code == 200
+        notification_payload = shell_notifications.json()
+        assert notification_payload["unacknowledged"] is None
+        assert notification_payload["preferences"]["value"] is None
+        assert (
+            notification_payload["preferences"]["availability"]["state"]
+            == "unavailable"
+        )
+        assert [response.status_code for response in governed_unavailable] == [
+            503,
+            503,
+            503,
+        ]
+        assert {
+            response.json()["detail"]["code"]
+            for response in governed_unavailable
+        } == {"OPERATOR_SHELL_CONTRACT_UNAVAILABLE"}
 
         serialized = str(payloads)
         assert all(seed_id not in serialized for seed_id in SEED_IDS)

@@ -52,11 +52,10 @@ PRODUCTION_MODEL_CONTRACTS: Mapping[str, ProductionModelContract] = (
             ),
             "heatzone": ProductionModelContract(
                 service="heatzone",
-                model_name=None,
-                training_spec_key=None,
-                required_for_platform_readiness=False,
+                model_name="heatzone_priority",
+                training_spec_key="heatzone",
+                required_for_platform_readiness=True,
                 outcome_contract_required=True,
-                unavailable_reason="NO_PRODUCTION_TRAINER_OR_DATA_CONTRACT",
             ),
         }
     )

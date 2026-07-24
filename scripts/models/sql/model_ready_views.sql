@@ -277,6 +277,16 @@ INSERT INTO model_ready.view_contracts (
         CURRENT_TIMESTAMP
     ),
     (
+        'model_ready.heatzone_training_view',
+        'heatzone_training_view',
+        'heatzone-training-view-v1',
+        ARRAY[]::text[],
+        'BLOCKED',
+        FALSE,
+        'POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING',
+        CURRENT_TIMESTAMP
+    ),
+    (
         'model_ready.avm_liquidity_training_view',
         'avm_liquidity_training_view',
         'avm-liquidity-training-view-v1',

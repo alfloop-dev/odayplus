@@ -10,6 +10,7 @@ const API_BOUND_ROUTES = [
   "expansion/page.tsx",
   "franchisee/page.tsx",
   "interventions/page.tsx",
+  "intake/[intakeId]/page.tsx",
   "learning/page.tsx",
   "netplan/page.tsx",
   "notifications/page.tsx",
@@ -49,4 +50,16 @@ describe("production API route rendering", () => {
       expect(source).toContain('export const dynamic = "force-dynamic"');
     },
   );
+
+  it("renders the durable intake route instead of redirecting away from it", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/intake/[intakeId]/page.tsx"),
+      "utf8",
+    );
+
+    expect(source).toContain("<ExpansionWorkspace");
+    expect(source).toContain('dialog: "detail"');
+    expect(source).toContain("selected: intakeId");
+    expect(source).not.toContain("redirect(");
+  });
 });

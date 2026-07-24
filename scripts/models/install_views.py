@@ -96,6 +96,10 @@ class ModelReadyViewPreflight:
                     "trainable": False,
                     "reason": "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING",
                 },
+                "heatzone": {
+                    "trainable": False,
+                    "reason": "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING",
+                },
                 "avm-liquidity": {
                     "trainable": False,
                     "reason": "MATURE_LIQUIDITY_EVENT_RELATION_MISSING",

@@ -114,12 +114,14 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
         adlift,
         avm,
         forecastops,
+        interventions,
         learninghub,
         netplan,
         operator,
         priceops,
         sitescore,
     )
+    from apps.api.oday_api import main as api_main
     from models.shared_ml import MlflowProductionModelRuntime
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
@@ -162,6 +164,7 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
         ("netplan", netplan, "create_netplan_router"),
         ("priceops", priceops, "create_priceops_router"),
         ("adlift", adlift, "create_adlift_router"),
+        ("interventions", interventions, "create_interventions_router"),
         ("operator", operator, "create_operator_router"),
     ):
         original = getattr(module, attribute)
@@ -176,6 +179,14 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
 
         monkeypatch.setattr(module, attribute, wrapper)
 
+    original_heatzone_router = api_main.create_heatzone_router
+
+    def heatzone_wrapper(**kwargs: Any) -> Any:
+        captured["heatzone"] = kwargs
+        return original_heatzone_router(**kwargs)
+
+    monkeypatch.setattr(api_main, "create_heatzone_router", heatzone_wrapper)
+
     bundle = _production_backed_bundle(tmp_path / "production-composition.sqlite3")
     try:
         app = create_app(
@@ -188,6 +199,7 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert {service for service, _version in runtime.resolutions} == {
         "avm",
         "forecastops",
+        "heatzone",
         "sitescore",
     }
     assert captured["model_runtime_factory"]["model_names"] == production_model_names()
@@ -205,6 +217,7 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
         assert captured[name]["runtime_mode"] == "production"
 
     assert captured["forecastops"]["model_runtime"] is runtime
+    assert captured["heatzone"]["model_runtime"] is runtime
     assert captured["forecastops"]["repository"] is bundle.forecastops_repository
     assert captured["forecastops"]["audit_log"] is bundle.audit_log
     assert captured["forecastops"]["job_queue"] is bundle.job_queue
@@ -219,15 +232,23 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert captured["learninghub"]["audit_log"] is bundle.audit_log
     assert captured["avm"]["repository"] is bundle.avm_repository
     assert captured["avm"]["audit_log"] is bundle.audit_log
+    assert captured["avm"]["job_queue"] is bundle.job_queue
+    assert captured["avm"]["require_durable_commands"] is True
     assert captured["avm"]["production_executor"] is avm_executor
     assert captured["netplan"]["repository"] is bundle.netplan_repository
     assert captured["netplan"]["audit_log"] is bundle.audit_log
     assert captured["netplan"]["production_executor"] is not None
     assert captured["priceops"]["repository"] is bundle.priceops_repository
     assert captured["priceops"]["audit_log"] is bundle.audit_log
+    assert captured["priceops"]["job_queue"] is bundle.job_queue
+    assert captured["priceops"]["require_durable_commands"] is True
     assert captured["priceops"]["production_optimizer"] is not None
     assert captured["adlift"]["repository"] is bundle.adlift_repository
     assert captured["adlift"]["audit_log"] is bundle.audit_log
+    assert captured["adlift"]["job_queue"] is bundle.job_queue
+    assert captured["adlift"]["require_durable_jobs"] is True
+    assert captured["interventions"]["job_queue"] is bundle.job_queue
+    assert captured["interventions"]["require_durable_commands"] is True
     assert captured["operator"]["model_runtime"] is runtime
     assert captured["operator"]["avm_production_executor"] is avm_executor
     assert captured["operator"]["netplan_production_executor"] is (
@@ -235,17 +256,17 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     )
     assert app.state.domain_runtime_mode == "production"
     assert app.state.production_model_error is None
-    assert app.state.production_model_capabilities["heatzone"] == {
-        "service": "heatzone",
-        "modelName": None,
-        "trainingSpecKey": None,
-        "trainable": False,
-        "requiredForPlatformReadiness": False,
-        "outcomeContractRequired": True,
-        "available": False,
-        "reasonCode": "NO_PRODUCTION_TRAINER_OR_DATA_CONTRACT",
-        "error": None,
-    }
+    assert app.state.production_model_capabilities["heatzone"]["modelName"] == (
+        "heatzone_priority"
+    )
+    assert app.state.production_model_capabilities["heatzone"]["trainable"] is True
+    assert (
+        app.state.production_model_capabilities["heatzone"][
+            "requiredForPlatformReadiness"
+        ]
+        is True
+    )
+    assert app.state.production_model_capabilities["heatzone"]["available"] is True
 
 
 def test_model_aliases_resolve_independently_while_platform_stays_fail_closed(
@@ -272,11 +293,11 @@ def test_model_aliases_resolve_independently_while_platform_stays_fail_closed(
         bundle.engine.close()
 
     capabilities = app.state.production_model_capabilities
-    assert app.state.scoring_bindings.keys() == {"forecastops"}
+    assert app.state.scoring_bindings.keys() == {"forecastops", "heatzone"}
     assert capabilities["forecastops"]["available"] is True
     assert capabilities["avm"]["available"] is False
     assert capabilities["sitescore"]["available"] is False
-    assert capabilities["heatzone"]["available"] is False
+    assert capabilities["heatzone"]["available"] is True
     assert (
         capabilities["avm"]["reasonCode"]
         == "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
@@ -313,7 +334,7 @@ def test_forecastops_alias_remains_a_required_fail_closed_binding(
     finally:
         bundle.engine.close()
 
-    assert app.state.scoring_bindings == {}
+    assert app.state.scoring_bindings.keys() == {"heatzone"}
     assert app.state.production_model_capabilities["forecastops"]["available"] is False
     assert "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
         app.state.production_model_error or ""
@@ -328,7 +349,7 @@ def test_training_and_runtime_share_canonical_production_model_names() -> None:
         for service, contract in PRODUCTION_MODEL_CONTRACTS.items()
         if contract.training_spec_key is not None
     } == production_model_names()
-    assert PRODUCTION_MODEL_CONTRACTS["heatzone"].trainable is False
+    assert PRODUCTION_MODEL_CONTRACTS["heatzone"].trainable is True
 
 
 def test_live_routes_fail_closed_when_production_dependencies_are_missing(
@@ -383,7 +404,7 @@ def test_production_routes_gate_only_the_dependency_they_use(
                 headers=operator_headers,
             )
             assert operator.status_code == 200, operator.text
-            assert operator.json()["meta"]["dataMode"] == "live"
+            assert operator.json()["meta"]["dataMode"] == "degraded"
             assert "r4-seed" not in operator.text
 
             history = client.get(
@@ -430,3 +451,13 @@ def test_non_production_fixture_ingestion_is_unchanged(monkeypatch: Any) -> None
     assert response.status_code == 202
     assert response.json()["created"] is True
     assert response.json()["accepted_count"] == 2
+
+
+def test_external_ingestion_uses_bundle_scheduler_state_store() -> None:
+    bundle = _memory_bundle()
+
+    app = create_app(persistence=bundle)
+
+    service = app.state.external_ingestion_service
+    assert service.store is bundle.ingestion_run_store
+    assert service.scheduler.state_store is bundle.external_fetch_state_store

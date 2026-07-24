@@ -177,6 +177,7 @@ else:
 
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
+            state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
@@ -717,6 +718,7 @@ else:
             try:
                 from modules.avm.domain import AVM_FEATURE_VERSION
                 from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
+                from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
                 model_runtime = MlflowProductionModelRuntime.from_environment(
@@ -736,6 +738,7 @@ else:
                 feature_schema_versions = {
                     "avm": AVM_FEATURE_VERSION,
                     "forecastops": FORECASTOPS_FEATURE_VERSION,
+                    "heatzone": HEATZONE_FEATURE_VERSION,
                     "sitescore": SITESCORE_FEATURE_VERSION,
                 }
                 for service, feature_schema_version in feature_schema_versions.items():
@@ -824,7 +827,7 @@ else:
                 store=heatzone_store,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
-                model_runtime=None,
+                model_runtime=model_runtime,
                 require_production_model=require_live_data,
             ),
         )
@@ -866,6 +869,8 @@ else:
             create_avm_router(
                 repository=avm_repo,
                 audit_log=audit_log,
+                job_queue=job_queue,
+                require_durable_commands=require_live_data,
                 production_executor=avm_production_executor,
                 runtime_mode=domain_runtime_mode,
             ),
@@ -907,6 +912,8 @@ else:
             create_priceops_router(
                 repository=price_repo,
                 audit_log=audit_log,
+                job_queue=job_queue,
+                require_durable_commands=require_live_data,
                 production_optimizer=priceops_production_optimizer,
                 runtime_mode=domain_runtime_mode,
             ),
@@ -931,6 +938,8 @@ else:
             create_adlift_router(
                 repository=adlift_repo,
                 audit_log=audit_log,
+                job_queue=job_queue,
+                require_durable_jobs=require_live_data,
                 runtime_mode=domain_runtime_mode,
             ),
         )
@@ -946,6 +955,8 @@ else:
             create_interventions_router(
                 workflow=interventions_workflow,
                 label_registry=label_registry,
+                job_queue=job_queue,
+                require_durable_commands=require_live_data,
             ),
         )
         from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
@@ -1062,6 +1073,7 @@ else:
         api.state.intervention_label_registry = label_registry
         api.state.operator_document_store = operator_document_store
         api.state.operator_live_repository = operator_live_repository
+        api.state.external_ingestion_service = ingestion_service
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data

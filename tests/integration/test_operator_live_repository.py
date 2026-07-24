@@ -74,18 +74,20 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
         tenant_id="tenant-live-1",
     )
 
-    assert envelope["meta"]["dataMode"] == "live"
-    assert envelope["meta"]["dataOrigin"] == {
-        "kind": "live",
-        "sourceId": "operator-live-repository",
-        "repository": "OperatorLiveRepository",
-        "persistenceMode": "postgresql",
-    }
-    assert envelope["meta"]["liveReadiness"] == {
-        "required": True,
-        "ready": True,
-        "reasonCode": "OPERATOR_LIVE_REPOSITORY_READY",
-    }
+    assert envelope["meta"]["dataMode"] == "degraded"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
+    assert envelope["meta"]["dataOrigin"]["complete"] is False
+    assert envelope["meta"]["liveReadiness"]["ready"] is True
+    assert envelope["meta"]["liveReadiness"]["complete"] is False
+    assert (
+        envelope["meta"]["liveReadiness"]["reasonCode"]
+        == "OPERATOR_LIVE_REPOSITORY_DEGRADED"
+    )
+    assert envelope["meta"]["sections"]["stores"]["state"] == "available"
+    assert envelope["meta"]["sections"]["stores"]["recordCount"] == 0
+    assert envelope["meta"]["sections"]["listings"]["state"] == "unavailable"
+    assert envelope["meta"]["sections"]["listings"]["recordCount"] is None
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "unavailable"
     assert envelope["workQueue"] == []
     assert envelope["approvals"] == []
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}

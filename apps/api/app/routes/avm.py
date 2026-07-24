@@ -7,7 +7,15 @@ from models.shared_ml import (
     production_execution_required,
 )
 from modules.avm.application.valuation import AVMError
+from shared.api.idempotency import IdempotencyConflictError, apply_replay_marker
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.infrastructure.persistence.command_receipts import (
+    CommandReceiptIncompleteError,
+    CommandReceiptPersistenceError,
+    TenantScopedCommandReceiptStore,
+)
+from shared.infrastructure.persistence.job_receipts import JobQueue
+from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -51,25 +59,12 @@ else:
         reason: str = ""
 
 
-    class AVMCaseStore:
-        def __init__(self) -> None:
-            self._idempotency_index: dict[str, str] = {}
-
-        def put(self, idempotency_key: str | None, case_id: str) -> None:
-            if idempotency_key:
-                self._idempotency_index[idempotency_key] = case_id
-
-        def get(self, idempotency_key: str | None) -> str | None:
-            if not idempotency_key:
-                return None
-            return self._idempotency_index.get(idempotency_key)
-
-
     def create_avm_router(
         *,
         repository: InMemoryAVMRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
-        case_store: AVMCaseStore | None = None,
+        job_queue: JobQueue | None = None,
+        require_durable_commands: bool | None = None,
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
@@ -77,6 +72,11 @@ else:
         from shared.auth import Action
 
         production_required = production_execution_required(runtime_mode)
+        durable_commands_required = (
+            production_required
+            if require_durable_commands is None
+            else require_durable_commands
+        )
         active_repository = (
             repository
             if production_required
@@ -94,7 +94,46 @@ else:
             service = None
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        idempotency = case_store or AVMCaseStore()
+        local_job_queue = None if durable_commands_required else InMemoryJobQueue()
+
+        def command_store(request: Request) -> TenantScopedCommandReceiptStore:
+            active_queue = job_queue
+            if active_queue is None:
+                app = request.scope.get("app")
+                active_queue = getattr(
+                    getattr(app, "state", None),
+                    "job_queue",
+                    None,
+                )
+            active_queue = active_queue or local_job_queue
+            if active_queue is None:
+                raise _durable_store_required(
+                    "AVM production commands require durable persistence"
+                )
+            store = TenantScopedCommandReceiptStore(
+                queue=active_queue,
+                service="avm",
+            )
+            if durable_commands_required and not store.is_durable:
+                raise _durable_store_required(
+                    "AVM production commands reject process-local stores"
+                )
+            return store
+
+        def tenant_id(request: Request) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            value = getattr(principal, "tenant_id", None)
+            if value:
+                return str(value)
+            if durable_commands_required:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "AVM production commands require tenant scope",
+                    },
+                )
+            return "__local__"
 
         def require_runtime_binding() -> None:
             if composition_error is not None:
@@ -150,30 +189,66 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
-            existing_case_id = idempotency.get(effective_key)
-            if existing_case_id:
-                case = service.get_case(existing_case_id)
-                payload = case.to_dict() if case else {}
-                payload["created"] = False
+
+            def execute(_receipt_id: str) -> dict[str, Any]:
+                case = service.create_case(
+                    body.model_dump(exclude={"created_by", "idempotency_key"}),
+                    created_by=body.created_by,
+                    correlation_id=request.state.correlation_id,
+                )
+                payload = case.to_dict()
+                payload["created"] = True
+                payload["correlation_id"] = request.state.correlation_id
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.case_created.v1",
+                    actor=body.created_by,
+                    action="create_case",
+                    resource=f"avm/cases/{case.case_id}",
+                    outcome="created",
+                    request=request,
+                    metadata={"idempotency_key": effective_key},
+                )
                 return payload
-            case = service.create_case(
-                body.model_dump(exclude={"created_by", "idempotency_key"}),
-                created_by=body.created_by,
-                correlation_id=request.state.correlation_id,
+
+            try:
+                outcome = command_store(request).run(
+                    tenant_id=tenant_id(request),
+                    idempotency_key=effective_key,
+                    scope="avm:create_case",
+                    payload=body.model_dump(mode="json"),
+                    correlation_id=request.state.correlation_id,
+                    operation=execute,
+                )
+            except IdempotencyConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "IDEMPOTENCY_KEY_REUSED",
+                        "message": str(exc),
+                    },
+                ) from exc
+            except CommandReceiptIncompleteError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "COMMAND_RECEIPT_INCOMPLETE",
+                        "message": str(exc),
+                    },
+                ) from exc
+            except CommandReceiptPersistenceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "DURABLE_COMMAND_STORE_UNAVAILABLE",
+                        "message": str(exc),
+                    },
+                ) from exc
+            payload = apply_replay_marker(
+                outcome.value,
+                replayed=outcome.replayed,
             )
-            idempotency.put(effective_key, case.case_id)
-            payload = case.to_dict()
-            payload["created"] = True
-            payload["correlation_id"] = request.state.correlation_id
-            payload["audit_event_id"] = _audit(
-                event_type="avm.case_created.v1",
-                actor=body.created_by,
-                action="create_case",
-                resource=f"avm/cases/{case.case_id}",
-                outcome="created",
-                request=request,
-                metadata={"idempotency_key": effective_key},
-            )
+            if outcome.replayed:
+                payload["created"] = False
             return payload
 
         @router.get("/cases", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
@@ -353,9 +428,18 @@ else:
         return router
 
 
+    def _durable_store_required(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "DURABLE_COMMAND_STORE_REQUIRED",
+                "message": message,
+            },
+        )
+
+
     __all__ = [
         "AVMCasePayload",
-        "AVMCaseStore",
         "ActorPayload",
         "DataRoomExportPayload",
         "FinanceApprovalPayload",

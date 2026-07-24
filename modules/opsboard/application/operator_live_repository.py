@@ -1,9 +1,9 @@
-"""Live read-model composition for the Operator Console.
+"""Authoritative read-model composition for the Operator Console.
 
-The Operator Console is a projection over several authoritative domain
-repositories.  This module performs that projection without caching or seeding:
-every read asks the injected persistence bundle for its current records.  An
-empty database is therefore a valid, ready, empty operator workspace.
+Every section is read from an injected repository.  A successful empty read is
+different from a repository that is absent, unsafe to query across tenants, or
+temporarily failing; the response preserves that distinction instead of
+turning unavailable sections into plausible-looking zeroes.
 """
 
 from __future__ import annotations
@@ -51,6 +51,39 @@ class OperatorRepositoryProbe:
             "persistenceMode": self.persistence_mode,
             "errors": list(self.errors),
         }
+
+
+@dataclass(frozen=True)
+class OperatorSectionAvailability:
+    """Availability and provenance for one Operator projection section."""
+
+    state: str
+    source: str
+    record_count: int | None
+    reason_code: str | None = None
+    message: str | None = None
+
+    @property
+    def available(self) -> bool:
+        return self.state in {"available", "degraded"}
+
+    @property
+    def complete(self) -> bool:
+        return self.state == "available"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "state": self.state,
+            "available": self.available,
+            "complete": self.complete,
+            "source": self.source,
+            "recordCount": self.record_count,
+        }
+        if self.reason_code is not None:
+            payload["reasonCode"] = self.reason_code
+        if self.message is not None:
+            payload["message"] = self.message
+        return payload
 
 
 class OperatorLiveRepositoryProtocol(Protocol):
@@ -138,10 +171,11 @@ class OperatorLiveRepository:
     @property
     def data_origin(self) -> dict[str, Any]:
         return {
-            "kind": "live",
+            "kind": "authoritative",
             "sourceId": "operator-live-repository",
             "repository": type(self).__name__,
             "persistenceMode": self._mode,
+            "completeness": "request-scoped",
         }
 
     @staticmethod
@@ -185,76 +219,299 @@ class OperatorLiveRepository:
                 f"{name}: {type(exc).__name__}: {exc}"
             ) from exc
 
-    def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
-        stores = list(
-            self._call(
-                "stores",
-                self._persistence.store_repository,
-                "list_stores",
-                tenant_id=scope.tenant_id,
-                brand_ids=scope.brand_ids,
-                region_codes=scope.region_ids,
-                store_ids=scope.store_ids,
+    @staticmethod
+    def _available(
+        source: str,
+        records: Any,
+    ) -> OperatorSectionAvailability:
+        count = records if isinstance(records, int) else len(records)
+        return OperatorSectionAvailability(
+            state="available",
+            source=source,
+            record_count=int(count),
+        )
+
+    @staticmethod
+    def _unavailable(
+        source: str,
+        *,
+        reason_code: str,
+        message: str,
+    ) -> OperatorSectionAvailability:
+        return OperatorSectionAvailability(
+            state="unavailable",
+            source=source,
+            record_count=None,
+            reason_code=reason_code,
+            message=message,
+        )
+
+    @staticmethod
+    def _degraded(
+        source: str,
+        records: Any,
+        *,
+        reason_code: str,
+        message: str,
+    ) -> OperatorSectionAvailability:
+        count = records if isinstance(records, int) else len(records)
+        return OperatorSectionAvailability(
+            state="degraded",
+            source=source,
+            record_count=int(count),
+            reason_code=reason_code,
+            message=message,
+        )
+
+    def _read_list(
+        self,
+        section: str,
+        repository: Any,
+        method_name: str,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[list[Any], OperatorSectionAvailability]:
+        source = f"{type(repository).__name__}.{method_name}"
+        try:
+            records = list(
+                self._call(
+                    section,
+                    repository,
+                    method_name,
+                    *args,
+                    **kwargs,
+                )
             )
+        except OperatorLiveRepositoryError as exc:
+            return [], self._unavailable(
+                source,
+                reason_code=f"OPERATOR_{section.upper()}_UNAVAILABLE",
+                message=str(exc),
+            )
+        return records, self._available(source, records)
+
+    def _tenant_scoped_repository(
+        self,
+        attribute: str,
+        scope: OperatorReadScope,
+    ) -> tuple[Any | None, str | None]:
+        """Resolve a repository without ever enumerating an unscoped document set."""
+
+        provider = getattr(
+            self._persistence,
+            f"{attribute}_for_tenant",
+            None,
+        )
+        if callable(provider):
+            try:
+                return provider(scope.tenant_id), None
+            except Exception as exc:
+                return None, f"{type(exc).__name__}: {exc}"
+
+        repository = getattr(self._persistence, attribute, None)
+        store = getattr(repository, "_store", None)
+        if repository is None or store is None:
+            return None, "tenant-aware repository is not configured"
+        try:
+            from shared.infrastructure.persistence.operator_domains import (
+                TenantScopedDocumentStore,
+            )
+
+            return type(repository)(
+                TenantScopedDocumentStore(store, scope.tenant_id)
+            ), None
+        except Exception as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
+        sections: dict[str, OperatorSectionAvailability] = {}
+        stores, sections["stores"] = self._read_list(
+            "stores",
+            self._persistence.store_repository,
+            "list_stores",
+            tenant_id=scope.tenant_id,
+            brand_ids=scope.brand_ids,
+            region_codes=scope.region_ids,
+            store_ids=scope.store_ids,
         )
         visible_store_ids = tuple(
             sorted(str(_value(store, "store_id")) for store in stores)
         )
-        transactions = list(
-            self._call(
+        if sections["stores"].available:
+            transactions, sections["transactions"] = self._read_list(
                 "transactions",
                 self._persistence.transaction_repository,
                 "list_transactions",
                 tenant_id=scope.tenant_id,
                 store_ids=visible_store_ids,
             )
-        )
+        else:
+            transactions = []
+            sections["transactions"] = self._unavailable(
+                "transaction_repository.list_transactions",
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="transactions require an available tenant-scoped store set",
+            )
 
         interventions: list[Any] = []
         alerts: list[Any] = []
-        for store_id in visible_store_ids:
-            interventions.extend(
-                self._call(
-                    "interventions",
-                    self._persistence.intervention_repository,
-                    "list_by_store",
-                    store_id,
+        intervention_errors: list[str] = []
+        alert_errors: list[str] = []
+        if sections["stores"].available:
+            for store_id in visible_store_ids:
+                try:
+                    interventions.extend(
+                        self._call(
+                            "interventions",
+                            self._persistence.intervention_repository,
+                            "list_by_store",
+                            store_id,
+                        )
+                    )
+                except OperatorLiveRepositoryError as exc:
+                    intervention_errors.append(str(exc))
+                try:
+                    alerts.extend(
+                        self._call(
+                            "forecast_alerts",
+                            self._persistence.forecastops_repository,
+                            "list_alerts_by_store",
+                            store_id,
+                        )
+                    )
+                except OperatorLiveRepositoryError as exc:
+                    alert_errors.append(str(exc))
+            sections["interventions"] = (
+                self._degraded(
+                    "intervention_repository.list_by_store",
+                    interventions,
+                    reason_code="OPERATOR_INTERVENTIONS_PARTIAL",
+                    message="; ".join(intervention_errors),
+                )
+                if intervention_errors
+                else self._available(
+                    "intervention_repository.list_by_store",
+                    interventions,
                 )
             )
-            alerts.extend(
-                self._call(
-                    "forecast_alerts",
-                    self._persistence.forecastops_repository,
-                    "list_alerts_by_store",
-                    store_id,
+            sections["forecastAlerts"] = (
+                self._degraded(
+                    "forecastops_repository.list_alerts_by_store",
+                    alerts,
+                    reason_code="OPERATOR_FORECAST_ALERTS_PARTIAL",
+                    message="; ".join(alert_errors),
                 )
+                if alert_errors
+                else self._available(
+                    "forecastops_repository.list_alerts_by_store",
+                    alerts,
+                )
+            )
+        else:
+            sections["interventions"] = self._unavailable(
+                "intervention_repository.list_by_store",
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="interventions require an available tenant-scoped store set",
+            )
+            sections["forecastAlerts"] = self._unavailable(
+                "forecastops_repository.list_alerts_by_store",
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="forecast alerts require an available tenant-scoped store set",
             )
 
-        # These legacy projections do not yet carry a tenant key. They stay
-        # invisible in the live Operator read model instead of being read
-        # cross-tenant. Their owning, tenant-aware intake APIs remain available.
-        listings: list[Any] = []
-        candidates: list[Any] = []
-        decisions: list[Any] = []
+        listing_repository, listing_error = self._tenant_scoped_repository(
+            "listing_repository",
+            scope,
+        )
+        if listing_repository is None:
+            listings = []
+            candidates = []
+            message = listing_error or "tenant-aware listing repository is unavailable"
+            sections["listings"] = self._unavailable(
+                "listing_repository.list_listings",
+                reason_code="OPERATOR_TENANT_LISTINGS_UNAVAILABLE",
+                message=message,
+            )
+            sections["candidates"] = self._unavailable(
+                "listing_repository.list_candidates",
+                reason_code="OPERATOR_TENANT_CANDIDATES_UNAVAILABLE",
+                message=message,
+            )
+        else:
+            listings, sections["listings"] = self._read_list(
+                "listings",
+                listing_repository,
+                "list_listings",
+            )
+            candidates, sections["candidates"] = self._read_list(
+                "candidates",
+                listing_repository,
+                "list_candidates",
+            )
+
+        decision_repository, decision_error = self._tenant_scoped_repository(
+            "sitescore_decision_store",
+            scope,
+        )
+        if decision_repository is None:
+            decisions = []
+            sections["siteScoreDecisions"] = self._unavailable(
+                "sitescore_decision_store.list_decisions",
+                reason_code="OPERATOR_TENANT_SITESCORE_DECISIONS_UNAVAILABLE",
+                message=decision_error
+                or "tenant-aware SiteScore decision repository is unavailable",
+            )
+        else:
+            decisions, sections["siteScoreDecisions"] = self._read_list(
+                "sitescore_decisions",
+                decision_repository,
+                "list_decisions",
+            )
+
+        # These persisted records currently have no tenant partition or tenant
+        # key. Reading them would be a cross-tenant enumeration, so their absence
+        # is explicit instead of being represented as a real empty result.
         ingestion_runs: list[Any] = []
         heatzones: list[Any] = []
+        sections["ingestionRuns"] = self._unavailable(
+            "ingestion_run_store.list_runs",
+            reason_code="OPERATOR_INGESTION_TENANT_SCOPE_UNAVAILABLE",
+            message="ingestion run records do not expose a tenant-safe Operator query",
+        )
+        sections["heatZones"] = self._unavailable(
+            "heatzone_store.list_scores",
+            reason_code="OPERATOR_HEATZONE_TENANT_SCOPE_UNAVAILABLE",
+            message="HeatZone results do not expose a tenant-safe Operator query",
+        )
 
-        audit_events = list(
-            self._call(
-                "audit_events",
-                self._persistence.audit_log,
-                "list_events",
-                tenant_id=scope.tenant_id,
-            )
+        audit_events, sections["auditEvents"] = self._read_list(
+            "audit_events",
+            self._persistence.audit_log,
+            "list_events",
+            tenant_id=scope.tenant_id,
         )
-        active_jobs = int(
-            self._call(
+        try:
+            active_jobs = int(
+                self._call(
+                    "active_jobs",
+                    self._persistence.job_queue,
+                    "count_active_jobs",
+                    tenant_id=scope.tenant_id,
+                )
+            )
+        except OperatorLiveRepositoryError as exc:
+            active_jobs = 0
+            sections["activeJobs"] = self._unavailable(
+                "job_queue.count_active_jobs",
+                reason_code="OPERATOR_ACTIVE_JOBS_UNAVAILABLE",
+                message=str(exc),
+            )
+        else:
+            sections["activeJobs"] = self._available(
                 "active_jobs",
-                self._persistence.job_queue,
-                "count_active_jobs",
-                tenant_id=scope.tenant_id,
+                active_jobs,
             )
-        )
         return {
             "stores": stores,
             "transactions": transactions,
@@ -267,6 +524,7 @@ class OperatorLiveRepository:
             "heatzones": heatzones,
             "audit_events": audit_events,
             "active_jobs": active_jobs,
+            "sections": sections,
         }
 
     def probe(self) -> OperatorRepositoryProbe:
@@ -317,6 +575,17 @@ class OperatorLiveRepository:
         ingestion_runs = list(sources["ingestion_runs"])
         audit_events = list(sources["audit_events"])
         active_jobs = int(sources["active_jobs"])
+        sections: dict[str, OperatorSectionAvailability] = dict(
+            sources["sections"]
+        )
+        sections["riskRows"] = self._unavailable(
+            "operator-risk-projection",
+            reason_code="OPERATOR_RISK_PROJECTION_UNAVAILABLE",
+            message=(
+                "the Operator risk projection has no tenant-aware authoritative "
+                "repository contract"
+            ),
+        )
 
         queue = [
             *self._alert_tasks(alerts),
@@ -349,19 +618,118 @@ class OperatorLiveRepository:
             if _status(_value(item, "listing_status")).lower() == "active"
         )
 
-        record_counts = {
-            "stores": len(stores),
-            "transactions": len(transactions),
-            "interventions": len(interventions),
-            "forecastAlerts": len(alerts),
-            "listings": len(listings),
-            "candidates": len(candidates),
-            "siteScoreDecisions": len(decisions),
-            "ingestionRuns": len(ingestion_runs),
-            "heatZones": len(sources["heatzones"]),
-            "auditEvents": len(audit_events),
-            "activeJobs": active_jobs,
+        section_payload = {
+            name: availability.to_dict()
+            for name, availability in sections.items()
         }
+        unavailable_sections = sorted(
+            name
+            for name, availability in sections.items()
+            if availability.state == "unavailable"
+        )
+        degraded_sections = sorted(
+            name
+            for name, availability in sections.items()
+            if availability.state == "degraded"
+        )
+        available_sections = sorted(
+            name
+            for name, availability in sections.items()
+            if availability.available
+        )
+        data_mode = (
+            "unavailable"
+            if not available_sections
+            else "degraded"
+            if unavailable_sections or degraded_sections
+            else "live"
+        )
+        record_counts = {
+            name: availability.record_count
+            for name, availability in sections.items()
+        }
+        queue_availability = (
+            "degraded"
+            if any(
+                sections[name].state != "available"
+                for name in (
+                    "forecastAlerts",
+                    "interventions",
+                    "listings",
+                    "candidates",
+                    "ingestionRuns",
+                )
+            )
+            else "available"
+        )
+        approval_availability = (
+            "degraded"
+            if any(
+                sections[name].state != "available"
+                for name in ("siteScoreDecisions", "interventions")
+            )
+            else "available"
+        )
+        notification_availability = (
+            "degraded"
+            if any(
+                sections[name].state != "available"
+                for name in ("forecastAlerts", "ingestionRuns")
+            )
+            else "available"
+        )
+        section_payload["workQueue"] = {
+            "state": queue_availability,
+            "available": True,
+            "complete": queue_availability == "available",
+            "source": "operator-work-queue-projection",
+            "recordCount": len(queue),
+            **(
+                {
+                    "reasonCode": "OPERATOR_WORK_QUEUE_PARTIAL",
+                    "message": "one or more task sources are unavailable",
+                }
+                if queue_availability == "degraded"
+                else {}
+            ),
+        }
+        section_payload["approvals"] = {
+            "state": approval_availability,
+            "available": True,
+            "complete": approval_availability == "available",
+            "source": "operator-approval-projection",
+            "recordCount": len(approvals),
+            **(
+                {
+                    "reasonCode": "OPERATOR_APPROVALS_PARTIAL",
+                    "message": "one or more approval sources are unavailable",
+                }
+                if approval_availability == "degraded"
+                else {}
+            ),
+        }
+        section_payload["notifications"] = {
+            "state": notification_availability,
+            "available": True,
+            "complete": notification_availability == "available",
+            "source": "operator-notification-projection",
+            "recordCount": len(notifications),
+            **(
+                {
+                    "reasonCode": "OPERATOR_NOTIFICATIONS_PARTIAL",
+                    "message": "one or more notification sources are unavailable",
+                }
+                if notification_availability == "degraded"
+                else {}
+            ),
+        }
+        record_counts.update(
+            {
+                "workQueue": len(queue),
+                "approvals": len(approvals),
+                "notifications": len(notifications),
+            }
+        )
         return {
             "_meta": {
                 "source": "operator-live-repository",
@@ -369,56 +737,88 @@ class OperatorLiveRepository:
                 "recordCounts": record_counts,
                 "scopeLabel": f"{len(stores)} stores",
                 "tenantId": scope.tenant_id,
+                "dataMode": data_mode,
+                "complete": data_mode == "live",
+                "sections": section_payload,
+                "unavailableSections": unavailable_sections,
+                "degradedSections": degraded_sections,
+                "dataOrigin": {
+                    **self.data_origin,
+                    "kind": data_mode,
+                    "complete": data_mode == "live",
+                },
             },
             "kpis": [
                 {
                     "label": "營運任務",
                     "value": str(len(queue)),
                     "delta": "",
-                    "meta": "live repositories",
+                    "meta": "authoritative repositories",
                     "tone": "warning" if queue else "success",
+                    "availability": queue_availability,
                 },
                 {
                     "label": "待核准",
                     "value": str(len(approvals)),
                     "delta": "",
-                    "meta": "live repositories",
+                    "meta": "authoritative repositories",
                     "tone": "warning" if approvals else "success",
+                    "availability": approval_availability,
                 },
                 {
                     "label": "有效門市",
-                    "value": str(
-                        sum(
-                            1
-                            for item in stores
-                            if _status(_value(item, "store_status")).lower()
-                            == "open"
+                    "value": (
+                        str(
+                            sum(
+                                1
+                                for item in stores
+                                if _status(_value(item, "store_status")).lower()
+                                == "open"
+                            )
                         )
+                        if sections["stores"].available
+                        else None
                     ),
                     "delta": "",
                     "meta": "store repository",
                     "tone": "neutral",
+                    "availability": sections["stores"].state,
                 },
                 {
                     "label": "交易淨額",
-                    "value": f"{transaction_net:.2f}",
+                    "value": (
+                        f"{transaction_net:.2f}"
+                        if sections["transactions"].available
+                        else None
+                    ),
                     "delta": "",
                     "meta": "successful persisted transactions",
                     "tone": "neutral",
+                    "availability": sections["transactions"].state,
                 },
                 {
                     "label": "有效物件",
-                    "value": str(open_listings),
+                    "value": (
+                        str(open_listings)
+                        if sections["listings"].available
+                        else None
+                    ),
                     "delta": "",
                     "meta": "listing repository",
                     "tone": "neutral",
+                    "availability": sections["listings"].state,
                 },
                 {
                     "label": "執行中工作",
-                    "value": str(active_jobs),
+                    "value": (
+                        str(active_jobs)
+                        if sections["activeJobs"].available
+                        else None
+                    ),
                     "delta": "",
                     "meta": "job repository",
                     "tone": "info" if active_jobs else "neutral",
+                    "availability": sections["activeJobs"].state,
                 },
             ],
             "workQueue": queue,

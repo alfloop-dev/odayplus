@@ -269,6 +269,41 @@ def create_operator_router(
                     },
                 ) from exc
 
+        def _shell_unavailable(
+            operation: str,
+            dependency: str,
+            *,
+            message: str | None = None,
+        ) -> None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "OPERATOR_SHELL_CONTRACT_UNAVAILABLE",
+                    "operation": operation,
+                    "dependency": dependency,
+                    "state": "unavailable",
+                    "reasonCode": "TENANT_BOUND_DURABLE_SHELL_NOT_WIRED",
+                    "message": message
+                    or (
+                        f"{dependency} has no tenant-bound durable production "
+                        "repository wiring"
+                    ),
+                },
+            )
+
+        def _unavailable_field(
+            dependency: str,
+            *,
+            reason_code: str,
+        ) -> dict[str, Any]:
+            return {
+                "state": "unavailable",
+                "available": False,
+                "complete": False,
+                "dependency": dependency,
+                "reasonCode": reason_code,
+            }
+
         @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
         @router.get("/today", dependencies=[Depends(operator_view_guard)])
         def live_envelope(
@@ -322,9 +357,17 @@ def create_operator_router(
                 "assigneeId": None,
                 "assigneeName": None,
                 "assignedAt": None,
-                "assignedToMe": False,
+                "assignedToMe": None,
                 "slaDueAt": None,
-                "slaState": "none",
+                "slaState": None,
+                "assignmentAvailability": _unavailable_field(
+                    "operator_shell_task_assignments",
+                    reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
+                ),
+                "slaAvailability": _unavailable_field(
+                    "operator_shell_task_sla",
+                    reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
+                ),
                 "severity": {
                     "danger": "critical",
                     "warning": "warning",
@@ -353,9 +396,13 @@ def create_operator_router(
                     "danger": "critical",
                     "warning": "warning",
                 }.get(str(item.get("tone", "info")), "info"),
-                "acknowledged": False,
+                "acknowledged": None,
                 "acknowledgedAt": None,
                 "acknowledgedBy": None,
+                "acknowledgementAvailability": _unavailable_field(
+                    "operator_shell_notification_state",
+                    reason_code="OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE",
+                ),
                 "sourceHref": (
                     f"/tasks?taskId={target.get('entityId')}"
                     f"&workspace={target.get('workspace', 'today')}"
@@ -404,6 +451,28 @@ def create_operator_router(
                 if entry["workspace"] in allowed_workspaces
                 and (not entry.get("requiresAdmin") or role["id"] == "ops-lead")
             ]
+            sections = envelope["meta"].get("sections", {})
+            work_queue_availability = sections.get(
+                "workQueue",
+                _unavailable_field(
+                    "operator_work_queue_projection",
+                    reason_code="OPERATOR_WORK_QUEUE_AVAILABILITY_UNKNOWN",
+                ),
+            )
+            approvals_availability = sections.get(
+                "approvals",
+                _unavailable_field(
+                    "operator_approval_projection",
+                    reason_code="OPERATOR_APPROVAL_AVAILABILITY_UNKNOWN",
+                ),
+            )
+            notifications_availability = sections.get(
+                "notifications",
+                _unavailable_field(
+                    "operator_notification_projection",
+                    reason_code="OPERATOR_NOTIFICATION_AVAILABILITY_UNKNOWN",
+                ),
+            )
             return {
                 "meta": {
                     **envelope["meta"],
@@ -414,28 +483,44 @@ def create_operator_router(
                 "status": {
                     "headline": f"{role['label']}・{len(tasks)} 件待處理",
                     "openTasks": len(tasks),
-                    "slaBreached": 0,
-                    "slaAtRisk": 0,
+                    "slaBreached": None,
+                    "slaAtRisk": None,
                     "pendingApprovals": len(envelope["approvals"]),
-                    "unacknowledgedNotifications": len(notifications),
+                    "unacknowledgedNotifications": None,
                     "tone": "warning" if tasks else "success",
+                    "availability": {
+                        "tasks": work_queue_availability,
+                        "approvals": approvals_availability,
+                        "notifications": notifications_availability,
+                        "assignment": _unavailable_field(
+                            "operator_shell_task_assignments",
+                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
+                        ),
+                        "sla": _unavailable_field(
+                            "operator_shell_task_sla",
+                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
+                        ),
+                        "notificationAcknowledgement": _unavailable_field(
+                            "operator_shell_notification_state",
+                            reason_code=(
+                                "OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE"
+                            ),
+                        ),
+                    },
                 },
                 "tasks": tasks[:5],
                 "approvals": envelope["approvals"][:5],
                 "decisions": envelope["decisions"][:5],
                 "freshness": [
                     {
-                        "source": "operator-live-repository",
-                        "label": "Operator live repositories",
+                        "source": details.get("source", section),
+                        "label": section,
                         "generatedAt": envelope["meta"]["generatedAt"],
-                        "records": sum(
-                            int(value)
-                            for value in envelope["meta"].get("recordCounts", {}).values()
-                        ),
-                        "state": (
-                            "live" if envelope["meta"]["liveReadiness"]["ready"] else "unavailable"
-                        ),
+                        "records": details.get("recordCount"),
+                        "state": details.get("state", "unavailable"),
+                        "reasonCode": details.get("reasonCode"),
                     }
+                    for section, details in sorted(sections.items())
                 ],
                 "entryPoints": entry_points,
                 "notifications": notifications[:5],
@@ -463,6 +548,24 @@ def create_operator_router(
                 alias="X-Correlation-Id",
             ),
         ) -> dict[str, Any]:
+            if sla is not None:
+                _shell_unavailable(
+                    "operator.shell.tasks.filter.sla",
+                    "operator_shell_task_sla",
+                    message=(
+                        "SLA filtering is unavailable until the tenant-bound "
+                        "task SLA repository is wired"
+                    ),
+                )
+            if assignee is not None:
+                _shell_unavailable(
+                    "operator.shell.tasks.filter.assignee",
+                    "operator_shell_task_assignments",
+                    message=(
+                        "assignee filtering is unavailable until the tenant-bound "
+                        "task assignment repository is wired"
+                    ),
+                )
             context = _context(
                 request,
                 x_operator_role=x_operator_role,
@@ -470,26 +573,16 @@ def create_operator_router(
                 x_roles=x_roles,
                 x_correlation_id=x_correlation_id,
             )
-            queue_context = {
-                key: value for key, value in context.items() if key != "correlation_id"
-            }
+            envelope = _live_read(
+                "operator.shell.tasks",
+                svc.get_today,
+                **context,
+            )
             tasks = [
                 _task_row(item)
-                for item in _live_read(
-                    "operator.shell.tasks",
-                    svc.get_work_queue,
-                    **queue_context,
-                )
+                for item in envelope["workQueue"]
             ]
             filtered = tasks
-            if sla:
-                filtered = [item for item in filtered if item["slaState"] == sla]
-            if assignee == "me":
-                filtered = [item for item in filtered if item["assignedToMe"]]
-            elif assignee == "unassigned":
-                filtered = [item for item in filtered if not item["assigneeId"]]
-            elif assignee:
-                filtered = [item for item in filtered if item["assigneeId"] == assignee]
             if task_status:
                 filtered = [item for item in filtered if str(item.get("status")) == task_status]
             if task_id:
@@ -499,7 +592,21 @@ def create_operator_router(
                     "generatedAt": datetime.now(UTC).isoformat(),
                     "correlationId": context["correlation_id"],
                     "source": "operator-live-shell-tasks",
-                    "dataOrigin": svc.data_origin,
+                    "dataOrigin": envelope["meta"]["dataOrigin"],
+                    "dataMode": envelope["meta"]["dataMode"],
+                    "sections": {
+                        "tasks": envelope["meta"].get("sections", {}).get(
+                            "workQueue"
+                        ),
+                        "assignment": _unavailable_field(
+                            "operator_shell_task_assignments",
+                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
+                        ),
+                        "sla": _unavailable_field(
+                            "operator_shell_task_sla",
+                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
+                        ),
+                    },
                     "filters": {
                         "sla": sla,
                         "assignee": assignee,
@@ -512,10 +619,14 @@ def create_operator_router(
                 "total": len(tasks),
                 "facets": {
                     "sla": {
-                        "breached": 0,
-                        "at-risk": 0,
-                        "on-track": 0,
-                        "none": len(tasks),
+                        "breached": None,
+                        "at-risk": None,
+                        "on-track": None,
+                        "none": None,
+                        "availability": _unavailable_field(
+                            "operator_shell_task_sla",
+                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
+                        ),
                     },
                     "status": {
                         status_value: sum(
@@ -523,7 +634,14 @@ def create_operator_router(
                         )
                         for status_value in {str(item.get("status")) for item in tasks}
                     },
-                    "assignee": {"me": 0},
+                    "assignee": {
+                        "me": None,
+                        "unassigned": None,
+                        "availability": _unavailable_field(
+                            "operator_shell_task_assignments",
+                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
+                        ),
+                    },
                 },
                 "actions": [
                     {
@@ -531,9 +649,19 @@ def create_operator_router(
                         "label": "開啟來源",
                         "allowed": True,
                         "reason": None,
+                    },
+                    {
+                        "key": "task.assign",
+                        "label": "指派",
+                        "allowed": False,
+                        "reason": "OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
                     }
                 ],
-                "assignableRoles": [],
+                "assignableRoles": None,
+                "assignability": _unavailable_field(
+                    "operator_shell_task_assignments",
+                    reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
+                ),
             }
 
         @router.get(
@@ -555,6 +683,15 @@ def create_operator_router(
                 alias="X-Correlation-Id",
             ),
         ) -> dict[str, Any]:
+            if acknowledged is not None:
+                _shell_unavailable(
+                    "operator.shell.notifications.filter.acknowledged",
+                    "operator_shell_notification_state",
+                    message=(
+                        "acknowledgement filtering is unavailable until the "
+                        "tenant-bound notification state repository is wired"
+                    ),
+                )
             context = _context(
                 request,
                 x_operator_role=x_operator_role,
@@ -571,26 +708,226 @@ def create_operator_router(
             filtered = rows
             if severity:
                 filtered = [item for item in filtered if item["severity"] == severity]
-            if acknowledged is not None:
-                filtered = [item for item in filtered if item["acknowledged"] is acknowledged]
             return {
                 "meta": {
                     "generatedAt": envelope["meta"]["generatedAt"],
                     "correlationId": context["correlation_id"],
                     "source": "operator-live-shell-notifications",
                     "dataOrigin": envelope["meta"]["dataOrigin"],
+                    "sections": {
+                        "notifications": envelope["meta"].get("sections", {}).get(
+                            "notifications"
+                        ),
+                        "acknowledgement": _unavailable_field(
+                            "operator_shell_notification_state",
+                            reason_code=(
+                                "OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE"
+                            ),
+                        ),
+                    },
                 },
                 "items": filtered,
                 "count": len(filtered),
-                "unacknowledged": len(rows),
+                "unacknowledged": None,
                 "facets": {
                     "severity": {
                         level: sum(1 for item in rows if item["severity"] == level)
                         for level in ("critical", "warning", "info")
                     }
                 },
-                "preferences": None,
+                "preferences": {
+                    "value": None,
+                    "availability": _unavailable_field(
+                        "operator_shell_notification_preferences",
+                        reason_code=(
+                            "OPERATOR_SHELL_NOTIFICATION_PREFERENCES_UNAVAILABLE"
+                        ),
+                    ),
+                },
             }
+
+        @router.get(
+            "/shell/search",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def live_shell_search(
+            request: Request,
+            q: str = Query(default=""),
+            limit: int = Query(default=20, ge=1, le=100),
+            x_operator_role: str | None = Header(
+                default=None,
+                alias="X-Operator-Role",
+            ),
+            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
+            x_roles: str | None = Header(default=None, alias="X-Roles"),
+            x_correlation_id: str | None = Header(
+                default=None,
+                alias="X-Correlation-Id",
+            ),
+        ) -> dict[str, Any]:
+            result = _live_read(
+                "operator.shell.search",
+                svc.search,
+                q,
+                **_context(
+                    request,
+                    x_operator_role=x_operator_role,
+                    x_subject_id=x_subject_id,
+                    x_roles=x_roles,
+                    x_correlation_id=x_correlation_id,
+                ),
+            )
+            result["items"] = result["items"][:limit]
+            result["count"] = len(result["items"])
+            result["meta"]["source"] = "operator-live-shell-search"
+            return result
+
+        @router.post(
+            "/shell/tasks/{task_id}/assignment",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_task_assignment(
+            task_id: str,
+            body: dict[str, Any],
+        ) -> None:
+            del task_id, body
+            _shell_unavailable(
+                "operator.shell.tasks.assignment",
+                "operator_shell_task_assignments",
+            )
+
+        @router.get(
+            "/shell/notifications/preferences",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def unavailable_shell_notification_preferences() -> None:
+            _shell_unavailable(
+                "operator.shell.notifications.preferences.read",
+                "operator_shell_notification_preferences",
+            )
+
+        @router.put(
+            "/shell/notifications/preferences",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_notification_preferences_update(
+            body: dict[str, Any],
+        ) -> None:
+            del body
+            _shell_unavailable(
+                "operator.shell.notifications.preferences.update",
+                "operator_shell_notification_preferences",
+            )
+
+        @router.post(
+            "/shell/notifications/{notification_id}/acknowledgement",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_notification_acknowledgement(
+            notification_id: str,
+        ) -> None:
+            del notification_id
+            _shell_unavailable(
+                "operator.shell.notifications.acknowledgement",
+                "operator_shell_notification_state",
+            )
+
+        @router.get(
+            "/shell/admin",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_admin() -> None:
+            _shell_unavailable(
+                "operator.shell.admin.read",
+                "operator_shell_role_workspaces",
+            )
+
+        @router.put(
+            "/shell/admin/roles/{target_role_id}/workspaces",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_admin_update(
+            target_role_id: str,
+            body: dict[str, Any],
+        ) -> None:
+            del target_role_id, body
+            _shell_unavailable(
+                "operator.shell.admin.role_workspaces.update",
+                "operator_shell_role_workspaces",
+            )
+
+        @router.get(
+            "/shell/settings",
+            dependencies=[Depends(operator_view_guard)],
+        )
+        def unavailable_shell_settings() -> None:
+            _shell_unavailable(
+                "operator.shell.settings.read",
+                "operator_shell_settings",
+            )
+
+        @router.put(
+            "/shell/settings",
+            dependencies=[Depends(operator_write_guard)],
+        )
+        def unavailable_shell_settings_update(
+            body: dict[str, Any],
+        ) -> None:
+            del body
+            _shell_unavailable(
+                "operator.shell.settings.update",
+                "operator_shell_settings",
+            )
+
+        franchisee_view_guard = require_permission(
+            "franchisee_portal",
+            Action.VIEW,
+            engine=authz_engine,
+        )
+        franchisee_write_guard = require_permission(
+            "franchisee_portal",
+            Action.CREATE,
+            engine=authz_engine,
+        )
+
+        @router.get(
+            "/shell/franchisee",
+            dependencies=[Depends(franchisee_view_guard)],
+        )
+        def unavailable_shell_franchisee(
+            store_id: str | None = Query(default=None, alias="storeId"),
+        ) -> None:
+            del store_id
+            _shell_unavailable(
+                "operator.shell.franchisee.read",
+                "operator_shell_franchisee_projection",
+            )
+
+        @router.post(
+            "/shell/franchisee/acknowledgement",
+            dependencies=[Depends(franchisee_write_guard)],
+        )
+        def unavailable_shell_franchisee_acknowledgement(
+            body: dict[str, Any],
+        ) -> None:
+            del body
+            _shell_unavailable(
+                "operator.shell.franchisee.acknowledgement",
+                "operator_shell_franchisee_acknowledgements",
+            )
+
+        @router.post(
+            "/shell/franchisee/reports",
+            dependencies=[Depends(franchisee_write_guard)],
+        )
+        def unavailable_shell_franchisee_reports(
+            body: dict[str, Any],
+        ) -> None:
+            del body
+            _shell_unavailable(
+                "operator.shell.franchisee.reports.create",
+                "operator_shell_franchisee_reports",
+            )
 
         if document_store is None:
 

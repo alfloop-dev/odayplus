@@ -264,6 +264,9 @@ class OperatorStateService:
     @property
     def data_origin(self) -> dict[str, Any]:
         """Return machine-verifiable provenance for the operator read model."""
+        state_origin = self._state.get("_meta", {}).get("dataOrigin")
+        if isinstance(state_origin, dict):
+            return deepcopy(state_origin)
         if self._live_repository is not None:
             return deepcopy(self._live_repository.data_origin)
         if self._require_live_data:
@@ -283,16 +286,25 @@ class OperatorStateService:
     @property
     def live_readiness(self) -> dict[str, Any]:
         """Return the live-data gate state without implying connector support."""
+        data_mode = str(
+            self._state.get("_meta", {}).get("dataMode", "")
+        ).strip()
         reason_code = "LIVE_DATA_NOT_REQUIRED"
-        if self._require_live_data and self._live_ready:
+        if self._require_live_data and self._live_ready and data_mode == "degraded":
+            reason_code = "OPERATOR_LIVE_REPOSITORY_DEGRADED"
+        elif self._require_live_data and self._live_ready:
             reason_code = "OPERATOR_LIVE_REPOSITORY_READY"
         elif self._require_live_data:
             reason_code = "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
         payload = {
             "required": self._require_live_data,
             "ready": self._live_ready,
+            "complete": bool(self._live_ready and data_mode == "live"),
             "reasonCode": reason_code,
         }
+        sections = self._state.get("_meta", {}).get("sections")
+        if isinstance(sections, dict):
+            payload["sections"] = deepcopy(sections)
         if self._live_error:
             payload["error"] = self._live_error
         return payload
@@ -342,8 +354,15 @@ class OperatorStateService:
                 raise
             raise OperatorLiveRepositoryError(self._live_error) from exc
         else:
-            self._live_ready = True
-            self._live_error = None
+            data_mode = str(
+                self._state.get("_meta", {}).get("dataMode", "live")
+            ).strip()
+            self._live_ready = data_mode in {"live", "degraded"}
+            self._live_error = (
+                None
+                if self._live_ready
+                else "all Operator read-model sections are unavailable"
+            )
         return self._state
 
     # ------------------------------------------------------------------
@@ -725,9 +744,11 @@ class OperatorStateService:
             for available_role in response_roles:
                 available_role.pop("heroName", None)
 
+        state_meta = state.get("_meta", {})
+        live_data_mode = str(state_meta.get("dataMode", "live")).strip()
         envelope = {
             "meta": {
-                "generatedAt": state.get("_meta", {}).get(
+                "generatedAt": state_meta.get(
                     "generatedAt",
                     datetime.now(UTC).isoformat(),
                 ),
@@ -736,16 +757,25 @@ class OperatorStateService:
                 "counts": counts,
                 "source": "operator-shell-api-envelope",
                 "dataMode": (
-                    "live"
+                    live_data_mode
                     if self._require_live_data and self._live_ready
                     else "unavailable"
                     if self._require_live_data
                     else "fixture"
                 ),
-                "dataOrigin": self.data_origin,
+                "dataOrigin": deepcopy(
+                    state_meta.get("dataOrigin", self.data_origin)
+                ),
                 "liveReadiness": self.live_readiness,
-                "recordCounts": deepcopy(state.get("_meta", {}).get("recordCounts", {})),
-                "tenantId": state.get("_meta", {}).get("tenantId"),
+                "recordCounts": deepcopy(state_meta.get("recordCounts", {})),
+                "sections": deepcopy(state_meta.get("sections", {})),
+                "unavailableSections": deepcopy(
+                    state_meta.get("unavailableSections", [])
+                ),
+                "degradedSections": deepcopy(
+                    state_meta.get("degradedSections", [])
+                ),
+                "tenantId": state_meta.get("tenantId"),
             },
             "navigation": {
                 "roles": response_roles,

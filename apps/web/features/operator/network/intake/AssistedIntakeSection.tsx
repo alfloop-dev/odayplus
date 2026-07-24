@@ -111,6 +111,7 @@ export function AssistedIntakeSection({
   const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
+  const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -216,6 +217,46 @@ export function AssistedIntakeSection({
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
+
+  // A durable detail link may point to a record outside the current inbox
+  // page. Resolve that record directly instead of depending on list pagination.
+  useEffect(() => {
+    if (dialog !== "detail" || !selectedId) {
+      setDetailLoadState("idle");
+      return undefined;
+    }
+    if (selected) {
+      setDetailLoadState("ready");
+      return undefined;
+    }
+    if (!client) {
+      setDetailLoadState("error");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setDetailLoadState("loading");
+    void intakeApi.get(client, selectedId).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setRecords((current) => {
+          const index = current.findIndex((item) => item.id === result.value.id);
+          if (index === -1) return [result.value, ...current];
+          const next = [...current];
+          next[index] = result.value;
+          return next;
+        });
+        setActionError(null);
+        setDetailLoadState("ready");
+      } else {
+        setActionError(result.error);
+        setDetailLoadState("error");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, dialog, selected, selectedId]);
 
   // Restore the durable promotion saga whenever a deep link or reloaded inbox
   // opens an intake. Until this lookup finishes the request form stays closed,
@@ -947,6 +988,33 @@ export function AssistedIntakeSection({
       {toast ? (
         <div className={styles.noteBox} data-testid="intake-toast" role="status">
           {toast}
+        </div>
+      ) : null}
+
+      {dialog === "detail" && !selected && detailLoadState === "loading" ? (
+        <div
+          aria-live="polite"
+          className={styles.noteBox}
+          data-testid="intake-direct-detail-loading"
+          role="status"
+        >
+          正在從後端載入收件 {selectedId}…
+        </div>
+      ) : null}
+
+      {dialog === "detail" && !selected && detailLoadState === "error" ? (
+        <div
+          className={styles.errorPanel}
+          data-testid="intake-direct-detail-error"
+          role="alert"
+        >
+          <span className={styles.errorSummary}>
+            {actionError?.code ?? "ODP-INTAKE-UNAVAILABLE"} ·{" "}
+            {actionError?.summary ?? "後端未提供此收件紀錄。"}
+          </span>
+          <span className={styles.errorNext}>
+            {actionError?.nextAction ?? "請重新整理或返回 Listing 收件匣。"}
+          </span>
         </div>
       ) : null}
 

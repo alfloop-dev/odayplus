@@ -10,11 +10,17 @@ from models.shared_ml import (
 from shared.api.errors import ApiError, ErrorCode
 from shared.api.idempotency import (
     IdempotencyConflictError,
-    IdempotencyStore,
     apply_replay_marker,
 )
 from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.infrastructure.persistence.command_receipts import (
+    CommandReceiptIncompleteError,
+    CommandReceiptPersistenceError,
+    TenantScopedCommandReceiptStore,
+)
+from shared.infrastructure.persistence.job_receipts import JobQueue
+from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -34,7 +40,6 @@ else:
     from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
-        PriceOpsBatchResult,
         run_priceops_optimizer_batch,
     )
 
@@ -111,30 +116,12 @@ else:
         generated_at: str | None = None
 
 
-    class PriceOpsJobStore:
-        def __init__(self) -> None:
-            self._jobs: dict[str, PriceOpsBatchResult] = {}
-            self._idempotency_index: dict[str, str] = {}
-
-        def put(
-            self, result: PriceOpsBatchResult, *, idempotency_key: str | None = None
-        ) -> tuple[PriceOpsBatchResult, bool]:
-            if idempotency_key and idempotency_key in self._idempotency_index:
-                return self._jobs[self._idempotency_index[idempotency_key]], False
-            self._jobs[result.job_id] = result
-            if idempotency_key:
-                self._idempotency_index[idempotency_key] = result.job_id
-            return result, True
-
-        def get(self, job_id: str) -> PriceOpsBatchResult | None:
-            return self._jobs.get(job_id)
-
-
     def create_priceops_router(
         *,
         repository: InMemoryPriceOpsRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
-        job_store: PriceOpsJobStore | None = None,
+        job_queue: JobQueue | None = None,
+        require_durable_commands: bool | None = None,
         production_optimizer: PriceOpsProductionOptimizer | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
@@ -142,6 +129,11 @@ else:
         from shared.auth import Action
 
         production_required = production_execution_required(runtime_mode)
+        durable_commands_required = (
+            production_required
+            if require_durable_commands is None
+            else require_durable_commands
+        )
         price_repository = (
             repository
             if production_required
@@ -149,7 +141,7 @@ else:
         )
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        jobs = job_store or PriceOpsJobStore()
+        local_job_queue = None if durable_commands_required else InMemoryJobQueue()
         composition_error: ProductionExecutionConfigurationError | None = None
         try:
             service = PriceOpsService(
@@ -176,11 +168,52 @@ else:
             tags=["priceops"],
             dependencies=[Depends(require_runtime_binding)],
         )
-        # One store for every priceops mutation, replacing the router-local
-        # `idempotency_index` dict. Unlike that dict this one fingerprints the
-        # request body, so reusing a key for a different payload is a 409
-        # rather than a silent replay of the first response.
-        idempotency = IdempotencyStore()
+
+        def command_store(request: Request) -> TenantScopedCommandReceiptStore:
+            active_queue = job_queue
+            if active_queue is None:
+                app = request.scope.get("app")
+                active_queue = getattr(
+                    getattr(app, "state", None), "job_queue", None
+                )
+            active_queue = active_queue or local_job_queue
+            if active_queue is None:
+                raise _durable_store_required(
+                    "PriceOps production commands require durable persistence"
+                )
+            store = TenantScopedCommandReceiptStore(
+                queue=active_queue,
+                service="priceops",
+            )
+            if durable_commands_required and not store.is_durable:
+                raise _durable_store_required(
+                    "PriceOps production commands reject process-local stores"
+                )
+            return store
+
+        def tenant_id(request: Request, fallback: str | None = None) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            scope = getattr(principal, "scope", None)
+            value = getattr(scope, "tenant_id", None)
+            if value:
+                if fallback and str(fallback) != str(value):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": "PriceOps payload tenant does not match caller scope",
+                        },
+                    )
+                return str(value)
+            if durable_commands_required:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "PriceOps production commands require tenant scope",
+                    },
+                )
+            return "__local__"
 
         @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
         def create_plan(
@@ -189,8 +222,9 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
+            active_tenant_id = tenant_id(request, body.tenant_id)
 
-            def _execute() -> dict[str, Any]:
+            def _execute(_receipt_id: str) -> dict[str, Any]:
                 try:
                     resolved = [_resolve_item(item) for item in body.items]
                 except ElasticityInputError as exc:
@@ -219,7 +253,9 @@ else:
                 return payload
 
             return _guard_creation(
-                idempotency,
+                command_store(request),
+                tenant_id=active_tenant_id,
+                correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_plan",
                 payload=body.model_dump(mode="json"),
@@ -233,8 +269,11 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
+            active_tenant_id = tenant_id(request, body.plans[0].tenant_id)
+            for plan in body.plans:
+                tenant_id(request, plan.tenant_id)
 
-            def _execute() -> dict[str, Any]:
+            def _execute(receipt_id: str) -> dict[str, Any]:
                 try:
                     plan_requests = [
                         PlanRequest(
@@ -249,15 +288,13 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result, _created = jobs.put(
-                    run_priceops_optimizer_batch(
-                        requests=plan_requests,
-                        optimized_at=_parse_time(body.optimized_at),
-                        repository=price_repository,
-                        production_optimizer=production_optimizer,
-                        runtime_mode=runtime_mode,
-                    ),
-                    idempotency_key=effective_key,
+                result = run_priceops_optimizer_batch(
+                    requests=plan_requests,
+                    job_id=receipt_id,
+                    optimized_at=_parse_time(body.optimized_at),
+                    repository=price_repository,
+                    production_optimizer=production_optimizer,
+                    runtime_mode=runtime_mode,
                 )
                 audit_event = _record_audit(
                     active_audit_log,
@@ -278,7 +315,9 @@ else:
                 return payload
 
             return _guard_creation(
-                idempotency,
+                command_store(request),
+                tenant_id=active_tenant_id,
+                correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_optimizer_job",
                 payload=body.model_dump(mode="json"),
@@ -286,11 +325,17 @@ else:
             )
 
         @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
-        def get_optimizer_job(job_id: str) -> dict[str, Any] | None:
-            result = jobs.get(job_id)
+        def get_optimizer_job(job_id: str, request: Request) -> dict[str, Any]:
+            result = command_store(request).get(
+                tenant_id=tenant_id(request),
+                receipt_id=job_id,
+            )
             if result is None:
-                return None
-            return result.to_dict()
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="optimizer job not found",
+                )
+            return result
 
         @router.get("/plans", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
         def list_plans(
@@ -347,7 +392,12 @@ else:
             return _run_read(lambda: service.get_plan_comparison(plan_id))
 
         @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
-        def simulate(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
+        def simulate(
+            plan_id: str,
+            body: PriceOpsActorPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
             return _run(
                 lambda: service.simulate(
                     plan_id,
@@ -360,10 +410,19 @@ else:
                 "priceops.simulated.v1",
                 "simulate",
                 plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
-        def optimize(plan_id: str, body: PriceOpsActorPayload, request: Request) -> dict[str, Any]:
+        def optimize(
+            plan_id: str,
+            body: PriceOpsActorPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
             return _run(
                 lambda: service.optimize(
                     plan_id,
@@ -376,6 +435,10 @@ else:
                 "priceops.optimized.v1",
                 "run_model",
                 plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
@@ -397,7 +460,8 @@ else:
                 "priceops.submitted.v1",
                 "submit",
                 plan_id,
-                idempotency=idempotency,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
                 idempotency_key=idempotency_key,
                 body=body,
             )
@@ -422,7 +486,8 @@ else:
                 "priceops.approved.v1",
                 body.decision,
                 plan_id,
-                idempotency=idempotency,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
                 idempotency_key=idempotency_key,
                 body=body,
             )
@@ -449,14 +514,18 @@ else:
                 "priceops.activated.v1",
                 "execute",
                 plan_id,
-                idempotency=idempotency,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
                 idempotency_key=idempotency_key,
                 body=body,
             )
 
         @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def start_observation(
-            plan_id: str, body: PriceOpsObservationPayload, request: Request
+            plan_id: str,
+            body: PriceOpsObservationPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             return _run(
                 lambda: service.start_observation(
@@ -470,11 +539,18 @@ else:
                 "priceops.observation_started.v1",
                 "observe",
                 plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
         def evaluate(
-            plan_id: str, body: PriceOpsEvaluationPayload, request: Request
+            plan_id: str,
+            body: PriceOpsEvaluationPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             outcome_window = None
             if body.outcome_window_start and body.outcome_window_end:
@@ -498,6 +574,10 @@ else:
                 "priceops.evaluated.v1",
                 "evaluate",
                 plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
             )
 
         @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
@@ -519,7 +599,8 @@ else:
                 "priceops.rollback.v1",
                 "rollback",
                 plan_id,
-                idempotency=idempotency,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
                 idempotency_key=idempotency_key,
                 body=body,
             )
@@ -609,8 +690,10 @@ else:
         )
 
     def _guard_creation(
-        idempotency: IdempotencyStore,
+        command_store: TenantScopedCommandReceiptStore,
         *,
+        tenant_id: str,
+        correlation_id: str,
         key: str | None,
         scope: str,
         payload: Any,
@@ -619,18 +702,28 @@ else:
         """Run a creation under the idempotency policy and mark the replay.
 
         The whole operation -- resolve, create, audit -- runs inside
-        ``IdempotencyStore.run`` so the lookup and the write are covered by one
+        the durable command receipt store so reservation and replay are covered
+        by one
         lock. Looking up first and remembering afterwards leaves a
         check-then-act window: these sync handlers run concurrently in the
         threadpool, so N same-key POSTs all miss the lookup and all create,
         returning N distinct ids and N ``created: true`` responses.
         """
         try:
-            outcome = idempotency.run(
-                key=key, scope=scope, payload=payload, operation=operation
+            outcome = command_store.run(
+                tenant_id=tenant_id,
+                idempotency_key=key,
+                scope=scope,
+                payload=payload,
+                correlation_id=correlation_id,
+                operation=operation,
             )
         except IdempotencyConflictError as exc:
             raise _conflict_error(exc) from exc
+        except CommandReceiptIncompleteError as exc:
+            raise _incomplete_receipt_error(exc) from exc
+        except CommandReceiptPersistenceError as exc:
+            raise _persistence_error(exc) from exc
         result = apply_replay_marker(outcome.value, replayed=outcome.replayed)
         if outcome.replayed:
             # `created` predates this task and callers branch on it; a replay
@@ -647,7 +740,8 @@ else:
         audit_action: str,
         plan_id: str,
         *,
-        idempotency: IdempotencyStore | None = None,
+        command_store: TenantScopedCommandReceiptStore | None = None,
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         body: Any = None,
     ) -> dict[str, Any]:
@@ -686,12 +780,13 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        if idempotency is None:
+        if command_store is None:
             return _execute()
 
         try:
-            outcome = idempotency.run(
-                key=idempotency_key,
+            outcome = command_store.run(
+                tenant_id=tenant_id or "__local__",
+                idempotency_key=idempotency_key,
                 # Scope by event type and plan: the same client key on a
                 # different plan is a different mutation, not a replay.
                 #
@@ -703,11 +798,45 @@ else:
                 # it is.
                 scope=f"priceops:{event_type}:{plan_id}",
                 payload=body.model_dump(mode="json") if hasattr(body, "model_dump") else body,
-                operation=_execute,
+                correlation_id=request.state.correlation_id,
+                operation=lambda _receipt_id: _execute(),
             )
         except IdempotencyConflictError as exc:
             raise _conflict_error(exc) from exc
+        except CommandReceiptIncompleteError as exc:
+            raise _incomplete_receipt_error(exc) from exc
+        except CommandReceiptPersistenceError as exc:
+            raise _persistence_error(exc) from exc
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
+
+    def _durable_store_required(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "DURABLE_COMMAND_STORE_REQUIRED",
+                "message": message,
+            },
+        )
+
+    def _incomplete_receipt_error(
+        exc: CommandReceiptIncompleteError,
+    ) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "COMMAND_RECEIPT_INCOMPLETE",
+                "message": str(exc),
+            },
+        )
+
+    def _persistence_error(exc: CommandReceiptPersistenceError) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "DURABLE_COMMAND_STORE_UNAVAILABLE",
+                "message": str(exc),
+            },
+        )
 
     def _run_read(action: Any) -> dict[str, Any]:
         try:
@@ -717,7 +846,6 @@ else:
         return result.to_dict()
 
     __all__ = [
-        "PriceOpsJobStore",
         "PriceOpsOptimizerJobPayload",
         "PriceOpsPlanPayload",
         "create_priceops_router",

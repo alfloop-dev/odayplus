@@ -7,7 +7,6 @@ import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
 import { ListingCompareTable, type TargetListingData } from "./ListingCompareTable";
 import { MatchEvidencePanel } from "./MatchEvidencePanel";
-import { operatorFixturesAllowed } from "../../operatorDataMode";
 import {
   decisionTitle,
   matchLabel,
@@ -35,7 +34,7 @@ export type IdentityDecisionResultReceipt = {
 
 export function IdentityDecisionPanel({
   record,
-  currentOperator = { id: "OP-101", name: "Current Operator", role: "operations_manager" },
+  currentOperator,
   targetListing,
   busy = false,
   error = null,
@@ -67,16 +66,19 @@ export function IdentityDecisionPanel({
   onRefresh?: () => void;
   className?: string;
 }) {
+  const operator = currentOperator ?? { id: "", name: "UNAVAILABLE", role: "UNAVAILABLE" };
   const match = record.matchResult;
   const outcome: MatchOutcome = match?.outcome ?? "POSSIBLE_MATCH";
   const targetId = targetListing?.id || match?.targetListingId || "";
 
   // Proposer and Reviewer setup for 2nd actor governance
-  const proposerId = customProposerId || record.submitter || "OP-100";
-  const reviewerId = customReviewerId || currentOperator.id;
+  const proposerId = customProposerId || record.submitter || "";
+  const reviewerId = customReviewerId || operator.id;
+  const actorUnavailable = !proposerId || !reviewerId;
 
   // Self-review denial check: Proposer and Reviewer cannot be the same person when second actor review is required
-  const isSelfReviewDenied = requireSecondActor && proposerId === reviewerId;
+  const isSelfReviewDenied =
+    requireSecondActor && Boolean(proposerId) && proposerId === reviewerId;
 
   // Graph action mode state
   const [graphMode, setGraphMode] = useState<IdentityGraphMode>(() => {
@@ -107,8 +109,8 @@ export function IdentityDecisionPanel({
     if (error?.code === "ODP-INTAKE-CONFLICT" || error?.status === 409) {
       return {
         hasConflict: true,
-        currentVersion: "v2-updated",
-        currentOwner: record.owner || "Other Operator",
+        currentVersion: undefined,
+        currentOwner: record.owner || undefined,
       };
     }
     return null;
@@ -152,32 +154,79 @@ export function IdentityDecisionPanel({
   // Graph Plan lineage node state before and after
   const graphPlan = useMemo(() => {
     const beforeNodes = [
-      { id: record.id, type: "IntakeSubmission", label: `收件: ${shortUrl(record.canonicalUrl, 20)}` },
-      ...(targetId ? [{ id: targetId, type: "TargetListing", label: `既有物件 ${targetId}` }] : []),
+      {
+        key: `intake:${record.id}`,
+        displayId: record.id,
+        type: "IntakeSubmission",
+        label: `收件: ${shortUrl(record.canonicalUrl, 20)}`,
+      },
+      ...(targetId
+        ? [{
+            key: `listing:${targetId}`,
+            displayId: targetId,
+            type: "TargetListing",
+            label: `既有物件 ${targetId}`,
+          }]
+        : []),
     ];
 
-    let afterNodes: Array<{ id: string; type: string; label: string }> = [];
+    let afterNodes: Array<{
+      key: string;
+      displayId: string;
+      type: string;
+      label: string;
+    }> = [];
     if (graphMode === "merge") {
       afterNodes = [
         {
-          id: targetId || `LST-NEW-${record.id.slice(-4)}`,
-          type: "TargetListing (v2)",
-          label: `${targetId || "LST-NEW"} (合併新版本 v2)`,
+          key: "merge-result",
+          displayId: targetId || "UNAVAILABLE",
+          type: "TargetListing (next version)",
+          label: targetId
+            ? `${targetId}（版本由後端提交結果決定）`
+            : "後端尚未提供 target listing ID",
         },
       ];
     } else if (graphMode === "split") {
       afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing", label: `${targetId || "既有物件"} (獨立)` },
-        { id: `LST-NEW-${record.id.slice(-4)}`, type: "NewListing", label: `LST-NEW-${record.id.slice(-4)} (獨立新物件)` },
+        {
+          key: "split-original",
+          displayId: targetId || "UNAVAILABLE",
+          type: "TargetListing",
+          label: targetId ? `${targetId}（獨立）` : "後端尚未提供 target listing ID",
+        },
+        {
+          key: "split-new",
+          displayId: "UNAVAILABLE",
+          type: "NewListing",
+          label: "新物件 ID 將於後端成功提交後提供",
+        },
       ];
     } else if (graphMode === "unmerge") {
       afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing", label: `${targetId || "原物件"} (已解除合併)` },
-        { id: record.id, type: "UnmergedIntake", label: `${record.id} (獨立收件節點)` },
+        {
+          key: "unmerge-target",
+          displayId: targetId || "UNAVAILABLE",
+          type: "TargetListing",
+          label: targetId ? `${targetId}（解除合併）` : "後端尚未提供 target listing ID",
+        },
+        {
+          key: `unmerged-intake:${record.id}`,
+          displayId: record.id,
+          type: "UnmergedIntake",
+          label: `${record.id}（獨立收件節點）`,
+        },
       ];
     } else {
       afterNodes = [
-        { id: targetId || "LST-ORIGINAL", type: "TargetListing (Rolled back)", label: `${targetId || "既有物件"} (已回滾至 v1)` },
+        {
+          key: "reversal-target",
+          displayId: targetId || "UNAVAILABLE",
+          type: "TargetListing (reversal requested)",
+          label: targetId
+            ? `${targetId}（實際版本由後端提交結果決定）`
+            : "後端尚未提供 target listing ID",
+        },
       ];
     }
 
@@ -186,6 +235,10 @@ export function IdentityDecisionPanel({
 
   async function handleSubmit() {
     if (busy) return;
+    if (actorUnavailable) {
+      setLocalError("ACTOR_UNAVAILABLE · 後端工作階段未提供提案者或審查者身分。");
+      return;
+    }
     if (isSelfReviewDenied) {
       setLocalError("提案者與審查者不能為同一人，無法提交此決策 (SELF_REVIEW_DENIED)。");
       return;
@@ -209,37 +262,22 @@ export function IdentityDecisionPanel({
         riskAcknowledged,
         proposerId,
         reviewerId,
-        ifMatchVersion: conflictState?.currentVersion || "v1",
+        ifMatchVersion: conflictState?.currentVersion,
       });
 
       if (res && res.receiptId) {
         setReceipt(res);
-      } else if (operatorFixturesAllowed()) {
-        setReceipt({
-          receiptId: `RCPT-MATCH-${Date.now().toString(36).toUpperCase()}`,
-          actor: currentOperator.name,
-          actorRole: currentOperator.role,
-          timestamp: new Date().toISOString(),
-          intakeId: record.id,
-          targetListingId: targetId || "LST-AUTO",
-          decisionKind,
-          graphMode,
-          beforeVersion: "v1",
-          afterVersion: "v2",
-          correlationId: record.correlationId || "corr-default",
-          auditEventId: `AUDIT-${Date.now()}`,
-        });
       } else {
         setLocalError(
-          "DECISION_RECEIPT_MISSING · API 未回傳 durable receipt；Production 不會建立模擬收據。",
+          "DECISION_RECEIPT_MISSING · API 未回傳 durable receipt；本頁不會建立替代收據。",
         );
       }
     } catch (err: unknown) {
       if (typeof err === "object" && err !== null && "status" in err && (err as { status: number }).status === 409) {
         setConflictState({
           hasConflict: true,
-          currentVersion: "v2-updated",
-          currentOwner: record.owner || "Another Operator",
+          currentVersion: undefined,
+          currentOwner: record.owner || undefined,
         });
         setLocalError("偵測到版本衝突 (409 OWNER_CONFLICT)！其他人員已更新該筆資料，你的輸入已為你完整保留。");
       } else {
@@ -305,8 +343,12 @@ export function IdentityDecisionPanel({
 
       {/* Screen-reader summary */}
       <div className={styles.srSummary} data-testid="identity-sr-summary" role="region" aria-live="polite">
-        身份審查狀態：{outcome}，提案者：{proposerId}，審查者：{reviewerId}。
-        {isSelfReviewDenied ? "警告：自我審查已被拒絕 (SELF_REVIEW_DENIED)。" : "雙人授權查核正常。"}
+        身份審查狀態：{outcome}，提案者：{proposerId || "UNAVAILABLE"}，審查者：{reviewerId || "UNAVAILABLE"}。
+        {actorUnavailable
+          ? "工作階段未提供完整人員身分。"
+          : isSelfReviewDenied
+            ? "警告：自我審查已被拒絕 (SELF_REVIEW_DENIED)。"
+            : "雙人授權查核正常。"}
       </div>
 
       {/* Receipt View upon successful decision */}
@@ -393,13 +435,13 @@ export function IdentityDecisionPanel({
               <div>
                 <span className={styles.metaCaption}>提案者 Proposer</span>
                 <div className={styles.metaValue} data-testid="proposer-id-val">
-                  <code>{proposerId}</code>
+                  <code>{proposerId || "UNAVAILABLE"}</code>
                 </div>
               </div>
               <div>
                 <span className={styles.metaCaption}>當前審查者 Reviewer</span>
                 <div className={styles.metaValue} data-testid="reviewer-id-val">
-                  <code>{reviewerId}</code> ({currentOperator.role})
+                  <code>{reviewerId || "UNAVAILABLE"}</code> ({operator.role})
                 </div>
               </div>
               <div>
@@ -488,16 +530,16 @@ export function IdentityDecisionPanel({
             <div className={styles.signalCol} data-testid="graph-before-nodes">
               <div className={styles.signalHeadCon}>變更前節點 Lineage Before</div>
               {graphPlan.beforeNodes.map((node) => (
-                <div className={styles.signalItem} key={node.id} data-testid={`node-before-${node.id}`}>
-                  <code>[{node.type}]</code> <strong>{node.id}</strong> — {node.label}
+                <div className={styles.signalItem} key={node.key} data-testid={`node-before-${node.key}`}>
+                  <code>[{node.type}]</code> <strong>{node.displayId}</strong> — {node.label}
                 </div>
               ))}
             </div>
             <div className={styles.signalCol} data-testid="graph-after-nodes">
               <div className={styles.signalHeadAgree}>變更後預期節點 Lineage After</div>
               {graphPlan.afterNodes.map((node) => (
-                <div className={styles.signalItem} key={node.id} data-testid={`node-after-${node.id}`}>
-                  <code>[{node.type}]</code> <strong>{node.id}</strong> — {node.label}
+                <div className={styles.signalItem} key={node.key} data-testid={`node-after-${node.key}`}>
+                  <code>[{node.type}]</code> <strong>{node.displayId}</strong> — {node.label}
                 </div>
               ))}
             </div>
@@ -589,7 +631,7 @@ export function IdentityDecisionPanel({
               onChange={(e) => setRiskAcknowledged(e.target.checked)}
               type="checkbox"
             />
-            <span>我已詳細閱讀風險評估，確認執行此圖譜變更（將連同決策原因與人員資訊寫入 Audit WORM 歷程）</span>
+            <span>我已詳細閱讀風險評估，確認將決策原因與人員資訊提交至後端稽核流程。</span>
           </label>
         </div>
 
@@ -600,7 +642,7 @@ export function IdentityDecisionPanel({
               ⚠ 偵測到版本與 Lock 衝突 (409 OWNER_CONFLICT)
             </span>
             <span className={styles.errorMeta}>
-              最新 Owner: {conflictState.currentOwner} · 最新版本: {conflictState.currentVersion}。
+              最新 Owner: {conflictState.currentOwner ?? "UNAVAILABLE"} · 最新版本: {conflictState.currentVersion ?? "UNAVAILABLE"}。
               你的輸入（原因與勾選狀態）已妥善保留，請點擊下方按鈕以最新版本 If-Match 重試。
             </span>
             <div style={{ marginTop: "6px" }}>
@@ -610,7 +652,7 @@ export function IdentityDecisionPanel({
                 onClick={handleRefreshAndRetry}
                 type="button"
               >
-                重新整理資料並重新提交 (If-Match {conflictState.currentVersion})
+                重新整理資料並重新提交
               </button>
             </div>
           </div>
@@ -628,7 +670,7 @@ export function IdentityDecisionPanel({
           <button
             className={styles.primaryButton}
             data-testid="identity-submit-btn"
-            disabled={isSelfReviewDenied || busy || !riskAcknowledged || !reason.trim()}
+            disabled={actorUnavailable || isSelfReviewDenied || busy || !riskAcknowledged || !reason.trim()}
             onClick={handleSubmit}
             type="button"
           >

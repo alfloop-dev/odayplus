@@ -53,47 +53,52 @@ class DurableJobQueue:
             return row["count"] if row else 0
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
-        if request.idempotency_key:
-            existing = self._engine.query_one(
-                "SELECT * FROM durable_jobs WHERE idempotency_key = ?",
-                (request.idempotency_key,),
-            )
-            if existing is not None:
-                return self._row_to_record(existing), False
-
         record = JobRecord(
             job_type=request.job_type,
             payload=request.payload,
             correlation_id=correlation_id,
             idempotency_key=request.idempotency_key,
         )
-        self._engine.execute(
-            "INSERT INTO durable_jobs("
-            "  job_id, job_type, status, correlation_id, idempotency_key, "
-            "  payload_json, created_at, fence_token, version, locked_by, "
-            "  heartbeat_at, lease_expires_at, attempts, error_message, "
-            "  leased_until, max_retries"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.job_id,
-                record.job_type,
-                record.status.value,
-                record.correlation_id,
-                record.idempotency_key,
-                json.dumps(record.payload),
-                record.created_at.isoformat(),
-                record.fence_token,
-                record.version,
-                record.locked_by,
-                record.heartbeat_at.isoformat() if record.heartbeat_at else None,
-                record.lease_expires_at.isoformat() if record.lease_expires_at else None,
-                record.attempts,
-                record.error_message,
-                record.leased_until.isoformat() if record.leased_until else None,
-                record.max_retries,
-            ),
-        )
-        return record, True
+        with self._engine.lock:
+            result = self._engine.execute(
+                "INSERT INTO durable_jobs("
+                "  job_id, job_type, status, correlation_id, idempotency_key, "
+                "  payload_json, created_at, fence_token, version, locked_by, "
+                "  heartbeat_at, lease_expires_at, attempts, error_message, "
+                "  leased_until, max_retries"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT DO NOTHING",
+                (
+                    record.job_id,
+                    record.job_type,
+                    record.status.value,
+                    record.correlation_id,
+                    record.idempotency_key,
+                    json.dumps(record.payload),
+                    record.created_at.isoformat(),
+                    record.fence_token,
+                    record.version,
+                    record.locked_by,
+                    record.heartbeat_at.isoformat() if record.heartbeat_at else None,
+                    record.lease_expires_at.isoformat()
+                    if record.lease_expires_at
+                    else None,
+                    record.attempts,
+                    record.error_message,
+                    record.leased_until.isoformat() if record.leased_until else None,
+                    record.max_retries,
+                ),
+            )
+            if int(getattr(result, "rowcount", 0)) > 0:
+                return record, True
+            if request.idempotency_key:
+                existing = self._engine.query_one(
+                    "SELECT * FROM durable_jobs WHERE idempotency_key = ?",
+                    (request.idempotency_key,),
+                )
+                if existing is not None:
+                    return self._row_to_record(existing), False
+        raise RuntimeError("durable job reservation conflicted without a replay record")
 
     def get(self, job_id: str) -> JobRecord | None:
         row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
