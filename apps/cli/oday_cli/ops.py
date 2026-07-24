@@ -15,6 +15,16 @@ from shared.infrastructure.persistence import (
     build_migration_manifest_checksum,
     discover_migration_steps,
 )
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    AssistedIntakeSchemaError,
+    apply_upgrade_to_database,
+)
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    manifest_checksum as assisted_intake_manifest_checksum,
+)
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    migration_steps as assisted_intake_migration_steps,
+)
 
 DEFAULT_MIGRATIONS_DIR = Path("infra/db/migrations/versions")
 DEFAULT_ALEMBIC_CONFIG = Path("infra/db/migrations/alembic.ini")
@@ -55,6 +65,9 @@ class MigrationRun:
     returncode: int | None
     generated_at: str
     plan: MigrationPlan
+    assisted_intake_manifest_sha256: str | None = None
+    assisted_intake_steps: tuple[str, ...] = ()
+    assisted_intake_schema_status: str = "not-requested"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +81,9 @@ class MigrationRun:
             "returncode": self.returncode,
             "generated_at": self.generated_at,
             "plan": self.plan.to_dict(),
+            "assisted_intake_manifest_sha256": self.assisted_intake_manifest_sha256,
+            "assisted_intake_steps": list(self.assisted_intake_steps),
+            "assisted_intake_schema_status": self.assisted_intake_schema_status,
         }
 
 
@@ -130,6 +146,7 @@ def build_migration_run(
     migrations_dir: Path = DEFAULT_MIGRATIONS_DIR,
     alembic_config: Path = DEFAULT_ALEMBIC_CONFIG,
     expected_manifest_sha256: str | None = None,
+    include_assisted_intake: bool = False,
 ) -> MigrationRun:
     plan = build_migration_plan(
         environment=environment,
@@ -146,6 +163,13 @@ def build_migration_run(
 
     command = ("alembic", "-c", alembic_config.as_posix(), "upgrade", target_revision)
     returncode: int | None = None
+    intake_manifest_sha256: str | None = None
+    intake_steps: tuple[str, ...] = ()
+    intake_schema_status = "not-requested"
+    if include_assisted_intake:
+        intake_manifest_sha256 = assisted_intake_manifest_checksum()
+        intake_steps = tuple(step.name for step in assisted_intake_migration_steps())
+        intake_schema_status = "planned" if dry_run else "pending"
     if not dry_run:
         if not os.environ.get(database_url_env):
             raise OpsPlanError(f"{database_url_env} must be set before executing migrations")
@@ -153,6 +177,16 @@ def build_migration_run(
         returncode = result.returncode
         if result.returncode != 0:
             raise OpsPlanError(f"migration runner failed with exit code {result.returncode}")
+        if include_assisted_intake:
+            try:
+                intake_result = apply_upgrade_to_database(
+                    os.environ[database_url_env]
+                )
+            except AssistedIntakeSchemaError as exc:
+                raise OpsPlanError(str(exc)) from exc
+            intake_manifest_sha256 = intake_result.manifest_sha256
+            intake_steps = intake_result.steps
+            intake_schema_status = "verified"
 
     return MigrationRun(
         environment=environment,
@@ -165,6 +199,9 @@ def build_migration_run(
         returncode=returncode,
         generated_at=_utc_now(),
         plan=plan,
+        assisted_intake_manifest_sha256=intake_manifest_sha256,
+        assisted_intake_steps=intake_steps,
+        assisted_intake_schema_status=intake_schema_status,
     )
 
 

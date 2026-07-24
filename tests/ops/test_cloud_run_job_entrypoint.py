@@ -86,8 +86,22 @@ def test_migration_receipt_requires_successful_runner(monkeypatch) -> None:
         manifest_sha256="sha256",
         checksum_status="verified",
         returncode=0,
+        assisted_intake_manifest_sha256="intake-sha256",
+        assisted_intake_steps=(
+            "001_baseline.sql",
+            "002_consistency.sql",
+            "003_promotion_state.sql",
+            "004_tenant_rls_lineage.sql",
+        ),
+        assisted_intake_schema_status="verified",
     )
-    monkeypatch.setattr(entrypoint, "build_migration_run", lambda **_kwargs: receipt)
+    migration_options: list[dict[str, object]] = []
+
+    def migration_run(**kwargs):
+        migration_options.append(kwargs)
+        return receipt
+
+    monkeypatch.setattr(entrypoint, "build_migration_run", migration_run)
     verified: list[str] = []
     monkeypatch.setattr(
         entrypoint, "_verify_runtime_schema", lambda database_url: verified.append(database_url)
@@ -95,6 +109,14 @@ def test_migration_receipt_requires_successful_runner(monkeypatch) -> None:
     monkeypatch.setenv("ODAY_DATABASE_URL", "postgresql://user:pass@db/oday")
     assert entrypoint.run_migration() == 0
     assert verified == ["postgresql://user:pass@db/oday"]
+    assert migration_options == [
+        {
+            "environment": "",
+            "target_revision": "head",
+            "dry_run": False,
+            "include_assisted_intake": True,
+        }
+    ]
 
 
 def test_database_urls_normalize_sqlalchemy_and_psycopg_drivers() -> None:

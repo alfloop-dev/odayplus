@@ -54,10 +54,16 @@ def _database_urls(value: str) -> tuple[str, str]:
 
 
 def _verify_runtime_schema(database_url: str) -> None:
+    from shared.infrastructure.persistence.assisted_listing_intake import (
+        validate_required_tables,
+    )
     from shared.infrastructure.persistence.postgresql import PostgresEngine
 
     engine = PostgresEngine(database_url, bootstrap=True, validate_schema=True)
-    engine.close()
+    try:
+        validate_required_tables(engine)
+    finally:
+        engine.close()
 
 
 class TrackingJobQueue:
@@ -102,6 +108,7 @@ def run_migration() -> int:
             environment=os.environ.get("ODP_DEPLOY_ENV", ""),
             target_revision="head",
             dry_run=False,
+            include_assisted_intake=True,
         )
         os.environ["ODAY_DATABASE_URL"] = psycopg_url
         _verify_runtime_schema(psycopg_url)
@@ -125,6 +132,17 @@ def run_migration() -> int:
         manifest_sha256=receipt.manifest_sha256,
         checksum_status=receipt.checksum_status,
         returncode=receipt.returncode,
+        assisted_intake_manifest_sha256=(
+            getattr(receipt, "assisted_intake_manifest_sha256", None)
+        ),
+        assisted_intake_steps=list(
+            getattr(receipt, "assisted_intake_steps", ())
+        ),
+        assisted_intake_schema_status=getattr(
+            receipt,
+            "assisted_intake_schema_status",
+            "verified",
+        ),
         runtime_schema_verified=True,
     )
     return 0

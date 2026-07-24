@@ -70,6 +70,8 @@ class PersistenceBundle:
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
+    operator_intake_repository: Any = None
+    assisted_intake_store: Any = None
     engine: Any = None
 
 
@@ -167,6 +169,9 @@ def _durable_bundle(
     from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         DurableAddressLocationRepository,
@@ -229,6 +234,7 @@ def _durable_bundle(
         external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
         outbox_repository=DurableOutboxRepository(engine),
+        operator_intake_repository=DurableAssistedIntakeRepository(store),
         engine=engine,
     )
 
@@ -242,9 +248,16 @@ def _postgres_bundle(
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
+    from shared.infrastructure.persistence.assisted_listing_intake import (
+        DurableAssistedIntakeStore,
+        validate_required_tables,
+    )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.postgresql import (
         PostgresDocumentStore,
@@ -276,6 +289,12 @@ def _postgres_bundle(
 
     engine = PostgresEngine(database_url)
     store = PostgresDocumentStore(engine)
+    try:
+        validate_required_tables(engine)
+        assisted_intake_store = DurableAssistedIntakeStore(store)
+    except Exception:
+        engine.close()
+        raise
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     return PersistenceBundle(
         mode="postgresql",
@@ -311,6 +330,8 @@ def _postgres_bundle(
         external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
         outbox_repository=DurableOutboxRepository(engine),
+        operator_intake_repository=DurableAssistedIntakeRepository(store),
+        assisted_intake_store=assisted_intake_store,
         engine=engine,
     )
 

@@ -7,6 +7,9 @@ import pytest
 
 from shared.audit.events import AuditEvent
 from shared.domain.models import Tenant
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    apply_upgrade_to_database,
+)
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import build_persistence
@@ -98,6 +101,7 @@ def test_factory_builds_production_bundle_against_canonical_core_schema(
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+    apply_upgrade_to_database(database_url)
     bundle = build_persistence(mode="postgresql")
     tenant = Tenant(tenant_name="PostgreSQL integration")
     try:

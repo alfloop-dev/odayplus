@@ -664,7 +664,7 @@ else:
 
 
     class AssistedIntakeStore:
-        """Small process-local contract store; durable adapters can replace it later."""
+        """Process-local Assisted Intake state for local and contract tests."""
         _instances: list[AssistedIntakeStore] = []
 
         def __init__(self) -> None:
@@ -678,6 +678,12 @@ else:
             self.saved_views: list[dict[str, Any]] = []
             self.replays: dict[str, tuple[str, dict[str, Any], int]] = {}
             AssistedIntakeStore._instances.append(self)
+
+        def refresh(self, tenant_id: str | None = None) -> None:
+            return None
+
+        def flush(self) -> None:
+            return None
 
 
     class V1PromotionRepositoryAdapter:
@@ -1100,6 +1106,9 @@ else:
                 check_uuid(tenant_id)
             except ValueError:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required") from None
+            # Production replicas share one PostgreSQL state store. Bind and
+            # refresh only the verified tenant at the request boundary.
+            active.refresh(tenant_id)
             return tenant_id
 
         def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -1164,6 +1173,20 @@ else:
                 f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
             )
             active.replays[composite_key] = (digest, copy.deepcopy(result), code)
+            try:
+                active.flush()
+            except Exception as exc:
+                from shared.infrastructure.persistence.assisted_listing_intake import (
+                    AssistedIntakePersistenceConflict,
+                )
+
+                if isinstance(exc, AssistedIntakePersistenceConflict):
+                    raise HTTPException(
+                        409,
+                        "VERSION_CONFLICT: Assisted Intake state changed in "
+                        "another replica",
+                    ) from exc
+                raise
             return result, code, False
 
         def require_version(if_match: str | None, current: int = 1) -> None:

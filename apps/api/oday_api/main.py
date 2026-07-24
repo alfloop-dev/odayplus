@@ -99,28 +99,14 @@ else:
         external_ingestion_service: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
-        # Defaults come from the persistence factory, which selects in-memory
-        # (default) or durable SQLite storage from the environment
-        # (ODP_PERSISTENCE / ODP_DB_PATH). Explicit arguments still win, so
-        # tests can inject hand-built doubles. See ODP-PV-009.
+        # Defaults come from the persistence factory, including the production
+        # PostgreSQL runtime. Explicit arguments still win so tests can inject
+        # hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
         from shared.observability import SpanKind, SpanStatus, Telemetry, TraceContext
 
         telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
-        requested_persistence_mode = os.environ.get(
-            "ODP_PERSISTENCE", "memory"
-        ).strip().lower()
-        if persistence is None and requested_persistence_mode not in {
-            "memory",
-            "durable",
-            "sqlite",
-        }:
-            raise ValueError(
-                "Unsupported ODP_PERSISTENCE mode "
-                f"{requested_persistence_mode!r}; supported runtime modes are "
-                "memory, durable, and sqlite."
-            )
         bundle = persistence or build_persistence()
         deployment_mode = os.environ.get(
             "ODP_DEPLOY_ENV", os.environ.get("APP_ENV", "development")
@@ -145,8 +131,10 @@ else:
 
             operator_live_repository = OperatorLiveRepository(bundle)
         production_model_bindings_ready = False
+        production_model_error: str | None = None
+        model_runtime: Any | None = None
         model_binding_mode = (
-            "approved-registry-unverified"
+            "mlflow-production-unverified"
             if require_live_data
             else "local-baseline-seed"
         )
@@ -209,17 +197,20 @@ else:
                 production_persistence_supported
                 and provider_live_ready
                 and operator_repository_ready
+                and production_model_bindings_ready
             )
             blocking_reasons: list[str] = []
             if require_live_data:
                 if not bundle.is_durable:
                     blocking_reasons.append("MEMORY_PERSISTENCE")
-                else:
+                elif not production_persistence_supported:
                     blocking_reasons.append("SQLITE_NOT_PRODUCTION_PERSISTENCE")
                 if configured_persistence_mode not in {
                     "memory",
                     "durable",
                     "sqlite",
+                    "postgres",
+                    "postgresql",
                 }:
                     blocking_reasons.append("UNSUPPORTED_PERSISTENCE_MODE")
                 if not provider_live_ready:
@@ -255,6 +246,7 @@ else:
                 "models": {
                     "mode": model_binding_mode,
                     "productionBindingsReady": production_model_bindings_ready,
+                    "error": production_model_error,
                     "autoSeeded": (
                         not require_live_data and production_model_bindings_ready
                     ),
@@ -262,7 +254,7 @@ else:
                 "data": {
                     "mode": (
                         "live"
-                        if require_live_data and operator_repository_ready
+                        if require_live_data and live_ready
                         else "unavailable"
                         if require_live_data
                         else "fixture"
@@ -530,7 +522,10 @@ else:
         from apps.api.app.routes.priceops import create_priceops_router
         from apps.api.app.routes.sitescore import create_sitescore_router
         from modules.intervention.application.workflow import InterventionWorkflow
-        from shared.infrastructure.persistence import SqliteDocumentStore
+        from shared.infrastructure.persistence import (
+            PostgresDocumentStore,
+            SqliteDocumentStore,
+        )
         from shared.workflow.sitescore import (
             CandidateSiteRealizationHook,
             SiteScoreDecisionWorkflow,
@@ -558,19 +553,23 @@ else:
         store_ops_repo = store_ops_repository or bundle.store_ops_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
         intervention_repo = intervention_repository or bundle.intervention_repository
-        operator_document_store = SqliteDocumentStore(bundle.engine) if bundle.is_durable else None
+        if persistence_mode in {"postgres", "postgresql"}:
+            operator_document_store = PostgresDocumentStore(bundle.engine)
+        elif bundle.is_durable:
+            operator_document_store = SqliteDocumentStore(bundle.engine)
+        else:
+            operator_document_store = None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
             label_hooks=[label_registry],
         )
 
-        # ODP-GAP-ML-002: register the baseline production model for each
-        # scoring/forecast service in the durable registry (idempotent) and bind
-        # each router to its resolved PRODUCTION ModelVersion so runs carry
-        # auditable governance metadata and fail closed when the model or the
-        # live inputs are absent.
-        from models.shared_ml import seed_scoring_models
+        from models.shared_ml import (
+            MlflowProductionModelRuntime,
+            ProductionModelRuntimeError,
+            seed_scoring_models,
+        )
 
         release_sha = (
             os.environ.get("ODAY_RELEASE_SHA")
@@ -578,11 +577,32 @@ else:
             or os.environ.get("COMMIT_SHA")
         )
         if require_live_data:
-            # Production model bindings must be resolved from an approved
-            # registry together with verified training and live-input lineage.
-            # No such resolver exists in this runtime yet, so do not create or
-            # promote a baseline model implicitly.
             scoring_bindings: dict[str, Any] = {}
+            try:
+                from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
+                from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
+                from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
+
+                model_runtime = MlflowProductionModelRuntime.from_environment()
+                for service, feature_schema_version in {
+                    "forecastops": FORECASTOPS_FEATURE_VERSION,
+                    "heatzone": HEATZONE_FEATURE_VERSION,
+                    "sitescore": SITESCORE_FEATURE_VERSION,
+                }.items():
+                    executable = model_runtime.resolve(
+                        service=service,
+                        expected_feature_schema_version=feature_schema_version,
+                    )
+                    scoring_bindings[service] = executable.binding
+            except ProductionModelRuntimeError as exc:
+                production_model_error = f"{exc.code}: {exc}"
+                model_runtime = None
+                scoring_bindings = {}
+            production_model_bindings_ready = (
+                len(scoring_bindings) == 3 and model_runtime is not None
+            )
+            if production_model_bindings_ready:
+                model_binding_mode = "mlflow-production"
         else:
             scoring_bindings = seed_scoring_models(
                 learning_repo,
@@ -601,6 +621,8 @@ else:
                 store=heatzone_store,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
+                model_runtime=model_runtime,
+                require_production_model=require_live_data,
             ),
         )
         mount_versioned(
@@ -618,7 +640,22 @@ else:
         # This router is generated from a separately approved OpenAPI bundle;
         # preserve its per-operation response set instead of adding the generic
         # platform responses to every operation.
-        mount_versioned(api, create_assisted_intake_router(), exact_responses=True)
+        assisted_intake_store = getattr(bundle, "assisted_intake_store", None)
+        if (
+            production_persistence_supported
+            and assisted_intake_store is None
+        ):
+            raise RuntimeError(
+                "Production PostgreSQL requires a durable Assisted Intake store"
+            )
+        mount_versioned(
+            api,
+            create_assisted_intake_router(
+                store=assisted_intake_store,
+                audit_log=audit_log,
+            ),
+            exact_responses=True,
+        )
         mount_versioned(api, create_avm_router(repository=avm_repo, audit_log=audit_log))
         mount_versioned(
             api,
@@ -626,6 +663,8 @@ else:
                 repository=forecast_repository,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("forecastops"),
+                model_runtime=model_runtime,
+                require_production_model=require_live_data,
             ),
         )
         mount_versioned(api, create_netplan_router(repository=netplan_repo, audit_log=audit_log))
@@ -646,6 +685,8 @@ else:
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
+                model_runtime=model_runtime,
+                require_production_model=require_live_data,
             ),
         )
         mount_versioned(api, create_adlift_router(repository=adlift_repo, audit_log=audit_log))
@@ -668,9 +709,12 @@ else:
             DurableAssistedIntakeRepository,
         )
         operator_intake_repository = (
-            DurableAssistedIntakeRepository(operator_document_store)
-            if operator_document_store is not None
-            else InMemoryAssistedIntakeRepository()
+            getattr(bundle, "operator_intake_repository", None)
+            or (
+                DurableAssistedIntakeRepository(operator_document_store)
+                if operator_document_store is not None
+                else InMemoryAssistedIntakeRepository()
+            )
         )
 
         mount_versioned(
@@ -691,6 +735,8 @@ else:
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
         api.state.operator_intake_repository = operator_intake_repository
+        api.state.assisted_intake_store = assisted_intake_store
+        api.state.persistence_bundle = bundle
         api.state.job_queue = job_queue
         api.state.heatzone_store = heatzone_store
         api.state.avm_repository = avm_repo
@@ -698,6 +744,8 @@ else:
         api.state.netplan_repository = netplan_repo
         api.state.learninghub_repository = learning_repo
         api.state.scoring_bindings = scoring_bindings
+        api.state.model_runtime = model_runtime
+        api.state.production_model_error = production_model_error
         api.state.artifact_store = model_artifacts
         api.state.priceops_repository = price_repo
         api.state.sitescore_repository = site_repository

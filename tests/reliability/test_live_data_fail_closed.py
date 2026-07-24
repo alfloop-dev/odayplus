@@ -164,16 +164,16 @@ def test_live_gate_does_not_seed_or_promote_baseline_models(
 
     assert response_status == 503
     models = response_body["details"]["models"]
-    assert models == {
-        "mode": "approved-registry-unverified",
-        "productionBindingsReady": False,
-        "autoSeeded": False,
-    }
+    assert models["mode"] == "mlflow-production-unverified"
+    assert models["productionBindingsReady"] is False
+    assert models["autoSeeded"] is False
+    assert "MLFLOW_TRACKING_URI" in models["error"]
     assert (
         "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
         in response_body["details"]["data"]["blockingReasons"]
     )
     assert app.state.scoring_bindings == {}
+    assert app.state.model_runtime is None
 
 
 def test_live_gate_rejects_durable_sqlite_as_production_persistence(
@@ -199,13 +199,17 @@ def test_live_gate_rejects_durable_sqlite_as_production_persistence(
     )
 
 
-def test_unknown_postgres_mode_cannot_fall_back_to_live_ready(
+def test_postgres_mode_requires_database_url_without_falling_back(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgres")
+    monkeypatch.delenv("ODAY_DATABASE_URL", raising=False)
 
-    with pytest.raises(ValueError, match="Unsupported ODP_PERSISTENCE mode 'postgres'"):
+    with pytest.raises(
+        RuntimeError,
+        match="ODAY_DATABASE_URL is required for PostgreSQL persistence",
+    ):
         create_app()
 
 
