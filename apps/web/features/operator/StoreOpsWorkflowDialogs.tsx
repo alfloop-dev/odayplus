@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button, Chip, StatusBadge, type Tone } from "./components";
+import { operatorFixturesAllowed } from "./operatorDataMode";
 import { OPERATOR_ROLE_IDS, type OperatorRoleId, type Severity } from "./types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./storeOpsWorkflows.module.css";
@@ -202,6 +203,33 @@ export function StoreOpsWorkflowDialogs({
     return null;
   }
 
+  const fixturesAllowed = operatorFixturesAllowed();
+  if (!issue && !fixturesAllowed) {
+    return (
+      <div className={styles.overlay}>
+        <section
+          aria-live="polite"
+          className={styles.dialog}
+          data-testid="store-ops-workflow-unavailable"
+          role="alert"
+        >
+          <header className={styles.header}>
+            <div className={styles.headerTitle}>
+              <p className={styles.eyebrow}>Live data required</p>
+              <h2>Store Ops workflow unavailable</h2>
+            </div>
+            <Button onClick={onClose} size="sm" variant="ghost">
+              Close
+            </Button>
+          </header>
+          <div className={styles.body}>
+            <p>找不到 API issue record；Production 不會以 fallback issue 開啟工作流程。</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   const effectiveIssue = issue ?? fallbackIssue;
   const meta = dialogMeta[activeDialog];
   const frameClass = activeDialog === "fieldReport" ? styles.drawer : styles.dialog;
@@ -302,6 +330,7 @@ type WorkflowFormProps = {
 };
 
 function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
   const [severity, setSeverity] = useState<Severity>(issue.severity);
   const [category, setCategory] = useState<StoreOpsTriageCategory>("multiSignal");
   const [evidenceStrength, setEvidenceStrength] = useState<StoreOpsEvidenceStrength>("usable");
@@ -363,7 +392,9 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           options={[
             { label: "Accept triage", value: "accept" },
             { label: "Need evidence", value: "needEvidence" },
-            { label: "Demo fast-forward", value: "fastForward" },
+            ...(fixturesAllowed
+              ? [{ label: "Demo fast-forward", value: "fastForward" as const }]
+              : []),
           ]}
           value={decision}
         />
@@ -377,12 +408,14 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           label="Need evidence"
           onChange={setNeedEvidence}
         />
-        <CheckboxField
-          checked={demoFastForward}
-          description="Allow the demo shell to move past observation timers."
-          label="Demo fast-forward"
-          onChange={setDemoFastForward}
-        />
+        {fixturesAllowed ? (
+          <CheckboxField
+            checked={demoFastForward}
+            description="Allow the demo shell to move past observation timers."
+            label="Demo fast-forward"
+            onChange={setDemoFastForward}
+          />
+        ) : null}
       </div>
       <DialogActions onCancel={onClose} primaryLabel="Submit Triage" />
     </form>

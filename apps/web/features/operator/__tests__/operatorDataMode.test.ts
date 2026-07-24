@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   inspectOperatorShellPayload,
   isOperatorProductionMode,
@@ -33,6 +33,10 @@ const livePayload = {
 };
 
 describe("operator data mode", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("allows fixtures only outside production", () => {
     expect(operatorFixturesAllowed({ nodeEnv: "test" })).toBe(true);
     expect(operatorFixturesAllowed({ nodeEnv: "production" })).toBe(false);
@@ -73,6 +77,17 @@ describe("operator data mode", () => {
     ).toBe(false);
     expect(isOperatorProductionMode({ nodeEnv: "production" })).toBe(true);
   });
+
+  it.each(["ODAY_ENV", "ODP_ENV"])(
+    "treats %s as a production-owned deployment alias",
+    (name) => {
+      vi.stubEnv("NODE_ENV", "development");
+      vi.stubEnv("ODP_DEPLOY_ENV", "");
+      vi.stubEnv(name, "production");
+
+      expect(operatorFixturesAllowed()).toBe(false);
+    },
+  );
 
   it("blocks the known seed-backed shell envelope", () => {
     expect(

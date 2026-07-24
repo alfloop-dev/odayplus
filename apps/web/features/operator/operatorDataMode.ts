@@ -37,7 +37,10 @@ function asArray(value: unknown): unknown[] {
 
 export function isOperatorProductionMode(
   environment: RuntimeEnvironment = {
-    deployEnv: process.env.ODP_DEPLOY_ENV,
+    deployEnv:
+      process.env.ODP_DEPLOY_ENV ??
+      process.env.ODAY_ENV ??
+      process.env.ODP_ENV,
     nodeEnv: process.env.NODE_ENV,
     productMode:
       process.env.ODP_PRODUCT_MODE ??

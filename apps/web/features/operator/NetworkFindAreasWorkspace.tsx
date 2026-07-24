@@ -1150,6 +1150,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : (
           <FindAreasPanel
+            fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
             effectiveLens={effectiveLens}
@@ -1184,6 +1185,7 @@ export function NetworkFindAreasWorkspace({
 }
 
 type FindAreasPanelProps = {
+  fixturesAllowed: boolean;
   viewModel: NetworkFindAreasViewModel;
   selectedZone: NetworkFindAreasZoneViewModel | null;
   effectiveLens: NetworkFindAreasLens;
@@ -1202,6 +1204,7 @@ type FindAreasPanelProps = {
 function FindAreasPanel({
   candidates,
   effectiveLens,
+  fixturesAllowed,
   heatZones,
   isSelectedTracked,
   listings,
@@ -1267,14 +1270,12 @@ function FindAreasPanel({
             <h3>HeatZone Lens Map</h3>
             <span>{viewModel.activeLens}</span>
           </div>
-          {/* Real MapLibre/deck.gl HeatZoneMap – replaces CSS-grid placeholder.
-              When no tile URL is configured (default), HeatZoneMap falls back to
-              its local MapLibre style (deterministic CSS background), preserving
-              the tile-fallback contract from the task brief. */}
           <HeatZoneMap
+            dataSource={fixturesAllowed ? "fixture" : "api"}
             zones={mapZones}
             listings={mapListings}
             candidates={mapCandidates}
+            productionMode={!fixturesAllowed}
             selectedZoneId={selectedMapZoneId}
             freshness={OPERATOR_MAP_FRESHNESS}
           />

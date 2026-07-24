@@ -76,6 +76,43 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByText(GROWTH_ITEMS[0].name)).not.toBeInTheDocument();
   });
 
+  it("never labels live production model output as mock", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    render(
+      <GrowthWorkspace
+        apiData={{
+          availability: "ready",
+          freshness: {
+            ...FIXTURE_FRESHNESS,
+            modelVersion: "growth-production-v2",
+            sourceSnapshotId: "live-growth-snapshot-24",
+          },
+          fromApi: true,
+          items: [{
+            ...GROWTH_ITEMS[0],
+            id: "live-growth-action-1",
+            segmentId: "live-segment-1",
+          }],
+          recommendations: [{
+            ...PRICEOPS_RECOMMENDATIONS[0],
+            id: "live-recommendation-1",
+            segmentId: "live-segment-1",
+          }],
+          segments: [{
+            ...SEGMENTS[0],
+            id: "live-segment-1",
+            name: "Live production segment",
+          }],
+        }}
+        basePath="/operator"
+        searchParams={{ gtab: "segments" }}
+      />,
+    );
+
+    expect(screen.getByText(/分群與模型版本來自 live API/)).toBeInTheDocument();
+    expect(screen.queryByText(/mock/i)).not.toBeInTheDocument();
+  });
+
   it("fails closed when a Growth read is unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));

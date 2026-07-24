@@ -286,7 +286,12 @@ export function GrowthWorkspace({
         </nav>
 
         {activeTab === "segments" ? (
-          <SegmentSection segments={vm.segments} selected={vm.selectedSegment} href={href} />
+          <SegmentSection
+            fixturesAllowed={fixturesAllowed}
+            href={href}
+            segments={vm.segments}
+            selected={vm.selectedSegment}
+          />
         ) : activeTab === "priceops" ? (
           <RecommendationSection recommendations={vm.recommendations} href={href} />
         ) : (
@@ -366,10 +371,12 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
 
 /** 會員分群 tab — segment cards with a scan-friendly filter chip bar. */
 function SegmentSection({
+  fixturesAllowed,
   segments,
   selected,
   href,
 }: {
+  fixturesAllowed: boolean;
   segments: GrowthSegment[];
   selected: GrowthSegment | null;
   href: (o: Record<string, string | undefined>) => string;
@@ -425,7 +432,9 @@ function SegmentSection({
         ))}
       </div>
       <p className={g.tabNote}>
-        分群由 CRM 流失風險與消費行為模型每日更新（mock）— 由分群建立的草稿仍走核准流程。
+        {fixturesAllowed
+          ? "分群由本機範例資料建立；由分群建立的草稿仍走核准流程。"
+          : "分群與模型版本來自 live API；由分群建立的草稿仍走核准流程。"}
       </p>
     </section>
   );

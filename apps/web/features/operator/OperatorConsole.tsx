@@ -698,14 +698,16 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         setIsTaskCenterOpen(false);
       },
     },
-    {
-      id: "action-reset-demo",
-      group: "actions",
-      title: "重設示範資料",
-      subtitle: "清除角色與 workspace session state",
-      keywords: ["reset", "demo", "session"],
-      execute: () => handleReset(),
-    },
+    ...(fixturesAllowed
+      ? [{
+          id: "action-reset-demo",
+          group: "actions" as const,
+          title: "重設示範資料",
+          subtitle: "清除角色與 workspace session state",
+          keywords: ["reset", "demo", "session"],
+          execute: () => handleReset(),
+        }]
+      : []),
     ...rolesForShell.map((role) => ({
       id: `role-${role.id}`,
       group: "actions" as CommandGroup,

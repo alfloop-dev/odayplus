@@ -104,19 +104,15 @@ def test_freshness_reads_persisted_run_state(monkeypatch) -> None:
     assert warm.json()["availability"]["source"] == "persisted"
 
 
-def test_production_cold_store_reports_unavailable_without_fixture(monkeypatch) -> None:
+def test_production_cold_store_fails_closed_without_live_runtime(monkeypatch) -> None:
     monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
     client = TestClient(create_app())
 
     response = client.get("/external-data/freshness", headers=EXTERNAL_DATA_HEADERS)
 
-    assert response.status_code == 200
-    assert response.json()["freshness"] == []
-    assert response.json()["availability"] == {
-        "status": "UNAVAILABLE",
-        "reason_code": "NO_PERSISTED_FRESHNESS_EVIDENCE",
-        "source": "persisted",
-    }
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "production_runtime_unavailable"
+    assert "snap-expansion-20260628-0100" not in response.text
 
 
 def test_live_provider_mode_never_uses_poc_freshness_fixture(monkeypatch) -> None:

@@ -1,33 +1,24 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from apps.api.oday_api.runtime_mode import live_data_required
 from modules.external_data.workers import SourceFreshnessEvidence
 from shared.audit import InMemoryAuditLog
 
 _FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
-_PRODUCTION_DEPLOYMENTS = frozenset({"prod", "production"})
 
 
 def _fixture_freshness_enabled() -> bool:
+    import os
+
     product_mode = os.environ.get("ODP_PRODUCT_MODE", "").strip().lower()
     provider_mode = os.environ.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
-    deployment_mode = os.environ.get(
-        "ODP_DEPLOY_ENV", os.environ.get("APP_ENV", "development")
-    ).strip().lower()
-    require_live_data = os.environ.get("ODP_REQUIRE_LIVE_DATA", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
     return (
         product_mode in _FIXTURE_PRODUCT_MODES
         and provider_mode != "live"
-        and deployment_mode not in _PRODUCTION_DEPLOYMENTS
-        and not require_live_data
+        and not live_data_required()
     )
 
 

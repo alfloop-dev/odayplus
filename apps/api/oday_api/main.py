@@ -12,20 +12,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
+from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
 from modules.external_data.connectors import validate_external_providers_or_raise
-from shared.api.errors import install_error_handlers
+from shared.api.errors import error_response_body, install_error_handlers
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 
 API_VERSION = "0.1.0"
-_LIVE_REQUIRED_DEPLOYMENTS = {"staging", "stage", "prod", "production"}
-_TRUE_VALUES = {"1", "true", "yes", "on"}
-
-
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in _TRUE_VALUES
 
 
 def _provider_mode_label(provider_validation: Any) -> str:
@@ -65,6 +60,7 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
 
 try:
     from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
+    from fastapi.responses import JSONResponse
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - dependency added by backend task
     app: Any = None
@@ -108,12 +104,8 @@ else:
         telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
         bundle = persistence or build_persistence()
-        deployment_mode = os.environ.get(
-            "ODP_DEPLOY_ENV", os.environ.get("APP_ENV", "development")
-        ).strip().lower()
-        require_live_data = _env_flag("ODP_REQUIRE_LIVE_DATA") or (
-            deployment_mode in _LIVE_REQUIRED_DEPLOYMENTS
-        )
+        active_deployment_mode = deployment_mode()
+        require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
         configured_persistence_mode = os.environ.get(
@@ -196,6 +188,7 @@ else:
             )
             live_ready = (
                 production_persistence_supported
+                and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
                 and production_model_bindings_ready
@@ -206,6 +199,8 @@ else:
                     blocking_reasons.append("MEMORY_PERSISTENCE")
                 elif not production_persistence_supported:
                     blocking_reasons.append("SQLITE_NOT_PRODUCTION_PERSISTENCE")
+                if not persistence_reachable:
+                    blocking_reasons.append("PERSISTENCE_UNREACHABLE")
                 if configured_persistence_mode not in {
                     "memory",
                     "durable",
@@ -224,7 +219,7 @@ else:
                     )
             return {
                 "requireLiveData": require_live_data,
-                "deploymentMode": deployment_mode,
+                "deploymentMode": active_deployment_mode,
                 "persistence": {
                     "configuredMode": configured_persistence_mode,
                     "runtimeMode": persistence_mode,
@@ -297,6 +292,54 @@ else:
                 action=request.method,
                 latency_labels={"service": "oday-api", "route": request.url.path},
             ) as span:
+                if require_live_data and request.url.path not in {
+                    "/health",
+                    "/healthz",
+                    "/openapi.json",
+                    "/platform/health",
+                    "/platform/version",
+                    "/readiness",
+                    "/docs",
+                    "/docs/oauth2-redirect",
+                    "/redoc",
+                }:
+                    db_ok, _ = database_health()
+                    provider_ok, _ = provider_health()
+                    modes = runtime_modes(
+                        provider_ok=provider_ok,
+                        persistence_reachable=db_ok,
+                    )
+                    if not modes["data"]["liveReady"]:
+                        message = (
+                            "Production runtime dependencies are unavailable; "
+                            "fixture, seed, and in-memory fallback are disabled."
+                        )
+                        response = JSONResponse(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            content=error_response_body(
+                                code="production_runtime_unavailable",
+                                message=message,
+                                next_action=(
+                                    "Restore the required live persistence, provider, "
+                                    "and approved model bindings, then retry."
+                                ),
+                                correlation_id=context.correlation_id,
+                                details=[
+                                    {
+                                        "blocking_reasons": modes["data"][
+                                            "blockingReasons"
+                                        ],
+                                        "deployment_mode": active_deployment_mode,
+                                    }
+                                ],
+                            ),
+                        )
+                        response.headers[CORRELATION_ID_HEADER] = (
+                            context.correlation_id
+                        )
+                        span.status = SpanStatus.ERROR
+                        span.error_code = "HTTP_503"
+                        return response
                 response = await call_next(request)
                 if response.status_code >= 400:
                     span.status = SpanStatus.ERROR

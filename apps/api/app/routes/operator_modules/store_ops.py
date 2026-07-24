@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.api.oday_api.runtime_mode import live_data_required
 from modules.opsboard.application.store_ops import (
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
@@ -48,21 +48,7 @@ class StoreOpsCameraPurposePayload(BaseModel):
 def _live_data_required(explicit: bool | None) -> bool:
     if explicit is not None:
         return explicit
-    flag = os.environ.get("ODP_REQUIRE_LIVE_DATA", "").strip().lower()
-    deployment = (
-        os.environ.get(
-            "ODP_DEPLOY_ENV",
-            os.environ.get("APP_ENV", "development"),
-        )
-        .strip()
-        .lower()
-    )
-    return flag in {"1", "true", "yes", "on"} or deployment in {
-        "staging",
-        "stage",
-        "prod",
-        "production",
-    }
+    return live_data_required()
 
 
 def create_operator_store_ops_router(

@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 import uvicorn
 from fastapi import Request, Response
+from fastapi.testclient import TestClient
 
 from apps.api import server
 from apps.api.oday_api.main import create_app
@@ -70,23 +71,11 @@ def test_live_required_operator_state_never_loads_seed(monkeypatch: Any) -> None
         persistence_mode="memory",
         provider_mode="fixture",
     )
-    envelope = service.get_today(role_id="ops-lead")
-
-    assert envelope["workQueue"] == []
-    assert envelope["approvals"] == []
-    assert envelope["kpis"] == []
-    assert envelope["meta"]["dataMode"] == "unavailable"
-    assert envelope["meta"]["dataOrigin"] == {
-        "kind": "unavailable",
-        "sourceId": None,
-        "persistenceMode": "memory",
-        "providerMode": "fixture",
-    }
-    assert envelope["meta"]["liveReadiness"] == {
-        "required": True,
-        "ready": False,
-        "reasonCode": "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE",
-    }
+    with pytest.raises(
+        operator_state.OperatorLiveRepositoryError,
+        match="live repository is not configured",
+    ):
+        service.get_today(role_id="ops-lead")
 
 
 def test_explicit_live_gate_fails_closed_for_memory_and_fixtures(
@@ -131,18 +120,21 @@ def test_explicit_live_gate_fails_closed_for_memory_and_fixtures(
     assert health_response.status_code == 503
     assert health_body["modes"]["data"]["liveReady"] is False
 
-    bootstrap = route_for(
-        app,
+    bootstrap_response = TestClient(app).get(
         "/api/v1/operator/bootstrap",
-    ).endpoint(
-        request_context("/api/v1/operator/bootstrap"),
-        x_operator_role="ops-lead",
-        x_subject_id="test-ops-manager",
-        x_roles="operations_manager",
-        x_correlation_id="corr-live-gate",
+        headers={
+            "x-correlation-id": "corr-live-gate",
+            "x-operator-role": "ops-lead",
+            "x-roles": "operations_manager",
+            "x-subject-id": "test-ops-manager",
+        },
     )
-    assert bootstrap["workQueue"] == []
-    assert bootstrap["meta"]["dataOrigin"]["kind"] == "unavailable"
+    assert bootstrap_response.status_code == 503
+    assert (
+        bootstrap_response.json()["error"]["code"]
+        == "production_runtime_unavailable"
+    )
+    assert "r4-seed" not in bootstrap_response.text
 
     with pytest.raises(AssertionError, match="route not found"):
         route_for(app, "/api/v1/operator/seed/reset")
@@ -221,6 +213,55 @@ def test_production_deployment_implies_live_data_gate(monkeypatch: Any) -> None:
     assert app.state.require_live_data is True
     with pytest.raises(AssertionError, match="route not found"):
         route_for(app, "/api/v1/operator/seed/reset")
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value"),
+    [
+        ("ODAY_ENV", "production"),
+        ("ODP_ENV", "staging"),
+        ("ODP_PRODUCT_MODE", "production"),
+        ("NODE_ENV", "production"),
+    ],
+)
+def test_all_production_mode_aliases_block_product_routes_without_live_stack(
+    monkeypatch: Any,
+    env_name: str,
+    env_value: str,
+) -> None:
+    for name in (
+        "APP_ENV",
+        "ENVIRONMENT",
+        "NODE_ENV",
+        "ODAY_ENV",
+        "ODP_DEPLOY_ENV",
+        "ODP_ENV",
+        "ODP_PRODUCT_MODE",
+        "ODP_REQUIRE_LIVE_DATA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(env_name, env_value)
+
+    app = create_app(persistence=_memory_bundle())
+    client = TestClient(app)
+
+    assert app.state.require_live_data is True
+    assert client.get("/healthz").status_code == 200
+    response = client.get(
+        "/api/v1/operator/bootstrap",
+        headers={
+            "x-operator-role": "ops-lead",
+            "x-subject-id": "production-operator",
+            "x-roles": "operations_manager",
+        },
+    )
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "production_runtime_unavailable"
+    assert "fallback are disabled" in body["error"]["message"]
+    assert body["error"]["details"][0]["blocking_reasons"]
+    assert "r4-seed" not in response.text
 
 
 def test_local_runtime_keeps_fixture_and_seed_reset(monkeypatch: Any) -> None:
