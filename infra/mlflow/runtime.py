@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 _PLACEHOLDER_TOKENS = (
     "<",
@@ -14,6 +15,9 @@ _PLACEHOLDER_TOKENS = (
     "your-",
 )
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+_CLOUD_SQL_INSTANCE_RE = re.compile(
+    r"^[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$"
+)
 
 
 class MlflowServerSettingsError(RuntimeError):
@@ -25,6 +29,7 @@ class MlflowServerSettings:
     backend_store_uri: str
     default_artifact_root: str
     allowed_hosts: str
+    cloud_sql_instance: str = ""
     host: str = "0.0.0.0"
     port: int = 5000
     workers: int = 2
@@ -37,6 +42,7 @@ class MlflowServerSettings:
             "MLFLOW_ALLOWED_HOSTS",
             os.getenv("MLFLOW_SERVER_ALLOWED_HOSTS", ""),
         ).strip()
+        cloud_sql_instance = os.getenv("ODP_MLFLOW_CLOUD_SQL_INSTANCE", "").strip()
         host = os.getenv("MLFLOW_HOST", "0.0.0.0").strip()
         try:
             port = int(os.getenv("PORT", os.getenv("MLFLOW_PORT", "5000")))
@@ -49,6 +55,7 @@ class MlflowServerSettings:
             backend_store_uri=backend,
             default_artifact_root=artifact_root,
             allowed_hosts=allowed_hosts,
+            cloud_sql_instance=cloud_sql_instance,
             host=host,
             port=port,
             workers=workers,
@@ -57,7 +64,10 @@ class MlflowServerSettings:
         return settings
 
     def validate(self) -> None:
-        _require_remote_postgresql(self.backend_store_uri)
+        _require_remote_postgresql(
+            self.backend_store_uri,
+            cloud_sql_instance=self.cloud_sql_instance,
+        )
         _require_gcs_root(self.default_artifact_root)
         if not self.allowed_hosts or self.allowed_hosts == "*":
             raise MlflowServerSettingsError(
@@ -105,7 +115,7 @@ class MlflowServerSettings:
         }
 
 
-def _require_remote_postgresql(value: str) -> None:
+def _require_remote_postgresql(value: str, *, cloud_sql_instance: str = "") -> None:
     if not value:
         raise MlflowServerSettingsError("MLFLOW_BACKEND_STORE_URI is required")
     _reject_placeholder(value, "MLFLOW_BACKEND_STORE_URI")
@@ -114,9 +124,22 @@ def _require_remote_postgresql(value: str) -> None:
         raise MlflowServerSettingsError(
             "MLFLOW_BACKEND_STORE_URI must use remote PostgreSQL"
         )
-    if (parsed.hostname or "").lower() in _LOCAL_HOSTS:
+    hostname = (parsed.hostname or "").lower()
+    if hostname == "":
+        expected_socket = (
+            f"/cloudsql/{cloud_sql_instance}"
+            if _CLOUD_SQL_INSTANCE_RE.fullmatch(cloud_sql_instance)
+            else ""
+        )
+        socket_hosts = parse_qs(parsed.query).get("host", [])
+        if socket_hosts != [expected_socket] or not expected_socket:
+            raise MlflowServerSettingsError(
+                "MLFLOW_BACKEND_STORE_URI local socket requires an exact "
+                "ODP_MLFLOW_CLOUD_SQL_INSTANCE binding"
+            )
+    elif hostname in _LOCAL_HOSTS:
         raise MlflowServerSettingsError(
-            "MLFLOW_BACKEND_STORE_URI rejects localhost and local sockets"
+            "MLFLOW_BACKEND_STORE_URI rejects localhost"
         )
     if not parsed.path or parsed.path == "/":
         raise MlflowServerSettingsError(

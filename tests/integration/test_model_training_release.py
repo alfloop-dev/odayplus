@@ -314,6 +314,37 @@ def test_mlflow_server_command_uses_remote_backend_and_disables_artifact_proxy()
     assert settings.backend_store_uri not in command
 
 
+def test_mlflow_server_accepts_only_exact_cloud_sql_socket_binding() -> None:
+    instance = "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+    backend = (
+        "postgresql://runtime:secret@/mlflow"
+        f"?host=/cloudsql/{instance}"
+    )
+    settings = MlflowServerSettings(
+        backend_store_uri=backend,
+        default_artifact_root="gs://oday-models/production",
+        allowed_hosts="oday-mlflow.internal",
+        cloud_sql_instance=instance,
+    )
+    settings.validate()
+
+    with pytest.raises(MlflowServerSettingsError, match="exact"):
+        MlflowServerSettings(
+            backend_store_uri=backend,
+            default_artifact_root="gs://oday-models/production",
+            allowed_hosts="oday-mlflow.internal",
+        ).validate()
+    with pytest.raises(MlflowServerSettingsError, match="exact"):
+        MlflowServerSettings(
+            backend_store_uri=backend,
+            default_artifact_root="gs://oday-models/production",
+            allowed_hosts="oday-mlflow.internal",
+            cloud_sql_instance=(
+                "alfaloop-data-project:asia-east1:different-postgres"
+            ),
+        ).validate()
+
+
 def test_production_training_settings_fail_closed_on_local_or_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
