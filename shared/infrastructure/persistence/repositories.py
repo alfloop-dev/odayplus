@@ -87,6 +87,36 @@ from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.workflow.sitescore import RealizedSite, SiteScoreDecision
 
 
+class TenantScopeRequiredError(ValueError):
+    """Raised when a production repository read omits its tenant boundary."""
+
+
+def _requires_tenant_scope(engine: Any) -> bool:
+    return str(getattr(engine, "dialect", "")).lower() == "postgresql"
+
+
+def _require_tenant_scope(engine: Any, tenant_id: str | None) -> str | None:
+    normalized = str(tenant_id or "").strip()
+    if _requires_tenant_scope(engine) and not normalized:
+        raise TenantScopeRequiredError(
+            "tenant_id is required for PostgreSQL business-data reads"
+        )
+    return normalized or None
+
+
+def _append_in_filter(
+    clauses: list[str],
+    params: list[Any],
+    column: str,
+    values: tuple[str, ...] | list[str],
+) -> None:
+    normalized = tuple(str(value).strip() for value in values if str(value).strip())
+    if not normalized:
+        return
+    clauses.append(f"{column} IN ({', '.join('?' for _ in normalized)})")
+    params.extend(normalized)
+
+
 class DurableSiteScoreRepository:
     """Durable mirror of ``InMemorySiteScoreRepository``."""
 
@@ -261,11 +291,19 @@ class DurableForecastOpsRepository:
         return self._store.list_by_group(self._FORECASTS, store_id)
 
     def save_alert(self, alert: Alert) -> Alert:
-        self._store.put(self._ALERTS, alert.alert_id, alert)
+        self._store.put(
+            self._ALERTS,
+            alert.alert_id,
+            alert,
+            group_key=alert.store_id,
+        )
         return alert
 
     def list_alerts(self) -> list[Alert]:
         return self._store.list_all(self._ALERTS)
+
+    def list_alerts_by_store(self, store_id: str) -> list[Alert]:
+        return self._store.list_by_group(self._ALERTS, store_id)
 
     def get_alert(self, alert_id: str) -> Alert | None:
         return self._store.get(self._ALERTS, alert_id)
@@ -964,12 +1002,21 @@ class DurableAddressLocationRepository:
         self._engine = engine
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
+        postgres = _requires_tenant_scope(self._engine)
+        geom_expression = (
+            "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
+        )
+        geom_params: tuple[Any, ...] = (
+            (address.longitude, address.latitude)
+            if postgres
+            else (address.raw_address,)
+        )
         self._engine.execute(
             "INSERT INTO address_locations ("
             "  address_id, raw_address, normalized_address, city, district, village, road, "
             "  latitude, longitude, geom, geocode_precision, geocode_confidence, "
             "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            f") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {geom_expression}, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
             "ON CONFLICT(address_id) DO UPDATE SET "
             "  raw_address = excluded.raw_address, "
             "  normalized_address = excluded.normalized_address, "
@@ -997,13 +1044,13 @@ class DurableAddressLocationRepository:
                 address.road,
                 address.latitude,
                 address.longitude,
-                address.raw_address,
+                *geom_params,
                 address.geocode_precision,
                 address.geocode_confidence,
                 address.h3_res_8,
                 address.h3_res_9,
                 address.h3_res_10,
-                1 if address.manual_override_flag else 0
+                bool(address.manual_override_flag),
             )
         )
         return address
@@ -1065,8 +1112,24 @@ class InMemoryStoreRepository:
     def get_store(self, store_id: str) -> Store | None:
         return self._stores.get(store_id)
 
-    def list_stores(self) -> list[Store]:
-        return list(self._stores.values())
+    def list_stores(
+        self,
+        *,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_codes: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> list[Store]:
+        stores = list(self._stores.values())
+        if tenant_id:
+            stores = [store for store in stores if store.tenant_id == tenant_id]
+        if brand_ids:
+            stores = [store for store in stores if store.brand_id in brand_ids]
+        if region_codes:
+            stores = [store for store in stores if store.region_code in region_codes]
+        if store_ids:
+            stores = [store for store in stores if store.store_id in store_ids]
+        return stores
 
 
 class DurableStoreRepository:
@@ -1124,7 +1187,7 @@ class DurableStoreRepository:
                 service_end_time,
                 effective_from,
                 effective_to,
-                1 if store.is_current else 0
+                bool(store.is_current),
             )
         )
         return store
@@ -1154,9 +1217,29 @@ class DurableStoreRepository:
             is_current=bool(row["is_current"])
         )
 
-    def list_stores(self) -> list[Store]:
+    def list_stores(
+        self,
+        *,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_codes: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> list[Store]:
         from datetime import date, datetime, time
-        rows = self._engine.query("SELECT * FROM stores")
+        tenant_id = _require_tenant_scope(self._engine, tenant_id)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        _append_in_filter(clauses, params, "brand_id", brand_ids)
+        _append_in_filter(clauses, params, "region_code", region_codes)
+        _append_in_filter(clauses, params, "store_id", store_ids)
+        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._engine.query(
+            f"SELECT * FROM stores{where_clause} ORDER BY store_id",
+            tuple(params),
+        )
         return [
             Store(
                 store_id=row["store_id"],
@@ -1304,8 +1387,23 @@ class InMemoryTransactionRepository:
     def get_transaction(self, transaction_id: str) -> Transaction | None:
         return self._transactions.get(transaction_id)
 
-    def list_transactions(self) -> list[Transaction]:
-        return list(self._transactions.values())
+    def list_transactions(
+        self,
+        *,
+        tenant_id: str | None = None,
+        store_ids: tuple[str, ...] = (),
+    ) -> list[Transaction]:
+        # In-memory transactions carry scope through the tenant-filtered store ids.
+        if tenant_id is not None and not store_ids:
+            return []
+        transactions = list(self._transactions.values())
+        if store_ids:
+            transactions = [
+                transaction
+                for transaction in transactions
+                if transaction.store_id in store_ids
+            ]
+        return transactions
 
 
 class DurableTransactionRepository:
@@ -1397,9 +1495,37 @@ class DurableTransactionRepository:
             ingested_at=datetime.fromisoformat(row["ingested_at"])
         )
 
-    def list_transactions(self) -> list[Transaction]:
+    def list_transactions(
+        self,
+        *,
+        tenant_id: str | None = None,
+        store_ids: tuple[str, ...] = (),
+    ) -> list[Transaction]:
         from datetime import datetime
-        rows = self._engine.query("SELECT * FROM transactions")
+        tenant_id = _require_tenant_scope(self._engine, tenant_id)
+        clauses: list[str] = []
+        params: list[Any] = []
+        table_expression = "transactions AS transaction_row"
+        if tenant_id is not None:
+            table_expression += (
+                " JOIN stores AS store_row"
+                " ON store_row.store_id = transaction_row.store_id"
+            )
+            clauses.append("store_row.tenant_id = ?")
+            params.append(tenant_id)
+        _append_in_filter(
+            clauses,
+            params,
+            "transaction_row.store_id",
+            store_ids,
+        )
+        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._engine.query(
+            "SELECT transaction_row.* FROM "
+            f"{table_expression}{where_clause} "
+            "ORDER BY transaction_row.event_time, transaction_row.transaction_id",
+            tuple(params),
+        )
         return [
             Transaction(
                 transaction_id=row["transaction_id"],

@@ -19,6 +19,20 @@ class OperatorLiveRepositoryError(RuntimeError):
     """Raised when one of the authoritative repositories cannot be read."""
 
 
+class OperatorTenantScopeRequiredError(OperatorLiveRepositoryError):
+    """Raised when a live Operator read has no authorized tenant."""
+
+
+@dataclass(frozen=True)
+class OperatorReadScope:
+    """Verified tenant and optional object scopes applied at repository reads."""
+
+    tenant_id: str
+    brand_ids: tuple[str, ...] = ()
+    region_ids: tuple[str, ...] = ()
+    store_ids: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class OperatorRepositoryProbe:
     """Result of probing every repository used by the operator projection."""
@@ -47,7 +61,14 @@ class OperatorLiveRepositoryProtocol(Protocol):
 
     def probe(self) -> OperatorRepositoryProbe: ...
 
-    def load_state(self) -> dict[str, Any]: ...
+    def load_state(
+        self,
+        *,
+        tenant_id: str,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> dict[str, Any]: ...
 
 
 def _enum_value(value: Any) -> Any:
@@ -123,63 +144,146 @@ class OperatorLiveRepository:
             "persistenceMode": self._mode,
         }
 
-    def _sources(self) -> tuple[tuple[str, Any, str], ...]:
-        return (
-            ("stores", self._persistence.store_repository, "list_stores"),
-            (
+    @staticmethod
+    def _require_scope(
+        *,
+        tenant_id: str,
+        brand_ids: tuple[str, ...],
+        region_ids: tuple[str, ...],
+        store_ids: tuple[str, ...],
+    ) -> OperatorReadScope:
+        normalized_tenant = str(tenant_id or "").strip()
+        if not normalized_tenant:
+            raise OperatorTenantScopeRequiredError(
+                "authorized tenant_id is required for Operator live reads"
+            )
+        return OperatorReadScope(
+            tenant_id=normalized_tenant,
+            brand_ids=tuple(sorted({value for value in brand_ids if value})),
+            region_ids=tuple(sorted({value for value in region_ids if value})),
+            store_ids=tuple(sorted({value for value in store_ids if value})),
+        )
+
+    @staticmethod
+    def _call(
+        name: str,
+        repository: Any,
+        method_name: str,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        method = getattr(repository, method_name, None)
+        if not callable(method):
+            raise OperatorLiveRepositoryError(
+                f"{name}: missing tenant-scoped {method_name}()"
+            )
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            raise OperatorLiveRepositoryError(
+                f"{name}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
+        stores = list(
+            self._call(
+                "stores",
+                self._persistence.store_repository,
+                "list_stores",
+                tenant_id=scope.tenant_id,
+                brand_ids=scope.brand_ids,
+                region_codes=scope.region_ids,
+                store_ids=scope.store_ids,
+            )
+        )
+        visible_store_ids = tuple(
+            sorted(str(_value(store, "store_id")) for store in stores)
+        )
+        transactions = list(
+            self._call(
                 "transactions",
                 self._persistence.transaction_repository,
                 "list_transactions",
-            ),
-            (
-                "interventions",
-                self._persistence.intervention_repository,
-                "list_all",
-            ),
-            (
-                "forecast_alerts",
-                self._persistence.forecastops_repository,
-                "list_alerts",
-            ),
-            ("listings", self._persistence.listing_repository, "list_listings"),
-            ("candidates", self._persistence.listing_repository, "list_candidates"),
-            (
-                "sitescore_decisions",
-                self._persistence.sitescore_decision_store,
-                "list_decisions",
-            ),
-            (
-                "ingestion_runs",
-                self._persistence.ingestion_run_store,
-                "latest_per_provider",
-            ),
-            ("heatzones", self._persistence.heatzone_store, "list_scores"),
-            ("audit_events", self._persistence.audit_log, "list_events"),
-            ("active_jobs", self._persistence.job_queue, "count_active_jobs"),
+                tenant_id=scope.tenant_id,
+                store_ids=visible_store_ids,
+            )
         )
 
-    def _read_sources(self) -> dict[str, Any]:
-        values: dict[str, Any] = {}
-        errors: list[str] = []
-        for name, repository, method_name in self._sources():
-            method = getattr(repository, method_name, None)
-            if not callable(method):
-                errors.append(f"{name}: missing {method_name}()")
-                continue
-            try:
-                values[name] = method()
-            except Exception as exc:  # repository boundary
-                errors.append(f"{name}: {type(exc).__name__}: {exc}")
-        if errors:
-            raise OperatorLiveRepositoryError("; ".join(errors))
-        return values
+        interventions: list[Any] = []
+        alerts: list[Any] = []
+        for store_id in visible_store_ids:
+            interventions.extend(
+                self._call(
+                    "interventions",
+                    self._persistence.intervention_repository,
+                    "list_by_store",
+                    store_id,
+                )
+            )
+            alerts.extend(
+                self._call(
+                    "forecast_alerts",
+                    self._persistence.forecastops_repository,
+                    "list_alerts_by_store",
+                    store_id,
+                )
+            )
+
+        # These legacy projections do not yet carry a tenant key. They stay
+        # invisible in the live Operator read model instead of being read
+        # cross-tenant. Their owning, tenant-aware intake APIs remain available.
+        listings: list[Any] = []
+        candidates: list[Any] = []
+        decisions: list[Any] = []
+        ingestion_runs: list[Any] = []
+        heatzones: list[Any] = []
+
+        audit_events = list(
+            self._call(
+                "audit_events",
+                self._persistence.audit_log,
+                "list_events",
+                tenant_id=scope.tenant_id,
+            )
+        )
+        active_jobs = int(
+            self._call(
+                "active_jobs",
+                self._persistence.job_queue,
+                "count_active_jobs",
+                tenant_id=scope.tenant_id,
+            )
+        )
+        return {
+            "stores": stores,
+            "transactions": transactions,
+            "interventions": interventions,
+            "forecast_alerts": alerts,
+            "listings": listings,
+            "candidates": candidates,
+            "sitescore_decisions": decisions,
+            "ingestion_runs": ingestion_runs,
+            "heatzones": heatzones,
+            "audit_events": audit_events,
+            "active_jobs": active_jobs,
+        }
 
     def probe(self) -> OperatorRepositoryProbe:
         errors: tuple[str, ...] = ()
         try:
-            self._read_sources()
-        except OperatorLiveRepositoryError as exc:
-            errors = tuple(part.strip() for part in str(exc).split(";") if part.strip())
+            engine = getattr(self._persistence, "engine", None)
+            if engine is not None and callable(getattr(engine, "query_one", None)):
+                engine.query_one("SELECT 1 AS ready")
+            else:
+                self._call(
+                    "stores",
+                    self._persistence.store_repository,
+                    "list_stores",
+                    tenant_id="__operator_probe__",
+                )
+        except Exception as exc:
+            errors = (f"{type(exc).__name__}: {exc}",)
         return OperatorRepositoryProbe(
             ready=not errors,
             checked_at=datetime.now(UTC).isoformat(),
@@ -188,8 +292,21 @@ class OperatorLiveRepository:
             errors=errors,
         )
 
-    def load_state(self) -> dict[str, Any]:
-        sources = self._read_sources()
+    def load_state(
+        self,
+        *,
+        tenant_id: str,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        scope = self._require_scope(
+            tenant_id=tenant_id,
+            brand_ids=brand_ids,
+            region_ids=region_ids,
+            store_ids=store_ids,
+        )
+        sources = self._read_sources(scope)
         stores = list(sources["stores"])
         transactions = list(sources["transactions"])
         interventions = list(sources["interventions"])
@@ -251,6 +368,7 @@ class OperatorLiveRepository:
                 "generatedAt": datetime.now(UTC).isoformat(),
                 "recordCounts": record_counts,
                 "scopeLabel": f"{len(stores)} stores",
+                "tenantId": scope.tenant_id,
             },
             "kpis": [
                 {

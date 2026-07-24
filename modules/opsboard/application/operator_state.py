@@ -303,11 +303,32 @@ class OperatorStateService:
                 "owning domain service for this operation."
             )
 
-    def _load_state(self) -> dict[str, Any]:
+    def _load_state(
+        self,
+        *,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
         if self._live_repository is None:
             return self._state
+        normalized_tenant = str(tenant_id or "").strip()
+        if not normalized_tenant:
+            from modules.opsboard.application.operator_live_repository import (
+                OperatorTenantScopeRequiredError,
+            )
+
+            raise OperatorTenantScopeRequiredError(
+                "authorized tenant_id is required for Operator live reads"
+            )
         try:
-            self._state = self._live_repository.load_state()
+            self._state = self._live_repository.load_state(
+                tenant_id=normalized_tenant,
+                brand_ids=brand_ids,
+                region_ids=region_ids,
+                store_ids=store_ids,
+            )
         except Exception as exc:
             self._state = {}
             self._live_ready = False
@@ -354,6 +375,10 @@ class OperatorStateService:
         subject_id: str | None = None,
         system_roles: str | None = None,
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Return a role-aware shell envelope for bootstrap/today."""
         role = self.resolve_role(
@@ -364,7 +389,12 @@ class OperatorStateService:
         return self._build_envelope(
             role=role,
             correlation_id=correlation_id,
-            state=self._load_state(),
+            state=self._load_state(
+                tenant_id=tenant_id,
+                brand_ids=brand_ids,
+                region_ids=region_ids,
+                store_ids=store_ids,
+            ),
         )
 
     def get_work_queue(
@@ -373,6 +403,10 @@ class OperatorStateService:
         role_id: str | None = None,
         subject_id: str | None = None,
         system_roles: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         """Return a deep copy of the current work-queue items."""
         role = self.resolve_role(
@@ -382,7 +416,12 @@ class OperatorStateService:
         )
         return self._filtered_queue(
             role_id=role["id"],
-            state=self._load_state(),
+            state=self._load_state(
+                tenant_id=tenant_id,
+                brand_ids=brand_ids,
+                region_ids=region_ids,
+                store_ids=store_ids,
+            ),
         )
 
     def get_approvals(
@@ -391,6 +430,10 @@ class OperatorStateService:
         role_id: str | None = None,
         subject_id: str | None = None,
         system_roles: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         """Return a deep copy of the current approval decisions."""
         role = self.resolve_role(
@@ -400,7 +443,12 @@ class OperatorStateService:
         )
         return self._filtered_approvals(
             role_id=role["id"],
-            state=self._load_state(),
+            state=self._load_state(
+                tenant_id=tenant_id,
+                brand_ids=brand_ids,
+                region_ids=region_ids,
+                store_ids=store_ids,
+            ),
         )
 
     def search(
@@ -411,6 +459,10 @@ class OperatorStateService:
         subject_id: str | None = None,
         system_roles: str | None = None,
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Search the role-aware shell index."""
         envelope = self.get_today(
@@ -418,6 +470,10 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
             correlation_id=correlation_id,
+            tenant_id=tenant_id,
+            brand_ids=brand_ids,
+            region_ids=region_ids,
+            store_ids=store_ids,
         )
         normalized = query.strip().casefold()
         items = envelope["search"]["items"]
@@ -691,6 +747,7 @@ class OperatorStateService:
                 "recordCounts": deepcopy(
                     state.get("_meta", {}).get("recordCounts", {})
                 ),
+                "tenantId": state.get("_meta", {}).get("tenantId"),
             },
             "navigation": {
                 "roles": response_roles,

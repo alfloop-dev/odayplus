@@ -103,18 +103,35 @@ class DurableAuditLog:
             )
             return event
 
-    def list_events(self, *, correlation_id: str | None = None) -> list[AuditEvent]:
-        if correlation_id is None:
+    def list_events(
+        self,
+        *,
+        correlation_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[AuditEvent]:
+        if correlation_id is None and tenant_id is None:
             events = self._read_events()
             verify_audit_chain(events).raise_for_tamper()
             return events
 
         # Operational lookups use the correlation index and validate each
         # returned record; verify_chain() remains the full-chain evidence check.
+        clauses: list[str] = []
+        params: list[str] = []
+        if correlation_id is not None:
+            clauses.append("correlation_id = ?")
+            params.append(correlation_id)
+        if tenant_id is not None:
+            if str(getattr(self._engine, "dialect", "")).lower() == "postgresql":
+                clauses.append("metadata_json ->> 'tenant_id' = ?")
+            else:
+                clauses.append("json_extract(metadata_json, '$.tenant_id') = ?")
+            params.append(tenant_id)
         rows = self._engine.query(
-            "SELECT * FROM durable_audit_events "
-            "WHERE correlation_id = ? ORDER BY seq",
-            (correlation_id,),
+            "SELECT * FROM durable_audit_events WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY seq",
+            tuple(params),
         )
         events = [self._row_to_event(row) for row in rows]
         if any(not verify_audit_event_integrity(event) for event in events):

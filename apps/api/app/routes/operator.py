@@ -78,6 +78,34 @@ class EvidencePurposePayload(BaseModel):
     auditNote: str | None = None
 
 
+def _live_operator_request_context(
+    request: Request,
+    *,
+    x_operator_role: str | None = None,
+    x_subject_id: str | None = None,
+    x_roles: str | None = None,
+    x_correlation_id: str | None = None,
+) -> dict[str, Any]:
+    """Build live read scope only from the verified request principal."""
+
+    principal = getattr(request.state, "operator_principal", None)
+    scope = getattr(principal, "scope", None)
+    return {
+        "role_id": getattr(request.state, "operator_role_id", None)
+        or x_operator_role,
+        "subject_id": getattr(request.state, "operator_subject_id", None)
+        or x_subject_id,
+        "system_roles": getattr(request.state, "operator_system_roles", None)
+        or x_roles,
+        "correlation_id": getattr(request.state, "correlation_id", None)
+        or x_correlation_id,
+        "tenant_id": getattr(scope, "tenant_id", None),
+        "brand_ids": tuple(getattr(scope, "brand_ids", ()) or ()),
+        "region_ids": tuple(getattr(scope, "region_ids", ()) or ()),
+        "store_ids": tuple(getattr(scope, "store_ids", ()) or ()),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -119,6 +147,7 @@ def create_operator_router(
     """
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
+        OPERATOR_TENANT_ID,
         build_engine,
         require_operator_permission,
         require_permission,
@@ -185,10 +214,16 @@ def create_operator_router(
     from shared.infrastructure.persistence.operator_shell import DurableShellRepository
 
     operator_view_guard = require_operator_permission(
-        OPERATOR_CONSOLE_RESOURCE, Action.VIEW, engine=authz_engine
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.VIEW,
+        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        engine=authz_engine,
     )
     operator_write_guard = require_operator_permission(
-        OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.UPDATE,
+        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        engine=authz_engine,
     )
 
     if require_live_data:
@@ -202,17 +237,14 @@ def create_operator_router(
             x_subject_id: str | None,
             x_roles: str | None,
             x_correlation_id: str | None,
-        ) -> dict[str, str | None]:
-            return {
-                "role_id": getattr(request.state, "operator_role_id", None)
-                or x_operator_role,
-                "subject_id": getattr(request.state, "operator_subject_id", None)
-                or x_subject_id,
-                "system_roles": getattr(request.state, "operator_system_roles", None)
-                or x_roles,
-                "correlation_id": getattr(request.state, "correlation_id", None)
-                or x_correlation_id,
-            }
+        ) -> dict[str, Any]:
+            return _live_operator_request_context(
+                request,
+                x_operator_role=x_operator_role,
+                x_subject_id=x_subject_id,
+                x_roles=x_roles,
+                x_correlation_id=x_correlation_id,
+            )
 
         @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
         @router.get("/today", dependencies=[Depends(operator_view_guard)])

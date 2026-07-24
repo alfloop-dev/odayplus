@@ -5,16 +5,25 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import Response
+import pytest
+from fastapi import HTTPException, Response
+from starlette.requests import Request
 
+from apps.api.app.routes.operator import _live_operator_request_context
 from apps.api.oday_api.main import create_app
+from apps.api.oday_api.security.dependencies import (
+    OPERATOR_CONSOLE_RESOURCE,
+    require_operator_permission,
+)
 from modules.forecastops.domain.forecasting import Alert, AlertLevel
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
+    OperatorTenantScopeRequiredError,
 )
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import AuditEvent
-from shared.domain import Store, Transaction
+from shared.auth import Action, Role
+from shared.domain import AddressLocation, Brand, Store, Tenant, Transaction
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 
 
@@ -60,7 +69,10 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
         live_repository=repository,
     )
 
-    envelope = service.get_today(role_id="ops-lead")
+    envelope = service.get_today(
+        role_id="ops-lead",
+        tenant_id="tenant-live-1",
+    )
 
     assert envelope["meta"]["dataMode"] == "live"
     assert envelope["meta"]["dataOrigin"] == {
@@ -111,6 +123,7 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
             resource="forecast-alert/alert-live-1",
             outcome="accepted",
             correlation_id="corr-live-1",
+            metadata={"tenant_id": "tenant-live-1"},
         )
     )
 
@@ -120,7 +133,10 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
         provider_mode="live",
         live_repository=OperatorLiveRepository(bundle),
     )
-    envelope = service.get_today(role_id="ops-lead")
+    envelope = service.get_today(
+        role_id="ops-lead",
+        tenant_id="tenant-live-1",
+    )
 
     assert [item["id"] for item in envelope["workQueue"]] == ["alert-live-1"]
     assert envelope["notifications"][0]["id"] == "notification-alert-live-1"
@@ -134,6 +150,33 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
 def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None:
     db_path = tmp_path / "operator-live-restart.sqlite3"
     first = _durable_bundle(db_path)
+    first.tenant_repository.save_tenant(
+        Tenant(tenant_id="tenant-live-1", tenant_name="Live Tenant")
+    )
+    first.brand_repository.save_brand(
+        Brand(
+            brand_id="brand-live-1",
+            tenant_id="tenant-live-1",
+            brand_code="brand-live",
+            brand_name="Live Brand",
+        )
+    )
+    first.address_location_repository.save_address(
+        AddressLocation(
+            address_id="address-live-1",
+            raw_address="Live test address",
+        )
+    )
+    first.store_repository.save_store(
+        Store(
+            store_id="store-live-1",
+            tenant_id="tenant-live-1",
+            brand_id="brand-live-1",
+            store_name="Live Store",
+            store_status="open",
+            address_id="address-live-1",
+        )
+    )
     first.forecastops_repository.save_alert(_alert("alert-restart-1"))
     first.engine.close()
 
@@ -147,7 +190,10 @@ def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None
             live_repository=repository,
         )
 
-        envelope = service.get_today(role_id="ops-lead")
+        envelope = service.get_today(
+            role_id="ops-lead",
+            tenant_id="tenant-live-1",
+        )
 
         assert repository.probe().ready is True
         assert [item["id"] for item in envelope["workQueue"]] == [
@@ -199,7 +245,7 @@ def test_create_app_injects_and_probes_postgresql_live_repository(
 
 def test_repository_probe_reports_real_dependency_failure() -> None:
     class BrokenStoreRepository:
-        def list_stores(self) -> list[Any]:
+        def list_stores(self, **_: Any) -> list[Any]:
             raise ConnectionError("database unavailable")
 
     bundle = replace(
@@ -212,5 +258,132 @@ def test_repository_probe_reports_real_dependency_failure() -> None:
 
     assert probe.ready is False
     assert probe.errors == (
-        "stores: ConnectionError: database unavailable",
+        "OperatorLiveRepositoryError: stores: ConnectionError: database unavailable",
+    )
+
+
+def test_live_repository_requires_tenant_scope() -> None:
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=OperatorLiveRepository(
+            replace(_memory_bundle(), mode="postgresql")
+        ),
+    )
+
+    with pytest.raises(
+        OperatorTenantScopeRequiredError,
+        match="authorized tenant_id is required",
+    ):
+        service.get_today(role_id="ops-lead")
+
+
+def test_live_operator_http_context_applies_verified_tenant_and_store_scope() -> None:
+    bundle = replace(_memory_bundle(), mode="postgresql")
+    for store in (
+        Store(
+            store_id="store-a-visible",
+            tenant_id="tenant-a",
+            brand_id="brand-a",
+            store_name="Tenant A Visible",
+            store_status="open",
+            region_code="north",
+        ),
+        Store(
+            store_id="store-a-hidden-by-scope",
+            tenant_id="tenant-a",
+            brand_id="brand-a",
+            store_name="Tenant A Hidden",
+            store_status="open",
+            region_code="south",
+        ),
+        Store(
+            store_id="store-b-secret",
+            tenant_id="tenant-b",
+            brand_id="brand-b",
+            store_name="Tenant B Secret",
+            store_status="open",
+            region_code="north",
+        ),
+    ):
+        bundle.store_repository.save_store(store)
+        bundle.transaction_repository.save_transaction(
+            Transaction(
+                transaction_id=f"txn-{store.store_id}",
+                store_id=store.store_id,
+                net_amount=100,
+                transaction_status="succeeded",
+                source_system="pos",
+            )
+        )
+
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=OperatorLiveRepository(bundle),
+    )
+    request = _operator_request(
+        subject_id="operator-ops-lead",
+        roles=Role.OPERATIONS_MANAGER.value,
+        tenant_id="tenant-a",
+        store_ids="store-a-visible",
+    )
+    guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.VIEW,
+    )
+    guard(request)
+    context = _live_operator_request_context(request)
+    payload = service.get_today(**context)
+
+    assert payload["meta"]["tenantId"] == "tenant-a"
+    assert payload["meta"]["recordCounts"]["stores"] == 1
+    assert payload["meta"]["recordCounts"]["transactions"] == 1
+    kpis = {item["label"]: item["value"] for item in payload["kpis"]}
+    assert kpis["有效門市"] == "1"
+    assert kpis["交易淨額"] == "100.00"
+    assert "Tenant B Secret" not in str(payload)
+
+    missing_tenant = _operator_request(
+        subject_id="operator-ops-lead",
+        roles=Role.OPERATIONS_MANAGER.value,
+    )
+    with pytest.raises(HTTPException) as denied:
+        guard(missing_tenant)
+    assert denied.value.status_code == 403
+    assert denied.value.detail == "Operator Console tenant scope is required"
+
+
+def _operator_request(
+    *,
+    subject_id: str,
+    roles: str,
+    tenant_id: str | None = None,
+    store_ids: str | None = None,
+) -> Request:
+    headers = {
+        "x-subject-id": subject_id,
+        "x-roles": roles,
+    }
+    if tenant_id is not None:
+        headers["x-tenant-id"] = tenant_id
+    if store_ids is not None:
+        headers["x-store-ids"] = store_ids
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/v1/operator/today",
+            "raw_path": b"/api/v1/operator/today",
+            "query_string": b"",
+            "headers": [
+                (name.encode("latin-1"), value.encode("latin-1"))
+                for name, value in headers.items()
+            ],
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 443),
+        }
     )

@@ -28,11 +28,26 @@ class DurableJobQueue:
     def __init__(self, engine: SqliteEngine) -> None:
         self._engine = engine
 
-    def count_active_jobs(self) -> int:
+    def count_active_jobs(self, *, tenant_id: str | None = None) -> int:
         with self._engine.lock:
+            tenant_clause = ""
+            params: list[str] = [
+                JobStatus.QUEUED.value,
+                JobStatus.RUNNING.value,
+            ]
+            if tenant_id is not None:
+                if str(getattr(self._engine, "dialect", "")).lower() == "postgresql":
+                    tenant_clause = " AND payload_json ->> 'tenant_id' = ?"
+                else:
+                    tenant_clause = (
+                        " AND json_extract(payload_json, '$.tenant_id') = ?"
+                    )
+                params.append(tenant_id)
             row = self._engine.query_one(
-                "SELECT COUNT(*) as count FROM durable_jobs WHERE status = ? OR status = ?",
-                (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
+                "SELECT COUNT(*) as count FROM durable_jobs "
+                "WHERE (status = ? OR status = ?)"
+                + tenant_clause,
+                tuple(params),
             )
             return row["count"] if row else 0
 

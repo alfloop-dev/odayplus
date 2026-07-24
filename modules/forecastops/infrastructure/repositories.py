@@ -55,6 +55,11 @@ class InMemoryForecastOpsRepository:
     def list_alerts(self) -> list[Alert]:
         return list(self._alerts.values())
 
+    def list_alerts_by_store(self, store_id: str) -> list[Alert]:
+        return [
+            alert for alert in self._alerts.values() if alert.store_id == store_id
+        ]
+
     def get_alert(self, alert_id: str) -> Alert | None:
         return self._alerts.get(alert_id)
 
