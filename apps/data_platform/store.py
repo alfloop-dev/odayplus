@@ -654,6 +654,20 @@ class PsycopgCanonicalStore:
         }[envelope.source_kind]
         authority = connection.execute(
             f"""
+            WITH ensured_transaction AS (
+                INSERT INTO core.transactions (
+                    transaction_id, source_transaction_id, store_id, machine_id,
+                    member_id, event_time, observation_time, payment_time,
+                    gross_amount, discount_amount, net_amount, currency,
+                    payment_method, transaction_status, refund_of_transaction_id,
+                    price_schedule_id, promotion_id, source_system, ingested_at
+                ) VALUES (
+                    %s, %s, %s, NULL, NULL, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, NULL, NULL, NULL, 'fongniao_prod', %s
+                )
+                ON CONFLICT (transaction_id) DO NOTHING
+                RETURNING transaction_id
+            )
             INSERT INTO {self._schema}.transaction_authority (
                 transaction_id, source_kind, authority_rank, source_snapshot_id
             ) VALUES (%s, %s, %s, %s)
@@ -667,6 +681,19 @@ class PsycopgCanonicalStore:
             RETURNING source_kind, authority_rank
             """,
             (
+                projection.transaction_id,
+                projection.source_id,
+                projection.store_id,
+                projection.event_time,
+                projection.observation_time,
+                projection.payment_time,
+                projection.gross_amount,
+                projection.discount_amount,
+                projection.net_amount,
+                projection.currency,
+                projection.payment_method,
+                projection.transaction_status,
+                projection.ingested_at,
                 projection.transaction_id,
                 envelope.source_kind.value,
                 authority_rank,

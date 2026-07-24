@@ -311,5 +311,7 @@ def test_transaction_authority_check_and_upsert_share_one_round_trip(
     store._upsert_transaction(connection, envelope, projection)
 
     assert len(connection.statements) == 2
+    assert "WITH ensured_transaction AS" in connection.statements[0]
+    assert "ON CONFLICT (transaction_id) DO NOTHING" in connection.statements[0]
     assert "RETURNING source_kind, authority_rank" in connection.statements[0]
     assert "INSERT INTO core.transactions" in connection.statements[1]
