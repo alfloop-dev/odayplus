@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from modules.external_data.providers import ListingPartnerFeedProvider
+from modules.external_data.providers.live import assert_listing_provider_selected
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.observability import new_correlation_id
 
@@ -266,10 +268,12 @@ class ExternalFetchScheduler:
         state_store: InMemoryExternalFetchStateStore | None = None,
         provider_factories: Mapping[str, ProviderFactory] | None = None,
         resilience_policy: ExternalFetchResiliencePolicy | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         self.state_store = state_store or InMemoryExternalFetchStateStore()
         self.provider_factories = dict(provider_factories or {})
         self.resilience_policy = resilience_policy or ExternalFetchResiliencePolicy()
+        self.env = os.environ if env is None else env
 
     def run_once(
         self,
@@ -316,6 +320,11 @@ class ExternalFetchScheduler:
             )
 
         try:
+            if spec.provider_id == "listing.partner_feed":
+                assert_listing_provider_selected(
+                    env=self.env,
+                    correlation_id=corr,
+                )
             provider = self._provider_for(spec.provider_id)
             result = provider.fetch_and_ingest(ingestion_time=effective_end, correlation_id=corr)
             raw_snapshot_id = str(result.raw_snapshot.snapshot_id)
@@ -511,6 +520,9 @@ def _idempotency_key(spec: ExternalFetchJobSpec, window_start: datetime, window_
 
 def _provider_failure_code(exc: Exception) -> str:
     code = str(getattr(exc, "code", "") or "").lower()
+    validation_errors = getattr(getattr(exc, "result", None), "errors", ())
+    if not code and validation_errors:
+        code = str(getattr(validation_errors[0], "code", "") or "").lower()
     name = type(exc).__name__.lower()
     message = str(exc).lower()
     if "rate" in code or "quota" in code or "rate" in name or "quota" in message:
@@ -521,6 +533,8 @@ def _provider_failure_code(exc: Exception) -> str:
         return "timeout"
     if "server" in code or "5xx" in message:
         return "server_error"
+    if code in {"provider_allowlist_required", "provider_not_selected"}:
+        return code
     return "provider_failure"
 
 

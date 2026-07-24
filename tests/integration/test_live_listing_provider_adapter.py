@@ -163,6 +163,34 @@ def test_missing_live_listing_credential_fails_closed_without_secret_values() ->
     assert "missing_credential" in exc_info.value.to_dict()["errors"][0]["code"]
 
 
+@pytest.mark.parametrize(
+    ("allowlist", "code"),
+    [
+        ("", "provider_allowlist_required"),
+        ("poi.commercial_api", "provider_not_selected"),
+    ],
+)
+def test_production_listing_provider_enforces_allowlist_before_client_execution(
+    allowlist: str,
+    code: str,
+) -> None:
+    client = MockListingFeedClient({"records": []})
+    provider = ListingPartnerFeedProvider(
+        client=client,
+        env=_live_env(
+            ODP_DEPLOY_ENV="production",
+            ODP_PRODUCTION_PROVIDER_IDS=allowlist,
+        ),
+        geo_pipeline=_geo_pipeline(),
+    )
+
+    with pytest.raises(ExternalProviderConfigError) as exc_info:
+        provider.fetch_and_ingest(correlation_id=f"corr-{code}")
+
+    assert exc_info.value.result.errors[0].code == code
+    assert client.calls == []
+
+
 def test_invalid_live_listing_credential_status_fails_closed_without_secret_values() -> None:
     provider = ListingPartnerFeedProvider(
         client=MockListingFeedClient({"records": []}),

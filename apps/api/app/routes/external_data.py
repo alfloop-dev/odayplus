@@ -1,10 +1,35 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from modules.external_data.workers import SourceFreshnessEvidence
 from shared.audit import InMemoryAuditLog
+
+_FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
+_PRODUCTION_DEPLOYMENTS = frozenset({"prod", "production"})
+
+
+def _fixture_freshness_enabled() -> bool:
+    product_mode = os.environ.get("ODP_PRODUCT_MODE", "").strip().lower()
+    provider_mode = os.environ.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
+    deployment_mode = os.environ.get(
+        "ODP_DEPLOY_ENV", os.environ.get("APP_ENV", "development")
+    ).strip().lower()
+    require_live_data = os.environ.get("ODP_REQUIRE_LIVE_DATA", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return (
+        product_mode in _FIXTURE_PRODUCT_MODES
+        and provider_mode != "live"
+        and deployment_mode not in _PRODUCTION_DEPLOYMENTS
+        and not require_live_data
+    )
+
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -49,10 +74,9 @@ else:
         @router.get("/freshness", dependencies=[view_guard])
         def list_external_data_freshness(request: Request) -> dict[str, Any]:
             evidence = service.store.freshness()
-            if not evidence:
-                # Cold store: fall back to the documented fixture so the
-                # product renders (and the freshness contract holds) before any
-                # run has been persisted.
+            fixture_used = False
+            if not evidence and _fixture_freshness_enabled():
+                fixture_used = True
                 evidence = [
                     SourceFreshnessEvidence(
                         provider_id="listing.partner_feed",
@@ -64,8 +88,22 @@ else:
                         correlation_id=request.state.correlation_id,
                     )
                 ]
+            availability = (
+                {
+                    "status": "AVAILABLE",
+                    "reason_code": None,
+                    "source": "fixture" if fixture_used else "persisted",
+                }
+                if evidence
+                else {
+                    "status": "UNAVAILABLE",
+                    "reason_code": "NO_PERSISTED_FRESHNESS_EVIDENCE",
+                    "source": "persisted",
+                }
+            )
             return {
                 "freshness": [item.to_dict() for item in evidence],
+                "availability": availability,
                 "correlation_id": request.state.correlation_id,
             }
 

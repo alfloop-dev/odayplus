@@ -976,7 +976,7 @@ class ListingPartnerFeedProvider:
         mode: ExternalProviderMode | str | None = None,
         replay_fixture_path: Path | str = DEFAULT_REPLAY_FIXTURE,
     ) -> None:
-        self.env = env or os.environ
+        self.env = os.environ if env is None else env
         self.mode = (
             ExternalProviderMode(mode)
             if isinstance(mode, str)
@@ -1000,6 +1000,11 @@ class ListingPartnerFeedProvider:
     ) -> ListingFeedIngestionResult:
         corr = correlation_id or new_correlation_id()
         fetched_at = ingestion_time or datetime.now(UTC)
+        assert_listing_provider_selected(
+            env=self.env,
+            mode=self.mode,
+            correlation_id=corr,
+        )
         credential = self._credential_or_raise(corr)
         payload = self.client.fetch_listing_feed(
             provider=self.provider,
@@ -1966,6 +1971,50 @@ def _listing_provider_definition() -> ExternalProviderDefinition:
     raise ValueError(f"{LISTING_PROVIDER_ID} is not registered")
 
 
+def assert_listing_provider_selected(
+    *,
+    env: Mapping[str, str] | None = None,
+    mode: ExternalProviderMode | str | None = None,
+    correlation_id: str,
+) -> None:
+    source_env = os.environ if env is None else env
+    resolved_mode = (
+        ExternalProviderMode(mode)
+        if isinstance(mode, str)
+        else mode
+        if mode is not None
+        else external_provider_mode(source_env)
+    )
+    if resolved_mode is not ExternalProviderMode.LIVE:
+        return
+
+    provider = _listing_provider_definition()
+    deployment_mode = source_env.get(
+        "ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")
+    ).strip().lower()
+    selected = {
+        item.strip()
+        for item in source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "").split(",")
+        if item.strip()
+    }
+    if deployment_mode in {"prod", "production"} and not selected:
+        raise _config_error(
+            provider,
+            correlation_id,
+            env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+            code="provider_allowlist_required",
+            message="Production live mode requires an explicit provider allowlist.",
+        )
+    if selected and provider.provider_id not in selected:
+        raise _config_error(
+            provider,
+            correlation_id,
+            env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+            code="provider_not_selected",
+            message="Provider is not selected by the production provider allowlist.",
+        )
+
+
 def _geocode_provider_definition() -> ExternalProviderDefinition:
     for provider in provider_registry():
         if provider.provider_id == GEOCODE_PROVIDER_ID:
@@ -2136,6 +2185,7 @@ __all__ = [
     "ProviderSnapshotPayload",
     "RawExternalDatasetSnapshot",
     "SnapshotHttpClient",
+    "assert_listing_provider_selected",
     "normalize_listing_feed_payload",
     "record_idempotency_key",
 ]

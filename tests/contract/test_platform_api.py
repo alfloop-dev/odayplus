@@ -105,7 +105,10 @@ def test_job_lookup_and_openapi_contract() -> None:
     assert "/audit/events" not in paths
 
 
-def test_external_data_freshness_api_exposes_lineage_and_correlation() -> None:
+def test_external_data_freshness_api_exposes_lineage_and_correlation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
     client = TestClient(create_app())
 
     response = client.get(

@@ -203,6 +203,51 @@ def test_unconfigured_provider_fails_closed_as_blocked() -> None:
     assert "not configured" in run.message
 
 
+@pytest.mark.parametrize(
+    ("allowlist", "reason_code"),
+    [
+        ("", "provider_allowlist_required"),
+        ("poi.commercial_api", "provider_not_selected"),
+    ],
+)
+def test_worker_blocks_unselected_listing_provider_before_factory_execution(
+    allowlist: str,
+    reason_code: str,
+) -> None:
+    factory_calls = 0
+
+    def provider_factory() -> CountingProvider:
+        nonlocal factory_calls
+        factory_calls += 1
+        return CountingProvider()
+
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": provider_factory},
+        env={
+            "ODP_EXTERNAL_PROVIDER_MODE": "live",
+            "ODP_DEPLOY_ENV": "production",
+            "ODP_PRODUCTION_PROVIDER_IDS": allowlist,
+            "ODP_LISTING_PROVIDER_API_KEY": "configured-but-not-selected",
+        },
+    )
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="hourly-listing",
+    )
+
+    run = scheduler.run_once(
+        spec,
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+        correlation_id=f"corr-worker-{reason_code}",
+    )
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.alerts[0].reason_code == reason_code
+    assert reason_code in run.message
+    assert factory_calls == 0
+
+
 def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixture[str]) -> None:
     from scripts.external_data_backfill import main
 
