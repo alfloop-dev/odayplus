@@ -136,6 +136,21 @@ def test_worker_explicitly_selects_mlforecast_without_changing_existing_signatur
     assert payload["forecasts"][0]["model_name"] == "hist_gradient_boosting"
 
 
+@pytest.mark.skipif(not HAS_STATSFORECAST, reason="statsforecast is not installed")
+def test_worker_uses_deployment_selected_oss_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ODP_FORECAST_ENGINE", "statsforecast")
+    monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
+
+    result = run_forecastops_batch_forecast(inputs=[_input()])
+
+    forecast = result.to_dict()["forecasts"][0]
+    assert forecast["engine_name"] == "statsforecast"
+    assert forecast["model_name"] == "seasonal_naive"
+    assert forecast["model_metadata"]["library"] == "statsforecast"
+
+
 @pytest.mark.parametrize(
     ("engine_name", "missing_package"),
     (("statsforecast", "statsforecast"), ("mlforecast", "mlforecast")),

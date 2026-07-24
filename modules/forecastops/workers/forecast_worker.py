@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,14 +33,16 @@ class ForecastOpsForecastWorker:
         self,
         *,
         repository: InMemoryForecastOpsRepository | None = None,
-        engine: str | ForecastEngine = "baseline",
+        engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
     ) -> None:
+        selected_engine = engine or os.getenv("ODP_FORECAST_ENGINE", "baseline")
+        selected_model = model_name or os.getenv("ODP_FORECAST_MODEL") or None
         self.service = ForecastOpsService(
             repository=repository,
-            engine=engine,
-            model_name=model_name,
+            engine=selected_engine,
+            model_name=selected_model,
             engine_options=engine_options,
         )
 
@@ -78,7 +81,7 @@ def run_forecastops_batch_forecast(
     job_id: str | None = None,
     prediction_origin_time: datetime | str | None = None,
     repository: InMemoryForecastOpsRepository | None = None,
-    engine: str | ForecastEngine = "baseline",
+    engine: str | ForecastEngine | None = None,
     model_name: str | None = None,
     engine_options: Mapping[str, Any] | None = None,
 ) -> ForecastOpsBatchResult:

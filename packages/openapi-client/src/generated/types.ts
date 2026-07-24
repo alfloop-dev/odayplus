@@ -1442,6 +1442,7 @@ export const API_PATHS = {
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],
   "/api/v1/learninghub/models/{model_name}/versions": ["POST"],
+  "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
   "/api/v1/listings/candidates": ["GET"],
