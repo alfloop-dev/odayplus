@@ -526,6 +526,29 @@ _MACHINE_STATUS = {
 }
 
 
+def _device_lifecycle_status(document: dict[str, Any]) -> str:
+    enabled = document.get("enable")
+    if isinstance(enabled, bool):
+        return "active" if enabled else "inactive"
+
+    raw_status = document.get("modelStatus")
+    if isinstance(raw_status, str):
+        normalized = raw_status.strip().lower()
+        if normalized:
+            try:
+                return _MACHINE_STATUS[normalized]
+            except KeyError as exc:
+                raise SourceContractError(
+                    QuarantineReason.UNSUPPORTED_STATUS,
+                    f"Unsupported device lifecycle status: {normalized}",
+                ) from exc
+
+    raise SourceContractError(
+        QuarantineReason.MISSING_REQUIRED_FIELD,
+        "device.enable boolean or string modelStatus lifecycle is required",
+    )
+
+
 def project_device(envelope: SourceEnvelope, lookup: MappingLookup) -> DeviceProjection:
     document = envelope.source_document
     source_merchant_id = _source_reference(document.get("merchant"), "device.merchant")
@@ -537,19 +560,7 @@ def project_device(envelope: SourceEnvelope, lookup: MappingLookup) -> DevicePro
             QuarantineReason.TENANT_OWNERSHIP_MISMATCH,
             "Device merchant does not own the referenced place",
         )
-    raw_status = str(document.get("modelStatus") or "").strip().lower()
-    if not raw_status:
-        raise SourceContractError(
-            QuarantineReason.MISSING_REQUIRED_FIELD,
-            "device.modelStatus is required; connection is not a status fallback",
-        )
-    try:
-        machine_status = _MACHINE_STATUS[raw_status]
-    except KeyError as exc:
-        raise SourceContractError(
-            QuarantineReason.UNSUPPORTED_STATUS,
-            f"Unsupported device status: {raw_status}",
-        ) from exc
+    machine_status = _device_lifecycle_status(document)
     return DeviceProjection(
         source_id=envelope.source_id,
         source_merchant_id=source_merchant_id,

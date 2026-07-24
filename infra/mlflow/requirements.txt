@@ -1,0 +1,4 @@
+mlflow==3.14.0
+psycopg[binary]==3.3.4
+google-cloud-storage==3.13.0
+gunicorn==23.0.0

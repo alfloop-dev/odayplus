@@ -116,7 +116,10 @@ time-series outputs remain date-partitioned.
 
 Live field bindings are explicit:
 
-- device: `modelStatus`, `enable`, `connection`, `machineType`, and `model`;
+- device lifecycle: boolean `enable`; `connection` and nested
+  `modelStatus.operationStatus.machineStatus` remain operational evidence
+  rather than being coerced into the lifecycle enum; `machineType` and `model`
+  identify the equipment;
 - device daily: `startDatetime` and `endDatetime`;
 - campaign: `offerName`, `isActive`, `startDatetime`, `endDatetime`,
   discount amount/percentage, offer type/method;

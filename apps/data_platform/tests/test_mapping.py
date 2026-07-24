@@ -233,6 +233,67 @@ def test_device_enforces_merchant_place_tenant(envelope_factory) -> None:
     assert error.value.reason_code is QuarantineReason.TENANT_OWNERSHIP_MISMATCH
 
 
+@pytest.mark.parametrize(
+    ("enabled", "connection", "expected"),
+    (
+        (True, False, "active"),
+        (True, True, "active"),
+        (False, True, "inactive"),
+        (False, False, "inactive"),
+    ),
+)
+def test_device_uses_live_enable_for_lifecycle_not_nested_model_status(
+    envelope_factory,
+    enabled,
+    connection,
+    expected,
+) -> None:
+    document = {
+        "_id": "device-live-1",
+        "id": "device-live-1",
+        "hwid": "HW-LIVE-1",
+        "merchant": {"_id": "merchant-1"},
+        "place": {"_id": "place-1"},
+        "product": {"_id": "product-1"},
+        "model": "WASH-1",
+        "machineType": 0,
+        "enable": enabled,
+        "connection": connection,
+        "modelStatus": {
+            "hwType": "pulse",
+            "operationStatus": {"machineStatus": "611"},
+        },
+        "createdAt": "2022-01-03T00:00:00Z",
+    }
+
+    projection = project_device(
+        envelope_factory(SourceKind.DEVICE, document),
+        Lookup(),
+    )
+
+    assert projection.machine_status == expected
+
+
+def test_device_without_live_lifecycle_field_is_quarantined(envelope_factory) -> None:
+    document = {
+        "_id": "device-live-2",
+        "id": "device-live-2",
+        "hwid": "HW-LIVE-2",
+        "merchant": {"_id": "merchant-1"},
+        "place": {"_id": "place-1"},
+        "product": {"_id": "product-1"},
+        "model": "WASH-1",
+        "machineType": 0,
+        "modelStatus": {"operationStatus": {"machineStatus": "611"}},
+        "createdAt": "2022-01-03T00:00:00Z",
+    }
+
+    with pytest.raises(SourceContractError) as error:
+        project_device(envelope_factory(SourceKind.DEVICE, document), Lookup())
+
+    assert error.value.reason_code is QuarantineReason.MISSING_REQUIRED_FIELD
+
+
 def test_daily_statistic_uses_live_datetime_fields(envelope_factory) -> None:
     document = {
         "_id": "daily-1",
