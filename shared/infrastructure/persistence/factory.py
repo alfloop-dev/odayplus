@@ -25,6 +25,9 @@ from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
 
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
+_MEMORY_MODES = {"memory"}
+_SUPPORTED_MODES = _MEMORY_MODES | _DURABLE_MODES
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -231,6 +234,21 @@ def build_persistence(
     Args mirror the env knobs and override them when supplied (used by tests).
     """
     resolved_mode = (mode or os.environ.get("ODP_PERSISTENCE", "memory")).strip().lower()
+    require_live_data = (
+        os.environ.get("ODP_REQUIRE_LIVE_DATA", "").strip().lower()
+        in _TRUTHY_ENV_VALUES
+    )
+    if resolved_mode not in _SUPPORTED_MODES:
+        raise ValueError(
+            "Unsupported ODP_PERSISTENCE mode "
+            f"{resolved_mode!r}; supported modes are memory, durable, and sqlite."
+        )
+    if require_live_data:
+        raise RuntimeError(
+            "ODP_REQUIRE_LIVE_DATA=true requires a production PostgreSQL "
+            "persistence adapter. The current memory and SQLite backends are "
+            "local/test surrogates and cannot serve a live-data runtime."
+        )
     worm_sink = build_audit_worm_sink_from_env()
     if resolved_mode in _DURABLE_MODES:
         resolved_path = db_path or os.environ.get("ODP_DB_PATH", DEFAULT_DB_PATH)
