@@ -22,7 +22,22 @@ from models.shared_ml.feature_registry import (
     FeatureViewBinding,
     create_feature_registry,
 )
+from models.shared_ml.hyperparameter_search import (
+    HyperparameterSearchResult,
+    HyperparameterTrial,
+    OptunaSearchRunner,
+    ParameterSpec,
+)
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
+from models.shared_ml.oss_capabilities import (
+    CAPABILITY_PACKAGES,
+    OssCapability,
+    OssCapabilityStatus,
+    OssCapabilityUnavailable,
+    inspect_oss_capability,
+    inspect_oss_stack,
+    require_oss_capability,
+)
 from models.shared_ml.registry import (
     FeatureDefinition,
     FeatureSet,
@@ -56,10 +71,13 @@ from models.shared_ml.validation import (
 )
 
 __all__ = [
+    "CAPABILITY_PACKAGES",
     "ArtifactKind",
     "ArtifactRecord",
     "ArtifactStore",
     "InMemoryArtifactStore",
+    "HyperparameterSearchResult",
+    "HyperparameterTrial",
     "MetricThreshold",
     "ModelAlias",
     "ModelCard",
@@ -69,6 +87,10 @@ __all__ = [
     "ModelRiskLevel",
     "ModelStage",
     "ModelVersion",
+    "OptunaSearchRunner",
+    "OssCapability",
+    "OssCapabilityStatus",
+    "OssCapabilityUnavailable",
     "RegisteredModel",
     "SegmentMetric",
     "SegmentMetricThreshold",
@@ -79,6 +101,9 @@ __all__ = [
     "build_model_registry_evidence",
     "compute_content_digest",
     "make_artifact_id",
+    "inspect_oss_capability",
+    "inspect_oss_stack",
+    "require_oss_capability",
     "validate_model_candidate",
     "run_rolling_backtest",
     "calculate_psi",
@@ -97,6 +122,7 @@ __all__ = [
     "create_feature_registry",
     "ModelBinding",
     "ProductionModelUnavailableError",
+    "ParameterSpec",
     "SCORING_MODEL_SPECS",
     "SCORING_MODEL_SPECS_BY_SERVICE",
     "ScoringInputUnavailableError",

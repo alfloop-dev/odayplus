@@ -9,6 +9,7 @@ from models.shared_ml.artifact_store import (
     build_model_registry_evidence,
 )
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
+from models.shared_ml.oss_capabilities import inspect_oss_stack
 from models.shared_ml.registry import ModelStage, ModelVersion
 from models.shared_ml.validation import MetricThreshold, SegmentMetric
 from modules.learninghub.application import LearningHubError, LearningHubService, ReleaseType
@@ -321,6 +322,19 @@ else:
                     if getattr(release, "model_name", None) == model_name
                 ]
             return {"items": [_to_dict(release) for release in releases], "count": len(releases)}
+
+        @router.get(
+            "/oss-capabilities",
+            dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))],
+        )
+        def get_oss_capabilities() -> dict[str, Any]:
+            statuses = inspect_oss_stack()
+            return {
+                "status": "ready" if all(item.available for item in statuses) else "blocked",
+                "items": [item.to_dict() for item in statuses],
+                "count": len(statuses),
+                "unavailable_count": sum(not item.available for item in statuses),
+            }
 
         return router
 
