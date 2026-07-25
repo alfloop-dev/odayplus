@@ -75,6 +75,7 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
     )
 
     assert envelope["meta"]["dataMode"] == "degraded"
+    assert envelope["meta"]["source"] == "operator-shell-production"
     assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
     assert envelope["meta"]["dataOrigin"]["complete"] is False
     assert envelope["meta"]["liveReadiness"]["ready"] is True
@@ -147,6 +148,7 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
     assert kpis["有效門市"] == "1"
     assert kpis["交易淨額"] == "180.50"
     assert envelope["meta"]["recordCounts"]["transactions"] == 1
+    assert envelope["meta"]["source"] == "operator-shell-production"
 
 
 def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None:

@@ -755,7 +755,11 @@ class OperatorStateService:
                 "correlationId": correlation_id,
                 "role": response_role,
                 "counts": counts,
-                "source": "operator-shell-api-envelope",
+                "source": (
+                    "operator-shell-production"
+                    if self._require_live_data and self._live_ready
+                    else "operator-shell-api-envelope"
+                ),
                 "dataMode": (
                     live_data_mode
                     if self._require_live_data and self._live_ready
