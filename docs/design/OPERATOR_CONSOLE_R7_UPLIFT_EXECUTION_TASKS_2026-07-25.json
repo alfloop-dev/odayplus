@@ -1,0 +1,69 @@
+{
+  "schema": "oday-plus.fleet-execution-tasks.v1",
+  "doc_id": "ODP-OC-R7-UPLIFT-001",
+  "generated_at": "2026-07-25",
+  "status": "ready_for_fleet",
+  "corrected_premise": "React operator console is the CI-verified R5/37-label impl (check_product_grade_ci_gates.py PASS); do NOT delete or rewrite. Remaining work = fix web->API 401 + R5->R7 delta.",
+  "canonical_design": {
+    "version": "R7",
+    "package": "Package 10",
+    "extracted_root": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted",
+    "labels": 40,
+    "react_current_labels": 37,
+    "review_binding": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md"
+  },
+  "do_not": [
+    "delete apps/web/features/operator/**",
+    "rewrite operator console from scratch",
+    "treat deployed empty gate as design-wrong (it is no-data/401)"
+  ],
+  "tasks": [
+    {
+      "id": "ODP-OC-R7-AUTH-001",
+      "title": "Close web->API identity federation (fix 401)",
+      "owner_role": "Antigravity",
+      "reviewer_role": "Claude",
+      "status": "ready_for_fleet",
+      "scope": [
+        "apps/api/oday_api/security",
+        "modules/opsboard/auth",
+        "apps/web/src/lib/auth",
+        "cloud-run-deploy-config"
+      ],
+      "requires": [
+        "ODP_AUTH_ISSUER/JWKS_URI/AUDIENCES",
+        "BFF->API token+header defined",
+        "end-user subject+roles to operator guards",
+        "operator RBAC roles provisioned",
+        "fail-closed exact"
+      ],
+      "acceptance": "authenticated operator gets 200 real data at /api/v1/operator/bootstrap; unauth 401; wrong role 403; live transcript"
+    },
+    {
+      "id": "ODP-OC-R7-FE-DELTA-001",
+      "title": "Uplift existing React R5(37)->R7(40) + VDC-001..005",
+      "owner_role": "Codex",
+      "reviewer_role": "Claude2",
+      "status": "ready_for_fleet",
+      "base": "existing apps/web/features/operator/** (delta, not rewrite)",
+      "design_source": "docs_archive/.../r7-20260720-package-10/extracted",
+      "vdc": {
+        "VDC-001": "Transfer/Pause runtime branch",
+        "VDC-002": "remove 390px mobile overflow",
+        "VDC-003": "a11y focus/contrast/landmark",
+        "VDC-004": "URL restorable inbox state",
+        "VDC-005": "discipline review outcomes"
+      },
+      "also": "update check_product_grade_ci_gates.py to Package 10 / 40 labels",
+      "acceptance": "40/40 R7 labels PASS; VDC evidence; a11y+mobile e2e pass; existing operator e2e green"
+    },
+    {
+      "id": "ODP-OC-R7-DEPLOY-001",
+      "title": "Deploy delta + show live 40-label dashboard",
+      "owner_role": "Codex2",
+      "reviewer_role": "Claude",
+      "status": "blocked_on:ODP-OC-R7-AUTH-001",
+      "acceptance": "/operator renders real 40-label dashboard for authenticated operator; no production fixtures"
+    }
+  ]
+}
