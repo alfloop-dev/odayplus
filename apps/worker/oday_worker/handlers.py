@@ -29,43 +29,31 @@ EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
 
 def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
     """Run a ForecastOps scoring pass for a store and persist the result."""
-    from modules.forecastops.application.forecasting import ForecastInput, ForecastOpsService
+    from modules.forecastops.application.forecasting import ForecastInput
+    from modules.forecastops.workers import run_forecastops_batch_forecast
 
     store_id = job.payload.get("store_id")
     if not store_id:
         raise ValueError("Forecast job payload missing store_id")
 
-    # Ingest / mock the timeseries if the repository has none yet.
     repo = persistence.forecastops_repository
     series = repo.get_series(store_id)
     if series is None or not series.observations:
-        from datetime import date
-
-        from modules.forecastops.domain.forecasting import StoreDayObservation
-
-        observations = tuple(
-            StoreDayObservation(
-                store_id=store_id,
-                business_date=date(2026, 6, day),
-                actual_revenue=float(80000 - day * 2000),
-                machine_cycles=int((80000 - day * 2000) / 100),
-                site_score_baseline_p50=100000.0,
-                source_snapshot_ids=(f"pos-202606{day:02d}",),
-            )
-            for day in range(20, 27)
+        raise ValueError(
+            f"Forecast job has no persisted timeseries for {store_id}; "
+            "synthetic runtime fallback is prohibited"
         )
-    else:
-        observations = series.observations
 
-    service = ForecastOpsService(repository=repo)
-    service.forecast(
-        [
+    run_forecastops_batch_forecast(
+        inputs=(
             ForecastInput(
                 store_id=store_id,
-                observations=observations,
+                observations=series.observations,
                 prediction_origin_time=datetime.now(UTC),
-            )
-        ]
+            ),
+        ),
+        job_id=job.job_id,
+        repository=repo,
     )
 
 

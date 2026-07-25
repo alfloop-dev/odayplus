@@ -8,6 +8,12 @@ import { Badge, PageHeader } from "@oday-plus/ui";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
+import {
   auditDecisions,
   matrixColumns,
   selectedDecision,
@@ -38,14 +44,46 @@ export function AuditWorkspace({
   liveEvents,
   isProduction: isProductionProp,
 }: AuditWorkspaceProps) {
-  const isProduction = isProductionProp !== undefined ? isProductionProp : (
-    liveEvents ? liveEvents.source === "api" : false
-  );
+  const isProduction = resolveProductionMode(isProductionProp);
+  if (isProduction) {
+    return <ProductionAuditWorkspace binding={liveEvents} view={view} />;
+  }
   if (view === "decisions") return <DecisionsPage searchParams={searchParams} />;
   if (view === "decisionDetail") return <DecisionDetailPage decision={selectedDecision(decisionId)} />;
   if (view === "evidence") return <EvidencePage />;
   if (view === "admin") return <AdminAuditPage liveEvents={liveEvents} isProduction={isProduction} />;
   return <AuditOverview />;
+}
+
+function ProductionAuditWorkspace({
+  binding,
+  view,
+}: {
+  binding?: ApiBinding<AuditEvent>;
+  view: NonNullable<AuditWorkspaceProps["view"]>;
+}) {
+  const state = productionBindingState(binding);
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "稽核軌跡", href: "/audit" }, { label: view }]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production audit workspace. Only immutable backend events are rendered."
+        title="稽核軌跡"
+      />
+      <main className="odp-content" data-testid={`audit-${view}-production-page`}>
+        <WorkspaceNav active={view === "overview" ? "overview" : view === "evidence" ? "evidence" : "decisions"} />
+        <ProductionDataState binding={binding} resource="Audit events" testId="audit-production-data-state">
+          {binding ? <LiveAuditEvents binding={binding} isProduction /> : null}
+        </ProductionDataState>
+      </main>
+    </>
+  );
 }
 
 // Client-side Offline Indicator
@@ -140,7 +178,11 @@ function LiveAuditEvents({ binding, isProduction }: { binding: ApiBinding<AuditE
     <section className={styles.panel} data-testid="audit-live-events" aria-label="API-bound audit events">
       <div className={styles.badgeRow}>
         <h2>Audit events（API live）</h2>
-        <DataSourceBadge binding={binding} testId="audit-data-source" />
+        {isProduction ? (
+          <ProductionDataBadge binding={binding} testId="audit-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="audit-data-source" />
+        )}
         <ClientRetryButton />
       </div>
 
@@ -197,11 +239,11 @@ function LiveAuditEvents({ binding, isProduction }: { binding: ApiBinding<AuditE
                   {isProduction && (
                     <td>
                       <Link
-                        href={`/w/audit/decisions?selected=dec-lh-240&drawer=case`}
+                        href={`/w/audit/decisions/${encodeURIComponent(event.event_id)}`}
                         data-testid={`live-drawer-trigger-${event.event_id}`}
                         style={{ textDecoration: "underline", color: "#0066cc" }}
                       >
-                        Drawer
+                        Open event
                       </Link>
                     </td>
                   )}
@@ -755,9 +797,7 @@ function BatchExportPanel() {
         }
       );
 
-      // We handle fallback mock check for this batch API since it's mock/unimplemented in backend,
-      // but we wait for server response and stay visible.
-      if (!response.ok && response.status !== 404) {
+      if (!response.ok) {
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
 

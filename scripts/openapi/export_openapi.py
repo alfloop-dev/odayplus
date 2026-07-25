@@ -37,7 +37,12 @@ def build_schema() -> dict[str, Any]:
     leak into the artifact, making the drift check fail on every machine whose
     environment differs.
     """
-    for env_key in ("ODAY_RELEASE_SHA", "GITHUB_SHA", "COMMIT_SHA"):
+    for env_key in (
+        "ODAY_RELEASE_SHA",
+        "ODP_RELEASE_COMMIT_SHA",
+        "GITHUB_SHA",
+        "COMMIT_SHA",
+    ):
         os.environ.pop(env_key, None)
     # In-memory persistence: exporting a schema must not create a database file
     # or require one to exist.

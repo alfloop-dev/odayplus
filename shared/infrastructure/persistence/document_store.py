@@ -31,6 +31,10 @@ class SqliteDocumentStore:
     def __init__(self, engine: SqliteEngine) -> None:
         self._engine = engine
 
+    @property
+    def engine(self) -> SqliteEngine:
+        return self._engine
+
     # -- writes -----------------------------------------------------------
 
     def put(
@@ -50,35 +54,36 @@ class SqliteDocumentStore:
         insertion-ordered iteration of the in-memory ``dict`` repositories.
         """
         blob = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
-        existing = self._engine.query_one(
-            "SELECT ordinal FROM durable_documents WHERE collection = ? AND doc_id = ?",
-            (collection, doc_id),
-        )
-        ordinal = (
-            int(existing["ordinal"])
-            if existing is not None
-            else self._engine.next_ordinal(f"documents:{collection}")
-        )
-        self._engine.execute(
-            "INSERT INTO durable_documents("
-            "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(collection, doc_id) DO UPDATE SET "
-            "  group_key = excluded.group_key, "
-            "  seq = excluded.seq, "
-            "  correlation_id = excluded.correlation_id, "
-            "  data = excluded.data",
-            (
-                collection,
-                doc_id,
-                group_key,
-                seq,
-                ordinal,
-                correlation_id,
-                blob,
-                _now(),
-            ),
-        )
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT ordinal FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            )
+            ordinal = (
+                int(existing["ordinal"])
+                if existing is not None
+                else self._engine.next_ordinal(f"documents:{collection}")
+            )
+            self._engine.execute(
+                "INSERT INTO durable_documents("
+                "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(collection, doc_id) DO UPDATE SET "
+                "  group_key = excluded.group_key, "
+                "  seq = excluded.seq, "
+                "  correlation_id = excluded.correlation_id, "
+                "  data = excluded.data",
+                (
+                    collection,
+                    doc_id,
+                    group_key,
+                    seq,
+                    ordinal,
+                    correlation_id,
+                    blob,
+                    _now(),
+                ),
+            )
 
     def append_version(
         self,
@@ -90,16 +95,17 @@ class SqliteDocumentStore:
         correlation_id: str | None = None,
     ) -> int:
         """Append a new version within ``group_key`` and return its 1-based seq."""
-        next_seq = self.count_in_group(collection, group_key) + 1
-        self.put(
-            collection,
-            doc_id,
-            obj,
-            group_key=group_key,
-            seq=next_seq,
-            correlation_id=correlation_id,
-        )
-        return next_seq
+        with self._engine.lock:
+            next_seq = self.count_in_group(collection, group_key) + 1
+            self.put(
+                collection,
+                doc_id,
+                obj,
+                group_key=group_key,
+                seq=next_seq,
+                correlation_id=correlation_id,
+            )
+            return next_seq
 
     def replace_latest_in_group(
         self,
@@ -110,25 +116,30 @@ class SqliteDocumentStore:
         correlation_id: str | None = None,
     ) -> int:
         """Overwrite the highest-seq row in ``group_key`` (or append if empty)."""
-        row = self._engine.query_one(
-            "SELECT doc_id, seq FROM durable_documents "
-            "WHERE collection = ? AND group_key = ? "
-            "ORDER BY seq DESC, ordinal DESC LIMIT 1",
-            (collection, group_key),
-        )
-        if row is None:
-            return self.append_version(
-                collection, group_key, obj, group_key=group_key, correlation_id=correlation_id
+        with self._engine.lock:
+            row = self._engine.query_one(
+                "SELECT doc_id, seq FROM durable_documents "
+                "WHERE collection = ? AND group_key = ? "
+                "ORDER BY seq DESC, ordinal DESC LIMIT 1",
+                (collection, group_key),
             )
-        self.put(
-            collection,
-            row["doc_id"],
-            obj,
-            group_key=group_key,
-            seq=int(row["seq"]),
-            correlation_id=correlation_id,
-        )
-        return int(row["seq"])
+            if row is None:
+                return self.append_version(
+                    collection,
+                    group_key,
+                    obj,
+                    group_key=group_key,
+                    correlation_id=correlation_id,
+                )
+            self.put(
+                collection,
+                row["doc_id"],
+                obj,
+                group_key=group_key,
+                seq=int(row["seq"]),
+                correlation_id=correlation_id,
+            )
+            return int(row["seq"])
 
     # -- reads ------------------------------------------------------------
 

@@ -1,4 +1,8 @@
 import { LearningHubWorkspace } from "../../../../../../features/learninghub/LearningHubWorkspace.tsx";
+import { getServerApiClient } from "../../../../../lib/api/client.ts";
+import { loadApiBinding } from "../../../../../lib/api/binding.ts";
+
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ releaseId: string }>;
@@ -6,5 +10,15 @@ type PageProps = {
 
 export default async function AiReleaseDetailPage({ params }: PageProps) {
   const { releaseId } = await params;
-  return <LearningHubWorkspace view="releaseDetail" releaseId={decodeURIComponent(releaseId)} />;
+  const liveReleases = await loadApiBinding({
+    client: await getServerApiClient(),
+    fetcher: (client) => client.listLearningReleases().then((response) => response.items),
+  });
+  return (
+    <LearningHubWorkspace
+      view="releaseDetail"
+      releaseId={decodeURIComponent(releaseId)}
+      liveReleases={liveReleases}
+    />
+  );
 }

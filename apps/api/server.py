@@ -126,8 +126,8 @@ def main() -> None:  # pragma: no cover - process entry point
     host = os.environ.get("ODP_API_HOST", "0.0.0.0")
     port = int(os.environ.get("ODP_API_PORT", "8000"))
     # Migrations (durable mode) and app composition happen inside build_server.
-    build_server()
-    uvicorn.run("apps.api.oday_api.main:app", host=host, port=port)
+    application = build_server()
+    uvicorn.run(application, host=host, port=port)
 
 
 if __name__ == "__main__":  # pragma: no cover

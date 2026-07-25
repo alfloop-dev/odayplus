@@ -12,6 +12,14 @@ import {
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  isSeedDataSource,
+  operatorFixturesAllowed,
+  payloadContainsSeedData,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
@@ -76,8 +84,8 @@ export type NetworkFindAreasWorkspaceProps = {
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
   /**
    * Live API binding for heatzone scores. When `source === "api"` the
-   * workspace renders live items; otherwise it falls back to bundled
-   * HEAT_ZONE_FIXTURES and shows a fixture-mode indicator.
+   * workspace renders live items; local/POC may otherwise use bundled
+   * HEAT_ZONE_FIXTURES with a fixture-mode indicator.
    */
   liveHeatZones?: ApiBinding<OperatorHeatZone>;
   /**
@@ -140,15 +148,66 @@ type NetworkRebalanceSnapshot = {
   correlationId?: string;
 };
 
-const NETWORK_OPERATOR_HEADERS = {
-  "X-Operator-Role": "expansion-manager",
-  "X-Roles": "expansion_user",
-  "X-Subject-Id": "operator-expansion-manager",
-  "X-Tenant-Id": "tenant-a",
-};
+export function inspectNetworkListingsSnapshot(
+  snapshot: NetworkListingsSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
+  const requiredCollections = [
+    snapshot.heatZones,
+    snapshot.listingSources,
+    snapshot.listings,
+    snapshot.candidates,
+    snapshot.siteReviews,
+  ];
+  const hasRequiredShape =
+    snapshot.source === "api" &&
+    requiredCollections.every(Array.isArray);
+  const hasUsableRows =
+    (snapshot.heatZones?.length ?? 0) > 0 &&
+    (snapshot.listingSources?.length ?? 0) > 0 &&
+    ((snapshot.listings?.length ?? 0) > 0 || (snapshot.candidates?.length ?? 0) > 0);
+  return hasRequiredShape && hasUsableRows ? "ready" : "empty";
+}
+
+export function inspectNetworkScoringSnapshot(
+  snapshot: NetworkScoringSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
+  return snapshot.source === "api" &&
+    snapshot.candidates.length > 0 &&
+    snapshot.scorecards.length > 0 &&
+    snapshot.compare.columns.length > 0
+    ? "ready"
+    : "empty";
+}
+
+export function inspectNetworkRebalanceSnapshot(
+  snapshot: NetworkRebalanceSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
+  return snapshot.source === "api" && (snapshot.stores?.length ?? 0) > 0
+    ? "ready"
+    : "empty";
+}
+
+export function inspectNetworkReviewsSnapshot(
+  snapshot: NetworkReviewsSnapshot | null,
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+  if (!snapshot) return "empty";
+  if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
+  return snapshot.source === "api" && snapshot.reviews.length > 0
+    ? "ready"
+    : "empty";
+}
+
+const NETWORK_OPERATOR_HEADERS = operatorSecurityHeaders(
+  "expansion-manager",
+);
 
 const NETWORK_ACTOR = {
-  actorName: "王若寧",
   actorRoleId: "expansionManager",
 };
 
@@ -164,27 +223,17 @@ const NETWORK_ACTOR = {
 //   (canDecide=false). If a decide POST is still attempted it carries the
 //   role's own non-approving identity, so the API fails closed with 403 —
 //   defense in depth behind the hidden bar.
-const SITE_REVIEWER_REVIEW_HEADERS = {
-  "X-Operator-Role": "site-reviewer",
-  "X-Roles": "site_reviewer",
-  "X-Subject-Id": "operator-site-reviewer",
-  "X-Tenant-Id": "tenant-a",
-};
+const SITE_REVIEWER_REVIEW_HEADERS = operatorSecurityHeaders("site-reviewer");
 
-const EXPANSION_REVIEW_HEADERS = {
-  "X-Operator-Role": "expansion-manager",
-  "X-Roles": "expansion_user",
-  "X-Subject-Id": "operator-expansion-manager",
-  "X-Tenant-Id": "tenant-a",
-};
+const EXPANSION_REVIEW_HEADERS = operatorSecurityHeaders(
+  "expansion-manager",
+);
 
 const SITE_REVIEWER_ACTOR = {
-  actorName: "陳映辰",
   actorRoleId: "siteReviewer",
 };
 
 const EXPANSION_ACTOR = {
-  actorName: "王若寧",
   actorRoleId: "expansionManager",
 };
 
@@ -197,7 +246,7 @@ type NetworkReviewIdentity = {
   canDecide: boolean;
   readHeaders: Record<string, string>;
   decideHeaders: Record<string, string>;
-  actor: { actorName: string; actorRoleId: string };
+  actor: { actorRoleId: string };
 };
 
 function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
@@ -355,54 +404,93 @@ export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
-  candidates: candidatesProp = CANDIDATE_FIXTURES,
-  heatZones: heatZonesProp = HEAT_ZONE_FIXTURES,
-  listings = LISTING_FIXTURES,
-  listingSources = LISTING_SOURCE_FIXTURES,
-  rebalanceStores = REBALANCE_STORE_FIXTURES,
-  siteReviews = SITE_REVIEW_FIXTURES,
+  candidates: candidatesInput,
+  heatZones: heatZonesInput,
+  listings: listingsInput,
+  listingSources: listingSourcesInput,
+  rebalanceStores: rebalanceStoresInput,
+  siteReviews: siteReviewsInput,
   selectedHeatZoneId,
   trackedHeatZoneIds,
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
+  const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : []);
+  const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : []);
+  const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : []);
+  const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : []);
+  const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : []);
+  const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : []);
   const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
-  const [localSelectedId, setLocalSelectedId] = useState(selectedHeatZoneId ?? "HZ-01");
+  const [localSelectedId, setLocalSelectedId] = useState(
+    selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
+  );
   const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
-  const [localTrackedIds, setLocalTrackedIds] = useState(() => new Set(trackedHeatZoneIds ?? ["HZ-01"]));
+  const [localTrackedIds, setLocalTrackedIds] = useState(
+    () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
+  );
   const [activeTab, setActiveTab] = useState(0);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
+  const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
   const [busyListingId, setBusyListingId] = useState<string | null>(null);
   const [mergeRequest, setMergeRequest] = useState<ListingMergeRequest | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<ListingApiError | null>(null);
   const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const [scoringLoadState, setScoringLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
+  const [rebalanceLoadState, setRebalanceLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
   const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
+  const [reviewsLoadState, setReviewsLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
-  const snapshotHeatZones = networkSnapshot?.heatZones?.length ? networkSnapshot.heatZones : undefined;
+  const snapshotHeatZones = networkSnapshot?.heatZones?.length
+    ? networkSnapshot.heatZones
+    : fixturesAllowed
+      ? undefined
+      : networkSnapshot?.heatZones;
   const heatZones =
     snapshotHeatZones ??
     (liveHeatZones?.source === "api" && liveHeatZones.items.length > 0
       ? liveHeatZones.items
       : heatZonesProp);
-  const listingsEffective = networkSnapshot?.listings?.length ? networkSnapshot.listings : listings;
-  const listingSourcesEffective = networkSnapshot?.listingSources?.length ? networkSnapshot.listingSources : listingSources;
+  const listingsEffective = networkSnapshot?.listings?.length
+    ? networkSnapshot.listings
+    : fixturesAllowed
+      ? listings
+      : networkSnapshot?.listings ?? [];
+  const listingSourcesEffective = networkSnapshot?.listingSources?.length
+    ? networkSnapshot.listingSources
+    : fixturesAllowed
+      ? listingSources
+      : networkSnapshot?.listingSources ?? [];
   const candidates =
     networkSnapshot?.candidates ??
     (liveCandidates?.source === "api" && liveCandidates.items.length > 0
       ? liveCandidates.items
       : candidatesProp);
   const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
-  const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length ? rebalanceSnapshot.stores : rebalanceStores;
+  const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length
+    ? rebalanceSnapshot.stores
+    : fixturesAllowed
+      ? rebalanceStores
+      : rebalanceSnapshot?.stores ?? [];
 
-  // True when every Network R4 intake binding is still falling back to fixtures.
+  // True when every Network R4 binding is using the local/POC fixture path.
   const isFixtureFallback =
     networkSnapshot?.source !== "api" &&
     ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
@@ -425,66 +513,142 @@ export function NetworkFindAreasWorkspace({
   const trackedSet = useMemo(() => new Set(effectiveTrackedIds), [effectiveTrackedIds]);
 
   useEffect(() => {
+    if (
+      selectedHeatZoneId === undefined &&
+      !localSelectedId &&
+      heatZones.length > 0
+    ) {
+      setLocalSelectedId(heatZones[0].id);
+    }
+  }, [heatZones, localSelectedId, selectedHeatZoneId]);
+
+  useEffect(() => {
     let cancelled = false;
     async function load() {
+      if (!effectiveSelectedId) {
+        if (!fixturesAllowed) setNetworkLoadState("loading");
+        return;
+      }
       const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
       if (!cancelled && snapshot) {
-        setNetworkSnapshot(snapshot);
+        const inspection = inspectNetworkListingsSnapshot(snapshot);
+        setNetworkSnapshot(
+          inspection === "ready" || fixturesAllowed
+            ? snapshot
+            : null,
+        );
         setNetworkApiError(null);
+        setNetworkLoadState(
+          inspection === "ready"
+            ? "ready"
+            : fixturesAllowed
+              ? "fixture"
+              : inspection,
+        );
       } else if (!cancelled && !snapshot) {
-        setNetworkApiError("network-listings API unavailable; using fixtures");
+        setNetworkApiError(
+          fixturesAllowed
+            ? "network-listings API unavailable; using local fixtures"
+            : "network-listings API unavailable",
+        );
+        setNetworkLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
     load();
     return () => {
       cancelled = true;
     };
-  }, [effectiveLens, effectiveSelectedId]);
+  }, [effectiveLens, effectiveSelectedId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadScoring() {
       const snapshot = await fetchNetworkScoringSnapshot();
       if (!cancelled && snapshot) {
-        setScoringSnapshot(snapshot);
+        const inspection = inspectNetworkScoringSnapshot(snapshot);
+        setScoringSnapshot(
+          inspection === "ready" || fixturesAllowed
+            ? snapshot
+            : null,
+        );
+        setScoringLoadState(
+          inspection === "ready"
+            ? "ready"
+            : fixturesAllowed
+              ? "fixture"
+              : inspection,
+        );
+      } else if (!cancelled) {
+        setScoringLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
     loadScoring();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadRebalance() {
       const snapshot = await fetchNetworkRebalanceSnapshot();
       if (!cancelled && snapshot) {
-        setRebalanceSnapshot(snapshot);
+        const inspection = inspectNetworkRebalanceSnapshot(snapshot);
+        setRebalanceSnapshot(
+          inspection === "ready" || fixturesAllowed
+            ? snapshot
+            : null,
+        );
         setRebalanceApiError(null);
+        setRebalanceLoadState(
+          inspection === "ready"
+            ? "ready"
+            : fixturesAllowed
+              ? "fixture"
+              : inspection,
+        );
       } else if (!cancelled && !snapshot) {
-        setRebalanceApiError("network-rebalance API unavailable; using fixtures");
+        setRebalanceApiError(
+          fixturesAllowed
+            ? "network-rebalance API unavailable; using local fixtures"
+            : "network-rebalance API unavailable",
+        );
+        setRebalanceLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
     loadRebalance();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadReviews() {
       const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       if (!cancelled && snapshot) {
-        setReviewsSnapshot(snapshot);
+        const inspection = inspectNetworkReviewsSnapshot(snapshot);
+        setReviewsSnapshot(
+          inspection === "ready" || fixturesAllowed
+            ? snapshot
+            : null,
+        );
+        setReviewsLoadState(
+          inspection === "ready"
+            ? "ready"
+            : fixturesAllowed
+              ? "fixture"
+              : inspection,
+        );
+      } else if (!cancelled) {
+        setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
     loadReviews();
     return () => {
       cancelled = true;
     };
-  }, [reviewIdentity]);
+  }, [fixturesAllowed, reviewIdentity]);
 
   // Decide a review as the active operator role's review identity. The decision
   // syncs Candidate + Review + Approval + Decision + Audit atomically
@@ -858,11 +1022,50 @@ export function NetworkFindAreasWorkspace({
 
   const expansionSteps =
     networkSnapshot?.expansionSteps ??
-    buildFallbackExpansionSteps(
-      effectiveSelectedId,
-      viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
-    );
+    (fixturesAllowed
+      ? buildFallbackExpansionSteps(
+          effectiveSelectedId,
+          viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
+        )
+      : []);
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
+
+  const bindingLoadStates: OperatorDataAvailability[] = [liveHeatZones, liveCandidates].map(
+    (binding) => {
+      if (!binding) return "loading";
+      if (binding.state === "ready" && binding.source === "api") return "ready";
+      if (binding.state === "empty") return "empty";
+      if (binding.state === "error" || binding.state === "unconfigured") return "error";
+      return "seed";
+    },
+  );
+  const requiredLoadStates = [
+    ...bindingLoadStates,
+    networkLoadState,
+    scoringLoadState,
+    rebalanceLoadState,
+    reviewsLoadState,
+  ];
+  const unavailableNetworkState: Exclude<OperatorDataAvailability, "ready" | "fixture"> | null =
+    requiredLoadStates.includes("error")
+      ? "error"
+      : requiredLoadStates.includes("seed") || requiredLoadStates.includes("fixture")
+        ? "seed"
+        : requiredLoadStates.includes("empty")
+          ? "empty"
+          : requiredLoadStates.includes("loading")
+            ? "loading"
+            : null;
+
+  if (!fixturesAllowed && unavailableNetworkState) {
+    return (
+      <OperatorDataUnavailableGate
+        detail={networkApiError ?? rebalanceApiError}
+        onRetry={() => window.location.reload()}
+        status={unavailableNetworkState}
+      />
+    );
+  }
 
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
@@ -906,7 +1109,7 @@ export function NetworkFindAreasWorkspace({
           <CandidatePanel
             busyCandidateId={busyCandidateId}
             candidates={scoringSnapshot?.candidates ?? []}
-            fallbackRows={viewModel.candidatePipeline}
+            fallbackRows={fixturesAllowed ? viewModel.candidatePipeline : []}
             onScore={runSiteScore}
             onScoreAll={scoreAllCandidates}
             onToggleCompare={toggleCompareCandidate}
@@ -915,17 +1118,20 @@ export function NetworkFindAreasWorkspace({
           <SiteScorePanel
             busyCandidateId={busyCandidateId}
             candidates={scoringSnapshot?.candidates ?? []}
-            fallbackRows={viewModel.siteScoreLab}
+            fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
             onRescore={runSiteScore}
             scorecards={scoringSnapshot?.scorecards ?? []}
           />
         ) : activeTab === 4 ? (
-          <ComparePanel compare={scoringSnapshot?.compare ?? null} fallback={viewModel.compare} />
+          <ComparePanel
+            compare={scoringSnapshot?.compare ?? null}
+            fallback={fixturesAllowed ? viewModel.compare : { columns: [], metrics: [] }}
+          />
         ) : activeTab === 5 ? (
           <ReviewPanel
             reviews={reviewsSnapshot?.reviews ?? []}
-            fallbackRows={viewModel.reviewQueue}
+            fallbackRows={fixturesAllowed ? viewModel.reviewQueue : []}
             canDecide={reviewIdentity.canDecide}
             submitting={reviewSubmitting}
             decideError={reviewError}
@@ -944,6 +1150,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : (
           <FindAreasPanel
+            fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
             effectiveLens={effectiveLens}
@@ -978,6 +1185,7 @@ export function NetworkFindAreasWorkspace({
 }
 
 type FindAreasPanelProps = {
+  fixturesAllowed: boolean;
   viewModel: NetworkFindAreasViewModel;
   selectedZone: NetworkFindAreasZoneViewModel | null;
   effectiveLens: NetworkFindAreasLens;
@@ -996,6 +1204,7 @@ type FindAreasPanelProps = {
 function FindAreasPanel({
   candidates,
   effectiveLens,
+  fixturesAllowed,
   heatZones,
   isSelectedTracked,
   listings,
@@ -1061,14 +1270,12 @@ function FindAreasPanel({
             <h3>HeatZone Lens Map</h3>
             <span>{viewModel.activeLens}</span>
           </div>
-          {/* Real MapLibre/deck.gl HeatZoneMap – replaces CSS-grid placeholder.
-              When no tile URL is configured (default), HeatZoneMap falls back to
-              its local MapLibre style (deterministic CSS background), preserving
-              the tile-fallback contract from the task brief. */}
           <HeatZoneMap
+            dataSource={fixturesAllowed ? "fixture" : "api"}
             zones={mapZones}
             listings={mapListings}
             candidates={mapCandidates}
+            productionMode={!fixturesAllowed}
             selectedZoneId={selectedMapZoneId}
             freshness={OPERATOR_MAP_FRESHNESS}
           />
@@ -1283,7 +1490,7 @@ function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     district: zone.label,
     // h3 is intentionally invalid so that zoneToFeature falls back to the
     // centroid-delta polygon – a deterministic, no-network fallback.
-    h3: `operator-${zone.id}`,
+    h3: `h3-${zone.id}`,
     centroid: zone.centroid,
     h3Resolution: 9,
     score: Math.round(zone.demandGap * 100),

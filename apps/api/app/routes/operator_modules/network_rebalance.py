@@ -17,9 +17,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_rebalance import (
     NetworkRebalanceConflict,
     NetworkRebalanceNotFound,
@@ -56,25 +57,44 @@ def create_network_rebalance_sub_router(
     require_view_permission_fn: Callable[..., Any],
     require_write_permission_fn: Callable[..., Any],
     reset_govern_fn: Callable[[], None] | None = None,
+    service_resolver: Callable[[Request], Any] | None = None,
+    allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-rebalance", tags=["operator-network-rebalance"])
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": "network rebalance reset is disabled in live mode",
+                },
+            )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])
     def get_network_rebalance(
+        request: Request,
         selected_store_id: str | None = Query(default=None, alias="selectedStoreId"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
-        return service.snapshot(
+        return resolve_service(request, service, service_resolver).snapshot(
             selected_store_id=selected_store_id,
             correlation_id=x_correlation_id,
         )
 
-    @router.post("/reset", dependencies=[Depends(require_write_permission_fn)])
-    def reset_network_rebalance() -> dict[str, Any]:
+    @router.post(
+        "/reset",
+        dependencies=[
+            Depends(require_write_permission_fn),
+            Depends(require_reset_allowed),
+        ],
+    )
+    def reset_network_rebalance(request: Request) -> dict[str, Any]:
         if reset_govern_fn is not None:
             reset_govern_fn()
-        return service.reset()
+        return resolve_service(request, service, service_resolver).reset()
 
     @router.post(
         "/stores/{store_id}/avm/request",
@@ -83,11 +103,12 @@ def create_network_rebalance_sub_router(
     def request_avm(
         store_id: str,
         body: RebalanceActorPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.request_avm(
+            return resolve_service(request, service, service_resolver).request_avm(
                 store_id=store_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
@@ -96,13 +117,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/avm/complete",
@@ -111,11 +136,12 @@ def create_network_rebalance_sub_router(
     def complete_avm(
         store_id: str,
         body: RebalanceActorPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.complete_avm(
+            return resolve_service(request, service, service_resolver).complete_avm(
                 store_id=store_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
@@ -124,13 +150,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/netplan/solve",
@@ -139,11 +169,12 @@ def create_network_rebalance_sub_router(
     def solve_netplan(
         store_id: str,
         body: RebalanceActorPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.solve_netplan(
+            return resolve_service(request, service, service_resolver).solve_netplan(
                 store_id=store_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
@@ -152,13 +183,17 @@ def create_network_rebalance_sub_router(
                 simulate_unavailable=body.simulateUnavailable,
             )
         except NetworkRebalanceRuntimeUnavailable as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.to_detail()
+            ) from exc
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/scenarios/{scenario_id}/select",
@@ -168,11 +203,12 @@ def create_network_rebalance_sub_router(
         store_id: str,
         scenario_id: str,
         body: RebalanceActorPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.select_scenario(
+            return resolve_service(request, service, service_resolver).select_scenario(
                 store_id=store_id,
                 scenario_id=scenario_id,
                 actor_role_id=body.actorRoleId,
@@ -185,7 +221,9 @@ def create_network_rebalance_sub_router(
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     @router.post(
         "/stores/{store_id}/submit-review",
@@ -194,11 +232,12 @@ def create_network_rebalance_sub_router(
     def submit_review(
         store_id: str,
         body: RebalanceSubmitPayload,
+        request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return service.submit_review(
+            return resolve_service(request, service, service_resolver).submit_review(
                 store_id=store_id,
                 reason=body.reason,
                 actor_role_id=body.actorRoleId,
@@ -211,7 +250,9 @@ def create_network_rebalance_sub_router(
         except NetworkRebalanceConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkRebalancePolicyError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     return router
 

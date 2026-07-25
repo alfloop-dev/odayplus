@@ -516,7 +516,7 @@ export function PromotionReviewPanel({
               <div className={styles.riskSummaryText} data-testid="promotion-risk-summary">
                 晉升為高風險決策：核准後將以單一交易建立 Candidate Site 並排入
                 SiteScore 評分（提案者 {proposerId || "—"} 不得自行核准）。決策、原因與
-                風險確認會寫入 WORM audit。
+                風險確認會提交至後端稽核流程；實際 evidence 狀態以後端收據為準。
               </div>
               <label className={styles.checkboxRow} htmlFor="promotion-request-ack">
                 <input

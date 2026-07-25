@@ -1,8 +1,8 @@
 """Fail-closed retrieval security for human-assisted listing intake.
 
-The production R5 flow still uses deterministic fixture replay by default. This
-module owns the live-retrieval boundary that any future approved source adapter
-must pass through before opening a socket.
+Deterministic fixture replay is available only in POC, test, and local modes.
+Production/live ``server_http`` retrieval requires an explicitly configured
+fetcher and never falls back to the fixture corpus.
 Verified and integrated with snapshot storage policy rules under task ODP-INTAKE-SNAPSHOT-001.
 """
 
@@ -203,7 +203,9 @@ def validate_submitted_listing_url(raw_url: str) -> None:
         raise SensitiveSubmissionError("cloud metadata endpoints are not valid listing URLs")
     ip = _ip_address_or_none(host)
     if ip is not None and is_blocked_ip(ip):
-        raise SensitiveSubmissionError("local or private network targets are not valid listing URLs")
+        raise SensitiveSubmissionError(
+            "local or private network targets are not valid listing URLs"
+        )
 
 
 def redact_sensitive_snapshot(value: Any) -> Any:
@@ -228,6 +230,8 @@ def redact_sensitive_snapshot(value: Any) -> Any:
 
 
 class DefaultRetrievalFetcher:
+    """Fail closed when no governed server-side HTTP adapter is configured."""
+
     def __call__(
         self,
         url: str,
@@ -235,10 +239,40 @@ class DefaultRetrievalFetcher:
         timeout_seconds: float,
         max_response_bytes: int,
     ) -> FetchResponse:
+        del url, timeout_seconds, max_response_bytes
+        return FetchResponse(
+            status_code=503,
+            headers={
+                "Content-Type": "text/html",
+                "x-failure-code": "ODP-INTAKE-RETRIEVAL-ADAPTER-MISSING",
+                "x-failure-summary": (
+                    "No governed server-side retrieval adapter is configured for this source."
+                ),
+                "x-failure-next-action": (
+                    "Configure an approved live adapter or continue through assisted entry."
+                ),
+                "x-failure-retryable": "false",
+            },
+            body=b"",
+        )
+
+
+class FixtureReplayFetcher:
+    """Read the deterministic corpus after the non-production gate passes."""
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+        max_response_bytes: int,
+    ) -> FetchResponse:
+        del timeout_seconds, max_response_bytes
         from modules.external_data.application.assisted_intake import (
             resolve_source_policy,
             retrieve,
         )
+
         policy = resolve_source_policy(url)
         retrieval = retrieve(url, policy=policy)
         if not retrieval.ok:
@@ -247,18 +281,21 @@ class DefaultRetrievalFetcher:
                 status_code = 404
             headers = {"Content-Type": "text/html"}
             if retrieval.failure:
-                headers.update({
-                    "x-failure-code": retrieval.failure.code,
-                    "x-failure-summary": retrieval.failure.summary,
-                    "x-failure-next-action": retrieval.failure.next_action,
-                    "x-failure-retryable": "true" if retrieval.failure.retryable else "false",
-                })
+                headers.update(
+                    {
+                        "x-failure-code": retrieval.failure.code,
+                        "x-failure-summary": retrieval.failure.summary,
+                        "x-failure-next-action": retrieval.failure.next_action,
+                        "x-failure-retryable": "true" if retrieval.failure.retryable else "false",
+                    }
+                )
             return FetchResponse(
                 status_code=status_code,
                 headers=headers,
                 body=b"",
             )
         import json
+
         body = json.dumps(retrieval.raw).encode("utf-8")
         return FetchResponse(
             status_code=200,
@@ -279,7 +316,9 @@ class RetrievalSecurityGate:
         source_snapshot_service: Any = None,
     ) -> None:
         self._resolver = resolver or _resolve_host
+        self._uses_default_fetcher = fetcher is None
         self._fetcher = fetcher or DefaultRetrievalFetcher()
+        self._fixture_fetcher = FixtureReplayFetcher()
         self._limits = limits or RetrievalLimits()
         self.source_snapshot_service = source_snapshot_service
 
@@ -296,10 +335,11 @@ class RetrievalSecurityGate:
         if policy is None and self.source_snapshot_service is not None and tenant_id is not None:
             if not source_id:
                 from modules.external_data.application.assisted_intake import detect_source
+
                 src = detect_source(url)
                 source_id = src.source_id if src else "SRC-UNKNOWN"
             policy = self.source_snapshot_service.check_source_policy(tenant_id, source_id)
-            
+
         if policy is None:
             policy = "POLICY_UNKNOWN"
 
@@ -317,7 +357,6 @@ class RetrievalSecurityGate:
                 ),
             )
 
-
         current_url = url
         redirects: list[str] = []
         for _ in range(self._limits.max_redirects + 1):
@@ -333,7 +372,12 @@ class RetrievalSecurityGate:
                 )
 
             try:
-                response = self._fetcher(
+                active_fetcher = (
+                    self._fixture_fetcher
+                    if retrieval_method == "fixture_replay" and self._uses_default_fetcher
+                    else self._fetcher
+                )
+                response = active_fetcher(
                     current_url,
                     timeout_seconds=self._limits.timeout_seconds,
                     max_response_bytes=self._limits.max_response_bytes,
@@ -362,12 +406,20 @@ class RetrievalSecurityGate:
                 )
 
             if response.status_code >= 400:
-                code = _header(response.headers, "x-failure-code") or "ODP-INTAKE-RETRIEVAL-HTTP-ERROR"
-                summary = _header(response.headers, "x-failure-summary") or f"Approved source returned HTTP status {response.status_code}."
-                next_action = _header(response.headers, "x-failure-next-action") or "Use assisted entry or request source-policy review."
+                code = (
+                    _header(response.headers, "x-failure-code") or "ODP-INTAKE-RETRIEVAL-HTTP-ERROR"
+                )
+                summary = (
+                    _header(response.headers, "x-failure-summary")
+                    or f"Approved source returned HTTP status {response.status_code}."
+                )
+                next_action = (
+                    _header(response.headers, "x-failure-next-action")
+                    or "Use assisted entry or request source-policy review."
+                )
                 retryable_val = _header(response.headers, "x-failure-retryable")
                 retryable = (retryable_val == "true") if retryable_val is not None else False
-                
+
                 return RetrievalSecurityResult(
                     final_url=current_url,
                     redirects=tuple(redirects),
@@ -396,7 +448,9 @@ class RetrievalSecurityGate:
                 redirects.append(current_url)
                 continue
 
-            content_type = (_header(response.headers, "content-type") or "").split(";")[0].strip().lower()
+            content_type = (
+                (_header(response.headers, "content-type") or "").split(";")[0].strip().lower()
+            )
             if not content_type or content_type not in self._limits.allowed_content_types:
                 return RetrievalSecurityResult(
                     final_url=current_url,
@@ -509,6 +563,20 @@ class RetrievalSecurityGate:
         policy: str,
         retrieval_method: str,
     ) -> RetrievalSecurityFailure | None:
+        if retrieval_method == "fixture_replay":
+            from modules.external_data.application.assisted_intake import (
+                SYNTHETIC_FIXTURE_BLOCKED_CODE,
+                SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION,
+                fixture_replay_allowed,
+            )
+
+            if not fixture_replay_allowed():
+                return _failure(
+                    SYNTHETIC_FIXTURE_BLOCKED_CODE,
+                    "Synthetic assisted-listing fixture replay is disabled in production/live mode.",
+                    SYNTHETIC_FIXTURE_BLOCKED_NEXT_ACTION,
+                    retryable=False,
+                )
         if retrieval_method not in self._limits.allowed_methods:
             return _failure(
                 "ODP-INTAKE-RETRIEVAL-METHOD-BLOCKED",
@@ -553,7 +621,6 @@ def _resolve_host(host: str) -> Sequence[str]:
             }
         )
     )
-
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

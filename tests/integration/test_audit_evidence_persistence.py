@@ -30,7 +30,7 @@ from modules.opsboard.audit import (
     DecisionCard,
     EvidenceExportRequest,
 )
-from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit import AuditEvent, AuditIntegrityError, InMemoryAuditLog
 from shared.audit.persistence import (
     RETENTION_REGULATORY,
     RETENTION_STANDARD,
@@ -763,6 +763,10 @@ def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
         )
 
         assert bundle_persistence.audit_log.verify_chain().ok is False
+        with pytest.raises(AuditIntegrityError):
+            bundle_persistence.audit_log.list_events(
+                correlation_id="corr-audit-tamper-1"
+            )
     finally:
         bundle_persistence.engine.close()
 

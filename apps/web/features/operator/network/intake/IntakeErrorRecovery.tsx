@@ -35,17 +35,33 @@ export function IntakeErrorRecovery({
   const [overrideReason, setOverrideReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
 
-  const errorCode = (error as any)?.code ?? "ERR_PARSE_MALFORMED_HTML";
-  const errorMessage = (error as any)?.message ?? "收件解析過程發生未預期的結構異常或連線中斷。";
-  const isRetryable = (error as any)?.retryable ?? true;
-  const corrId = (error as any)?.correlation_id ?? correlationId ?? "CORR-ERR-991204";
-  const occurredAt = (error && "occurred_at" in error) ? (error as ApiError).occurred_at : new Date().toISOString();
-  const nextAction = (error as any)?.next_action ?? "RETRY";
-  const currentVersion = (error && "current_version" in error) ? (error as ConflictError).current_version : 1;
+  const errorCode = (error as any)?.code ?? "UNAVAILABLE";
+  const errorMessage =
+    (error as any)?.message ??
+    (error as IntakeApiError | undefined)?.summary ??
+    "UNAVAILABLE - 後端尚未提供錯誤明細。";
+  const isRetryable = (error as any)?.retryable ?? false;
+  const corrId =
+    (error as any)?.correlation_id ??
+    (error as IntakeApiError | undefined)?.correlationId ??
+    correlationId ??
+    "UNAVAILABLE";
+  const occurredAt =
+    error && "occurred_at" in error
+      ? (error as ApiError).occurred_at
+      : (error as IntakeApiError | undefined)?.occurredAt;
+  const nextAction =
+    (error as any)?.next_action ??
+    (error as IntakeApiError | undefined)?.nextAction ??
+    "UNAVAILABLE";
+  const currentVersion =
+    error && "current_version" in error
+      ? (error as ConflictError).current_version
+      : null;
 
   // Mask credential/sensitive class data from preserved input (Purpose Binding enforcement)
   const sanitizePreservedInput = (obj?: Record<string, unknown> | null): Record<string, unknown> => {
-    if (!obj) return { url: "https://example.com/item/10492", rawText: "<html_snapshot_data>" };
+    if (!obj) return {};
     const clean: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
       const lower = k.toLowerCase();
@@ -116,7 +132,7 @@ export function IntakeErrorRecovery({
             [{errorCode}]
           </span>
           <span style={{ fontSize: "10.5px", color: "#64748b" }}>
-            發生時間: {new Date(occurredAt).toLocaleString()}
+            發生時間: {occurredAt ? new Date(occurredAt).toLocaleString() : "UNAVAILABLE"}
           </span>
         </div>
 
@@ -126,7 +142,7 @@ export function IntakeErrorRecovery({
 
         <div style={{ display: "flex", gap: "16px", fontSize: "10.5px", color: "#64748b", borderTop: "1px dashed #fca5a5", paddingTop: "6px" }}>
           <div>Correlation ID: <code style={{ color: "#1e293b" }} data-testid="error-correlation-id">{corrId}</code></div>
-          <div>目前版本: <code>v{currentVersion}</code></div>
+          <div>目前版本: <code>{currentVersion === null ? "UNAVAILABLE" : `v${currentVersion}`}</code></div>
           <div>建議處置: <strong style={{ color: "#2563eb" }}>{nextAction}</strong></div>
         </div>
       </div>

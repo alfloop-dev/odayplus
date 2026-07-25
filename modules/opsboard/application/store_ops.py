@@ -12,7 +12,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Iterable, Mapping, MutableMapping
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
 
@@ -23,6 +23,18 @@ LightStatus = str
 _STORE_OPS_STATE_DOC_ID = "default"
 _STORE_OPS_STATE_COLLECTION = "opsboard.store_ops.state"
 _STORE_OPS_IDEMPOTENCY_COLLECTION = "opsboard.store_ops.idempotency"
+_STORE_OPS_FIXTURE_IDS = frozenset(
+    {
+        "ST-008",
+        "ST-014",
+        "ST-021",
+        "ISS-1024",
+        "ISS-1021",
+        "ISS-1008",
+        "AUD-OPS-7001",
+        "AUD-OPS-7002",
+    }
+)
 
 _LIGHT_DIMENSIONS = ("demand", "operations", "staffing", "margin")
 _LIGHT_STATUSES = ("green", "yellow", "red")
@@ -83,18 +95,21 @@ class StoreOpsPolicyError(StoreOpsError):
     """Policy-controlled Store Ops action was rejected."""
 
 
+class StoreOpsLiveDataUnavailable(StoreOpsError):
+    """The production Store Ops repository cannot provide canonical data."""
+
+
 class StoreOpsRepository(Protocol):
-    def get_state(self) -> dict[str, Any]:
-        ...
+    @property
+    def is_live(self) -> bool: ...
 
-    def save_state(self, state: Mapping[str, Any]) -> None:
-        ...
+    def get_state(self) -> dict[str, Any]: ...
 
-    def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
-        ...
+    def save_state(self, state: Mapping[str, Any]) -> None: ...
 
-    def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None:
-        ...
+    def get_idempotency_result(self, key: str) -> dict[str, Any] | None: ...
+
+    def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None: ...
 
 
 def _now_iso() -> str:
@@ -103,6 +118,14 @@ def _now_iso() -> str:
 
 def _clone(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+    for collection in ("stores", "issues", "auditEvents"):
+        for item in state.get(collection, ()):
+            if isinstance(item, Mapping) and str(item.get("id")) in _STORE_OPS_FIXTURE_IDS:
+                return True
+    return False
 
 
 def _seed_state() -> dict[str, Any]:
@@ -382,6 +405,10 @@ class InMemoryStoreOpsRepository:
         self._state = _clone(initial_state or _seed_state())
         self._idempotency_results: dict[str, dict[str, Any]] = {}
 
+    @property
+    def is_live(self) -> bool:
+        return False
+
     def get_state(self) -> dict[str, Any]:
         return _clone(self._state)
 
@@ -396,30 +423,100 @@ class InMemoryStoreOpsRepository:
         self._idempotency_results[key] = _clone(result)
 
 
+class UnavailableStoreOpsRepository:
+    """Fail-closed repository used when production wiring is incomplete."""
+
+    @property
+    def is_live(self) -> bool:
+        return False
+
+    @staticmethod
+    def _raise() -> NoReturn:
+        raise StoreOpsLiveDataUnavailable(
+            "Store Ops production routes require a PostgreSQL repository"
+        )
+
+    def get_state(self) -> dict[str, Any]:
+        self._raise()
+
+    def save_state(self, state: Mapping[str, Any]) -> None:
+        self._raise()
+
+    def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
+        self._raise()
+
+    def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None:
+        self._raise()
+
+
 class DurableStoreOpsRepository:
     def __init__(self, store: Any) -> None:
         self._store = store
 
+    @property
+    def is_live(self) -> bool:
+        engine = getattr(self._store, "engine", None)
+        return str(getattr(engine, "dialect", "")).strip().lower() == "postgresql"
+
     def get_state(self) -> dict[str, Any]:
-        state = self._store.get(_STORE_OPS_STATE_COLLECTION, _STORE_OPS_STATE_DOC_ID)
+        try:
+            state = self._store.get(
+                _STORE_OPS_STATE_COLLECTION,
+                _STORE_OPS_STATE_DOC_ID,
+            )
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops repository read failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if state is None:
+            if self.is_live:
+                raise StoreOpsLiveDataUnavailable(
+                    "Store Ops production state has not been materialized"
+                )
             state = _seed_state()
             self.save_state(state)
+        if self.is_live and _contains_fixture_signature(state):
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state contains canonical fixture identifiers"
+            )
         return _clone(state)
 
     def save_state(self, state: Mapping[str, Any]) -> None:
-        self._store.put(
-            _STORE_OPS_STATE_COLLECTION,
-            _STORE_OPS_STATE_DOC_ID,
-            _clone(state),
-        )
+        if self.is_live and _contains_fixture_signature(state):
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production writes cannot persist canonical fixture data"
+            )
+        try:
+            self._store.put(
+                _STORE_OPS_STATE_COLLECTION,
+                _STORE_OPS_STATE_DOC_ID,
+                _clone(state),
+            )
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops repository write failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
-        result = self._store.get(_STORE_OPS_IDEMPOTENCY_COLLECTION, key)
+        try:
+            result = self._store.get(_STORE_OPS_IDEMPOTENCY_COLLECTION, key)
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops idempotency read failed: {type(exc).__name__}: {exc}"
+            ) from exc
         return None if result is None else _clone(result)
 
     def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None:
-        self._store.put(_STORE_OPS_IDEMPOTENCY_COLLECTION, key, _clone(result))
+        try:
+            self._store.put(
+                _STORE_OPS_IDEMPOTENCY_COLLECTION,
+                key,
+                _clone(result),
+            )
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops idempotency write failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
 
 class StoreOpsService:
@@ -428,8 +525,14 @@ class StoreOpsService:
         repository: StoreOpsRepository | None = None,
         *,
         audit_log: InMemoryAuditLog | None = None,
+        require_live_data: bool = False,
     ) -> None:
-        self._repository = repository or InMemoryStoreOpsRepository()
+        if require_live_data and (
+            repository is None or not bool(getattr(repository, "is_live", False))
+        ):
+            self._repository = UnavailableStoreOpsRepository()
+        else:
+            self._repository = repository or InMemoryStoreOpsRepository()
         self._audit_log = audit_log or InMemoryAuditLog()
 
     def snapshot(
@@ -659,9 +762,13 @@ class StoreOpsService:
 
     def _apply_action(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
         _require_status(issue, {"assigned"}, "actions")
-        issue["status"] = "waitingapproval" if bool(payload.get("requiresApproval")) else "inprogress"
+        issue["status"] = (
+            "waitingapproval" if bool(payload.get("requiresApproval")) else "inprogress"
+        )
 
-    def _apply_field_report(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_field_report(
+        self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
+    ) -> None:
         _require_status(issue, {"inprogress", "executed"}, "field-report")
         checklist_status = payload.get("checklistStatus")
         issue["status"] = "waitingevidence" if checklist_status == "blocked" else "observing"
@@ -677,13 +784,21 @@ class StoreOpsService:
         else:
             issue["status"] = "outcomeready"
 
-    def _apply_escalation(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_escalation(
+        self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
+    ) -> None:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot be escalated")
         issue["status"] = "escalated"
-        issue["relatedGrowthId"] = payload.get("target") if payload.get("target") == "growth" else issue.get("relatedGrowthId")
+        issue["relatedGrowthId"] = (
+            payload.get("target")
+            if payload.get("target") == "growth"
+            else issue.get("relatedGrowthId")
+        )
 
-    def _apply_reply_review(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_reply_review(
+        self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
+    ) -> None:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot accept reply review")
         issue["updatedAt"] = _now_iso()

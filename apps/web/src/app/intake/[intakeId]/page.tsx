@@ -1,4 +1,8 @@
-import { redirect } from "next/navigation";
+import { ExpansionWorkspace } from "../../../../features/expansion/ExpansionWorkspace.tsx";
+import { loadApiBinding } from "../../../lib/api/binding.ts";
+import { getServerApiClient } from "../../../lib/api/client.ts";
+
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ intakeId: string }>;
@@ -8,20 +12,27 @@ type PageProps = {
 export default async function IntakeRoutePage({ params, searchParams }: PageProps) {
   const { intakeId } = await params;
   const resolvedSearchParams = await searchParams;
+  const heatZoneParam = resolvedSearchParams.heatZone;
+  const selectedHeatZoneId = Array.isArray(heatZoneParam)
+    ? heatZoneParam[0]
+    : heatZoneParam;
+  const liveNetwork = await loadApiBinding({
+    client: await getServerApiClient(),
+    fetcher: (client) =>
+      client
+        .getNetworkListings({ selectedHeatZoneId })
+        .then((response) => (response.listings.length > 0 ? [response] : [])),
+  });
 
-  const query = new URLSearchParams();
-  for (const [key, val] of Object.entries(resolvedSearchParams)) {
-    if (val !== undefined) {
-      if (Array.isArray(val)) {
-        val.forEach((v) => query.append(key, v));
-      } else {
-        query.set(key, val);
-      }
-    }
-  }
-
-  query.set("selected", intakeId);
-  query.set("dialog", "detail");
-
-  redirect(`/w/expansion/listings?${query.toString()}`);
+  return (
+    <ExpansionWorkspace
+      liveNetwork={liveNetwork}
+      searchParams={{
+        ...resolvedSearchParams,
+        selected: intakeId,
+        dialog: "detail",
+      }}
+      view="listings"
+    />
+  );
 }

@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
+from modules.listing.application.promotion import PromotionService
+from modules.listing.domain.intake_states import (
+    Actor,
+    PrincipalRole,
+    TransitionContext,
+)
+from modules.listing.domain.models import ListingDedupKey
 from shared.auth import Role
+from shared.domain import AddressLocation, Listing
+from shared.infrastructure.persistence.factory import _durable_bundle
 from tests.integration._authz import auth_headers
 
 HEADERS = {
@@ -31,6 +42,121 @@ STAFF_HEADERS = {
     "x-operator-role": "expansion-user",
     "x-tenant-id": "tenant-a",
 }
+
+
+class _PromotionRepository:
+    def __init__(self) -> None:
+        self.promotions: dict[str, dict] = {}
+
+    def save_promotion(self, promotion: dict) -> None:
+        self.promotions[promotion["promotion_decision_id"]] = dict(promotion)
+
+    def get_promotion(self, promotion_id: str) -> dict | None:
+        promotion = self.promotions.get(promotion_id)
+        return None if promotion is None else dict(promotion)
+
+    def list_promotions(self) -> list[dict]:
+        return [dict(promotion) for promotion in self.promotions.values()]
+
+
+class _IntakeRepository:
+    def __init__(self, intake: dict) -> None:
+        self.intake = intake
+
+    def get_listing_intake(self, intake_id: str) -> dict | None:
+        return self.intake if self.intake["id"] == intake_id else None
+
+
+def test_durable_score_failure_retains_domain_candidate_without_recursion(
+    tmp_path,
+) -> None:
+    bundle = _durable_bundle(tmp_path / "promotion-score-failure.sqlite3")
+    listing = Listing(
+        listing_id="listing-score-failure",
+        source_listing_id="provider-score-failure",
+        source_id="approved-provider",
+        address_id="address-score-failure",
+        rent_amount=54_000,
+        area_ping=22,
+        floor="1F",
+        frontage_m=5,
+        confidence=0.9,
+    )
+    address = AddressLocation(
+        address_id=listing.address_id,
+        raw_address="新北市板橋區府中路 26 號 1F",
+        normalized_address="新北市板橋區府中路26號1樓",
+        geocode_confidence=0.95,
+        h3_res_9="8929a1d4d67ffff",
+    )
+    key = ListingDedupKey(
+        source_id=listing.source_id,
+        source_listing_id=listing.source_listing_id,
+        normalized_address=address.normalized_address,
+        rent_amount=listing.rent_amount,
+        area_ping=listing.area_ping,
+    )
+    promotions = _PromotionRepository()
+    intake = {
+        "id": "intake-score-failure",
+        "tenantId": "tenant-a",
+        "matchResult": {"targetListingId": listing.listing_id},
+    }
+    adapter = V1ListingRepositoryAdapter(bundle.listing_repository)
+
+    def fail_score_queue() -> None:
+        raise RuntimeError("ODP_TEST_SCORE_FAILURE")
+
+    service = PromotionService(
+        promotion_repository=promotions,
+        listing_repository=adapter,
+        intake_repository=_IntakeRepository(intake),
+        score_queue_hook=fail_score_queue,
+    )
+    try:
+        bundle.listing_repository.save_listing(listing, address, key)
+        requested = service.request_promotion(
+            intake_id=intake["id"],
+            target_format_code="FORMAT-A",
+            reason="request durable candidate",
+            gate_snapshot_sha256="a" * 64,
+            context=TransitionContext(
+                actor=Actor(
+                    actor_id="proposer",
+                    role=PrincipalRole.EXPANSION_STAFF,
+                    tenant_id="tenant-a",
+                ),
+                idempotency_key="request-score-failure",
+                correlation_id="corr-score-failure",
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="ODP_TEST_SCORE_FAILURE"):
+            service.review_promotion(
+                promotion_decision_id=requested["promotion_decision_id"],
+                decision="APPROVE",
+                reason="independent review",
+                risk_acknowledged=True,
+                context=TransitionContext(
+                    actor=Actor(
+                        actor_id="reviewer",
+                        role=PrincipalRole.EXPANSION_MANAGER,
+                        tenant_id="tenant-a",
+                    ),
+                    idempotency_key="review-score-failure",
+                    correlation_id="corr-score-failure",
+                ),
+            )
+
+        failed = promotions.get_promotion(requested["promotion_decision_id"])
+        candidates = bundle.listing_repository.list_candidates()
+        assert failed is not None
+        assert failed["status"] == "SCORE_FAILED"
+        assert len(candidates) == 1
+        assert candidates[0].listing == listing
+        assert candidates[0].address == address
+    finally:
+        bundle.engine.close()
 
 
 def test_promotion_saga_golden_flow() -> None:

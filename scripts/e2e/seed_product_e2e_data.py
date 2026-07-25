@@ -17,8 +17,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Seed deterministic product E2E data.")
     parser.add_argument("--api-url", default="http://127.0.0.1:8099")
     parser.add_argument("--source-stub-url", default="http://127.0.0.1:8077")
+    parser.add_argument("--web-url")
     parser.add_argument("--diagnostics-dir", default=".odp_data/e2e-diagnostics")
-    parser.add_argument("--wait", action="store_true", help="Wait for API and source stub readiness.")
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for API, source stub, and the optional web URL readiness.",
+    )
     args = parser.parse_args()
 
     api_url = args.api_url.rstrip("/")
@@ -29,6 +34,8 @@ def main() -> int:
     if args.wait:
         wait_for_url(f"{api_url}/platform/health")
         wait_for_url(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
+        if args.web_url:
+            wait_for_http_url(args.web_url)
 
     source_fixture = get_json(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
     health = get_json(f"{api_url}/platform/health")
@@ -170,6 +177,20 @@ def wait_for_url(url: str, *, timeout_seconds: int = 120) -> None:
             get_json(url)
             return
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = exc
+            time.sleep(2)
+    raise RuntimeError(f"timed out waiting for {url}: {last_error}")
+
+
+def wait_for_http_url(url: str, *, timeout_seconds: int = 120) -> None:
+    deadline = time.time() + timeout_seconds
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            with urlopen(url, timeout=10) as response:
+                if 200 <= response.status < 400:
+                    return
+        except (HTTPError, URLError, OSError) as exc:
             last_error = exc
             time.sleep(2)
     raise RuntimeError(f"timed out waiting for {url}: {last_error}")

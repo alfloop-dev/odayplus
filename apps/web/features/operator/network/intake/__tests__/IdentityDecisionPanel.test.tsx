@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ListingCompareTable } from "../ListingCompareTable";
 import { MatchEvidencePanel } from "../MatchEvidencePanel";
 import { IdentityDecisionPanel } from "../IdentityDecisionPanel";
+import { operatorFixturesAllowed } from "../../../operatorDataMode";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +28,7 @@ afterEach(() => {
     container.remove();
     container = null;
   }
+  vi.unstubAllEnvs();
 });
 
 function render(ui: React.ReactNode) {
@@ -432,7 +434,29 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
     });
 
     it("renders durable receipt when decision succeeds", async () => {
-      render(<IdentityDecisionPanel record={sampleRecordPossibleMatch} proposerId="OP-100" reviewerId="OP-200" />);
+      const backendReceipt = {
+        receiptId: "RCPT-MATCH-BACKEND-001",
+        actor: "Expansion Manager",
+        actorRole: "expansion-manager",
+        timestamp: "2026-07-20T10:06:00Z",
+        intakeId: sampleRecordPossibleMatch.id,
+        targetListingId: "LST-2001",
+        decisionKind: "create" as const,
+        graphMode: "merge" as const,
+        beforeVersion: "7",
+        afterVersion: "8",
+        correlationId: "CORR-BACKEND-001",
+        auditEventId: "AUD-BACKEND-001",
+      };
+      const handleSubmit = vi.fn().mockResolvedValue(backendReceipt);
+      render(
+        <IdentityDecisionPanel
+          record={sampleRecordPossibleMatch}
+          proposerId="OP-100"
+          reviewerId="OP-200"
+          onSubmitDecision={handleSubmit}
+        />,
+      );
 
       // Fill reason and tick risk
       fireEvent.change(screen.getByTestId("identity-decision-reason"), { target: { value: "確認修訂" } });
@@ -446,9 +470,42 @@ describe("Assisted Intake UI — Identity & Match Components Suite (ODP-INTAKE-U
 
       await waitFor(() => {
         expectAny(screen.getByTestId("identity-durable-receipt")).toBeInTheDocument();
-        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent("RCPT-MATCH-");
+        expectAny(screen.getByTestId("receipt-id-val")).toHaveTextContent(
+          backendReceipt.receiptId,
+        );
         expectAny(screen.getByTestId("receipt-actor-val")).toBeInTheDocument();
       });
+    });
+
+    it("does not fabricate a durable receipt in production", async () => {
+      vi.stubEnv("ODP_PRODUCT_MODE", "production");
+      vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+      expect(operatorFixturesAllowed()).toBe(false);
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <IdentityDecisionPanel
+          record={sampleRecordPossibleMatch}
+          proposerId="OP-100"
+          reviewerId="OP-200"
+          onSubmitDecision={handleSubmit}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("identity-decision-reason"), {
+        target: { value: "Production decision" },
+      });
+      fireEvent.click(screen.getByTestId("identity-risk-ack"));
+      fireEvent.click(screen.getByTestId("identity-submit-btn"));
+
+      await waitFor(() => {
+        expect(handleSubmit).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expectAny(screen.getByTestId("identity-decision-error")).toHaveTextContent(
+          "DECISION_RECEIPT_MISSING",
+        );
+      });
+      expect(document.body.querySelector('[data-testid="identity-durable-receipt"]')).toBeNull();
     });
   });
 });

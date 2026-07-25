@@ -112,13 +112,12 @@ describe("IntakeProcessingDetail & Sub-components Test Suite", () => {
   });
 
   describe("DurableReceiptPanel", () => {
-    it("generates cryptographic payload digest and supports JSON export", () => {
+    it("does not assume backend verification", () => {
       const props = {
         record: sampleIntake,
-        verificationStatus: "Valid" as const,
       };
 
-      expect(props.verificationStatus).toBe("Valid");
+      expect("verification" in props).toBe(false);
       expect(props.record.version).toBe(3);
     });
   });

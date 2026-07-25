@@ -32,6 +32,8 @@ class AuthBoundaryConfig:
     issuer: str | None = None
     audiences: frozenset[str] = frozenset()
     signing_keys: Mapping[str, SigningKey] = field(default_factory=dict)
+    jwks_uri: str | None = None
+    jwks_cache_ttl_seconds: int = 300
     leeway_seconds: int = 60
     live_input_declared: bool = False
 
@@ -39,7 +41,11 @@ class AuthBoundaryConfig:
     def is_configured(self) -> bool:
         """True only when the live IdP inputs required to verify a token exist."""
 
-        return bool(self.issuer) and bool(self.audiences) and bool(self.signing_keys)
+        return (
+            bool(self.issuer)
+            and bool(self.audiences)
+            and (bool(self.signing_keys) or bool(self.jwks_uri))
+        )
 
     @property
     def has_live_inputs(self) -> bool:
@@ -65,6 +71,7 @@ class AuthBoundaryConfig:
             or bool(self.issuer)
             or bool(self.audiences)
             or bool(self.signing_keys)
+            or bool(self.jwks_uri)
         )
 
     def resolve_key(self, kid: str | None) -> SigningKey | None:
@@ -92,7 +99,9 @@ def config_from_env(
 
     - ``ODP_AUTH_ISSUER``
     - ``ODP_AUTH_AUDIENCES`` (comma-separated)
-    - ``ODP_AUTH_HS256_KEYS`` (``kid:secret`` pairs, comma-separated)
+    - ``ODP_AUTH_HS256_KEYS`` (``kid:secret`` pairs, comma-separated; local/test)
+    - ``ODP_AUTH_JWKS_URI`` (production IdP JSON Web Key Set endpoint)
+    - ``ODP_AUTH_JWKS_CACHE_TTL_SECONDS``
     - ``ODP_AUTH_LEEWAY_SECONDS``
 
     Only symmetric (HS256) keys are read from the environment; asymmetric JWKS
@@ -103,6 +112,7 @@ def config_from_env(
     source = os.environ if env is None else env
     issuer = source.get("ODP_AUTH_ISSUER") or None
     audiences = frozenset(_split_csv(source.get("ODP_AUTH_AUDIENCES")))
+    jwks_uri = (source.get("ODP_AUTH_JWKS_URI") or "").strip() or None
     keys: dict[str, SigningKey] = {}
     for pair in _split_csv(source.get("ODP_AUTH_HS256_KEYS")):
         kid, sep, secret = pair.partition(":")
@@ -116,17 +126,29 @@ def config_from_env(
     # during parsing.
     live_input_declared = any(
         (source.get(var) or "").strip()
-        for var in ("ODP_AUTH_ISSUER", "ODP_AUTH_AUDIENCES", "ODP_AUTH_HS256_KEYS")
+        for var in (
+            "ODP_AUTH_ISSUER",
+            "ODP_AUTH_AUDIENCES",
+            "ODP_AUTH_HS256_KEYS",
+            "ODP_AUTH_JWKS_URI",
+        )
     )
     leeway_raw = source.get("ODP_AUTH_LEEWAY_SECONDS")
     try:
         leeway = int(leeway_raw) if leeway_raw else 60
     except ValueError:
         leeway = 60
+    jwks_ttl_raw = source.get("ODP_AUTH_JWKS_CACHE_TTL_SECONDS")
+    try:
+        jwks_ttl = int(jwks_ttl_raw) if jwks_ttl_raw else 300
+    except ValueError:
+        jwks_ttl = 300
     return AuthBoundaryConfig(
         issuer=issuer,
         audiences=audiences,
         signing_keys=keys,
+        jwks_uri=jwks_uri,
+        jwks_cache_ttl_seconds=max(30, jwks_ttl),
         leeway_seconds=max(0, leeway),
         live_input_declared=live_input_declared,
     )

@@ -2,7 +2,9 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button, Chip, StatusBadge, type Tone } from "./components";
+import { operatorFixturesAllowed } from "./operatorDataMode";
 import { OPERATOR_ROLE_IDS, type OperatorRoleId, type Severity } from "./types";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./storeOpsWorkflows.module.css";
 import type {
   StoreOpsActionPayload,
@@ -114,15 +116,6 @@ const roleLabels: Record<OperatorRoleId, string> = {
 
 const roleOptions = OPERATOR_ROLE_IDS.map((roleId) => ({ label: roleLabels[roleId], value: roleId }));
 
-const roleApiRoles: Record<OperatorRoleId, string> = {
-  opsLead: "operations_manager",
-  supportLead: "operations_manager",
-  facilitiesLead: "regional_supervisor",
-  marketingManager: "marketing_manager",
-  expansionManager: "expansion_user",
-  auditPm: "auditor",
-};
-
 const workflowActionEndpoints: Partial<Record<StoreOpsWorkflowDialogType, string>> = {
   triage: "triage",
   assign: "assign",
@@ -159,9 +152,7 @@ async function submitStoreOpsWorkflow(
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
         "X-Correlation-ID": correlationId,
-        "X-Subject-Id": `operator-${roleId}`,
-        "X-Roles": roleApiRoles[roleId] ?? "operations_manager",
-        "X-Tenant-Id": "tenant-a",
+        ...operatorSecurityHeaders(roleId),
       },
       body: JSON.stringify({
         ...payload,
@@ -210,6 +201,33 @@ export function StoreOpsWorkflowDialogs({
 }: StoreOpsWorkflowDialogsProps) {
   if (!activeDialog) {
     return null;
+  }
+
+  const fixturesAllowed = operatorFixturesAllowed();
+  if (!issue && !fixturesAllowed) {
+    return (
+      <div className={styles.overlay}>
+        <section
+          aria-live="polite"
+          className={styles.dialog}
+          data-testid="store-ops-workflow-unavailable"
+          role="alert"
+        >
+          <header className={styles.header}>
+            <div className={styles.headerTitle}>
+              <p className={styles.eyebrow}>Live data required</p>
+              <h2>Store Ops workflow unavailable</h2>
+            </div>
+            <Button onClick={onClose} size="sm" variant="ghost">
+              Close
+            </Button>
+          </header>
+          <div className={styles.body}>
+            <p>找不到 API issue record；Production 不會以 fallback issue 開啟工作流程。</p>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   const effectiveIssue = issue ?? fallbackIssue;
@@ -312,6 +330,7 @@ type WorkflowFormProps = {
 };
 
 function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+  const fixturesAllowed = operatorFixturesAllowed();
   const [severity, setSeverity] = useState<Severity>(issue.severity);
   const [category, setCategory] = useState<StoreOpsTriageCategory>("multiSignal");
   const [evidenceStrength, setEvidenceStrength] = useState<StoreOpsEvidenceStrength>("usable");
@@ -373,7 +392,9 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           options={[
             { label: "Accept triage", value: "accept" },
             { label: "Need evidence", value: "needEvidence" },
-            { label: "Demo fast-forward", value: "fastForward" },
+            ...(fixturesAllowed
+              ? [{ label: "Demo fast-forward", value: "fastForward" as const }]
+              : []),
           ]}
           value={decision}
         />
@@ -387,12 +408,14 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           label="Need evidence"
           onChange={setNeedEvidence}
         />
-        <CheckboxField
-          checked={demoFastForward}
-          description="Allow the demo shell to move past observation timers."
-          label="Demo fast-forward"
-          onChange={setDemoFastForward}
-        />
+        {fixturesAllowed ? (
+          <CheckboxField
+            checked={demoFastForward}
+            description="Allow the demo shell to move past observation timers."
+            label="Demo fast-forward"
+            onChange={setDemoFastForward}
+          />
+        ) : null}
       </div>
       <DialogActions onCancel={onClose} primaryLabel="Submit Triage" />
     </form>

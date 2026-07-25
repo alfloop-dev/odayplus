@@ -32,6 +32,7 @@ from typing import Any
 from modules.opsboard.auth.claims import principal_from_claims
 from modules.opsboard.auth.config import AuthBoundaryConfig
 from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
+from modules.opsboard.auth.jwks import JwksResolver, KeyResolver
 from modules.opsboard.auth.jwt import (
     BadSignatureError,
     JwtError,
@@ -129,6 +130,7 @@ class AuthenticationBoundary:
         logger: StructuredLogger | None = None,
         metrics: MetricsRegistry | None = None,
         claim_prefix: str = "odp",
+        key_resolver: KeyResolver | None = None,
     ) -> None:
         self._config = config
         self._services = service_verifier or ServiceIdentityVerifier()
@@ -136,6 +138,12 @@ class AuthenticationBoundary:
         self._logger = logger
         self._metrics = metrics
         self._claim_prefix = claim_prefix
+        self._key_resolver = key_resolver
+        if self._key_resolver is None and config.jwks_uri:
+            self._key_resolver = JwksResolver(
+                config.jwks_uri,
+                cache_ttl_seconds=config.jwks_cache_ttl_seconds,
+            )
         if metrics is not None:
             metrics.register(AUTH_ATTEMPTS_METRIC)
 
@@ -179,7 +187,10 @@ class AuthenticationBoundary:
         except JwtError:
             return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN
 
-        key = self._config.resolve_key(header.get("kid"))
+        kid = header.get("kid")
+        key = self._config.resolve_key(kid)
+        if key is None and self._key_resolver is not None:
+            key = self._key_resolver.resolve(kid if isinstance(kid, str) else None)
         if key is None:
             return ANONYMOUS, AuthFailureReason.UNKNOWN_KEY
 

@@ -52,7 +52,9 @@ class ValuationInput:
             lease_liability=float(data.get("lease_liability", 0.0)),
             working_capital=float(data.get("working_capital", 0.0)),
             comparable_multiples=tuple(float(v) for v in data.get("comparable_multiples", ())),
-            liquidity_discount=_bounded(data.get("liquidity_discount", 0.1), minimum=0.0, maximum=0.5),
+            liquidity_discount=_bounded(
+                data.get("liquidity_discount", 0.1), minimum=0.0, maximum=0.5
+            ),
             quality_score=_bounded(data.get("quality_score", data.get("data_quality_score", 1.0))),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             prediction_origin_time=_parse_datetime(
@@ -238,6 +240,7 @@ class ValuationReport:
     feature_version: str
     prediction_origin_time: datetime
     valued_at: datetime
+    execution_metadata: dict[str, Any] = field(default_factory=dict)
     finance_approval: ApprovalDecision | None = None
     valuation_version: int = 1
 
@@ -266,6 +269,7 @@ class ValuationReport:
             "feature_version": self.feature_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
             "valued_at": self.valued_at.isoformat(),
+            "execution_metadata": self.execution_metadata,
             "finance_approval": (
                 self.finance_approval.to_dict() if self.finance_approval else None
             ),
@@ -442,6 +446,49 @@ def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> Val
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=item.prediction_origin_time,
         valued_at=datetime.now(UTC),
+    )
+
+
+def build_model_valuation_report(
+    case: ValuationCase,
+    normalized_margin: NormalizedMargin,
+    *,
+    p10: float,
+    p50: float,
+    p90: float,
+    model_version: str,
+    execution_metadata: Mapping[str, Any],
+) -> ValuationReport:
+    """Build policy outputs from an already executed approved model interval."""
+
+    fair = PriceBand(
+        p10=round(float(p10), 2),
+        p50=round(float(p50), 2),
+        p90=round(float(p90), 2),
+    )
+    model_lens = LensValuation(
+        lens="approved_model",
+        p10=fair.p10,
+        p50=fair.p50,
+        p90=fair.p90,
+        method="approved_oss_model_artifact",
+        evidence=dict(execution_metadata),
+    )
+    return ValuationReport(
+        report_id=f"avm-report-{uuid4()}",
+        case_id=case.case_id,
+        store_id=case.store_id,
+        normalized_margin=normalized_margin,
+        lenses=(model_lens,),
+        fair_price=fair,
+        reserve_price=round(fair.p10 * 0.97, 2),
+        asking_price=round(fair.p90 * 1.05, 2),
+        confidence=normalized_margin.confidence,
+        model_version=model_version,
+        feature_version=AVM_FEATURE_VERSION,
+        prediction_origin_time=case.valuation_input.prediction_origin_time,
+        valued_at=datetime.now(UTC),
+        execution_metadata=dict(execution_metadata),
     )
 
 

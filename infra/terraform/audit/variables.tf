@@ -29,3 +29,14 @@ variable "retention_period_seconds" {
   description = "WORM retention period for audit evidence objects."
   default     = 220924800 # 2557 days, approximately seven years.
 }
+
+variable "kms_key_name" {
+  type        = string
+  description = "CMEK used by the audit evidence bucket."
+}
+
+variable "lock_retention_policy" {
+  type        = bool
+  description = "Permanently lock the retention policy. This must be true in production."
+  default     = false
+}
