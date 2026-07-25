@@ -25,6 +25,12 @@ REQUIRED_ENV_VARS = {
     "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
     "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
 }
+REQUIRED_ENDPOINT_ENV_VARS = {
+    "ODP_LISTING_PROVIDER_FEED_URL",
+    "ODP_POI_PROVIDER_URL",
+    "ODP_GEOCODE_PROVIDER_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+}
 
 
 def test_provider_registry_covers_live_external_source_classes() -> None:
@@ -176,14 +182,37 @@ def test_production_live_mode_requires_explicit_provider_allowlist() -> None:
 
     assert not result.ok
     assert result.providers == ()
-    assert {
-        (error.env_var, error.code) for error in result.errors
-    } == {
+    assert {(error.env_var, error.code) for error in result.errors} == {
         (
             PRODUCTION_PROVIDER_IDS_ENV_VAR,
             "provider_allowlist_required",
         )
     }
+
+
+def test_production_configuration_requires_all_provider_endpoints() -> None:
+    env = {
+        LIVE_MODE_ENV_VAR: "live",
+        "ODP_DEPLOY_ENV": "production",
+        PRODUCTION_PROVIDER_IDS_ENV_VAR: (
+            "listing.partner_feed,poi.commercial_api,"
+            "geocode.primary_api,admin_boundary.official_dataset"
+        ),
+        "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
+        "ODP_POI_PROVIDER_API_KEY": "poi-token",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN": "admin-token",
+    }
+
+    result = validate_external_providers(
+        env=env,
+        correlation_id="corr-provider-endpoints-required",
+    )
+
+    assert result.ok is False
+    assert {
+        error.env_var for error in result.errors if error.code == "missing_endpoint"
+    } == REQUIRED_ENDPOINT_ENV_VARS
 
 
 def test_live_mode_validates_only_explicitly_enabled_providers() -> None:
@@ -215,9 +244,9 @@ def test_live_mode_rejects_unknown_provider_allowlist_id() -> None:
     )
 
     assert not result.ok
-    assert {
-        (error.provider_id, error.code) for error in result.errors
-    } == {("unknown.provider", "unknown_provider")}
+    assert {(error.provider_id, error.code) for error in result.errors} == {
+        ("unknown.provider", "unknown_provider")
+    }
 
 
 def test_downstream_export_flags_are_enforced_by_provider_license_metadata() -> None:

@@ -8,6 +8,8 @@ correlation ID tracking middleware, job queues, and the audit log.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,7 +20,10 @@ from models.shared_ml.production_contracts import (
     production_model_names,
     required_production_model_services,
 )
-from modules.external_data.connectors import validate_external_providers_or_raise
+from modules.external_data.connectors import (
+    probe_external_provider_connectivity,
+    validate_external_providers_or_raise,
+)
 from shared.api.errors import ApiError, error_response_body, install_error_handlers
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -32,6 +37,14 @@ def _provider_mode_label(provider_validation: Any) -> str:
     mode = getattr(provider_validation, "mode", None)
     value = getattr(mode, "value", mode)
     return str(value).strip().lower() if value is not None else "unknown"
+
+
+def _redacted_provider_error(error: Any) -> dict[str, str]:
+    return {
+        "provider_id": str(getattr(error, "provider_id", "provider_registry")),
+        "code": str(getattr(error, "code", "configuration_invalid")),
+        "env_var": str(getattr(error, "env_var", "")),
+    }
 
 
 def health_payload() -> dict[str, str]:
@@ -81,11 +94,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - dependency added by backend task
     app: Any = None
 else:
+
     class JobCreatePayload(BaseModel):
         job_type: str = Field(min_length=1)
         payload: dict[str, Any] = Field(default_factory=dict)
         idempotency_key: str | None = None
-
 
     def create_app(
         *,
@@ -108,6 +121,7 @@ else:
         intervention_label_registry: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
+        external_provider_connectivity_probe: Any = None,
         external_ingestion_service: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
@@ -124,13 +138,12 @@ else:
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
-        configured_persistence_mode = os.environ.get(
-            "ODP_PERSISTENCE", persistence_mode
-        ).strip().lower()
+        configured_persistence_mode = (
+            os.environ.get("ODP_PERSISTENCE", persistence_mode).strip().lower()
+        )
         provider_mode = _provider_mode_label(provider_validation)
-        production_persistence_supported = (
-            persistence_mode in {"postgres", "postgresql"}
-            and bool(bundle.is_production)
+        production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
+            bundle.is_production
         )
         operator_live_repository: Any | None = None
         if require_live_data and production_persistence_supported:
@@ -149,9 +162,7 @@ else:
                 "modelName": contract.model_name,
                 "trainingSpecKey": contract.training_spec_key,
                 "trainable": contract.trainable,
-                "requiredForPlatformReadiness": (
-                    contract.required_for_platform_readiness
-                ),
+                "requiredForPlatformReadiness": (contract.required_for_platform_readiness),
                 "outcomeContractRequired": contract.outcome_contract_required,
                 "available": False,
                 "reasonCode": (
@@ -164,9 +175,7 @@ else:
             for service, contract in PRODUCTION_MODEL_CONTRACTS.items()
         }
         model_binding_mode = (
-            "mlflow-production-unverified"
-            if require_live_data
-            else "local-baseline-seed"
+            "mlflow-production-unverified" if require_live_data else "local-baseline-seed"
         )
         audit_log = audit_log or bundle.audit_log
         evidence_store = evidence_store or bundle.evidence_store
@@ -181,6 +190,8 @@ else:
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
+        provider_probe_lock = threading.Lock()
+        provider_probe_cache: tuple[float, Any] | None = None
 
         # Normalise every error leaving the app into the one envelope
         # (ODP-PGAP-API-001). Registered before the routers so the 118 legacy
@@ -198,7 +209,7 @@ else:
                 return False, f"unhealthy: {exc}"
             return True, "healthy"
 
-        def provider_health() -> tuple[bool, tuple[Any, ...]]:
+        def provider_configuration_health() -> tuple[bool, tuple[Any, ...]]:
             if hasattr(provider_validation, "ok"):
                 return bool(provider_validation.ok), tuple(
                     getattr(provider_validation, "errors", ())
@@ -210,10 +221,88 @@ else:
                     return False, (str(exc),)
             return True, ()
 
+        def provider_health(
+            *, correlation_id: str | None = None
+        ) -> tuple[bool, dict[str, Any], tuple[Any, ...]]:
+            nonlocal provider_probe_cache
+            configuration_valid, configuration_errors = provider_configuration_health()
+            base_report: dict[str, Any] = {
+                "status": "healthy" if configuration_valid else "unhealthy",
+                "mode": provider_mode,
+                "configuration_valid": configuration_valid,
+                "connectivity_healthy": None,
+                "required_provider_ids": [],
+                "checked_at": None,
+                "expires_at": None,
+                "probes": [],
+                "configuration_errors": [
+                    _redacted_provider_error(error) for error in configuration_errors
+                ],
+            }
+            if provider_mode != "live":
+                return configuration_valid, base_report, configuration_errors
+            if not configuration_valid:
+                return False, base_report, configuration_errors
+            try:
+                with provider_probe_lock:
+                    now = time.monotonic()
+                    if provider_probe_cache is not None and provider_probe_cache[0] > now:
+                        connectivity = provider_probe_cache[1]
+                    else:
+                        if external_provider_connectivity_probe is None:
+                            connectivity = probe_external_provider_connectivity(
+                                validation=provider_validation,
+                                correlation_id=correlation_id,
+                            )
+                        else:
+                            connectivity = external_provider_connectivity_probe(
+                                validation=provider_validation,
+                                correlation_id=correlation_id,
+                            )
+                        provider_probe_cache = (now + 30.0, connectivity)
+            except Exception:
+                base_report.update(
+                    {
+                        "status": "unhealthy",
+                        "connectivity_healthy": False,
+                        "probe_error": "connectivity_probe_failed",
+                    }
+                )
+                return False, base_report, ("connectivity_probe_failed",)
+            try:
+                connectivity_report = (
+                    connectivity.to_dict()
+                    if hasattr(connectivity, "to_dict")
+                    else dict(connectivity)
+                )
+            except Exception:
+                base_report.update(
+                    {
+                        "status": "unhealthy",
+                        "connectivity_healthy": False,
+                        "probe_error": "connectivity_evidence_invalid",
+                    }
+                )
+                return False, base_report, ("connectivity_evidence_invalid",)
+            connectivity_healthy = bool(connectivity_report.get("connectivity_healthy"))
+            report = {
+                **base_report,
+                **connectivity_report,
+                "status": "healthy" if connectivity_healthy else "unhealthy",
+                "configuration_valid": configuration_valid,
+                "connectivity_healthy": connectivity_healthy,
+            }
+            probe_errors = tuple(
+                str(probe.get("reason_code") or "probe_failed")
+                for probe in connectivity_report.get("probes", [])
+                if isinstance(probe, dict) and not bool(probe.get("connectivity_healthy"))
+            )
+            return connectivity_healthy, report, probe_errors
+
         def require_live_external_provider() -> None:
             if not require_live_data:
                 return
-            provider_ok, provider_errors = provider_health()
+            provider_ok, provider_report, provider_errors = provider_health()
             if provider_ok and provider_mode == "live":
                 return
             raise ApiError(
@@ -221,22 +310,19 @@ else:
                 "The required production external provider is unavailable; "
                 "fixture providers are disabled.",
                 code="external_provider_unavailable",
-                next_action=(
-                    "Restore an approved live provider configuration, then retry."
-                ),
+                next_action=("Restore an approved live provider configuration, then retry."),
                 details=[
                     {
                         "dependency": "external_provider",
                         "provider_mode": provider_mode,
-                        "configuration_valid": provider_ok,
-                        "errors": [str(error) for error in provider_errors],
+                        "configuration_valid": provider_report["configuration_valid"],
+                        "connectivity_healthy": provider_report["connectivity_healthy"],
+                        "errors": list(provider_errors),
                     }
                 ],
             )
 
-        def production_persistence_blocking_reasons(
-            *, persistence_reachable: bool
-        ) -> list[str]:
+        def production_persistence_blocking_reasons(*, persistence_reachable: bool) -> list[str]:
             reasons: list[str] = []
             if not bundle.is_durable:
                 reasons.append("MEMORY_PERSISTENCE")
@@ -256,18 +342,20 @@ else:
 
         def runtime_modes(
             *,
-            provider_ok: bool,
+            provider_report: dict[str, Any],
             persistence_reachable: bool,
         ) -> dict[str, Any]:
-            provider_live_ready = provider_ok and provider_mode == "live"
+            provider_configuration_valid = bool(provider_report["configuration_valid"])
+            provider_connectivity_healthy = bool(provider_report["connectivity_healthy"])
+            provider_live_ready = (
+                provider_mode == "live"
+                and provider_configuration_valid
+                and provider_connectivity_healthy
+            )
             operator_probe = (
-                operator_live_repository.probe()
-                if operator_live_repository is not None
-                else None
+                operator_live_repository.probe() if operator_live_repository is not None else None
             )
-            operator_repository_ready = bool(
-                operator_probe is not None and operator_probe.ready
-            )
+            operator_repository_ready = bool(operator_probe is not None and operator_probe.ready)
             live_ready = (
                 production_persistence_supported
                 and persistence_reachable
@@ -284,12 +372,16 @@ else:
                 )
                 if not provider_live_ready:
                     blocking_reasons.append("PROVIDER_NOT_LIVE")
+                if (
+                    provider_mode == "live"
+                    and provider_configuration_valid
+                    and not provider_connectivity_healthy
+                ):
+                    blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
                 if not production_model_bindings_ready:
-                    blocking_reasons.append(
-                        "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
-                    )
+                    blocking_reasons.append("PRODUCTION_MODEL_BINDINGS_UNVERIFIED")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,
@@ -298,19 +390,19 @@ else:
                     "runtimeMode": persistence_mode,
                     "durable": bool(bundle.is_durable),
                     "reachable": persistence_reachable,
-                    "production_persistence_supported": (
-                        production_persistence_supported
-                    ),
+                    "production_persistence_supported": (production_persistence_supported),
                 },
                 "provider": {
                     "mode": provider_mode,
-                    "configurationValid": provider_ok,
+                    "configurationValid": provider_configuration_valid,
+                    "connectivityHealthy": provider_report["connectivity_healthy"],
                     "healthy": (
-                        provider_ok
-                        if not require_live_data
-                        else provider_live_ready
+                        provider_live_ready
+                        if provider_mode == "live" or require_live_data
+                        else provider_configuration_valid
                     ),
                     "live": provider_live_ready,
+                    "probeEvidence": provider_report,
                 },
                 "models": {
                     "mode": model_binding_mode,
@@ -318,9 +410,7 @@ else:
                     "requiredServices": sorted(required_model_services),
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,
-                    "autoSeeded": (
-                        not require_live_data and production_model_bindings_ready
-                    ),
+                    "autoSeeded": (not require_live_data and production_model_bindings_ready),
                 },
                 "data": {
                     "mode": (
@@ -339,9 +429,7 @@ else:
                     ),
                     "operatorRepositoryReady": operator_repository_ready,
                     "operatorRepositoryProbe": (
-                        operator_probe.to_dict()
-                        if operator_probe is not None
-                        else None
+                        operator_probe.to_dict() if operator_probe is not None else None
                     ),
                     "liveReady": live_ready,
                     "blockingReasons": blocking_reasons,
@@ -406,9 +494,7 @@ else:
                                 ],
                             ),
                         )
-                        response.headers[CORRELATION_ID_HEADER] = (
-                            context.correlation_id
-                        )
+                        response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
                         return response
@@ -419,7 +505,6 @@ else:
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
-
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
             # Liveness: simply check that process is running
@@ -428,46 +513,27 @@ else:
         @api.get("/readiness", tags=["system"])
         def readiness(response: Response) -> dict[str, Any]:
             db_ok, db_details = database_health()
-            provider_ok, provider_errors = provider_health()
+            provider_ok, provider_report, _provider_errors = provider_health()
             modes = runtime_modes(
-                provider_ok=provider_ok,
+                provider_report=provider_report,
                 persistence_reachable=db_ok,
             )
             persistence_ok = db_ok and (
                 not require_live_data
-                or bool(
-                    modes["persistence"][
-                        "production_persistence_supported"
-                    ]
-                )
+                or bool(modes["persistence"]["production_persistence_supported"])
             )
             provider_ready = provider_ok and (
                 not require_live_data or bool(modes["provider"]["live"])
             )
-            live_gate_ok = (
-                not require_live_data or bool(modes["data"]["liveReady"])
-            )
+            live_gate_ok = not require_live_data or bool(modes["data"]["liveReady"])
             overall_ok = persistence_ok and provider_ready and live_gate_ok
-            if require_live_data and not modes["persistence"][
-                "production_persistence_supported"
-            ]:
+            if require_live_data and not modes["persistence"]["production_persistence_supported"]:
                 db_details = (
-                    "unsupported for production live data: "
-                    f"runtime mode {persistence_mode}"
+                    f"unsupported for production live data: runtime mode {persistence_mode}"
                 )
-            provider_details = (
-                "healthy"
-                if provider_ready
-                else (
-                    "unsupported for production live data: "
-                    f"mode {provider_mode}"
-                    if require_live_data and provider_ok
-                    else f"unhealthy: {provider_errors}"
-                )
-            )
             details = {
                 "database": db_details,
-                "external_providers": provider_details,
+                "external_providers": provider_report,
                 **modes,
             }
 
@@ -481,18 +547,8 @@ else:
         def health(request: Request, response: Response) -> dict[str, Any]:
             # Detailed health: check database, job queue, and external providers
             db_ok, db_details = database_health()
-            provider_ok, provider_errors = provider_health()
-            provider_details = (
-                "healthy"
-                if provider_ok and (
-                    not require_live_data or provider_mode == "live"
-                )
-                else (
-                    "unsupported for production live data: "
-                    f"mode {provider_mode}"
-                    if require_live_data and provider_ok
-                    else f"unhealthy: {provider_errors}"
-                )
+            provider_ok, provider_report, _provider_errors = provider_health(
+                correlation_id=request.state.correlation_id
             )
 
             queue_ok = True
@@ -505,36 +561,22 @@ else:
                 queue_details = f"unhealthy: {exc}"
 
             modes = runtime_modes(
-                provider_ok=provider_ok,
+                provider_report=provider_report,
                 persistence_reachable=db_ok,
             )
             persistence_ok = db_ok and (
                 not require_live_data
-                or bool(
-                    modes["persistence"][
-                        "production_persistence_supported"
-                    ]
-                )
+                or bool(modes["persistence"]["production_persistence_supported"])
             )
             provider_ready = provider_ok and (
                 not require_live_data or bool(modes["provider"]["live"])
             )
-            live_gate_ok = (
-                not require_live_data or bool(modes["data"]["liveReady"])
-            )
-            if require_live_data and not modes["persistence"][
-                "production_persistence_supported"
-            ]:
+            live_gate_ok = not require_live_data or bool(modes["data"]["liveReady"])
+            if require_live_data and not modes["persistence"]["production_persistence_supported"]:
                 db_details = (
-                    "unsupported for production live data: "
-                    f"runtime mode {persistence_mode}"
+                    f"unsupported for production live data: runtime mode {persistence_mode}"
                 )
-            overall_ok = (
-                persistence_ok
-                and provider_ready
-                and queue_ok
-                and live_gate_ok
-            )
+            overall_ok = persistence_ok and provider_ready and queue_ok and live_gate_ok
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
@@ -547,11 +589,10 @@ else:
                 "dependencies": {
                     "database": db_details,
                     "job_queue": queue_details,
-                    "external_providers": provider_details,
+                    "external_providers": provider_report,
                 },
                 "modes": modes,
             }
-
 
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:
@@ -667,9 +708,7 @@ else:
         site_repository = sitescore_repository or bundle.sitescore_repository
         # ODP-FLOW-002: back the decision workflow and its realization hook with
         # the persistence bundle so decisions and realized sites survive restart.
-        realization_hook = CandidateSiteRealizationHook(
-            store=bundle.sitescore_realized_store
-        )
+        realization_hook = CandidateSiteRealizationHook(store=bundle.sitescore_realized_store)
         decision_workflow = sitescore_workflow or SiteScoreDecisionWorkflow(
             audit_log=audit_log,
             hooks=[realization_hook],
@@ -730,9 +769,7 @@ else:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:
-                            production_composition_errors.append(
-                                f"{service}: {exc.code}: {exc}"
-                            )
+                            production_composition_errors.append(f"{service}: {exc.code}: {exc}")
                 model_runtime = None
             if model_runtime is not None:
                 feature_schema_versions = {
@@ -752,9 +789,7 @@ else:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:
-                            production_composition_errors.append(
-                                f"{service}: {exc.code}: {exc}"
-                            )
+                            production_composition_errors.append(f"{service}: {exc.code}: {exc}")
                     else:
                         scoring_bindings[service] = executable.binding
                         capability = production_model_capabilities[service]
@@ -782,22 +817,17 @@ else:
                     except AVMProductionExecutionError as exc:
                         capability = production_model_capabilities["avm"]
                         capability["available"] = False
-                        capability["reasonCode"] = (
-                            "AVM_PRODUCTION_EXECUTION_UNAVAILABLE"
-                        )
+                        capability["reasonCode"] = "AVM_PRODUCTION_EXECUTION_UNAVAILABLE"
                         capability["error"] = str(exc)
                         production_composition_errors.append(
-                            "avm: AVM_PRODUCTION_EXECUTION_UNAVAILABLE: "
-                            f"{exc}"
+                            f"avm: AVM_PRODUCTION_EXECUTION_UNAVAILABLE: {exc}"
                         )
                         scoring_bindings.pop("avm", None)
                         avm_production_executor = None
             netplan_production_executor = NetPlanProductionExecutor()
             priceops_production_optimizer = PriceOpsProductionOptimizer()
             production_model_error = (
-                "; ".join(production_composition_errors)
-                if production_composition_errors
-                else None
+                "; ".join(production_composition_errors) if production_composition_errors else None
             )
             production_model_bindings_ready = (
                 all(
@@ -849,13 +879,8 @@ else:
         # preserve its per-operation response set instead of adding the generic
         # platform responses to every operation.
         assisted_intake_store = getattr(bundle, "assisted_intake_store", None)
-        if (
-            production_persistence_supported
-            and assisted_intake_store is None
-        ):
-            raise RuntimeError(
-                "Production PostgreSQL requires a durable Assisted Intake store"
-            )
+        if production_persistence_supported and assisted_intake_store is None:
+            raise RuntimeError("Production PostgreSQL requires a durable Assisted Intake store")
         mount_versioned(
             api,
             create_assisted_intake_router(
@@ -963,15 +988,14 @@ else:
         from shared.infrastructure.persistence.operator_network_listings import (
             DurableAssistedIntakeRepository,
         )
-        operator_intake_repository = (
-            getattr(bundle, "operator_intake_repository", None)
-            or (
-                DurableAssistedIntakeRepository(operator_document_store)
-                if operator_document_store is not None
-                else InMemoryAssistedIntakeRepository()
-            )
+
+        operator_intake_repository = getattr(bundle, "operator_intake_repository", None) or (
+            DurableAssistedIntakeRepository(operator_document_store)
+            if operator_document_store is not None
+            else InMemoryAssistedIntakeRepository()
         )
         if operator_document_store is not None:
+
             def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
                 return TenantScopedDocumentStore(operator_document_store, tenant_id)
 
@@ -998,9 +1022,7 @@ else:
             def netplan_repository_for_tenant(
                 tenant_id: str,
             ) -> DurableNetPlanRepository:
-                return DurableNetPlanRepository(
-                    tenant_document_store(tenant_id)
-                )
+                return DurableNetPlanRepository(tenant_document_store(tenant_id))
 
             def priceops_repository_for_tenant(
                 tenant_id: str,
@@ -1022,9 +1044,7 @@ else:
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,
                 sitescore_repository_for_tenant=sitescore_repository_for_tenant,
-                sitescore_decision_repository_for_tenant=(
-                    sitescore_decision_repository_for_tenant
-                ),
+                sitescore_decision_repository_for_tenant=(sitescore_decision_repository_for_tenant),
                 avm_repository_for_tenant=avm_repository_for_tenant,
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,

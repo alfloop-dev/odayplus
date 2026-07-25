@@ -16,6 +16,11 @@ from modules.external_data.connectors.external import (
     PoiConnector,
     build_external_connectors,
 )
+from modules.external_data.connectors.provider_connectivity import (
+    ProviderConnectivityResult,
+    ProviderProbeEvidence,
+    probe_external_provider_connectivity,
+)
 from modules.external_data.connectors.provider_registry import (
     ExternalProviderConfigError,
     ExternalProviderDefinition,
@@ -40,6 +45,9 @@ __all__ = [
     "ListingConnector",
     "PoiConnector",
     "build_external_connectors",
+    "ProviderConnectivityResult",
+    "ProviderProbeEvidence",
+    "probe_external_provider_connectivity",
     "ExternalProviderConfigError",
     "ExternalProviderDefinition",
     "ExternalProviderMode",

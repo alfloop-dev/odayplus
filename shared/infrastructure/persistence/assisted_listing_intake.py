@@ -20,6 +20,7 @@ Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql
 - docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -48,8 +49,14 @@ _CANONICAL_SHARED_TABLES: tuple[str, ...] = (
 _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
     ("001_baseline.sql", "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql"),
     ("002_consistency.sql", "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0002_CONSISTENCY_PATCH.sql"),
-    ("003_promotion_state.sql", "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql"),
-    ("004_tenant_rls_lineage.sql", "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql"),
+    (
+        "003_promotion_state.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0003_PROMOTION_STATE_PATCH.sql",
+    ),
+    (
+        "004_tenant_rls_lineage.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
 
@@ -277,9 +284,7 @@ class DurableAssistedIntakeStore:
 
     def __init__(self, store: Any) -> None:
         if getattr(getattr(store, "engine", None), "dialect", None) != "postgresql":
-            raise ValueError(
-                "DurableAssistedIntakeStore requires PostgresDocumentStore"
-            )
+            raise ValueError("DurableAssistedIntakeStore requires PostgresDocumentStore")
         self._store = store
         self._engine = store.engine
         self._local = threading.local()
@@ -305,10 +310,7 @@ class DurableAssistedIntakeStore:
 
     @staticmethod
     def _unwrap(value: Any) -> Any:
-        if (
-            isinstance(value, dict)
-            and set(value) == {"_state_key", "_tenant_id", "value"}
-        ):
+        if isinstance(value, dict) and set(value) == {"_state_key", "_tenant_id", "value"}:
             return value["value"]
         return value
 
@@ -323,10 +325,7 @@ class DurableAssistedIntakeStore:
     def _load_collection(self, name: str, tenant_id: str) -> dict[str, Any]:
         loaded: dict[str, Any] = {}
         for persisted in self._store.list_all(_STATE_COLLECTIONS[name]):
-            if (
-                not isinstance(persisted, dict)
-                or persisted.get("_tenant_id") != tenant_id
-            ):
+            if not isinstance(persisted, dict) or persisted.get("_tenant_id") != tenant_id:
                 continue
             key = self._key_for(name, persisted)
             if key is None:
@@ -339,12 +338,9 @@ class DurableAssistedIntakeStore:
 
         normalized_tenant = str(tenant_id or "").strip()
         if not normalized_tenant:
-            raise AssistedIntakeSchemaError(
-                "Assisted Intake store requires a verified tenant_id"
-            )
+            raise AssistedIntakeSchemaError("Assisted Intake store requires a verified tenant_id")
         loaded = {
-            name: self._load_collection(name, normalized_tenant)
-            for name in _STATE_COLLECTIONS
+            name: self._load_collection(name, normalized_tenant) for name in _STATE_COLLECTIONS
         }
         self._local.tenant_id = normalized_tenant
         self._local.collections = {
@@ -362,10 +358,7 @@ class DurableAssistedIntakeStore:
         for name in _STATE_COLLECTIONS:
             value = getattr(self, name)
             if name == "saved_views":
-                current[name] = {
-                    str(item["saved_view_id"]): item
-                    for item in value
-                }
+                current[name] = {str(item["saved_view_id"]): item for item in value}
             else:
                 current[name] = dict(value)
         return current
@@ -380,8 +373,7 @@ class DurableAssistedIntakeStore:
             (f"{collection}:{storage_key}",),
         )
         row = self._engine.query_one(
-            "SELECT data FROM durable_documents "
-            "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+            "SELECT data FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
             (collection, storage_key),
         )
         if row is None:
@@ -401,8 +393,7 @@ class DurableAssistedIntakeStore:
             deleted = set(baseline_values) - set(current_values)
             if deleted:
                 raise AssistedIntakePersistenceConflict(
-                    "Assisted Intake state deletion requires an explicit "
-                    "repository operation"
+                    "Assisted Intake state deletion requires an explicit repository operation"
                 )
             for key, value in current_values.items():
                 baseline = baseline_values.get(key)
@@ -540,8 +531,7 @@ def validate_required_tables(engine: Any) -> None:
             missing.append(relation)
     if missing:
         raise AssistedIntakeSchemaError(
-            "Assisted Listing Intake schema is incomplete; missing relations: "
-            + ", ".join(missing)
+            "Assisted Listing Intake schema is incomplete; missing relations: " + ", ".join(missing)
         )
 
 
@@ -551,16 +541,12 @@ def _psycopg_url(database_url: str) -> str:
         return "postgresql://" + value.removeprefix("postgresql+psycopg://")
     if value.startswith("postgresql://") or value.startswith("postgres://"):
         return value
-    raise AssistedIntakeSchemaError(
-        "ODAY_DATABASE_URL must use postgres:// or postgresql://"
-    )
+    raise AssistedIntakeSchemaError("ODAY_DATABASE_URL must use postgres:// or postgresql://")
 
 
 def _without_transaction_control(sql: str) -> str:
     return "\n".join(
-        line
-        for line in sql.splitlines()
-        if line.strip().upper() not in {"BEGIN;", "COMMIT;"}
+        line for line in sql.splitlines() if line.strip().upper() not in {"BEGIN;", "COMMIT;"}
     )
 
 
@@ -570,16 +556,13 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
     drift = contract_drift()
     if drift:
         raise AssistedIntakeSchemaError(
-            "Assisted Intake migration differs from reviewed contract: "
-            + ", ".join(drift)
+            "Assisted Intake migration differs from reviewed contract: " + ", ".join(drift)
         )
     try:
         import psycopg
         from psycopg.rows import dict_row
     except ImportError as exc:  # pragma: no cover - runtime dependency contract
-        raise AssistedIntakeSchemaError(
-            "Assisted Intake migration requires psycopg"
-        ) from exc
+        raise AssistedIntakeSchemaError("Assisted Intake migration requires psycopg") from exc
 
     expected_manifest = manifest_checksum()
     try:
@@ -628,18 +611,8 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                         ).fetchone()["relation"]
                         is not None
                     }
-                    if shared_tables and shared_tables != set(
-                        _CANONICAL_SHARED_TABLES
-                    ):
-                        raise AssistedIntakeSchemaError(
-                            "Canonical shared schema is incomplete before "
-                            "Assisted Intake migration: "
-                            + ", ".join(sorted(shared_tables))
-                        )
                     if shared_tables:
-                        connection.execute(
-                            _read(CANONICAL_COMPATIBILITY_PATH)
-                        )
+                        connection.execute(_read(CANONICAL_COMPATIBILITY_PATH))
                     for _name, sql in upgrade_statements():
                         connection.execute(_without_transaction_control(sql))
                     connection.execute(
@@ -665,8 +638,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
             if missing:
                 raise AssistedIntakeSchemaError(
                     "Assisted Listing Intake migration completed with missing "
-                    "relations: "
-                    + ", ".join(missing)
+                    "relations: " + ", ".join(missing)
                 )
     except AssistedIntakeSchemaError:
         raise

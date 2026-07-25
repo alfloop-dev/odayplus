@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from multiprocessing import get_context
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,10 +24,10 @@ from shared.infrastructure.persistence.assisted_listing_intake import (
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import build_persistence
-from shared.infrastructure.persistence.job_queue import DurableJobQueue
+from shared.infrastructure.persistence.job_queue import DurableJobQueue, JobFenceRejectedError
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.infrastructure.persistence.repositories import TenantScopeRequiredError
-from shared.jobs.queue import JobRequest
+from shared.jobs.queue import JobRequest, JobStatus
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("INTAKE_TEST_DATABASE_URL"),
@@ -50,6 +51,36 @@ def _apply_canonical_schema(database_url: str) -> None:
         )
         engine.execute(migration.read_text(encoding="utf-8"))
         engine.apply_runtime_migration()
+    finally:
+        engine.close()
+
+
+def _claim_from_independent_process(
+    database_url: str,
+    worker_id: str,
+    start_event,
+    result_queue,
+) -> None:
+    engine = PostgresEngine(
+        database_url,
+        min_pool_size=1,
+        max_pool_size=1,
+        bootstrap=False,
+        validate_schema=False,
+    )
+    try:
+        start_event.wait(timeout=10)
+        claimed = DurableJobQueue(engine).claim_next(worker_id=worker_id)
+        result_queue.put(
+            None
+            if claimed is None
+            else (
+                claimed.job_id,
+                claimed.locked_by,
+                claimed.version,
+                claimed.fence_token,
+            )
+        )
     finally:
         engine.close()
 
@@ -98,9 +129,7 @@ def test_postgresql_document_audit_and_job_contracts() -> None:
                 correlation_id=correlation_id,
                 tenant_id=tenant_a,
             )
-        ] == [
-            event_a.event_id
-        ]
+        ] == [event_a.event_id]
         assert event_b.event_id not in {
             item.event_id for item in audit.list_events(tenant_id=tenant_a)
         }
@@ -130,11 +159,84 @@ def test_postgresql_document_audit_and_job_contracts() -> None:
     finally:
         try:
             engine.execute(
+                "DELETE FROM durable_jobs WHERE correlation_id = ?",
+                (correlation_id,),
+            )
+            engine.execute(
                 "DELETE FROM durable_documents WHERE collection = ?",
                 (collection,),
             )
         finally:
             engine.close()
+
+
+def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
+    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
+    engine = PostgresEngine(database_url, validate_schema=False)
+    queue = DurableJobQueue(engine)
+    job_type = f"postgres.claim.{uuid4()}"
+    job, created = queue.enqueue(
+        JobRequest(
+            job_type=job_type,
+            payload={"tenant_id": f"tenant-{uuid4()}"},
+            idempotency_key=f"claim-{uuid4()}",
+        ),
+        correlation_id=f"corr-{uuid4()}",
+    )
+    assert created is True
+
+    context = get_context("spawn")
+    start_event = context.Event()
+    result_queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_claim_from_independent_process,
+            args=(database_url, f"worker-{index}", start_event, result_queue),
+        )
+        for index in range(4)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        start_event.set()
+        results = [result_queue.get(timeout=20) for _ in processes]
+        for process in processes:
+            process.join(timeout=20)
+            assert process.exitcode == 0
+
+        claims = [result for result in results if result is not None]
+        assert len(claims) == 1
+        claimed_job_id, worker_id, claimed_version, claimed_fence = claims[0]
+        assert claimed_job_id == job.job_id
+
+        persisted = queue.get(job.job_id)
+        assert persisted is not None
+        assert persisted.status == JobStatus.RUNNING
+        assert persisted.locked_by == worker_id
+        assert persisted.version == claimed_version
+        assert persisted.fence_token == claimed_fence
+
+        engine.execute(
+            "UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?",
+            ((datetime.now(UTC).replace(year=2000)).isoformat(), job.job_id),
+        )
+        replacement = queue.claim_next(worker_id="replacement-worker")
+        assert replacement is not None
+        assert replacement.job_id == job.job_id
+        with pytest.raises(JobFenceRejectedError):
+            queue.update_status(
+                job.job_id,
+                JobStatus.SUCCEEDED,
+                expected_version=claimed_version,
+                fence_token=claimed_fence,
+            )
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        engine.execute("DELETE FROM durable_jobs WHERE job_id = ?", (job.job_id,))
+        engine.close()
 
 
 def test_factory_builds_production_bundle_against_canonical_core_schema(
@@ -168,6 +270,7 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
 ) -> None:
     database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
     _apply_canonical_schema(database_url)
+    apply_upgrade_to_database(database_url)
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
     bundle = build_persistence(mode="postgresql")
@@ -295,12 +398,8 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         transactions_b = bundle.transaction_repository.list_transactions(
             tenant_id=tenant_b.tenant_id,
         )
-        assert [item.transaction_id for item in transactions_a] == [
-            transaction_a.transaction_id
-        ]
-        assert [item.transaction_id for item in transactions_b] == [
-            transaction_b.transaction_id
-        ]
+        assert [item.transaction_id for item in transactions_a] == [transaction_a.transaction_id]
+        assert [item.transaction_id for item in transactions_b] == [transaction_b.transaction_id]
 
         operator = OperatorStateService(
             require_live_data=True,
@@ -320,12 +419,8 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         assert tenant_b_envelope["meta"]["tenantId"] == tenant_b.tenant_id
         assert tenant_a_envelope["meta"]["recordCounts"]["stores"] == 1
         assert tenant_b_envelope["meta"]["recordCounts"]["stores"] == 1
-        tenant_a_kpis = {
-            item["label"]: item["value"] for item in tenant_a_envelope["kpis"]
-        }
-        tenant_b_kpis = {
-            item["label"]: item["value"] for item in tenant_b_envelope["kpis"]
-        }
+        tenant_a_kpis = {item["label"]: item["value"] for item in tenant_a_envelope["kpis"]}
+        tenant_b_kpis = {item["label"]: item["value"] for item in tenant_b_envelope["kpis"]}
         assert tenant_a_kpis["交易淨額"] == "110.00"
         assert tenant_b_kpis["交易淨額"] == "220.00"
         assert store_b.store_id not in str(tenant_a_envelope)

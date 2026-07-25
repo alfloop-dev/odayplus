@@ -30,10 +30,28 @@ done
 : "${ODP_WORKER_CRON:?Error: ODP_WORKER_CRON is required.}"
 : "${ODP_SCHEDULER_CRON:?Error: ODP_SCHEDULER_CRON is required.}"
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
+: "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
+: "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+
+case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
+  statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
+    ;;
+  mlforecast:hist_gradient_boosting)
+    ;;
+  *)
+    echo "Error: unsupported production ForecastOps binding " \
+      "'${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}'. " \
+      "Expected statsforecast:{seasonal_naive,auto_arima,auto_ets} " \
+      "or mlforecast:hist_gradient_boosting." >&2
+    exit 1
+    ;;
+esac
 
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
+MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
+source scripts/deployment/cloud_run_release_traffic.sh
 
 echo "Running fail-closed live deployment preflight..."
 python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
@@ -43,6 +61,18 @@ python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
 
 # No build, push, or Cloud Run mutation may occur above this line.
 IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
+REVISION_SUFFIX="release-${ODAY_RELEASE_SHA:0:12}"
+API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
+WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
+release_job_name() {
+  local base="$1"
+  local suffix="-r-${ODAY_RELEASE_SHA:0:12}"
+  local prefix_length=$((63 - ${#suffix}))
+  printf "%s%s" "${base:0:${prefix_length}}" "${suffix}"
+}
+MIGRATION_CANDIDATE_JOB="$(release_job_name "${MIGRATION_JOB}")"
+WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
+SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
@@ -66,10 +96,60 @@ echo "----------------------------------------------"
 
 API_ENV_FILE="$(mktemp)"
 WEB_ENV_FILE="$(mktemp)"
+API_TRAFFIC_SNAPSHOT="$(mktemp)"
+WEB_TRAFFIC_SNAPSHOT="$(mktemp)"
+API_CANDIDATE_DESCRIPTION="$(mktemp)"
+WEB_CANDIDATE_DESCRIPTION="$(mktemp)"
+SCHEDULER_TRIGGER_SNAPSHOT="$(mktemp)"
+WORKER_TRIGGER_SNAPSHOT="$(mktemp)"
+ROLLBACK_ARMED=false
+SCHEDULER_ROLLBACK_ARMED=false
+DEPLOYMENT_COMMITTED=false
 cleanup() {
-  rm -f "${API_ENV_FILE}" "${WEB_ENV_FILE}"
+  rm -f \
+    "${API_ENV_FILE}" \
+    "${WEB_ENV_FILE}" \
+    "${API_TRAFFIC_SNAPSHOT}" \
+    "${WEB_TRAFFIC_SNAPSHOT}" \
+    "${API_CANDIDATE_DESCRIPTION}" \
+    "${WEB_CANDIDATE_DESCRIPTION}" \
+    "${SCHEDULER_TRIGGER_SNAPSHOT}" \
+    "${WORKER_TRIGGER_SNAPSHOT}"
 }
-trap cleanup EXIT
+handle_deployment_exit() {
+  local status=$?
+  local rollback_status=0
+  trap - EXIT
+  set +e
+  if [ "${status}" -ne 0 ] \
+    && [ "${ROLLBACK_ARMED}" = "true" ] \
+    && [ "${DEPLOYMENT_COMMITTED}" != "true" ]; then
+    echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    rollback_release_traffic \
+      "${API_SERVICE}" \
+      "${API_TRAFFIC_SNAPSHOT}" \
+      "${WEB_SERVICE}" \
+      "${WEB_TRAFFIC_SNAPSHOT}" || rollback_status=$?
+    if [ "${rollback_status}" -ne 0 ]; then
+      echo "Error: one or more Cloud Run traffic restores failed." >&2
+    fi
+    if [ "${SCHEDULER_ROLLBACK_ARMED}" = "true" ]; then
+      echo "Restoring the recorded Cloud Scheduler trigger targets." >&2
+      restore_scheduler_trigger \
+        "${SCHEDULER_SCHEDULE_NAME}" \
+        "${SCHEDULER_TRIGGER_SNAPSHOT}" || rollback_status=$?
+      restore_scheduler_trigger \
+        "${WORKER_SCHEDULE_NAME}" \
+        "${WORKER_TRIGGER_SNAPSHOT}" || rollback_status=$?
+      if [ "${rollback_status}" -ne 0 ]; then
+        echo "Error: one or more Cloud Scheduler trigger restores failed." >&2
+      fi
+    fi
+  fi
+  cleanup
+  exit "${status}"
+}
+trap handle_deployment_exit EXIT
 mkdir -p "${JOB_REPORT_DIR}"
 
 python3 - "${API_ENV_FILE}" <<'PY'
@@ -83,13 +163,17 @@ keys = (
     "ODP_REQUIRE_LIVE_DATA",
     "ODP_DATA_BINDING_MODE",
     "ODP_PRODUCT_MODE",
+    "ODP_FORECAST_ENGINE",
+    "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
     "MLFLOW_TRACKING_URI",
     "ODP_LISTING_PROVIDER_FEED_URL",
+    "ODP_POI_PROVIDER_URL",
     "ODP_GEOCODE_PROVIDER_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
     "ODP_LISTING_PROVIDER_AUTH_STATUS",
     "ODP_POI_PROVIDER_AUTH_STATUS",
     "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
@@ -187,8 +271,17 @@ execute_job() {
   capture_job_proof "${kind}" "${job}"
 }
 
-echo "Deploying migration Cloud Run Job..."
-gcloud run jobs deploy "${MIGRATION_JOB}" \
+echo "Recording the existing API/Web traffic before any runtime mutation..."
+capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
+capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
+capture_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_TRIGGER_SNAPSHOT}"
+capture_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_TRIGGER_SNAPSHOT}"
+OLD_API_URL="$(service_snapshot_url "${API_TRAFFIC_SNAPSHOT}")"
+OLD_WEB_URL="$(service_snapshot_url "${WEB_TRAFFIC_SNAPSHOT}")"
+ROLLBACK_ARMED=true
+
+echo "Deploying immutable migration candidate Cloud Run Job..."
+gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
   --image="${WORKER_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
@@ -204,11 +297,20 @@ gcloud run jobs deploy "${MIGRATION_JOB}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=migration,oday-data-binding=live" \
   --quiet
 
-# This is the release gate: no API, worker, scheduler, or web runtime is
-# deployed until the exact release image has migrated the shared database.
-execute_job "migration" "${MIGRATION_JOB}"
+# This gate verifies both the exact migration receipt and backward
+# compatibility with the old revisions that still carry all production
+# traffic. No candidate service is deployed until this passes.
+run_migration_compatibility_gate() {
+  execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
+  python3 scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+    --api-url "${OLD_API_URL}" \
+    --web-url "${OLD_WEB_URL}" \
+    --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+    --output "${MIGRATION_COMPAT_REPORT}"
+}
+run_migration_compatibility_gate
 
-echo "Deploying API service..."
+echo "Deploying immutable API candidate without production traffic..."
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -220,20 +322,21 @@ gcloud run deploy "${API_SERVICE}" \
   --env-vars-file="${API_ENV_FILE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
+  --revision-suffix="${REVISION_SUFFIX}" \
+  --tag="${API_REVISION_TAG}" \
+  --no-traffic \
   --allow-unauthenticated \
   --quiet
 
-API_URL="$(gcloud run services describe "${API_SERVICE}" \
+gcloud run services describe "${API_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')"
-if [ -z "${API_URL}" ]; then
-  echo "Error: failed to resolve the deployed API URL." >&2
-  exit 1
-fi
+  --format=json >"${API_CANDIDATE_DESCRIPTION}"
+API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
+API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 
-echo "Deploying scheduler Cloud Run Job..."
-gcloud run jobs deploy "${SCHEDULER_JOB}" \
+echo "Deploying immutable scheduler candidate Cloud Run Job..."
+gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
   --image="${SCHEDULER_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
@@ -249,8 +352,8 @@ gcloud run jobs deploy "${SCHEDULER_JOB}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=scheduler,oday-data-binding=live" \
   --quiet
 
-echo "Deploying worker Cloud Run Job..."
-gcloud run jobs deploy "${WORKER_JOB}" \
+echo "Deploying immutable worker candidate Cloud Run Job..."
+gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
   --image="${WORKER_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
@@ -266,7 +369,7 @@ gcloud run jobs deploy "${WORKER_JOB}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=worker,oday-data-binding=live" \
   --quiet
 
-for job in "${SCHEDULER_JOB}" "${WORKER_JOB}"; do
+for job in "${SCHEDULER_CANDIDATE_JOB}" "${WORKER_CANDIDATE_JOB}"; do
   gcloud run jobs add-iam-policy-binding "${job}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
@@ -300,16 +403,13 @@ upsert_scheduler_trigger() {
     --quiet
 }
 
-upsert_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_JOB}" "${ODP_SCHEDULER_CRON}"
-upsert_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_JOB}" "${ODP_WORKER_CRON}"
-
 # The scheduler must persist an enqueue receipt. The worker must either leave a
 # terminal success receipt or prove that the durable queue is drained; a
 # same-minute scheduler idempotency replay may legitimately leave no new work.
 # Wrapper exit codes make retry-queued work retryable by Cloud Run and make
 # FAILED/CANCELLED/DLQ non-zero.
-execute_job "scheduler" "${SCHEDULER_JOB}"
-execute_job "worker" "${WORKER_JOB}" \
+execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
+execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
   --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
 
 python3 - "${WEB_ENV_FILE}" "${API_URL}" <<'PY'
@@ -355,7 +455,7 @@ docker push "${WEB_IMAGE}"
 cosign sign --yes "${WEB_IMAGE}"
 CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
 
-echo "Deploying Web service..."
+echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -366,19 +466,20 @@ gcloud run deploy "${WEB_SERVICE}" \
   --env-vars-file="${WEB_ENV_FILE}" \
   --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
+  --revision-suffix="${REVISION_SUFFIX}" \
+  --tag="${WEB_REVISION_TAG}" \
+  --no-traffic \
   --allow-unauthenticated \
   --quiet
 
-WEB_URL="$(gcloud run services describe "${WEB_SERVICE}" \
+gcloud run services describe "${WEB_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')"
-if [ -z "${WEB_URL}" ]; then
-  echo "Error: failed to resolve the deployed Web URL." >&2
-  exit 1
-fi
+  --format=json >"${WEB_CANDIDATE_DESCRIPTION}"
+WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
+WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
-echo "Running release-aware, live-data smoke checks..."
+echo "Running release-aware smoke checks against tagged candidate revisions..."
 python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
@@ -386,9 +487,22 @@ python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
   --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
   --output "${SMOKE_REPORT}"
 
+SCHEDULER_ROLLBACK_ARMED=true
+upsert_scheduler_trigger \
+  "${SCHEDULER_SCHEDULE_NAME}" \
+  "${SCHEDULER_CANDIDATE_JOB}" \
+  "${ODP_SCHEDULER_CRON}"
+upsert_scheduler_trigger \
+  "${WORKER_SCHEDULE_NAME}" \
+  "${WORKER_CANDIDATE_JOB}" \
+  "${ODP_WORKER_CRON}"
+promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
+promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+DEPLOYMENT_COMMITTED=true
+
 echo "=== Cloud Run deployment passed all live-data gates ==="
-echo "API Endpoint: ${API_URL}"
-echo "Web Endpoint: ${WEB_URL}"
-echo "Migration Job: ${MIGRATION_JOB}"
-echo "Worker Job: ${WORKER_JOB} (${WORKER_SCHEDULE_NAME})"
-echo "Scheduler Job: ${SCHEDULER_JOB} (${SCHEDULER_SCHEDULE_NAME})"
+echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
+echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
+echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

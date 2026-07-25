@@ -160,10 +160,11 @@ export function HeatZoneMap({
       const projected = map.project(coordinates);
       return { x: projected.x, y: projected.y };
     };
+    map.resize();
+    fitToZones(map, visibleZones.length ? visibleZones : zones);
     window.__odpHeatZoneMapProject = projectMapCoordinate;
 
     map.on("load", () => {
-      window.__odpHeatZoneMapProject = projectMapCoordinate;
       map.addSource("odp-local-heatzones", {
         type: "geojson",
         data: {

@@ -75,7 +75,9 @@ class JobRecord:
             "version": self.version,
             "locked_by": self.locked_by,
             "heartbeat_at": self.heartbeat_at.isoformat() if self.heartbeat_at else None,
-            "lease_expires_at": self.lease_expires_at.isoformat() if self.lease_expires_at else None,
+            "lease_expires_at": self.lease_expires_at.isoformat()
+            if self.lease_expires_at
+            else None,
             "error_message": self.error_message,
         }
 
@@ -92,10 +94,7 @@ class InMemoryJobQueue:
             for job in self._jobs.values()
             if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
             and not is_non_executable_receipt_job_type(job.job_type)
-            and (
-                tenant_id is None
-                or str(job.payload.get("tenant_id") or "") == tenant_id
-            )
+            and (tenant_id is None or str(job.payload.get("tenant_id") or "") == tenant_id)
         )
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
@@ -117,11 +116,13 @@ class InMemoryJobQueue:
             return record, True
 
     def get(self, job_id: str) -> JobRecord | None:
-        return self._jobs.get(job_id)
+        with self._reservation_lock:
+            return self._jobs.get(job_id)
 
     def lease(self, lease_duration_seconds: float) -> JobRecord | None:
         import dataclasses
         from datetime import timedelta
+
         now = datetime.now(UTC)
 
         # Sort by creation time to act as a FIFO queue
@@ -155,10 +156,15 @@ class InMemoryJobQueue:
 
     def complete(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
         import dataclasses
+
         if job_id in self._jobs:
             record = self._jobs[job_id]
             if lease_token is not None:
-                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                token_str = (
+                    lease_token.isoformat()
+                    if isinstance(lease_token, datetime)
+                    else str(lease_token)
+                )
                 current_token_str = record.leased_until.isoformat() if record.leased_until else None
                 if record.status != JobStatus.RUNNING or current_token_str != token_str:
                     return False
@@ -170,10 +176,15 @@ class InMemoryJobQueue:
 
     def fail(self, job_id: str, lease_token: datetime | str | None = None) -> bool:
         import dataclasses
+
         if job_id in self._jobs:
             record = self._jobs[job_id]
             if lease_token is not None:
-                token_str = lease_token.isoformat() if isinstance(lease_token, datetime) else str(lease_token)
+                token_str = (
+                    lease_token.isoformat()
+                    if isinstance(lease_token, datetime)
+                    else str(lease_token)
+                )
                 current_token_str = record.leased_until.isoformat() if record.leased_until else None
                 if record.status != JobStatus.RUNNING or current_token_str != token_str:
                     return False
@@ -195,61 +206,66 @@ class InMemoryJobQueue:
     def replay(
         self, job_id: str, *, expected_version: int | None = None, fence_token: int | None = None
     ) -> JobRecord:
-        if job_id not in self._jobs:
-            raise ValueError(f"Job {job_id} not found")
-        record = self._jobs[job_id]
-        if expected_version is not None and record.version != expected_version:
-            raise ValueError("Fence/version mismatch")
-        if fence_token is not None and record.fence_token != fence_token:
-            raise ValueError("Fence/version mismatch")
+        with self._reservation_lock:
+            if job_id not in self._jobs:
+                raise ValueError(f"Job {job_id} not found")
+            record = self._jobs[job_id]
+            if expected_version is not None and record.version != expected_version:
+                raise ValueError("Fence/version mismatch")
+            if fence_token is not None and record.fence_token != fence_token:
+                raise ValueError("Fence/version mismatch")
 
-        payload = dict(record.payload)
-        payload.pop("_retry_count", None)
-        payload.pop("stage_attempts", None)
-        payload.pop("current_stage", None)
+            payload = dict(record.payload)
+            payload.pop("_retry_count", None)
+            payload.pop("stage_attempts", None)
+            payload.pop("current_stage", None)
 
-        updated = JobRecord(
-            job_type=record.job_type,
-            payload=payload,
-            correlation_id=record.correlation_id,
-            idempotency_key=record.idempotency_key,
-            status=JobStatus.QUEUED,
-            job_id=record.job_id,
-            created_at=record.created_at,
-            fence_token=record.fence_token,
-            version=record.version + 1,
-            locked_by=None,
-            heartbeat_at=None,
-            lease_expires_at=None,
-            attempts=0,
-            error_message=None,
-        )
-        self._jobs[job_id] = updated
-        return updated
+            updated = JobRecord(
+                job_type=record.job_type,
+                payload=payload,
+                correlation_id=record.correlation_id,
+                idempotency_key=record.idempotency_key,
+                status=JobStatus.QUEUED,
+                job_id=record.job_id,
+                created_at=record.created_at,
+                fence_token=record.fence_token,
+                version=record.version + 1,
+                locked_by=None,
+                heartbeat_at=None,
+                lease_expires_at=None,
+                attempts=0,
+                error_message=None,
+            )
+            self._jobs[job_id] = updated
+            return updated
 
     def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
-        for job_id, record in self._jobs.items():
-            if (
-                record.status == JobStatus.QUEUED
-                and not is_non_executable_receipt_job_type(record.job_type)
-            ):
-                updated = JobRecord(
-                    job_type=record.job_type,
-                    payload=record.payload,
-                    correlation_id=record.correlation_id,
-                    idempotency_key=record.idempotency_key,
-                    status=JobStatus.RUNNING,
-                    job_id=record.job_id,
-                    created_at=record.created_at,
-                    fence_token=record.fence_token + 1,
-                    version=record.version + 1,
-                    locked_by=worker_id,
-                    heartbeat_at=datetime.now(UTC),
-                    lease_expires_at=datetime.now(UTC) + timedelta(seconds=45),
-                    attempts=record.attempts + 1,
+        with self._reservation_lock:
+            now = datetime.now(UTC)
+            for job_id, record in self._jobs.items():
+                is_eligible = record.status == JobStatus.QUEUED or (
+                    record.status == JobStatus.RUNNING
+                    and record.lease_expires_at is not None
+                    and record.lease_expires_at < now
                 )
-                self._jobs[job_id] = updated
-                return updated
+                if is_eligible and not is_non_executable_receipt_job_type(record.job_type):
+                    updated = JobRecord(
+                        job_type=record.job_type,
+                        payload=record.payload,
+                        correlation_id=record.correlation_id,
+                        idempotency_key=record.idempotency_key,
+                        status=JobStatus.RUNNING,
+                        job_id=record.job_id,
+                        created_at=record.created_at,
+                        fence_token=record.fence_token + 1,
+                        version=record.version + 1,
+                        locked_by=worker_id,
+                        heartbeat_at=now,
+                        lease_expires_at=now + timedelta(seconds=45),
+                        attempts=record.attempts + 1,
+                    )
+                    self._jobs[job_id] = updated
+                    return updated
         return None
 
     def update_status(
@@ -262,9 +278,10 @@ class InMemoryJobQueue:
         fence_token: int | None = None,
         error_message: str | None = None,
     ) -> None:
-        if job_id in self._jobs:
+        with self._reservation_lock:
+            if job_id not in self._jobs:
+                raise ValueError(f"Job {job_id} not found")
             record = self._jobs[job_id]
-            # Simple check for mock
             if expected_version is not None and record.version != expected_version:
                 raise ValueError(
                     f"Job version mismatch: expected {expected_version}, got {record.version}"
@@ -285,33 +302,38 @@ class InMemoryJobQueue:
                 fence_token=record.fence_token,
                 version=record.version + 1,
                 locked_by=record.locked_by if status == JobStatus.RUNNING else None,
-                heartbeat_at=record.heartbeat_at,
-                lease_expires_at=record.lease_expires_at,
+                heartbeat_at=record.heartbeat_at if status == JobStatus.RUNNING else None,
+                lease_expires_at=record.lease_expires_at if status == JobStatus.RUNNING else None,
                 attempts=record.attempts,
                 error_message=error_message or record.error_message,
             )
 
     def heartbeat(self, job_id: str, expected_version: int, fence_token: int) -> int:
-        if job_id not in self._jobs:
-            raise ValueError(f"Job {job_id} not found")
-        record = self._jobs[job_id]
-        if record.version != expected_version or record.fence_token != fence_token:
-            raise ValueError("Fence/version mismatch")
-        new_version = expected_version + 1
-        self._jobs[job_id] = JobRecord(
-            job_type=record.job_type,
-            payload=record.payload,
-            correlation_id=record.correlation_id,
-            idempotency_key=record.idempotency_key,
-            status=record.status,
-            job_id=record.job_id,
-            created_at=record.created_at,
-            fence_token=record.fence_token,
-            version=new_version,
-            locked_by=record.locked_by,
-            heartbeat_at=datetime.now(UTC),
-            lease_expires_at=datetime.now(UTC) + timedelta(seconds=45),
-            attempts=record.attempts,
-            error_message=record.error_message,
-        )
-        return new_version
+        with self._reservation_lock:
+            if job_id not in self._jobs:
+                raise ValueError(f"Job {job_id} not found")
+            record = self._jobs[job_id]
+            if (
+                record.status != JobStatus.RUNNING
+                or record.version != expected_version
+                or record.fence_token != fence_token
+            ):
+                raise ValueError("Fence/version mismatch")
+            new_version = expected_version + 1
+            self._jobs[job_id] = JobRecord(
+                job_type=record.job_type,
+                payload=record.payload,
+                correlation_id=record.correlation_id,
+                idempotency_key=record.idempotency_key,
+                status=record.status,
+                job_id=record.job_id,
+                created_at=record.created_at,
+                fence_token=record.fence_token,
+                version=new_version,
+                locked_by=record.locked_by,
+                heartbeat_at=datetime.now(UTC),
+                lease_expires_at=datetime.now(UTC) + timedelta(seconds=45),
+                attempts=record.attempts,
+                error_message=record.error_message,
+            )
+            return new_version

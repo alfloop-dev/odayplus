@@ -14,6 +14,8 @@ and scheduler processes:
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import date, timedelta
 
 import pytest
@@ -21,8 +23,10 @@ import pytest
 from apps.scheduler.oday_scheduler.main import ODayScheduler
 from apps.worker.oday_worker.main import ODayWorker
 from modules.forecastops import ForecastOpsService, StoreDayObservation
+from modules.forecastops.workers import ForecastOpsForecastWorker
 from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
 from shared.jobs.queue import JobRequest, JobStatus
+from shared.jobs.registry import JobRegistry
 
 PROVIDER_ID = "listing.partner_feed"
 
@@ -85,6 +89,104 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     worker = ODayWorker(persistence=bundle)
     assert worker.run_once() is True
     assert bundle.job_queue.get(job.job_id).status == JobStatus.SUCCEEDED
+
+
+def test_production_forecast_worker_reads_deployment_engine_and_model(
+    db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+    monkeypatch.setenv("ODP_FORECAST_ENGINE", "statsforecast")
+    monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
+    bundle = _durable_bundle(db_path)
+    try:
+        worker = ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
+
+        assert worker.service.production_required is True
+        assert worker.service.engine is not None
+        assert worker.service.engine.engine_name == "statsforecast"
+        assert worker.service.engine.model_name == "seasonal_naive"
+    finally:
+        bundle.engine.close()
+
+
+def test_worker_renews_lease_and_completes_with_latest_version() -> None:
+    bundle = build_persistence()
+    registry = JobRegistry()
+
+    def slow_handler(_job, _persistence) -> None:
+        time.sleep(0.06)
+
+    registry.register("slow-success", slow_handler)
+    job, _ = bundle.job_queue.enqueue(
+        JobRequest(job_type="slow-success", payload={}),
+        correlation_id="corr-slow-success",
+    )
+    worker = ODayWorker(
+        persistence=bundle,
+        registry=registry,
+        heartbeat_interval_seconds=0.01,
+    )
+
+    assert worker.run_once() is True
+    persisted = bundle.job_queue.get(job.job_id)
+    assert persisted is not None
+    assert persisted.status == JobStatus.SUCCEEDED
+    assert persisted.version >= 4
+    assert persisted.locked_by is None
+    assert persisted.lease_expires_at is None
+
+
+def test_stale_worker_cannot_overwrite_replacement_worker(tmp_path) -> None:
+    bundle = _durable_bundle(str(tmp_path / "stale-worker.sqlite3"))
+    registry = JobRegistry()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_handler(_job, _persistence) -> None:
+        started.set()
+        assert release.wait(timeout=5)
+
+    registry.register("lease-stolen", blocked_handler)
+    job, _ = bundle.job_queue.enqueue(
+        JobRequest(job_type="lease-stolen", payload={}),
+        correlation_id="corr-lease-stolen",
+    )
+    worker = ODayWorker(
+        persistence=bundle,
+        registry=registry,
+        heartbeat_interval_seconds=0.01,
+    )
+    thread = threading.Thread(target=worker.run_once)
+    try:
+        thread.start()
+        assert started.wait(timeout=5)
+        time.sleep(0.03)
+        current = bundle.job_queue.get(job.job_id)
+        assert current is not None
+        bundle.engine.execute(
+            "UPDATE durable_jobs SET fence_token = ?, version = ?, locked_by = ? WHERE job_id = ?",
+            (
+                current.fence_token + 1,
+                current.version + 1,
+                "replacement-worker",
+                job.job_id,
+            ),
+        )
+        release.set()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+        persisted = bundle.job_queue.get(job.job_id)
+        assert persisted is not None
+        assert persisted.status == JobStatus.RUNNING
+        assert persisted.locked_by == "replacement-worker"
+        assert persisted.fence_token == current.fence_token + 1
+    finally:
+        release.set()
+        thread.join(timeout=5)
+        bundle.engine.close()
 
 
 def test_worker_retries_three_times_then_dead_letters() -> None:

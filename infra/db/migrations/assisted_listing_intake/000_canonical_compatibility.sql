@@ -5,21 +5,32 @@
 -- tenant, identity, promotion, or audit lineage heuristically.
 
 DO $compatibility_guard$
+DECLARE
+  has_rows boolean;
 BEGIN
-  IF to_regclass('expansion.listings') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM expansion.listings LIMIT 1) THEN
-    RAISE EXCEPTION
-      'CANONICAL_LISTING_BACKFILL_REQUIRED: expansion.listings is not empty';
+  IF to_regclass('expansion.listings') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM expansion.listings LIMIT 1)'
+      INTO has_rows;
+    IF has_rows THEN
+      RAISE EXCEPTION
+        'CANONICAL_LISTING_BACKFILL_REQUIRED: expansion.listings is not empty';
+    END IF;
   END IF;
-  IF to_regclass('expansion.candidate_sites') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM expansion.candidate_sites LIMIT 1) THEN
-    RAISE EXCEPTION
-      'CANONICAL_CANDIDATE_BACKFILL_REQUIRED: expansion.candidate_sites is not empty';
+  IF to_regclass('expansion.candidate_sites') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM expansion.candidate_sites LIMIT 1)'
+      INTO has_rows;
+    IF has_rows THEN
+      RAISE EXCEPTION
+        'CANONICAL_CANDIDATE_BACKFILL_REQUIRED: expansion.candidate_sites is not empty';
+    END IF;
   END IF;
-  IF to_regclass('audit.audit_events') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM audit.audit_events LIMIT 1) THEN
-    RAISE EXCEPTION
-      'CANONICAL_AUDIT_BACKFILL_REQUIRED: audit.audit_events is not empty';
+  IF to_regclass('audit.audit_events') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM audit.audit_events LIMIT 1)'
+      INTO has_rows;
+    IF has_rows THEN
+      RAISE EXCEPTION
+        'CANONICAL_AUDIT_BACKFILL_REQUIRED: audit.audit_events is not empty';
+    END IF;
   END IF;
 END
 $compatibility_guard$;
@@ -167,16 +178,17 @@ ALTER TABLE IF EXISTS audit.audit_events
 
 DO $audit_checks$
 BEGIN
-  IF to_regclass('audit.audit_events') IS NOT NULL
-     AND NOT EXISTS (
+  IF to_regclass('audit.audit_events') IS NOT NULL THEN
+    IF NOT EXISTS (
        SELECT 1
        FROM pg_constraint
        WHERE conrelid = 'audit.audit_events'::regclass
          AND conname = 'audit_events_result_check'
      ) THEN
-    ALTER TABLE audit.audit_events
-      ADD CONSTRAINT audit_events_result_check
-      CHECK (result IN ('ALLOWED','DENIED','SUCCEEDED','FAILED','MASKED'));
+      ALTER TABLE audit.audit_events
+        ADD CONSTRAINT audit_events_result_check
+        CHECK (result IN ('ALLOWED','DENIED','SUCCEEDED','FAILED','MASKED'));
+    END IF;
   END IF;
 END
 $audit_checks$;

@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ REQUIRED_PRODUCT_PROVIDER_IDS = frozenset(
         "admin_boundary.official_dataset",
     }
 )
+MAX_PROVIDER_PROBE_AGE_SECONDS = 300
 
 REQUIRED_PUBLIC_CONFIG = (
     "GCP_PROJECT",
@@ -67,8 +69,12 @@ REQUIRED_PUBLIC_CONFIG = (
     "ODP_SCHEDULER_TIME_ZONE",
     "ODP_SNAPSHOT_BUCKET",
     "MLFLOW_TRACKING_URI",
+    "ODP_FORECAST_ENGINE",
+    "ODP_FORECAST_MODEL",
     "ODP_LISTING_PROVIDER_FEED_URL",
+    "ODP_POI_PROVIDER_URL",
     "ODP_GEOCODE_PROVIDER_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
     "ODP_LISTING_PROVIDER_AUTH_STATUS",
     "ODP_POI_PROVIDER_AUTH_STATUS",
     "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
@@ -100,6 +106,14 @@ REQUIRED_RUNTIME_VALUES = {
     "ODP_OBJECT_STORE": "gcs",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS": "disabled",
 }
+SUPPORTED_FORECAST_BINDINGS = frozenset(
+    {
+        ("statsforecast", "seasonal_naive"),
+        ("statsforecast", "auto_arima"),
+        ("statsforecast", "auto_ets"),
+        ("mlforecast", "hist_gradient_boosting"),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -156,46 +170,63 @@ def repository_capability_checks(
         worker_dockerfile.read_text(encoding="utf-8") if worker_dockerfile.exists() else ""
     )
     scheduler_text = (
-        scheduler_dockerfile.read_text(encoding="utf-8")
-        if scheduler_dockerfile.exists()
-        else ""
+        scheduler_dockerfile.read_text(encoding="utf-8") if scheduler_dockerfile.exists() else ""
     )
-    entrypoint_text = (
-        job_entrypoint.read_text(encoding="utf-8") if job_entrypoint.exists() else ""
-    )
+    entrypoint_text = job_entrypoint.read_text(encoding="utf-8") if job_entrypoint.exists() else ""
     deploys_worker = all(
         marker in deploy_text
         for marker in (
-            'gcloud run jobs deploy "${WORKER_JOB}"',
-            'execute_job "worker" "${WORKER_JOB}"',
-            'upsert_scheduler_trigger "${WORKER_SCHEDULE_NAME}"',
+            'gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}"',
+            'execute_job "worker" "${WORKER_CANDIDATE_JOB}"',
+            '"${WORKER_SCHEDULE_NAME}" \\\n  "${WORKER_CANDIDATE_JOB}"',
         )
     )
     deploys_scheduler = all(
         marker in deploy_text
         for marker in (
-            'gcloud run jobs deploy "${SCHEDULER_JOB}"',
-            'execute_job "scheduler" "${SCHEDULER_JOB}"',
-            'upsert_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"',
+            'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
+            'execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"',
+            '"${SCHEDULER_SCHEDULE_NAME}" \\\n  "${SCHEDULER_CANDIDATE_JOB}"',
         )
     )
-    deploys_migration_first = all(
+    deploys_migration_first = (
+        all(
+            marker in deploy_text
+            for marker in (
+                'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
+                'execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"',
+                "compatibility-smoke",
+                "run_migration_compatibility_gate",
+                "jobs-smoke",
+            )
+        )
+        and all(
+            marker in entrypoint_text
+            for marker in (
+                "build_migration_run",
+                "_verify_runtime_schema",
+                "runtime_schema_verified=True",
+            )
+        )
+        and deploy_text.index('execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"')
+        < deploy_text.index('gcloud run deploy "${API_SERVICE}"')
+    )
+    release_traffic_wired = all(
         marker in deploy_text
         for marker in (
-            'gcloud run jobs deploy "${MIGRATION_JOB}"',
-            'execute_job "migration" "${MIGRATION_JOB}"',
-            "jobs-smoke",
+            "--no-traffic",
+            '--revision-suffix="${REVISION_SUFFIX}"',
+            '--tag="${API_REVISION_TAG}"',
+            '--tag="${WEB_REVISION_TAG}"',
+            'capture_service_traffic "${API_SERVICE}"',
+            'capture_service_traffic "${WEB_SERVICE}"',
+            "rollback_release_traffic",
+            'promote_service_traffic "${API_SERVICE}"',
+            'promote_service_traffic "${WEB_SERVICE}"',
         )
-    ) and all(
-        marker in entrypoint_text
-        for marker in (
-            "build_migration_run",
-            "_verify_runtime_schema",
-            "runtime_schema_verified=True",
-        )
-    ) and deploy_text.index(
-        'execute_job "migration" "${MIGRATION_JOB}"'
-    ) < deploy_text.index('gcloud run deploy "${API_SERVICE}"')
+    ) and deploy_text.index("validate_cloud_run_live_deployment.py smoke") < deploy_text.index(
+        'promote_service_traffic "${API_SERVICE}"'
+    ) < deploy_text.index('promote_service_traffic "${WEB_SERVICE}"')
     worker_receipt_contract = all(
         marker in entrypoint_text
         for marker in (
@@ -239,9 +270,7 @@ def repository_capability_checks(
     )
     live_operator_seed_blocked = False
     try:
-        operator_module = importlib.import_module(
-            "modules.opsboard.application.operator_state"
-        )
+        operator_module = importlib.import_module("modules.opsboard.application.operator_state")
         operator_service = operator_module.OperatorStateService(
             require_live_data=True,
             persistence_mode="memory",
@@ -308,14 +337,21 @@ def repository_capability_checks(
             ),
         ),
         CheckResult(
+            ok=release_traffic_wired,
+            name="repository:release_traffic",
+            detail=(
+                "candidate revisions deploy without traffic, pass smoke, then promote with rollback armed"
+                if release_traffic_wired
+                else "missing: no-traffic candidate smoke, ordered promotion, or traffic rollback"
+            ),
+        ),
+        CheckResult(
             ok=live_operator_seed_blocked and has_live_operator_repository,
             name="repository:operator_bootstrap_data_source",
             detail=(
                 "operator bootstrap is wired to a live repository"
                 if live_operator_seed_blocked and has_live_operator_repository
-                else (
-                    "invalid: live-required OperatorStateService still exposes seed data"
-                )
+                else ("invalid: live-required OperatorStateService still exposes seed data")
                 if not live_operator_seed_blocked
                 else (
                     "missing: OperatorStateService has no live operator repository; "
@@ -347,9 +383,7 @@ def _provider_definitions(root: Path) -> tuple[Any, ...]:
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
     importlib.invalidate_caches()
-    registry_module = importlib.import_module(
-        "modules.external_data.connectors.provider_registry"
-    )
+    registry_module = importlib.import_module("modules.external_data.connectors.provider_registry")
     return tuple(registry_module.provider_registry())
 
 
@@ -563,6 +597,22 @@ def preflight_checks(
             )
         )
 
+    forecast_binding = (
+        env.get("ODP_FORECAST_ENGINE", "").strip().lower(),
+        env.get("ODP_FORECAST_MODEL", "").strip().lower(),
+    )
+    checks.append(
+        CheckResult(
+            ok=forecast_binding in SUPPORTED_FORECAST_BINDINGS,
+            name="runtime:forecast_binding",
+            detail=(
+                f"supported={forecast_binding[0]}:{forecast_binding[1]}"
+                if forecast_binding in SUPPORTED_FORECAST_BINDINGS
+                else f"unsupported={forecast_binding[0] or '<missing>'}:{forecast_binding[1] or '<missing>'}"
+            ),
+        )
+    )
+
     normalized_sha = expected_sha.strip().lower()
     checks.append(
         CheckResult(
@@ -674,6 +724,162 @@ def _dependency_text(payload: Mapping[str, Any], key: str) -> str:
     return json.dumps(value, sort_keys=True).lower() if value is not None else ""
 
 
+def _provider_probe_checks(
+    payload: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> list[CheckResult]:
+    dependencies = payload.get("dependencies")
+    provider_report = (
+        dependencies.get("external_providers") if isinstance(dependencies, Mapping) else None
+    )
+    if not isinstance(provider_report, Mapping):
+        return [
+            CheckResult(
+                False,
+                "smoke:/platform/health:external_providers:contract",
+                "missing structured provider connectivity report",
+            )
+        ]
+
+    connectivity_ok = (
+        provider_report.get("status") == "healthy"
+        and provider_report.get("mode") == "live"
+        and provider_report.get("configuration_valid") is True
+        and provider_report.get("connectivity_healthy") is True
+    )
+    checks = [
+        CheckResult(
+            ok=connectivity_ok,
+            name="smoke:/platform/health:external_providers:connectivity",
+            detail=(
+                "configuration and live connectivity healthy"
+                if connectivity_ok
+                else "configuration or live connectivity is not healthy"
+            ),
+        )
+    ]
+    declared_ids = {
+        str(value)
+        for value in provider_report.get("required_provider_ids", [])
+        if isinstance(value, str)
+    }
+    probes = provider_report.get("probes")
+    probe_items = probes if isinstance(probes, list) else []
+    probe_by_id = {
+        str(probe.get("provider_id")): probe
+        for probe in probe_items
+        if isinstance(probe, Mapping) and isinstance(probe.get("provider_id"), str)
+    }
+    complete = (
+        declared_ids == REQUIRED_PRODUCT_PROVIDER_IDS
+        and set(probe_by_id) == REQUIRED_PRODUCT_PROVIDER_IDS
+    )
+    checks.append(
+        CheckResult(
+            ok=complete,
+            name="smoke:/platform/health:external_providers:completeness",
+            detail=(
+                "all four required providers have probe evidence"
+                if complete
+                else (
+                    "missing provider probe evidence: "
+                    + ",".join(sorted(REQUIRED_PRODUCT_PROVIDER_IDS - set(probe_by_id)))
+                )
+            ),
+        )
+    )
+
+    checked_at = _parse_utc_timestamp(provider_report.get("checked_at"))
+    expires_at = _parse_utc_timestamp(provider_report.get("expires_at"))
+    freshness_ok = _probe_timestamp_is_fresh(
+        checked_at=checked_at,
+        expires_at=expires_at,
+        now=now,
+    )
+    checks.append(
+        CheckResult(
+            ok=freshness_ok,
+            name="smoke:/platform/health:external_providers:freshness",
+            detail=(
+                "provider probe report is fresh"
+                if freshness_ok
+                else "provider probe report is missing, expired, or too old"
+            ),
+        )
+    )
+
+    for provider_id in sorted(REQUIRED_PRODUCT_PROVIDER_IDS):
+        evidence = probe_by_id.get(provider_id)
+        evidence_checked_at = (
+            _parse_utc_timestamp(evidence.get("checked_at")) if evidence is not None else None
+        )
+        evidence_expires_at = (
+            _parse_utc_timestamp(evidence.get("expires_at")) if evidence is not None else None
+        )
+        evidence_ok = bool(
+            evidence is not None
+            and evidence.get("configuration_valid") is True
+            and evidence.get("connectivity_healthy") is True
+            and evidence.get("authentication_accepted") is True
+            and evidence.get("response_valid") is True
+            and evidence.get("schema_valid") is True
+            and evidence.get("http_status") == 200
+            and evidence.get("reason_code") == "ok"
+            and _probe_timestamp_is_fresh(
+                checked_at=evidence_checked_at,
+                expires_at=evidence_expires_at,
+                now=now,
+            )
+        )
+        reason = (
+            str(evidence.get("reason_code") or "missing_reason")
+            if evidence is not None
+            else "missing_probe"
+        )
+        checks.append(
+            CheckResult(
+                ok=evidence_ok,
+                name=(f"smoke:/platform/health:external_providers:{provider_id}"),
+                detail=(
+                    "authenticated response and schema probe passed"
+                    if evidence_ok
+                    else f"provider probe failed: reason_code={reason}"
+                ),
+            )
+        )
+    return checks
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _probe_timestamp_is_fresh(
+    *,
+    checked_at: datetime | None,
+    expires_at: datetime | None,
+    now: datetime | None,
+) -> bool:
+    if checked_at is None or expires_at is None:
+        return False
+    resolved_now = (now or datetime.now(UTC)).astimezone(UTC)
+    age_seconds = (resolved_now - checked_at).total_seconds()
+    return (
+        -5 <= age_seconds <= MAX_PROVIDER_PROBE_AGE_SECONDS
+        and checked_at <= expires_at
+        and resolved_now <= expires_at
+    )
+
+
 def _contains_forbidden_marker(value: str) -> bool:
     normalized = value.lower()
     return any(marker in normalized for marker in FORBIDDEN_DATA_MARKERS)
@@ -694,7 +900,7 @@ def smoke_checks(
     *,
     api_url: str,
     web_url: str,
-    expected_sha: str,
+    expected_sha: str | None,
     bearer_token: str,
     operator_role: str,
     operator_subject: str,
@@ -737,15 +943,18 @@ def smoke_checks(
         except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
             checks.append(CheckResult(False, f"smoke:{path}:http", str(exc)))
 
-    version = payloads.get("version", {})
-    actual_sha = str(version.get("release_sha") or "").strip().lower()
-    checks.append(
-        CheckResult(
-            ok=actual_sha == expected_sha.strip().lower(),
-            name="smoke:/platform/version:release_sha",
-            detail=f"expected={expected_sha.strip().lower()} actual={actual_sha or '<missing>'}",
+    if expected_sha is not None:
+        version = payloads.get("version", {})
+        actual_sha = str(version.get("release_sha") or "").strip().lower()
+        checks.append(
+            CheckResult(
+                ok=actual_sha == expected_sha.strip().lower(),
+                name="smoke:/platform/version:release_sha",
+                detail=(
+                    f"expected={expected_sha.strip().lower()} actual={actual_sha or '<missing>'}"
+                ),
+            )
         )
-    )
 
     for name in ("health", "readiness"):
         payload = payloads.get(name, {})
@@ -772,20 +981,7 @@ def smoke_checks(
         )
 
     health = payloads.get("health", {})
-    providers = _dependency_text(health, "external_providers")
-    checks.append(
-        CheckResult(
-            ok=bool(providers)
-            and "healthy" in providers
-            and not _contains_forbidden_marker(providers),
-            name="smoke:/platform/health:external_providers",
-            detail=(
-                "live providers healthy"
-                if providers and "healthy" in providers and not _contains_forbidden_marker(providers)
-                else "missing, unhealthy, or fixture provider mode"
-            ),
-        )
-    )
+    checks.extend(_provider_probe_checks(health))
     job_queue = _dependency_text(health, "job_queue")
     checks.append(
         CheckResult(
@@ -871,6 +1067,72 @@ def smoke_checks(
     return checks, report
 
 
+def compatibility_smoke_checks(
+    *,
+    api_url: str,
+    web_url: str,
+    correlation_id: str,
+    timeout: float,
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Verify that the old API can still read the migrated production database."""
+
+    checks: list[CheckResult] = []
+    report: dict[str, Any] = {
+        "api_url": api_url.rstrip("/"),
+        "web_url": web_url.rstrip("/"),
+        "correlation_id": correlation_id,
+        "secret_values_redacted": True,
+    }
+    headers = {"x-correlation-id": correlation_id}
+
+    try:
+        version_status, version = _json_request(
+            f"{api_url.rstrip('/')}/platform/version",
+            headers=headers,
+            timeout=timeout,
+        )
+        report["version"] = version
+        checks.append(
+            CheckResult(
+                ok=version_status == 200,
+                name="compatibility:/platform/version:http",
+                detail=f"status={version_status}",
+            )
+        )
+    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
+        checks.append(CheckResult(False, "compatibility:/platform/version:http", str(exc)))
+
+    try:
+        health_status, health = _json_request(
+            f"{api_url.rstrip('/')}/platform/health",
+            headers=headers,
+            timeout=timeout,
+        )
+        report["health"] = health
+        database = _dependency_text(health, "database")
+        database_compatible = (
+            health_status in {200, 503}
+            and bool(database)
+            and "healthy" in database
+            and not _contains_forbidden_marker(database)
+        )
+        checks.append(
+            CheckResult(
+                ok=database_compatible,
+                name="compatibility:/platform/health:database",
+                detail=(
+                    "old revision remains compatible with the migrated production database"
+                    if database_compatible
+                    else f"status={health_status} database={database or '<missing>'}"
+                ),
+            )
+        )
+    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
+        checks.append(CheckResult(False, "compatibility:/platform/health:database", str(exc)))
+
+    return checks, report
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -887,9 +1149,7 @@ def _execution_completed(payload: Mapping[str, Any]) -> bool:
     if not isinstance(status, Mapping):
         return False
     failed_count = int(status.get("failedCount") or status.get("failed_count") or 0)
-    succeeded_count = int(
-        status.get("succeededCount") or status.get("succeeded_count") or 0
-    )
+    succeeded_count = int(status.get("succeededCount") or status.get("succeeded_count") or 0)
     conditions = status.get("conditions")
     completed = False
     if isinstance(conditions, list):
@@ -1026,6 +1286,15 @@ def main() -> int:
     smoke.add_argument("--timeout", type=float, default=15.0)
     smoke.add_argument("--output", type=Path)
 
+    compatibility_smoke = subparsers.add_parser("compatibility-smoke")
+    compatibility_smoke.add_argument("--api-url", required=True)
+    compatibility_smoke.add_argument("--web-url", required=True)
+    compatibility_smoke.add_argument(
+        "--correlation-id", default=f"corr-cloud-run-compat-{int(time.time())}"
+    )
+    compatibility_smoke.add_argument("--timeout", type=float, default=15.0)
+    compatibility_smoke.add_argument("--output", type=Path)
+
     jobs_smoke = subparsers.add_parser("jobs-smoke")
     jobs_smoke.add_argument(
         "--job-kind", required=True, choices=("migration", "worker", "scheduler")
@@ -1085,34 +1354,46 @@ def main() -> int:
             label=f"Cloud Run {args.job_kind} Job smoke",
         )
 
-    token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
-    checks: list[CheckResult] = []
-    if not token.strip():
-        checks.append(
-            CheckResult(
-                False,
-                "secret:ODP_OPERATOR_SMOKE_BEARER_TOKEN",
-                "missing; authenticated operator bootstrap cannot be verified",
-            )
-        )
-        report = {"secret_values_redacted": True}
-    else:
-        checks, report = smoke_checks(
+    if args.command == "compatibility-smoke":
+        checks, report = compatibility_smoke_checks(
             api_url=args.api_url,
             web_url=args.web_url,
-            expected_sha=args.expected_sha,
-            bearer_token=token,
-            operator_role=os.environ.get("ODP_OPERATOR_SMOKE_ROLE", ""),
-            operator_subject=os.environ.get("ODP_OPERATOR_SMOKE_SUBJECT", ""),
-            operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
             correlation_id=args.correlation_id,
             timeout=args.timeout,
         )
+    else:
+        token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
+        checks = []
+        if not token.strip():
+            checks.append(
+                CheckResult(
+                    False,
+                    "secret:ODP_OPERATOR_SMOKE_BEARER_TOKEN",
+                    "missing; authenticated operator bootstrap cannot be verified",
+                )
+            )
+            report = {"secret_values_redacted": True}
+        else:
+            checks, report = smoke_checks(
+                api_url=args.api_url,
+                web_url=args.web_url,
+                expected_sha=args.expected_sha,
+                bearer_token=token,
+                operator_role=os.environ.get("ODP_OPERATOR_SMOKE_ROLE", ""),
+                operator_subject=os.environ.get("ODP_OPERATOR_SMOKE_SUBJECT", ""),
+                operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
+                correlation_id=args.correlation_id,
+                timeout=args.timeout,
+            )
     return _finalize(
         checks=checks,
         report=report,
         output=args.output,
-        label="Cloud Run live deployment smoke",
+        label=(
+            "Cloud Run live deployment smoke"
+            if args.command == "smoke"
+            else "Cloud Run migration compatibility smoke"
+        ),
     )
 
 
