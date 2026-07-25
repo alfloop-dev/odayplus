@@ -1,14 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import type {
   AssistedIntake,
-  IntakeStage,
   JobReceipt,
   SlaReceipt,
   TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { stageLabel, stageSteps, stageTone } from "./intakeTypes";
+import { StateMatrix } from "./StateMatrix";
 
 export type IntakeStageTimelineProps = {
   record: AssistedIntake;
@@ -31,6 +32,7 @@ export function IntakeStageTimeline({
   onCancel,
   testId = "intake-stage-timeline",
 }: IntakeStageTimelineProps) {
+  const [matrixOpen, setMatrixOpen] = useState(false);
   const steps = stageSteps(record);
   const activeJob = jobs.find((j) => j.status === "RUNNING" || j.status === "RETRYING" || j.status === "DEAD_LETTER") ?? jobs[0];
   const isDlq = activeJob?.status === "DEAD_LETTER" || record.stage === "FAILED";
@@ -38,24 +40,36 @@ export function IntakeStageTimeline({
 
   return (
     <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+      <div className={styles.timelineHeader}>
         <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
           <span>階段時序與執行歷程 STAGE TIMELINE</span>
           <span className={styles.chip} data-tone={stageTone(record.stage)}>
             {stageLabel(record.stage)}
           </span>
         </h4>
-        {onCancel && !isCancelled && record.stage !== "READY" && (
+        <div className={styles.timelineActions}>
           <button
-            type="button"
-            onClick={onCancel}
+            aria-expanded={matrixOpen}
+            aria-haspopup="dialog"
             className={styles.secondaryButton}
-            style={{ padding: "3px 8px", fontSize: "10.5px", color: "#b3261e" }}
-            data-testid="timeline-cancel-button"
+            data-testid="open-intake-state-matrix"
+            onClick={() => setMatrixOpen(true)}
+            type="button"
           >
-            取消流程 (Cancel Intake)
+            Intake 狀態矩陣
           </button>
-        )}
+          {onCancel && !isCancelled && record.stage !== "READY" && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className={styles.secondaryButton}
+              style={{ color: "#b3261e" }}
+              data-testid="timeline-cancel-button"
+            >
+              取消流程 (Cancel Intake)
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 1. Stepper without fake percentages */}
@@ -276,6 +290,8 @@ export function IntakeStageTimeline({
           </div>
         </div>
       )}
+
+      {matrixOpen ? <StateMatrix onClose={() => setMatrixOpen(false)} /> : null}
     </div>
   );
 }

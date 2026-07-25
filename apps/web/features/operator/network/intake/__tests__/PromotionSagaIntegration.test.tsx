@@ -376,6 +376,11 @@ describe("promotion saga — live operator route integration", () => {
     });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    expect(screen.getByTestId("promotion-confirmation-dialog")).toHaveAttribute(
+      "data-screen-label",
+      "Dialog Promotion 核准",
+    );
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
 
     await waitFor(() => {
       expect(
@@ -508,8 +513,10 @@ describe("promotion saga — live operator route integration", () => {
     });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
 
     await screen.findByTestId("promotion-lost-response");
+    expect(screen.getByTestId("promotion-confirmation-error")).toHaveTextContent("Idempotency-Key");
     fireEvent.click(screen.getByTestId("promotion-lookup-btn"));
 
     await waitFor(() => {

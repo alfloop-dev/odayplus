@@ -155,7 +155,7 @@ export function IntakeProcessingDetail({
       ariaLabel={`收件處理詳情 ${record.id}`}
       className={styles.panelWide}
       onClose={onClose}
-      screenLabel="Dialog 收件處理詳情"
+      screenLabel="Intake 收件處理詳情頁"
       testId={testId}
     >
       {/* Header */}

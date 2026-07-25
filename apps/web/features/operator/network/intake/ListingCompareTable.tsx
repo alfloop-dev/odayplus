@@ -57,6 +57,7 @@ export function ListingCompareTable({
   const compareRows = useMemo<ListingCompareRow[]>(() => {
     const agreeingKeys = new Set((match?.agreeingSignals ?? []).map((s) => s.key));
     const contradictingMap = new Map((match?.contradictingSignals ?? []).map((s) => [s.key, s.detail]));
+    const parsedValue = (...keys: string[]) => keys.map((key) => parsedMap.get(key)).find((value) => value !== undefined);
 
     const fields: Array<{
       key: string;
@@ -67,7 +68,7 @@ export function ListingCompareTable({
       {
         key: "sourceId",
         label: "來源 ID (Source ID)",
-        targetVal: targetListing?.sourceId ?? (targetId ? `SRC-${targetId.slice(-6)}` : undefined),
+        targetVal: targetListing?.sourceId,
         subVal: record.sourceId,
       },
       {
@@ -80,13 +81,13 @@ export function ListingCompareTable({
         key: "address",
         label: "地址 (Address)",
         targetVal: targetListing?.address,
-        subVal: parsedMap.get("address") ?? parsedMap.get("normalized_address"),
+        subVal: parsedValue("address", "normalized_address", "address_raw"),
       },
       {
         key: "area",
         label: "坪數/面積 (Area)",
         targetVal: targetListing?.area,
-        subVal: parsedMap.get("area") ?? parsedMap.get("ping"),
+        subVal: parsedValue("area", "area_ping", "ping"),
       },
       {
         key: "floor",
@@ -98,19 +99,19 @@ export function ListingCompareTable({
         key: "listingType",
         label: "物件類型 (Listing Type)",
         targetVal: targetListing?.listingType,
-        subVal: parsedMap.get("listingType") ?? parsedMap.get("listing_type"),
+        subVal: parsedValue("listingType", "listing_type", "property_type"),
       },
       {
         key: "rent",
         label: "租金/價格 (Rent/Price)",
         targetVal: targetListing?.rent,
-        subVal: parsedMap.get("rent") ?? parsedMap.get("price"),
+        subVal: parsedValue("rent", "rent_amount", "asking_price", "price"),
       },
       {
         key: "status",
-        label: "處理狀態 (Status)",
-        targetVal: targetListing?.status ?? (targetId ? "ACTIVE" : undefined),
-        subVal: record.stage,
+        label: "物件狀態 (Listing Status)",
+        targetVal: targetListing?.status,
+        subVal: parsedValue("status", "listing_status"),
       },
     ];
 
@@ -119,13 +120,16 @@ export function ListingCompareTable({
       const subStr = field.subVal !== undefined && field.subVal !== null ? String(field.subVal) : "—";
       const isContradiction = contradictingMap.has(field.key);
       const isAgreeing = agreeingKeys.has(field.key);
-      const isChanged = targetStr !== subStr || isContradiction;
+      const valuesComparable = targetStr !== "—" && subStr !== "—";
+      const isChanged = (valuesComparable && targetStr !== subStr) || isContradiction;
       let detail = "—";
 
       if (isContradiction) {
         detail = contradictingMap.get(field.key) || "資料不符，存在矛盾訊號";
       } else if (isAgreeing) {
         detail = "資訊一致";
+      } else if (!valuesComparable) {
+        detail = "缺少可比較值";
       } else if (isChanged) {
         detail = "數值變更";
       } else {
@@ -165,12 +169,12 @@ export function ListingCompareTable({
 
   return (
     <div
-      aria-label="物件差異比對表格"
+      aria-label="既有物件與本次送件差異比對"
       className={`${styles.sectionBox} ${className || ""}`}
       data-testid="listing-compare-table"
     >
       <div className={styles.sectionHead}>
-        <span>物件欄位並列比對 LISTING COMPARE TABLE</span>
+        <span>比對結果 MATCH REVIEW</span>
         {outcome ? (
           <span className={styles.chip} data-testid="compare-outcome-badge" data-tone={matchTone(outcome)}>
             {outcome} · {matchLabel(outcome)}
@@ -185,48 +189,64 @@ export function ListingCompareTable({
       </div>
 
       <div className={styles.desktopOnlyNote} data-testid="intake-desktop-required">
-        並列比對與詳細差異分析需要較寬畫面 — 在行動裝置下請至桌面端檢視 complete side-by-side comparison。
+        <strong>DESKTOP_REQUIRED — POSSIBLE_MATCH 完整比對需在桌面完成</strong>
+        <span>
+          行動版可查看狀態與簡單確認；side-by-side 欄位比對與識別決策請改用桌面開啟。Deep link
+          已保留：<code>#intake/{record.id}</code>，你的輸入不會遺失。
+        </span>
       </div>
 
-      <div className={styles.compareGrid} data-testid="compare-table-grid">
-        <div className={styles.fieldsHeadCell}>比對欄位</div>
-        <div className={styles.fieldsHeadCell}>既有目標物件 ({targetId || "無"})</div>
-        <div className={styles.fieldsHeadCell}>本次收件內容 ({record.id})</div>
-        <div className={styles.fieldsHeadCell}>比對判定與說明</div>
+      <div
+        aria-label="Current and submitted values"
+        className={styles.compareGrid}
+        data-testid="compare-table-grid"
+        role="table"
+      >
+        <div className={styles.fieldsHeadCell} role="columnheader">欄位</div>
+        <div className={styles.fieldsHeadCell} role="columnheader">既有物件 ({targetId || "無"})</div>
+        <div className={styles.fieldsHeadCell} role="columnheader">本次送件 ({record.id})</div>
 
         {compareRows.map((row) => (
           <div
-            className={row.contradiction ? styles.compareRowChanged : undefined}
             data-testid={`compare-row-${row.key}`}
             key={row.key}
+            role="row"
             style={{ display: "contents" }}
           >
-            <div className={styles.fieldCell} data-label="欄位">
+            <div
+              className={`${styles.fieldCell} ${row.changed ? styles.compareCellChanged : ""}`}
+              data-label="欄位"
+              role="rowheader"
+            >
               <span className={styles.fieldLabelText}>{row.label}</span>
-            </div>
-            <div className={`${styles.fieldCell} ${styles.sourceValue}`} data-label="既有目標">
-              <span>{row.targetValue}</span>
-            </div>
-            <div className={styles.fieldCell} data-label="本次收件">
-              <span className={row.changed ? styles.correctedValue : undefined}>{row.submissionValue}</span>
-            </div>
-            <div className={styles.fieldCell} data-label="判定說明">
               {row.contradiction ? (
                 <span className={styles.changeChip} data-testid={`signal-con-${row.key}`}>
                   ▲ 矛盾 (Contradiction)
                 </span>
               ) : row.changed ? (
-                <span className={styles.chip} data-tone="watch" data-testid={`signal-changed-${row.key}`}>
-                  ~ 變動 (Changed)
+                <span className={styles.changeChip} data-testid={`signal-changed-${row.key}`}>
+                  ▲ 變更 (Changed)
                 </span>
               ) : (
                 <span className={styles.chip} data-tone="good" data-testid={`signal-match-${row.key}`}>
                   ✓ 一致 (Matched)
                 </span>
               )}
-              <span className={styles.metaSub} style={{ marginLeft: "6px" }}>
-                {row.detail}
-              </span>
+              <span className={styles.metaSub}>{row.detail}</span>
+            </div>
+            <div
+              className={`${styles.fieldCell} ${styles.sourceValue} ${row.changed ? styles.compareCellChanged : ""}`}
+              data-label="既有物件"
+              role="cell"
+            >
+              <span>{row.targetValue}</span>
+            </div>
+            <div
+              className={`${styles.fieldCell} ${row.changed ? styles.compareCellChanged : ""}`}
+              data-label="本次送件"
+              role="cell"
+            >
+              <span className={row.changed ? styles.correctedValue : undefined}>{row.submissionValue}</span>
             </div>
           </div>
         ))}
