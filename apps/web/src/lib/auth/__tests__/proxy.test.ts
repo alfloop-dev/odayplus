@@ -256,6 +256,51 @@ describe("production BFF", () => {
     });
   });
 
+  it("bounds an unresponsive upstream and returns a retryable timeout", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const cookie = await productionSessionCookie();
+    const fetchMock = vi.fn(
+      async (_url: URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          expect(signal).toBeInstanceOf(AbortSignal);
+          signal?.addEventListener(
+            "abort",
+            () => reject(signal.reason),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest(
+      "https://web.example/api/v1/operator/bootstrap",
+    );
+    request.cookies.set(webSessionCookieName, cookie);
+
+    const response = await proxyApiRequest(
+      request,
+      "/api/v1/operator/bootstrap",
+      {
+        NODE_ENV: "production",
+        ODP_API_BASE_URL: "https://api.internal.example",
+        ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+      },
+      {
+        resolveServiceIdentityToken: async () => "a.b.c",
+        upstreamTimeoutMs: 5,
+      },
+    );
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "WEB_API_UPSTREAM_TIMEOUT",
+        retryable: true,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("obtains a metadata identity token without exposing it to the browser", async () => {
     const fetchMock = vi.fn(async (url: URL, init?: RequestInit) => {
       expect(url.hostname).toBe("metadata.google.internal");

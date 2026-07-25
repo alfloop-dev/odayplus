@@ -334,6 +334,7 @@ gcloud run services describe "${API_SERVICE}" \
   --format=json >"${API_CANDIDATE_DESCRIPTION}"
 API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
+API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
@@ -412,7 +413,7 @@ execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
 execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
   --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
 
-python3 - "${WEB_ENV_FILE}" "${API_URL}" <<'PY'
+python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<'PY'
 import json
 import os
 import sys
@@ -429,6 +430,7 @@ payload = {
     "NEXT_PUBLIC_ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "NEXT_PUBLIC_ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
     "ODP_API_BASE_URL": sys.argv[2],
+    "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
     "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
     "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],

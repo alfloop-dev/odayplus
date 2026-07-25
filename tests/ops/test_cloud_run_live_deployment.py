@@ -531,6 +531,16 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert ': "${ODP_FORECAST_MODEL:?' in text
     assert '"ODP_FORECAST_ENGINE",' in text
     assert '"ODP_FORECAST_MODEL",' in text
+    assert (
+        'API_SERVICE_AUDIENCE="$(service_snapshot_url '
+        '"${API_CANDIDATE_DESCRIPTION}")"'
+    ) in text
+    assert (
+        'python3 - "${WEB_ENV_FILE}" "${API_URL}" '
+        '"${API_SERVICE_AUDIENCE}" <<\'PY\''
+    ) in text
+    assert '"ODP_API_BASE_URL": sys.argv[2],' in text
+    assert '"ODP_API_SERVICE_AUDIENCE": sys.argv[3],' in text
     assert text.count('--env-vars-file="${API_ENV_FILE}"') == 4
     assert 'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"' in text
     assert 'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"' in text
