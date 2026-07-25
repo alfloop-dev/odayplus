@@ -160,7 +160,7 @@ def test_preflight_imports_every_registry_provider_adapter() -> None:
     checks = validator.provider_adapter_checks(ROOT)
     by_name = {check.name: check for check in checks}
 
-    assert by_name["repository:provider_adapter:listing.partner_feed"].ok is True
+    # Standing live-required set: geocode / poi / admin_boundary.
     assert by_name["repository:provider_adapter:geocode.primary_api"].ok is True
     assert by_name["repository:provider_adapter:poi.commercial_api"].ok is True
     assert (
@@ -172,6 +172,13 @@ def test_preflight_imports_every_registry_provider_adapter() -> None:
         "AdminBoundaryDatasetProvider"
         in by_name["repository:provider_adapter:admin_boundary.official_dataset"].detail
     )
+    # listing.partner_feed is a ready-but-not-required bulk capability; its concrete
+    # adapter must still import when a licensed partner is gated into the allowlist.
+    listing_checks = validator.provider_adapter_checks(
+        ROOT, production_provider_ids=frozenset({"listing.partner_feed"})
+    )
+    listing_by_name = {check.name: check for check in listing_checks}
+    assert listing_by_name["repository:provider_adapter:listing.partner_feed"].ok is True
     assert "repository:provider_adapter:competitor.manual_source" not in by_name
 
 
