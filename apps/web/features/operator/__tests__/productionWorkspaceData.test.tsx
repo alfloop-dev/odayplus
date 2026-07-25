@@ -79,6 +79,7 @@ describe("production workspace data contracts", () => {
       auditEvents: [],
     };
     expect(inspectStoreOpsApiPayload(livePayload)).toBe("ready");
+    expect(inspectStoreOpsApiPayload({ ...livePayload, source: undefined })).toBe("ready");
     expect(inspectStoreOpsApiPayload({ ...livePayload, source: "fixture-store-ops" })).toBe("seed");
     expect(inspectStoreOpsApiPayload({ ...livePayload, issues: [] })).toBe("empty");
   });
