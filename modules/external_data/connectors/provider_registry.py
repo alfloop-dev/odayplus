@@ -156,9 +156,23 @@ class ExternalProviderConfigError(RuntimeError):
 
 LIVE_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
 PRODUCTION_PROVIDER_IDS_ENV_VAR = "ODP_PRODUCTION_PROVIDER_IDS"
+# Providers that MUST be live-configured before the External Data Platform may
+# run in production live mode. These are the enrichment/reference sources that
+# have a live upstream today (geocode, POI, admin boundary).
+#
+# ``listing.partner_feed`` is intentionally NOT required here. The product sources
+# listings through two channels: (1) the assisted-listing-intake subsystem - a
+# human submits one URL and, for sources whose ToS forbid server retrieval
+# (591/rakuya/housefun), manually enters the fields under its own governance gates;
+# and (2) this bulk partner feed, which is fully implemented and tested but requires
+# a signed licensed-data partner (a real feed endpoint + credentials) that does not
+# exist yet. Requiring a live endpoint for an uncontracted partner would block live
+# mode on a business dependency, so the feed stays a defined, ready capability that
+# is gated in only when a licensed partner is configured - it is not part of the
+# standing live-required set.
+# See docs/design/EXTERNAL_PROVIDER_LIVE_REQUIRED_RECONCILIATION.md.
 REQUIRED_PRODUCTION_PROVIDER_IDS = frozenset(
     {
-        "listing.partner_feed",
         "poi.commercial_api",
         "geocode.primary_api",
         "admin_boundary.official_dataset",
