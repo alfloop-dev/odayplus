@@ -178,7 +178,6 @@ def test_deterministic_http_server_exercises_probe_contract_without_claiming_liv
     assert result.configuration_valid is True
     assert result.connectivity_healthy is True
     assert {probe.provider_id for probe in result.probes} == {
-        "listing.partner_feed",
         "poi.commercial_api",
         "geocode.primary_api",
         "admin_boundary.official_dataset",
@@ -188,7 +187,6 @@ def test_deterministic_http_server_exercises_probe_contract_without_claiming_liv
     assert all(probe.schema_valid for probe in result.probes)
     assert all(probe.reason_code == "ok" for probe in result.probes)
     by_path = {request["path"]: request for request in server.requests}
-    assert by_path["/listing"]["api_key"] == "listing-probe-secret"
     assert by_path["/poi"]["api_key"] == "poi-probe-secret"
     assert by_path["/geocode"]["method"] == "POST"
     assert by_path["/geocode"]["api_key"] == "geocode-probe-secret"
@@ -233,7 +231,7 @@ def test_probe_fails_closed_for_provider_specific_schema_failure() -> None:
 
 
 def test_probe_requires_exact_http_200_for_health() -> None:
-    with _deterministic_provider_server(failures={"/listing": "unexpected_status"}) as server:
+    with _deterministic_provider_server(failures={"/admin": "unexpected_status"}) as server:
         env = _production_env(server)
         validation = validate_external_providers(env=env)
         result = probe_external_provider_connectivity(
@@ -241,7 +239,7 @@ def test_probe_requires_exact_http_200_for_health() -> None:
             env=env,
         )
 
-    evidence = {probe.provider_id: probe for probe in result.probes}["listing.partner_feed"]
+    evidence = {probe.provider_id: probe for probe in result.probes}["admin_boundary.official_dataset"]
     assert result.connectivity_healthy is False
     assert evidence.connectivity_healthy is False
     assert evidence.http_status == 201
@@ -249,7 +247,7 @@ def test_probe_requires_exact_http_200_for_health() -> None:
 
 
 def test_probe_timeout_is_bounded_and_provider_specific() -> None:
-    with _deterministic_provider_server(delays={"/listing": 0.2}) as server:
+    with _deterministic_provider_server(delays={"/admin": 0.2}) as server:
         env = _production_env(server)
         env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "0.05"
         validation = validate_external_providers(env=env)
@@ -260,7 +258,7 @@ def test_probe_timeout_is_bounded_and_provider_specific() -> None:
         )
         elapsed = time.monotonic() - started
 
-    evidence = {probe.provider_id: probe for probe in result.probes}["listing.partner_feed"]
+    evidence = {probe.provider_id: probe for probe in result.probes}["admin_boundary.official_dataset"]
     assert elapsed < 0.5
     assert result.connectivity_healthy is False
     assert evidence.reason_code == "timeout"
