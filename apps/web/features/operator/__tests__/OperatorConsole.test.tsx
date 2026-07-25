@@ -129,7 +129,8 @@ describe("OperatorConsole production data gate", () => {
 
   it("shows an error gate when bootstrap cannot be loaded", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "store" }} />);
 
@@ -137,6 +138,14 @@ describe("OperatorConsole production data gate", () => {
     await waitFor(() => {
       expect(gate).toHaveAttribute("data-status", "error");
     });
+    expect(screen.getByTestId("operator-console").className).toContain("consoleNetworkParity");
+    expect(screen.getByRole("button", { name: /今日工作/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /門市營運/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /營運主管/ })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/operator/bootstrap",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(document.querySelector('[data-screen-label="Store Ops 門市營運"]')).not.toBeInTheDocument();
   });
 

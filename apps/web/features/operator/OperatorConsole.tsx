@@ -59,6 +59,7 @@ import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
+const operatorBootstrapTimeoutMs = 10_000;
 
 const notifications = [
   {
@@ -378,33 +379,21 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           label: role.label,
           subtitle: role.subtitle,
         }))
-      : fixturesAllowed
-        ? OPERATOR_ROLES
-        : [];
-  }, [fixturesAllowed, shellEnvelope.navigation.roles]);
+      : OPERATOR_ROLES;
+  }, [shellEnvelope.navigation.roles]);
 
   const activeRole = useMemo(() => {
     return rolesForShell.find((role) => role.id === activeRoleId) ??
-      (fixturesAllowed
-        ? getOperatorRole(activeRoleId)
-        : {
-            allowedWorkspaces: [],
-            id: activeRoleId,
-            label: "",
-            subtitle: "",
-          });
-  }, [activeRoleId, fixturesAllowed, rolesForShell]);
+      getOperatorRole(activeRoleId);
+  }, [activeRoleId, rolesForShell]);
 
   const workspaceNavItems = useMemo(() => {
     return shellEnvelope.navigation.workspaces.length
       ? shellEnvelope.navigation.workspaces
-      : fixturesAllowed
-        ? WORKSPACES
-        : [];
-  }, [fixturesAllowed, shellEnvelope.navigation.workspaces]);
+      : WORKSPACES;
+  }, [shellEnvelope.navigation.workspaces]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
-  const isNetworkWorkspace = activeWorkspaceId === "network";
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
   const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
@@ -450,7 +439,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       setShellLoadError(null);
       try {
         const headers = getSecurityHeaders(activeRoleId);
-        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", { headers });
+        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", {
+          headers,
+          signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
+        });
         if (!bootstrapRes.ok) {
           throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
         }
@@ -980,7 +972,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
   return (
     <div
-      className={[styles.console, isNetworkWorkspace ? styles.consoleNetworkParity : ""].join(" ")}
+      className={[styles.console, styles.consoleNetworkParity].join(" ")}
       data-testid="operator-console"
     >
       <header className={styles.topbar} data-screen-label="Top Navigation">
