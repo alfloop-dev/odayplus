@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.governance import (
     DECISION_ACTIONS,
     GovernanceConflict,
@@ -93,6 +94,7 @@ def create_governance_sub_router(
     require_view_permission_fn: Any = None,
     require_decision_permission_fn: Any = None,
     require_export_permission_fn: Any = None,
+    service_resolver: Any = None,
 ) -> APIRouter:
     """Return the Govern sub-router wired to a shared GovernanceService."""
     router = APIRouter(prefix="/governance", tags=["operator-governance"])
@@ -116,14 +118,16 @@ def create_governance_sub_router(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
-        return service.snapshot(
+        return resolve_service(request, service, service_resolver).snapshot(
             role_id=getattr(request.state, "operator_role_id", None) or x_operator_role,
             correlation_id=request.state.correlation_id,
         )
 
     @router.get("/evidence-packages", dependencies=read_deps)
     def list_evidence_packages(request: Request) -> dict[str, Any]:
-        snap = service.snapshot(correlation_id=request.state.correlation_id)
+        snap = resolve_service(
+            request, service, service_resolver
+        ).snapshot(correlation_id=request.state.correlation_id)
         items = snap["evidencePackages"]
         return {
             "items": items,
@@ -142,7 +146,7 @@ def create_governance_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
-            return service.decide(
+            return resolve_service(request, service, service_resolver).decide(
                 approval_id=body.approvalId,
                 action=body.action,
                 reason=body.reason,
@@ -166,7 +170,9 @@ def create_governance_sub_router(
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
-        return service.export_evidence_package(
+        return resolve_service(
+            request, service, service_resolver
+        ).export_evidence_package(
             date_from=body.dateFrom,
             date_to=body.dateTo,
             modules=body.modules,

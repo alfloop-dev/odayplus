@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.production_runtime import ProductionModelRuntime
 from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain.scoring import SiteScoreFeatureInput, SiteScoreReport
-from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+from modules.sitescore.infrastructure.repositories import SiteScoreRepository
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,20 @@ class SiteScoreBatchScoreResult:
 
 
 class SiteScoreScoringWorker:
-    def __init__(self, *, repository: InMemorySiteScoreRepository | None = None) -> None:
-        self.service = SiteScoreReportService(repository=repository)
+    def __init__(
+        self,
+        *,
+        repository: SiteScoreRepository | None = None,
+        model_runtime: ProductionModelRuntime | None = None,
+        require_production_model: bool | None = None,
+        runtime_mode: str | None = None,
+    ) -> None:
+        self.service = SiteScoreReportService(
+            repository=repository,
+            model_runtime=model_runtime,
+            require_production_model=require_production_model,
+            runtime_mode=runtime_mode,
+        )
 
     def run(
         self,
@@ -69,9 +82,17 @@ def run_sitescore_batch_score(
     job_id: str | None = None,
     features: Iterable[SiteScoreFeatureInput | Mapping[str, Any]],
     prediction_origin_time: datetime | str | None = None,
-    repository: InMemorySiteScoreRepository | None = None,
+    repository: SiteScoreRepository | None = None,
+    model_runtime: ProductionModelRuntime | None = None,
+    require_production_model: bool | None = None,
+    runtime_mode: str | None = None,
 ) -> SiteScoreBatchScoreResult:
-    return SiteScoreScoringWorker(repository=repository).run(
+    return SiteScoreScoringWorker(
+        repository=repository,
+        model_runtime=model_runtime,
+        require_production_model=require_production_model,
+        runtime_mode=runtime_mode,
+    ).run(
         job_id=job_id,
         features=features,
         prediction_origin_time=prediction_origin_time,

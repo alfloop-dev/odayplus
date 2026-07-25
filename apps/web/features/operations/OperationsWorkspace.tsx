@@ -2,9 +2,18 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import type { StatusTone } from "@oday-plus/domain-types";
-import type { ForecastAlert } from "@oday-plus/openapi-client";
+import type {
+  ForecastAlert,
+  ForecastOutputSummary,
+} from "@oday-plus/openapi-client";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "./ProductionDataState.tsx";
 import {
   alerts,
   formatMoney,
@@ -26,6 +35,9 @@ type OperationsWorkspaceProps = {
   searchParams?: SearchParams;
   /** Live `GET /forecastops/alerts` binding; supplied by the server route. */
   liveAlerts?: ApiBinding<ForecastAlert>;
+  /** Live `GET /forecastops/forecasts` binding; supplied by the server route. */
+  liveForecasts?: ApiBinding<ForecastOutputSummary>;
+  isProduction?: boolean;
 };
 
 const navItems = [
@@ -59,11 +71,162 @@ export function OperationsWorkspace({
   storeId,
   searchParams = {},
   liveAlerts,
+  liveForecasts,
+  isProduction: isProductionProp,
 }: OperationsWorkspaceProps) {
+  const isProduction = resolveProductionMode(isProductionProp);
+  if (isProduction) {
+    return (
+      <ProductionOperationsWorkspace
+        alertBinding={liveAlerts}
+        forecastBinding={liveForecasts}
+        storeId={storeId}
+        view={view}
+      />
+    );
+  }
   if (view === "forecast") return <ForecastPage searchParams={searchParams} />;
   if (view === "alerts") return <AlertsPage searchParams={searchParams} liveAlerts={liveAlerts} />;
   if (view === "storeDetail") return <StoreDetailPage store={selectedStore(storeId)} />;
   return <OperationsOverview liveAlerts={liveAlerts} />;
+}
+
+function ProductionOperationsWorkspace({
+  alertBinding,
+  forecastBinding,
+  storeId,
+  view,
+}: {
+  alertBinding?: ApiBinding<ForecastAlert>;
+  forecastBinding?: ApiBinding<ForecastOutputSummary>;
+  storeId?: string;
+  view: OperationsView;
+}) {
+  const usesForecasts = view === "forecast" || view === "storeDetail";
+  const binding = usesForecasts ? forecastBinding : alertBinding;
+  const resource = usesForecasts ? "ForecastOps forecasts" : "ForecastOps alerts";
+  const state = productionBindingState(binding);
+
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "營運 Operations", href: "/operations" }, { label: view }]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="ForecastOps production workspace. Only persisted API data is rendered."
+        title={view === "alerts" ? "四燈預警佇列" : view === "forecast" ? "Forecast 總覽" : "營運 Operations"}
+      />
+      <main className="odp-content" data-testid={`ops-${view}-production-page`}>
+        <WorkspaceNav active={view} />
+        {usesForecasts ? (
+          <ProductionDataState
+            binding={forecastBinding}
+            resource={resource}
+            testId="ops-production-data-state"
+          >
+            {forecastBinding ? (
+              <LiveForecastTable
+                binding={forecastBinding}
+                selectedStoreId={view === "storeDetail" ? storeId : undefined}
+              />
+            ) : null}
+          </ProductionDataState>
+        ) : (
+          <ProductionDataState
+            binding={alertBinding}
+            resource={resource}
+            testId="ops-production-data-state"
+          >
+            {alertBinding ? <LiveAlertQueue binding={alertBinding} productionMode /> : null}
+          </ProductionDataState>
+        )}
+      </main>
+    </>
+  );
+}
+
+function LiveForecastTable({
+  binding,
+  selectedStoreId,
+}: {
+  binding: ApiBinding<ForecastOutputSummary>;
+  selectedStoreId?: string;
+}) {
+  const rows = selectedStoreId
+    ? binding.items.filter((item) => item.store_id === selectedStoreId)
+    : binding.items;
+
+  return (
+    <section
+      className={styles.panel}
+      data-testid="ops-live-forecasts"
+      aria-label="API-bound ForecastOps outputs"
+    >
+      <div className={styles.badgeRow}>
+        <h2>ForecastOps forecasts（API live）</h2>
+        <ProductionDataBadge binding={binding} testId="ops-forecast-data-source" />
+      </div>
+      {selectedStoreId && rows.length === 0 ? (
+        <p data-testid="ops-live-forecast-not-found">
+          API 回傳資料中沒有 {selectedStoreId}；未以固定預測替代。
+        </p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table} data-testid="ops-live-forecasts-table">
+            <caption>Persisted forecasts served by GET /forecastops/forecasts.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Store</th>
+                <th scope="col">P10 / P50 / P90</th>
+                <th scope="col">Trajectory</th>
+                <th scope="col">Gap</th>
+                <th scope="col">Model</th>
+                <th scope="col">Snapshot lineage</th>
+                <th scope="col">Scored at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((forecast) => (
+                <tr key={forecast.forecast_output_id} data-testid="ops-live-forecast-row">
+                  <td>
+                    <Link href={`/w/operations/forecast/${encodeURIComponent(forecast.store_id)}`}>
+                      {forecast.store_id}
+                    </Link>
+                    <span className={styles.subtle}>
+                      v{forecast.forecast_version} · {forecast.prediction_run_id}
+                    </span>
+                  </td>
+                  <td>
+                    {formatMoney(forecast.p10)} / {formatMoney(forecast.p50)} /{" "}
+                    {formatMoney(forecast.p90)}
+                  </td>
+                  <td>
+                    {forecast.trajectory_class}
+                    <span className={styles.subtle}>
+                      turning {formatPercent(forecast.turning_point_probability)}
+                    </span>
+                  </td>
+                  <td>{formatPercent(forecast.sitescore_gap_ratio)}</td>
+                  <td>
+                    {forecast.model_name} · {forecast.model_version}
+                    <span className={styles.subtle}>
+                      {forecast.engine_name} · {forecast.feature_version}
+                    </span>
+                  </td>
+                  <td className={styles.mono}>{forecast.source_snapshot_ids.join(", ")}</td>
+                  <td>{forecast.scored_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function OperationsOverview({ liveAlerts }: { liveAlerts?: ApiBinding<ForecastAlert> }) {
@@ -491,16 +654,26 @@ function AlertsTable() {
   );
 }
 
-function LiveAlertQueue({ binding }: { binding: ApiBinding<ForecastAlert> }) {
+function LiveAlertQueue({
+  binding,
+  productionMode = false,
+}: {
+  binding: ApiBinding<ForecastAlert>;
+  productionMode?: boolean;
+}) {
   return (
     <section className={styles.panel} data-testid="ops-live-alerts" aria-label="API-bound four-light alerts">
       <div className={styles.badgeRow}>
         <h2>四燈預警（API live）</h2>
-        <DataSourceBadge binding={binding} testId="ops-alert-data-source" />
+        {productionMode ? (
+          <ProductionDataBadge binding={binding} testId="ops-alert-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="ops-alert-data-source" />
+        )}
       </div>
       <p>
-        本區直接讀取 <code>GET /forecastops/alerts</code> 的持久化狀態（含 acknowledged 確認軌跡）；
-        下方固定佇列為 documented non-product fallback。
+        本區直接讀取 <code>GET /forecastops/alerts</code> 的持久化狀態（含 acknowledged 確認軌跡）。
+        {!productionMode ? " 下方固定佇列為 documented non-product fixture。" : null}
       </p>
       {binding.state === "ready" ? (
         <div className={styles.tableWrap}>

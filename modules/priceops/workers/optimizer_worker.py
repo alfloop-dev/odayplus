@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from modules.priceops.application.pricing import PriceOpsService
 from modules.priceops.domain.pricing import PricingPlanItem
+from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 
 
@@ -50,8 +51,18 @@ class PriceOpsBatchResult:
 
 
 class PriceOpsOptimizerWorker:
-    def __init__(self, *, repository: InMemoryPriceOpsRepository | None = None) -> None:
-        self.service = PriceOpsService(repository=repository)
+    def __init__(
+        self,
+        *,
+        repository: InMemoryPriceOpsRepository | None = None,
+        production_optimizer: PriceOpsProductionOptimizer | None = None,
+        runtime_mode: str | None = None,
+    ) -> None:
+        self.service = PriceOpsService(
+            repository=repository,
+            production_optimizer=production_optimizer,
+            runtime_mode=runtime_mode,
+        )
 
     def run(
         self,
@@ -104,8 +115,14 @@ def run_priceops_optimizer_batch(
     job_id: str | None = None,
     optimized_at: datetime | None = None,
     repository: InMemoryPriceOpsRepository | None = None,
+    production_optimizer: PriceOpsProductionOptimizer | None = None,
+    runtime_mode: str | None = None,
 ) -> PriceOpsBatchResult:
-    return PriceOpsOptimizerWorker(repository=repository).run(
+    return PriceOpsOptimizerWorker(
+        repository=repository,
+        production_optimizer=production_optimizer,
+        runtime_mode=runtime_mode,
+    ).run(
         requests=requests,
         job_id=job_id,
         optimized_at=optimized_at,

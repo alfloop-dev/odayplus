@@ -347,10 +347,7 @@ def test_malformed_payload_contract_test(tmp_path) -> None:
 
 def test_unauthorized_contract_test(tmp_path) -> None:
     pipeline = ListingPipeline()
-    # Trigger client auth failure check
-    client = ListingFeedClient(
-        api_url="mock://api", api_key="unauthorized_key"  # pragma: allowlist-secret
-    )
+    client = ListingFeedClient(api_url="https://provider.example/listings", api_key="")
     adapter = LiveListingFeedAdapter(
         client=client,
         pipeline=pipeline,
@@ -361,18 +358,21 @@ def test_unauthorized_contract_test(tmp_path) -> None:
     with pytest.raises(UnauthorizedError) as exc_info:
         adapter.process_feed()
 
-    assert (
-        "Authentication failed" in str(exc_info.value)
-        or "access denied" in str(exc_info.value).lower()
-    )
+    assert "credential is required" in str(exc_info.value)
 
 
 def test_timeout_contract_test(tmp_path) -> None:
     pipeline = ListingPipeline()
-    # Trigger client timeout failure check
-    client = ListingFeedClient(api_url="mock://api", api_key="timeout_trigger")
+
+    class TimeoutClient:
+        def fetch_listings(self, *, correlation_id: str) -> None:
+            raise TimeoutError(
+                "Listing provider request exceeded the configured timeout.",
+                correlation_id=correlation_id,
+            )
+
     adapter = LiveListingFeedAdapter(
-        client=client,
+        client=TimeoutClient(),
         pipeline=pipeline,
         snapshot_dir=str(tmp_path / "snapshots"),
         quarantine_dir=str(tmp_path / "quarantine"),
@@ -381,7 +381,7 @@ def test_timeout_contract_test(tmp_path) -> None:
     with pytest.raises(TimeoutError) as exc_info:
         adapter.process_feed()
 
-    assert "timed out" in str(exc_info.value).lower()
+    assert "timeout" in str(exc_info.value).lower()
 
 
 def test_fixture_compatible_replay(tmp_path) -> None:

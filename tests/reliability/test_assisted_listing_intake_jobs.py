@@ -100,6 +100,14 @@ def test_fencing_optimistic_locking(db_path) -> None:
             bundle.job_queue.heartbeat(
                 job.job_id, expected_version=claimed_w1.version, fence_token=claimed_w1.fence_token
             )
+
+        # Operator replay must use the same fencing contract.
+        with pytest.raises(JobFenceRejectedError):
+            bundle.job_queue.replay(
+                job.job_id,
+                expected_version=claimed_w1.version,
+                fence_token=claimed_w1.fence_token,
+            )
     finally:
         bundle.engine.close()
 

@@ -317,6 +317,18 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
     reopened = build_persistence(mode="durable", db_path=db_path)
     try:
         client = TestClient(create_app(persistence=reopened), headers=AVM_HEADERS)
+        replay = client.post(
+            "/avm/cases",
+            json=payload,
+            headers={
+                "x-correlation-id": correlation_id,
+                "Idempotency-Key": "avm-durable-1",
+            },
+        )
+        assert replay.status_code == 201
+        assert replay.json()["created"] is False
+        assert replay.json()["case_id"] == case_id
+
         case = client.get(f"/avm/cases/{case_id}")
         assert case.status_code == 200
         assert case.json()["status"] == "DATAROOM_READY"

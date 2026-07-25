@@ -50,7 +50,7 @@ export function ListingRadarPanel({
 }) {
   const [filterMode, setFilterMode] = useState<"selected" | "all">("selected");
   const [sourceFilter, setSourceFilter] = useState("all");
-  const [selectedListingId, setSelectedListingId] = useState("L-2024");
+  const [selectedListingId, setSelectedListingId] = useState("");
   const listingById = useMemo(() => new Map(listings.map((listing) => [listing.id, listing])), [listings]);
   const visibleRows =
     filterMode === "selected" && selectedHeatZoneId
@@ -101,7 +101,8 @@ export function ListingRadarPanel({
       {/*
         "Network URL 收件佇列" sits directly under the compliance banner and
         above the source cards, per the Package 7 layout. It owns its own API
-        binding — the radar's fixture-backed list below is a different surface.
+        binding. The radar below is API-bound in production and may use fixtures
+        only in local/POC mode.
       */}
       <AssistedIntakeSection activeRoleId={activeRoleId} selectedHeatZoneId={selectedHeatZoneId} />
 

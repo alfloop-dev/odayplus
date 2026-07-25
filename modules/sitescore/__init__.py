@@ -19,7 +19,11 @@ from modules.sitescore.domain.scoring import (
     score_site,
     score_sites,
 )
-from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
+from modules.sitescore.infrastructure.repositories import (
+    InMemorySiteScoreRepository,
+    SiteScoreRepository,
+)
+from modules.sitescore.runtime import SiteScoreRuntimeConfigurationError
 from modules.sitescore.workers.scoring_worker import (
     SiteScoreBatchScoreResult,
     SiteScoreScoringWorker,
@@ -34,8 +38,10 @@ __all__ = [
     "SiteScoreBatchScoreResult",
     "SiteScoreFeatureInput",
     "SiteScoreRecommendation",
+    "SiteScoreRepository",
     "SiteScoreReport",
     "SiteScoreReportService",
+    "SiteScoreRuntimeConfigurationError",
     "SiteScoreScoringWorker",
     "run_sitescore_batch_score",
     "run_sitescore_reports",

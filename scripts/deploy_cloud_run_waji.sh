@@ -1,188 +1,508 @@
 #!/usr/bin/env bash
 #
-# Deploy ODay Plus API and Web services to GCP Cloud Run.
+# Deploy ODay Plus API/Web services and bounded worker/scheduler Cloud Run Jobs.
 #
-# Required Environment Variables:
-#   GCP_PROJECT     - The GCP Project ID (e.g., alfaloop-data-project)
-#   GCP_REGION      - The GCP Region (e.g., asia-east1)
-#   GCP_AR_REPO     - The GCP Artifact Registry repository name
-#
-# Optional Environment Variables:
-#   IMAGE_TAG       - The docker image tag to push/deploy (defaults to "dev")
-#   API_SERVICE     - Cloud Run service name for API (defaults to "oday-api")
-#   WEB_SERVICE     - Cloud Run service name for Web (defaults to "oday-web")
-#
+# The script is intentionally fail-closed. It will not build or deploy while
+# the repository lacks a production database adapter, worker runtime, concrete
+# live-provider adapters, or a non-seed Operator bootstrap.
 
 set -euo pipefail
 
-# --- Configuration & Validation ---
-
 echo "=== Starting ODay Plus Cloud Run Deployment ==="
 
-IMAGE_TAG="${IMAGE_TAG:-dev}"
-API_SERVICE="${API_SERVICE:-oday-api}"
-WEB_SERVICE="${WEB_SERVICE:-oday-web}"
-
-# Fail-closed validation with clear messages
-MISSING_VARS=0
-if [ -z "${GCP_PROJECT:-}" ]; then
-  echo "Error: GCP_PROJECT environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-if [ -z "${GCP_REGION:-}" ]; then
-  echo "Error: GCP_REGION environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-if [ -z "${GCP_AR_REPO:-}" ]; then
-  echo "Error: GCP_AR_REPO environment variable is not set." >&2
-  MISSING_VARS=1
-fi
-
-if [ "$MISSING_VARS" -ne 0 ]; then
-  echo "Error: Missing required configuration variables. Deploying aborted (fail-closed)." >&2
-  exit 1
-fi
-
-# Check required commands
-for cmd in gcloud docker curl; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "Error: Required command '$cmd' is not installed." >&2
+for cmd in python3 gcloud docker; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: required command '$cmd' is not installed." >&2
     exit 1
   fi
 done
 
-# Define Image URLs
+: "${ODP_DEPLOY_ENV:?Error: ODP_DEPLOY_ENV is required.}"
+: "${ODAY_RELEASE_SHA:?Error: ODAY_RELEASE_SHA is required.}"
+: "${API_SERVICE:?Error: API_SERVICE is required.}"
+: "${WEB_SERVICE:?Error: WEB_SERVICE is required.}"
+: "${MIGRATION_JOB:?Error: MIGRATION_JOB is required.}"
+: "${WORKER_JOB:?Error: WORKER_JOB is required.}"
+: "${SCHEDULER_JOB:?Error: SCHEDULER_JOB is required.}"
+: "${WORKER_SCHEDULE_NAME:?Error: WORKER_SCHEDULE_NAME is required.}"
+: "${SCHEDULER_SCHEDULE_NAME:?Error: SCHEDULER_SCHEDULE_NAME is required.}"
+: "${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT:?Error: ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT is required.}"
+: "${ODP_WORKER_CRON:?Error: ODP_WORKER_CRON is required.}"
+: "${ODP_SCHEDULER_CRON:?Error: ODP_SCHEDULER_CRON is required.}"
+: "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
+: "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
+: "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+
+case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
+  statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
+    ;;
+  mlforecast:hist_gradient_boosting)
+    ;;
+  *)
+    echo "Error: unsupported production ForecastOps binding " \
+      "'${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}'. " \
+      "Expected statsforecast:{seasonal_naive,auto_arima,auto_ets} " \
+      "or mlforecast:hist_gradient_boosting." >&2
+    exit 1
+    ;;
+esac
+
+PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
+SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
+MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
+JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
+source scripts/deployment/cloud_run_release_traffic.sh
+
+echo "Running fail-closed live deployment preflight..."
+python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+  --environment "${ODP_DEPLOY_ENV}" \
+  --release-sha "${ODAY_RELEASE_SHA}" \
+  --output "${PREFLIGHT_REPORT}"
+
+# No build, push, or Cloud Run mutation may occur above this line.
+IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
+REVISION_SUFFIX="release-${ODAY_RELEASE_SHA:0:12}"
+API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
+WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
+release_job_name() {
+  local base="$1"
+  local suffix="-r-${ODAY_RELEASE_SHA:0:12}"
+  local prefix_length=$((63 - ${#suffix}))
+  printf "%s%s" "${base:0:${prefix_length}}" "${suffix}"
+}
+MIGRATION_CANDIDATE_JOB="$(release_job_name "${MIGRATION_JOB}")"
+WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
+SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
 WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+WORKER_IMAGE="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
+SCHEDULER_IMAGE="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
 
-echo "Deployment Details:"
+echo "Deployment details:"
+echo "  Environment:      ${ODP_DEPLOY_ENV}"
+echo "  Release SHA:      ${ODAY_RELEASE_SHA}"
 echo "  GCP Project:      ${GCP_PROJECT}"
 echo "  GCP Region:       ${GCP_REGION}"
 echo "  Artifact Repo:    ${GCP_AR_REPO}"
-echo "  Image Tag:        ${IMAGE_TAG}"
-echo "  API Image:        ${API_IMAGE}"
-echo "  Web Image:        ${WEB_IMAGE}"
-echo "  API Service Name: ${API_SERVICE}"
-echo "  Web Service Name: ${WEB_SERVICE}"
+echo "  API Service:      ${API_SERVICE}"
+echo "  Web Service:      ${WEB_SERVICE}"
+echo "  Migration Job:    ${MIGRATION_JOB}"
+echo "  Worker Job:       ${WORKER_JOB}"
+echo "  Scheduler Job:    ${SCHEDULER_JOB}"
+echo "  Runtime Mode:     live / production / PostgreSQL"
 echo "----------------------------------------------"
 
-# --- Docker Registry Authentication ---
-echo "Authenticating docker with Artifact Registry at ${REGISTRY_HOST}..."
+API_ENV_FILE="$(mktemp)"
+WEB_ENV_FILE="$(mktemp)"
+API_TRAFFIC_SNAPSHOT="$(mktemp)"
+WEB_TRAFFIC_SNAPSHOT="$(mktemp)"
+API_CANDIDATE_DESCRIPTION="$(mktemp)"
+WEB_CANDIDATE_DESCRIPTION="$(mktemp)"
+SCHEDULER_TRIGGER_SNAPSHOT="$(mktemp)"
+WORKER_TRIGGER_SNAPSHOT="$(mktemp)"
+ROLLBACK_ARMED=false
+SCHEDULER_ROLLBACK_ARMED=false
+DEPLOYMENT_COMMITTED=false
+cleanup() {
+  rm -f \
+    "${API_ENV_FILE}" \
+    "${WEB_ENV_FILE}" \
+    "${API_TRAFFIC_SNAPSHOT}" \
+    "${WEB_TRAFFIC_SNAPSHOT}" \
+    "${API_CANDIDATE_DESCRIPTION}" \
+    "${WEB_CANDIDATE_DESCRIPTION}" \
+    "${SCHEDULER_TRIGGER_SNAPSHOT}" \
+    "${WORKER_TRIGGER_SNAPSHOT}"
+}
+handle_deployment_exit() {
+  local status=$?
+  local rollback_status=0
+  trap - EXIT
+  set +e
+  if [ "${status}" -ne 0 ] \
+    && [ "${ROLLBACK_ARMED}" = "true" ] \
+    && [ "${DEPLOYMENT_COMMITTED}" != "true" ]; then
+    echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    rollback_release_traffic \
+      "${API_SERVICE}" \
+      "${API_TRAFFIC_SNAPSHOT}" \
+      "${WEB_SERVICE}" \
+      "${WEB_TRAFFIC_SNAPSHOT}" || rollback_status=$?
+    if [ "${rollback_status}" -ne 0 ]; then
+      echo "Error: one or more Cloud Run traffic restores failed." >&2
+    fi
+    if [ "${SCHEDULER_ROLLBACK_ARMED}" = "true" ]; then
+      echo "Restoring the recorded Cloud Scheduler trigger targets." >&2
+      restore_scheduler_trigger \
+        "${SCHEDULER_SCHEDULE_NAME}" \
+        "${SCHEDULER_TRIGGER_SNAPSHOT}" || rollback_status=$?
+      restore_scheduler_trigger \
+        "${WORKER_SCHEDULE_NAME}" \
+        "${WORKER_TRIGGER_SNAPSHOT}" || rollback_status=$?
+      if [ "${rollback_status}" -ne 0 ]; then
+        echo "Error: one or more Cloud Scheduler trigger restores failed." >&2
+      fi
+    fi
+  fi
+  cleanup
+  exit "${status}"
+}
+trap handle_deployment_exit EXIT
+mkdir -p "${JOB_REPORT_DIR}"
+
+python3 - "${API_ENV_FILE}" <<'PY'
+import json
+import os
+import sys
+
+keys = (
+    "ODAY_RELEASE_SHA",
+    "ODP_DEPLOY_ENV",
+    "ODP_REQUIRE_LIVE_DATA",
+    "ODP_DATA_BINDING_MODE",
+    "ODP_PRODUCT_MODE",
+    "ODP_FORECAST_ENGINE",
+    "ODP_FORECAST_MODEL",
+    "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_PERSISTENCE",
+    "ODP_OBJECT_STORE",
+    "ODP_SNAPSHOT_BUCKET",
+    "MLFLOW_TRACKING_URI",
+    "ODP_LISTING_PROVIDER_FEED_URL",
+    "ODP_POI_PROVIDER_URL",
+    "ODP_GEOCODE_PROVIDER_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+    "ODP_LISTING_PROVIDER_AUTH_STATUS",
+    "ODP_POI_PROVIDER_AUTH_STATUS",
+    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+    "ODP_PRODUCTION_PROVIDER_IDS",
+    "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
+    "ODP_AUTH_ISSUER",
+    "ODP_AUTH_AUDIENCES",
+    "ODP_AUTH_JWKS_URI",
+)
+payload = {key: os.environ[key] for key in keys}
+payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
+payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
+json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
+PY
+
 gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
 
-# --- Build & Deploy API Service ---
-echo "Building API container image..."
-docker build \
-  --platform linux/amd64 \
-  -t "${API_IMAGE}" \
-  -f infra/docker/api.Dockerfile \
-  .
+build_publish_sign() {
+  local name="$1"
+  local image="$2"
+  local dockerfile="$3"
+  echo "Building and publishing ${name} image..."
+  docker build \
+    --platform linux/amd64 \
+    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+    --label "com.oday-plus.data-binding=live" \
+    -t "${image}" \
+    -f "${dockerfile}" \
+    .
+  docker push "${image}"
 
-echo "Pushing API container image to Artifact Registry..."
-docker push "${API_IMAGE}"
+  if command -v cosign >/dev/null 2>&1; then
+    cosign sign --yes "${image}"
+    CI=true ./scripts/security/sign_images.sh verify "${image}"
+  else
+    echo "Error: cosign is required for a production deployment." >&2
+    exit 1
+  fi
+}
 
-if command -v cosign &>/dev/null; then
-  echo "Signing API container image..."
-  cosign sign --yes "${API_IMAGE}"
-  echo "Verifying API container image signature..."
-  CI=true ./scripts/security/sign_images.sh verify "${API_IMAGE}"
-else
-  echo "Warning: Cosign is not installed. Skipping API image signing and verification."
-fi
+build_publish_sign "API" "${API_IMAGE}" "infra/docker/api.Dockerfile"
+build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
+build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
-echo "Deploying API service to Cloud Run..."
+API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
+API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
+API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+
+capture_job_proof() {
+  local kind="$1"
+  local job="$2"
+  local description_file="${JOB_REPORT_DIR}/${kind}-job.json"
+  local execution_file="${JOB_REPORT_DIR}/${kind}-execution.json"
+  gcloud run jobs describe "${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${description_file}"
+  gcloud run jobs executions describe-latest \
+    --job="${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${execution_file}"
+  python3 scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
+    --job-kind="${kind}" \
+    --job-description="${description_file}" \
+    --execution="${execution_file}" \
+    --expected-sha="${ODAY_RELEASE_SHA}" \
+    --output="${JOB_REPORT_DIR}/${kind}-validation.json"
+}
+
+execute_job() {
+  local kind="$1"
+  local job="$2"
+  shift 2
+  echo "Executing ${kind} Cloud Run Job..."
+  if ! gcloud run jobs execute "${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --wait \
+    --quiet \
+    "$@"; then
+    gcloud run jobs executions describe-latest \
+      --job="${job}" \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --format=json >"${JOB_REPORT_DIR}/${kind}-execution.json" || true
+    echo "Error: ${kind} Cloud Run Job failed; deployment stopped." >&2
+    return 1
+  fi
+  capture_job_proof "${kind}" "${job}"
+}
+
+echo "Recording the existing API/Web traffic before any runtime mutation..."
+capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
+capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
+capture_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_TRIGGER_SNAPSHOT}"
+capture_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_TRIGGER_SNAPSHOT}"
+OLD_API_URL="$(service_snapshot_url "${API_TRAFFIC_SNAPSHOT}")"
+OLD_WEB_URL="$(service_snapshot_url "${WEB_TRAFFIC_SNAPSHOT}")"
+ROLLBACK_ARMED=true
+
+echo "Deploying immutable migration candidate Cloud Run Job..."
+gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
+  --image="${WORKER_IMAGE}" \
+  --region="${GCP_REGION}" \
+  --project="${GCP_PROJECT}" \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --set-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
+  --env-vars-file="${API_ENV_FILE}" \
+  --set-secrets="${API_SECRET_BINDINGS}" \
+  --command=python \
+  --args="scripts/deployment/cloud_run_job_entrypoint.py,migrate" \
+  --tasks=1 \
+  --max-retries=0 \
+  --task-timeout=1800s \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=migration,oday-data-binding=live" \
+  --quiet
+
+# This gate verifies both the exact migration receipt and backward
+# compatibility with the old revisions that still carry all production
+# traffic. No candidate service is deployed until this passes.
+run_migration_compatibility_gate() {
+  execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
+  python3 scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+    --api-url "${OLD_API_URL}" \
+    --web-url "${OLD_WEB_URL}" \
+    --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+    --output "${MIGRATION_COMPAT_REPORT}"
+}
+run_migration_compatibility_gate
+
+echo "Deploying immutable API candidate without production traffic..."
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
   --platform=managed \
+  --port=8000 \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --add-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
+  --env-vars-file="${API_ENV_FILE}" \
+  --set-secrets="${API_SECRET_BINDINGS}" \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
+  --revision-suffix="${REVISION_SUFFIX}" \
+  --tag="${API_REVISION_TAG}" \
+  --no-traffic \
   --allow-unauthenticated \
-  --set-env-vars="ODP_ENV=dev,ODP_OBJECT_STORE=gcs" \
   --quiet
 
-# Retrieve API URL
-echo "Retrieving API service URL..."
-API_URL=$(gcloud run services describe "${API_SERVICE}" \
+gcloud run services describe "${API_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')
+  --format=json >"${API_CANDIDATE_DESCRIPTION}"
+API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
+API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 
-if [ -z "${API_URL}" ]; then
-  echo "Error: Failed to retrieve API service URL from Cloud Run." >&2
-  exit 1
-fi
-echo "API successfully deployed to: ${API_URL}"
+echo "Deploying immutable scheduler candidate Cloud Run Job..."
+gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
+  --image="${SCHEDULER_IMAGE}" \
+  --region="${GCP_REGION}" \
+  --project="${GCP_PROJECT}" \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --set-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
+  --env-vars-file="${API_ENV_FILE}" \
+  --set-secrets="${API_SECRET_BINDINGS}" \
+  --command=python \
+  --args="scripts/deployment/cloud_run_job_entrypoint.py,scheduler" \
+  --tasks=1 \
+  --max-retries=0 \
+  --task-timeout=600s \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=scheduler,oday-data-binding=live" \
+  --quiet
 
-# --- Build & Deploy Web Service ---
-# We bake ODP_API_BASE_URL (pointing to the API service URL) at build time.
-echo "Building Web container image with baked API URL: ${API_URL}..."
+echo "Deploying immutable worker candidate Cloud Run Job..."
+gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
+  --image="${WORKER_IMAGE}" \
+  --region="${GCP_REGION}" \
+  --project="${GCP_PROJECT}" \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --set-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
+  --env-vars-file="${API_ENV_FILE}" \
+  --set-secrets="${API_SECRET_BINDINGS}" \
+  --command=python \
+  --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,100" \
+  --tasks=1 \
+  --max-retries=3 \
+  --task-timeout=900s \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=worker,oday-data-binding=live" \
+  --quiet
+
+for job in "${SCHEDULER_CANDIDATE_JOB}" "${WORKER_CANDIDATE_JOB}"; do
+  gcloud run jobs add-iam-policy-binding "${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --member="serviceAccount:${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
+    --role="roles/run.invoker" \
+    --quiet
+done
+
+upsert_scheduler_trigger() {
+  local trigger_name="$1"
+  local target_job="$2"
+  local cron="$3"
+  local target_uri="https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${target_job}:run"
+  local action="create"
+  if gcloud scheduler jobs describe "${trigger_name}" \
+    --location="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" >/dev/null 2>&1; then
+    action="update"
+  fi
+  gcloud scheduler jobs "${action}" http "${trigger_name}" \
+    --location="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --schedule="${cron}" \
+    --time-zone="${ODP_SCHEDULER_TIME_ZONE}" \
+    --uri="${target_uri}" \
+    --http-method=POST \
+    --message-body="{}" \
+    --headers="Content-Type=application/json" \
+    --oauth-service-account-email="${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
+    --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
+    --quiet
+}
+
+# The scheduler must persist an enqueue receipt. The worker must either leave a
+# terminal success receipt or prove that the durable queue is drained; a
+# same-minute scheduler idempotency replay may legitimately leave no new work.
+# Wrapper exit codes make retry-queued work retryable by Cloud Run and make
+# FAILED/CANCELLED/DLQ non-zero.
+execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
+execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
+  --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
+
+python3 - "${WEB_ENV_FILE}" "${API_URL}" <<'PY'
+import json
+import os
+import sys
+
+payload = {
+    "NODE_ENV": "production",
+    "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
+    "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
+    "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
+    "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
+    "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
+    "NEXT_PUBLIC_ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
+    "NEXT_PUBLIC_ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
+    "NEXT_PUBLIC_ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    "ODP_API_BASE_URL": sys.argv[2],
+    "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
+    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
+    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
+    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
+}
+json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
+PY
+
+echo "Building and publishing Web image..."
 docker build \
   --platform linux/amd64 \
-  --build-arg ODP_API_BASE_URL="${API_URL}" \
+  --build-arg "ODP_API_BASE_URL=${API_URL}" \
+  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
+  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+  --label "com.oday-plus.data-binding=live" \
   -t "${WEB_IMAGE}" \
   -f infra/docker/web.Dockerfile \
   .
-
-echo "Pushing Web container image to Artifact Registry..."
 docker push "${WEB_IMAGE}"
 
-if command -v cosign &>/dev/null; then
-  echo "Signing Web container image..."
-  cosign sign --yes "${WEB_IMAGE}"
-  echo "Verifying Web container image signature..."
-  CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
-else
-  echo "Warning: Cosign is not installed. Skipping Web image signing and verification."
-fi
+cosign sign --yes "${WEB_IMAGE}"
+CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
 
-echo "Deploying Web service to Cloud Run..."
+echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
   --platform=managed \
+  --port=3000 \
+  --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --env-vars-file="${WEB_ENV_FILE}" \
+  --set-secrets="${WEB_SECRET_BINDINGS}" \
+  --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
+  --revision-suffix="${REVISION_SUFFIX}" \
+  --tag="${WEB_REVISION_TAG}" \
+  --no-traffic \
   --allow-unauthenticated \
   --quiet
 
-# Retrieve Web URL
-echo "Retrieving Web service URL..."
-WEB_URL=$(gcloud run services describe "${WEB_SERVICE}" \
+gcloud run services describe "${WEB_SERVICE}" \
   --region="${GCP_REGION}" \
   --project="${GCP_PROJECT}" \
-  --format='value(status.url)')
+  --format=json >"${WEB_CANDIDATE_DESCRIPTION}"
+WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
+WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
-if [ -z "${WEB_URL}" ]; then
-  echo "Error: Failed to retrieve Web service URL from Cloud Run." >&2
-  exit 1
-fi
-echo "Web successfully deployed to: ${WEB_URL}"
+echo "Running release-aware smoke checks against tagged candidate revisions..."
+python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
+  --api-url "${API_URL}" \
+  --web-url "${WEB_URL}" \
+  --expected-sha "${ODAY_RELEASE_SHA}" \
+  --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+  --output "${SMOKE_REPORT}"
 
-# --- Smoke Checks ---
-echo "----------------------------------------------"
-echo "Running automatic smoke checks..."
+SCHEDULER_ROLLBACK_ARMED=true
+upsert_scheduler_trigger \
+  "${SCHEDULER_SCHEDULE_NAME}" \
+  "${SCHEDULER_CANDIDATE_JOB}" \
+  "${ODP_SCHEDULER_CRON}"
+upsert_scheduler_trigger \
+  "${WORKER_SCHEDULE_NAME}" \
+  "${WORKER_CANDIDATE_JOB}" \
+  "${ODP_WORKER_CRON}"
+promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
+promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+DEPLOYMENT_COMMITTED=true
 
-# Check API health
-API_HEALTH_URL="${API_URL}/health"
-echo "Probing API health endpoint: ${API_HEALTH_URL}..."
-API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_HEALTH_URL}")
-if [ "$API_STATUS" -ne 200 ]; then
-  echo "Error: API smoke check failed with HTTP status code ${API_STATUS} (expected 200)." >&2
-  exit 1
-fi
-echo "API smoke check passed!"
-
-# Check Web operator console
-WEB_OP_URL="${WEB_URL}/operator"
-echo "Probing Web operator console: ${WEB_OP_URL}..."
-WEB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${WEB_OP_URL}")
-if [ "$WEB_STATUS" -ne 200 ]; then
-  echo "Error: Web operator console smoke check failed with HTTP status code ${WEB_STATUS} (expected 200)." >&2
-  exit 1
-fi
-echo "Web operator console smoke check passed!"
-
-echo "=== All Services Deployed and Verified Successfully ==="
-echo "API Endpoint: ${API_URL}"
-echo "Web Endpoint: ${WEB_URL}"
+echo "=== Cloud Run deployment passed all live-data gates ==="
+echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
+echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
+echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

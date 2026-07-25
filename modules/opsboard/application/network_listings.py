@@ -346,6 +346,18 @@ def _seed_state() -> dict[str, Any]:
     }
 
 
+def _empty_state() -> dict[str, Any]:
+    return {
+        "heatZones": [],
+        "listingSources": [],
+        "listings": [],
+        "candidates": [],
+        "siteReviews": [],
+        "assistedIntakes": [],
+        "auditEvents": [],
+    }
+
+
 class NetworkListingService:
     """Application service for R4 Listing Radar intake actions."""
 
@@ -353,17 +365,34 @@ class NetworkListingService:
         self,
         listing_repository: Any | None = None,
         intake_repository: AssistedIntakeRepository | None = None,
+        *,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
     ) -> None:
+        self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
             intake_repository if intake_repository is not None else InMemoryAssistedIntakeRepository()
         )
-        self._state = _seed_state()
-        self._idempotency_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        state = _copy(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else _empty_state()
+        )
+        self._idempotency_cache = _copy(state.pop("idempotencyCache", {}))
+        self._state = state
         self._load_intakes()
         self._load_idempotency_cache()
         self._load_listings()
         self._load_candidates()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            **_copy(self._state),
+            "idempotencyCache": _copy(self._idempotency_cache),
+        }
 
     def _load_listings(self) -> None:
         if self._listing_repository is not None:
@@ -372,7 +401,7 @@ class NetworkListingService:
                 self._state["listings"] = []
                 for lst in repo_listings:
                     self._state["listings"].append(self._listing_to_dict(lst))
-            else:
+            elif self._seed_fixtures:
                 for lst_dict in self._state["listings"]:
                     lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
                     self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
@@ -384,7 +413,7 @@ class NetworkListingService:
                 self._state["candidates"] = []
                 for cand in repo_candidates:
                     self._state["candidates"].append(self._candidate_to_dict(cand))
-            else:
+            elif self._seed_fixtures:
                 for cand_dict in self._state["candidates"]:
                     cand_obj = self._dict_to_candidate(cand_dict)
                     self._listing_repository.save_candidate(cand_obj)
@@ -417,7 +446,7 @@ class NetworkListingService:
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
-        else:
+        elif self._seed_fixtures:
             for item in _seed_state()["listings"]:
                 if item["id"] == lst.listing_id:
                     for k, v in item.items():
@@ -583,12 +612,14 @@ class NetworkListingService:
         self._intakes.save_intake(intake)
 
     def reset(self) -> dict[str, Any]:
-        self._state = _seed_state()
+        self._state = (
+            _seed_state() if self._seed_fixtures else _empty_state()
+        )
         self._idempotency_cache = {}
         self._intakes.clear()
         self._state["assistedIntakes"] = []
 
-        if self._listing_repository is not None:
+        if self._listing_repository is not None and self._seed_fixtures:
             self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
                 lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
@@ -603,7 +634,11 @@ class NetworkListingService:
         lens: str | None = None,
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
-        selected_id = selected_heat_zone_id or "HZ-01"
+        selected_id = selected_heat_zone_id or (
+            self._state["heatZones"][0]["id"]
+            if self._state["heatZones"]
+            else None
+        )
         active_lens = lens or "demand"
         self._state.setdefault("assistedIntakes", [])
         return {
@@ -928,7 +963,11 @@ class NetworkListingService:
                     raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
 
         policy = resolve_source_policy(url)
-        intake_id = f"IN-{3001 + len(self._state['assistedIntakes'])}"
+        intake_id = (
+            f"IN-{3001 + len(self._state['assistedIntakes'])}"
+            if self._seed_fixtures
+            else f"IN-{uuid.uuid4().hex[:12].upper()}"
+        )
 
         intake = {
             "id": intake_id,
@@ -1982,7 +2021,89 @@ class NetworkListingService:
         self._state["auditEvents"].insert(0, event)
         return _copy(event)
 
-    def _expansion_steps(self, *, selected_id: str) -> list[dict[str, Any]]:
+    def _expansion_steps(
+        self,
+        *,
+        selected_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not self._seed_fixtures:
+            listing = self._state["listings"][0] if self._state["listings"] else None
+            candidate = (
+                self._state["candidates"][0]
+                if self._state["candidates"]
+                else None
+            )
+            review = (
+                self._state["siteReviews"][0]
+                if self._state["siteReviews"]
+                else None
+            )
+            return [
+                {
+                    "id": "find",
+                    "label": "Find Area",
+                    "tabIndex": 0,
+                    "state": "completed" if selected_id else "current",
+                    "entityId": selected_id,
+                    "summary": (
+                        "Live HeatZone selected."
+                        if selected_id
+                        else "No live HeatZone is available."
+                    ),
+                },
+                {
+                    "id": "radar",
+                    "label": "Listing Radar",
+                    "tabIndex": 1,
+                    "state": "completed" if listing else "current",
+                    "entityId": listing.get("id") if listing else None,
+                    "summary": (
+                        "Live listing is available."
+                        if listing
+                        else "No live listing has been submitted."
+                    ),
+                },
+                {
+                    "id": "candidate",
+                    "label": "Candidate",
+                    "tabIndex": 2,
+                    "state": "completed" if candidate else "next",
+                    "entityId": candidate.get("id") if candidate else None,
+                    "summary": (
+                        "Live candidate exists."
+                        if candidate
+                        else "Candidate creation requires a live listing."
+                    ),
+                },
+                {
+                    "id": "sitescore",
+                    "label": "SiteScore",
+                    "tabIndex": 3,
+                    "state": "next" if candidate else "blocked",
+                    "entityId": candidate.get("id") if candidate else None,
+                    "summary": "Requires a production model binding.",
+                },
+                {
+                    "id": "compare",
+                    "label": "Compare",
+                    "tabIndex": 4,
+                    "state": "next" if candidate else "blocked",
+                    "entityId": candidate.get("id") if candidate else None,
+                    "summary": "Requires live scored candidates.",
+                },
+                {
+                    "id": "review",
+                    "label": "Review",
+                    "tabIndex": 5,
+                    "state": "current" if review else "blocked",
+                    "entityId": review.get("id") if review else None,
+                    "summary": (
+                        "Live review is ready."
+                        if review
+                        else "No live review packet is available."
+                    ),
+                },
+            ]
         has_selected_zone = any(zone["id"] == selected_id for zone in self._state["heatZones"])
         candidate = next(
             (item for item in self._state["candidates"] if item.get("id") == "CS-1001"),

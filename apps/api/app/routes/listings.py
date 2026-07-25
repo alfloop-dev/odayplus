@@ -664,7 +664,7 @@ else:
 
 
     class AssistedIntakeStore:
-        """Small process-local contract store; durable adapters can replace it later."""
+        """Process-local Assisted Intake state for local and contract tests."""
         _instances: list[AssistedIntakeStore] = []
 
         def __init__(self) -> None:
@@ -678,6 +678,12 @@ else:
             self.saved_views: list[dict[str, Any]] = []
             self.replays: dict[str, tuple[str, dict[str, Any], int]] = {}
             AssistedIntakeStore._instances.append(self)
+
+        def refresh(self, tenant_id: str | None = None) -> None:
+            return None
+
+        def flush(self) -> None:
+            return None
 
 
     class V1PromotionRepositoryAdapter:
@@ -846,16 +852,28 @@ else:
         def __init__(self, repo):
             self.repo = repo
 
+        def get_address(self, address_id: str) -> Any | None:
+            if hasattr(self.repo, "get_address"):
+                return self.repo.get_address(address_id)
+            if hasattr(self.repo, "addresses"):
+                return next(
+                    (
+                        address
+                        for address in self.repo.addresses
+                        if address.address_id == address_id
+                    ),
+                    None,
+                )
+            return None
+
+        def get_domain_listing(self, listing_id: str) -> Any | None:
+            return self.repo.get_listing(listing_id)
+
         def get_listing(self, listing_id: str) -> Any | None:
             listing = self.repo.get_listing(listing_id)
             if not listing:
                 return None
-            address = None
-            if hasattr(self.repo, "addresses"):
-                for addr in self.repo.addresses:
-                    if addr.address_id == listing.address_id:
-                        address = addr
-                        break
+            address = self.get_address(listing.address_id)
 
             d = {
                 "id": listing.listing_id,
@@ -910,7 +928,9 @@ else:
             listing_id = listing_dict["id"]
             existing_listing = self.repo.get_listing(listing_id)
             if existing_listing:
+                from modules.listing.domain.models import ListingDedupKey
                 from shared.domain.models import Listing
+
                 updated_listing = Listing(
                     listing_id=existing_listing.listing_id,
                     source_listing_id=existing_listing.source_listing_id,
@@ -932,10 +952,22 @@ else:
                     snapshot_id=existing_listing.snapshot_id,
                     confidence=existing_listing.confidence,
                 )
-                for i, lst in enumerate(self.repo.listings):
-                    if lst.listing_id == listing_id:
-                        self.repo.listings[i] = updated_listing
-                        break
+                address = self.get_address(existing_listing.address_id)
+                if address is None:
+                    raise ValueError(
+                        f"Address {existing_listing.address_id} not found "
+                        f"for listing {listing_id}"
+                    )
+                key = ListingDedupKey(
+                    source_id=updated_listing.source_id,
+                    source_listing_id=updated_listing.source_listing_id,
+                    normalized_address=(
+                        address.normalized_address or address.raw_address
+                    ),
+                    rent_amount=updated_listing.rent_amount,
+                    area_ping=updated_listing.area_ping,
+                )
+                self.repo.save_listing(updated_listing, address, key)
 
         def list_candidates(self) -> list[dict[str, Any]]:
             candidates = []
@@ -1074,6 +1106,9 @@ else:
                 check_uuid(tenant_id)
             except ValueError:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required") from None
+            # Production replicas share one PostgreSQL state store. Bind and
+            # refresh only the verified tenant at the request boundary.
+            active.refresh(tenant_id)
             return tenant_id
 
         def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -1138,6 +1173,20 @@ else:
                 f"{tenant_id}:{actor_id}:{operation_id}:{replay_scope}:{key}"
             )
             active.replays[composite_key] = (digest, copy.deepcopy(result), code)
+            try:
+                active.flush()
+            except Exception as exc:
+                from shared.infrastructure.persistence.assisted_listing_intake import (
+                    AssistedIntakePersistenceConflict,
+                )
+
+                if isinstance(exc, AssistedIntakePersistenceConflict):
+                    raise HTTPException(
+                        409,
+                        "VERSION_CONFLICT: Assisted Intake state changed in "
+                        "another replica",
+                    ) from exc
+                raise
             return result, code, False
 
         def require_version(if_match: str | None, current: int = 1) -> None:

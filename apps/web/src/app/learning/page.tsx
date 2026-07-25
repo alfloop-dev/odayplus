@@ -7,9 +7,16 @@ import { loadApiBinding } from "../../lib/api/binding.ts";
 export const dynamic = "force-dynamic";
 
 export default async function LearningPage() {
-  const liveReleases = await loadApiBinding({
-    client: await getServerApiClient(),
-    fetcher: (client) => client.listLearningReleases().then((response) => response.items),
-  });
-  return <LearningHubWorkspace liveReleases={liveReleases} />;
+  const client = await getServerApiClient();
+  const [liveReleases, liveModels] = await Promise.all([
+    loadApiBinding({
+      client,
+      fetcher: (api) => api.listLearningReleases().then((response) => response.items),
+    }),
+    loadApiBinding({
+      client,
+      fetcher: (api) => api.listLearningModels().then((response) => response.items),
+    }),
+  ]);
+  return <LearningHubWorkspace liveReleases={liveReleases} liveModels={liveModels} />;
 }

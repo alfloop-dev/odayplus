@@ -1,6 +1,11 @@
 """DealRoomAVM public API."""
 
-from modules.avm.application import AVMService
+from modules.avm.application import (
+    AVMProductionExecutionError,
+    AVMProductionExecutor,
+    AVMService,
+    LiquidityArtifactEvidence,
+)
 from modules.avm.domain import (
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
@@ -9,18 +14,29 @@ from modules.avm.domain import (
     DataRoom,
     DataRoomDocument,
     LensValuation,
+    LiquidityPrediction,
+    LiquidityTrainingRecord,
     NormalizedMargin,
     PriceBand,
+    SurvivalModelCapability,
     ValuationCase,
     ValuationCaseStatus,
     ValuationInput,
     ValuationReport,
+    build_model_valuation_report,
     build_valuation_view,
     generate_data_room,
     normalize_margin,
     value_store,
 )
-from modules.avm.infrastructure import InMemoryAVMRepository
+from modules.avm.infrastructure import (
+    LIFELINES_ARTIFACT_SCHEMA_VERSION,
+    LIFELINES_LIQUIDITY_MODEL_VERSION,
+    InMemoryAVMRepository,
+    LifelinesLiquiditySurvivalAdapter,
+    SurvivalDependencyUnavailableError,
+    SurvivalModelNotFittedError,
+)
 from modules.avm.workers import AVMBatchResult, AVMValuationWorker, run_avm_batch_valuation
 
 __all__ = [
@@ -28,19 +44,31 @@ __all__ = [
     "AVM_MODEL_VERSION",
     "AVM_POLICY_VERSION",
     "AVMBatchResult",
+    "AVMProductionExecutionError",
+    "AVMProductionExecutor",
     "AVMService",
     "AVMValuationWorker",
     "ApprovalDecision",
     "DataRoom",
     "DataRoomDocument",
     "InMemoryAVMRepository",
+    "LIFELINES_ARTIFACT_SCHEMA_VERSION",
+    "LIFELINES_LIQUIDITY_MODEL_VERSION",
     "LensValuation",
+    "LifelinesLiquiditySurvivalAdapter",
+    "LiquidityPrediction",
+    "LiquidityArtifactEvidence",
+    "LiquidityTrainingRecord",
     "NormalizedMargin",
     "PriceBand",
+    "SurvivalDependencyUnavailableError",
+    "SurvivalModelCapability",
+    "SurvivalModelNotFittedError",
     "ValuationCase",
     "ValuationCaseStatus",
     "ValuationInput",
     "ValuationReport",
+    "build_model_valuation_report",
     "build_valuation_view",
     "generate_data_room",
     "normalize_margin",

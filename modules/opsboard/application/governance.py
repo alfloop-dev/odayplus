@@ -17,11 +17,9 @@ owns the write paths the workspace needs:
 
 Aggregation contract
 --------------------
-The service is self-contained (deterministic seed mirroring the package-6
-Govern fixtures) so the workspace is populated even with no upstream writes.
-When a shared :class:`GrowthService` is injected, its live Decision Log and
-pending Govern approvals are merged in so *Store and Growth decisions plus
-pending Network approvals appear consistently after reload* (task acceptance).
+Local/test mode retains the deterministic package fixture. Production mode
+aggregates SiteScore decisions, AVM reports, NetPlan approvals, and PriceOps
+plans from tenant-scoped canonical durable repositories.
 
 Design source: canonical package 6 (r4-20260707-package-6),
 data-screen-label "Govern 治理稽核".
@@ -92,10 +90,57 @@ class GovernanceService:
     merges a shared ``GrowthService`` for live Growth decisions/approvals.
     """
 
-    def __init__(self, *, growth_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        growth_service: Any | None = None,
+        initial_state: dict[str, Any] | None = None,
+        seed_fixtures: bool = True,
+        sitescore_decision_repository: Any | None = None,
+        avm_repository: Any | None = None,
+        netplan_repository: Any | None = None,
+        priceops_repository: Any | None = None,
+        tenant_id: str | None = None,
+        require_canonical: bool = False,
+    ) -> None:
         self._growth = growth_service
-        self._state: dict[str, Any] = _seed_state()
-        self._idempotency: dict[str, dict[str, Any]] = {}
+        self._sitescore_decision_repository = sitescore_decision_repository
+        self._avm_repository = avm_repository
+        self._netplan_repository = netplan_repository
+        self._priceops_repository = priceops_repository
+        self._tenant_id = tenant_id
+        self._require_canonical = require_canonical
+        self._state = _clone(
+            initial_state
+            if initial_state is not None
+            else _seed_state()
+            if seed_fixtures
+            else _empty_state()
+        )
+        self._idempotency = _clone(self._state.pop("idempotency", {}))
+        if self._require_canonical:
+            self._refresh_canonical()
+
+    def export_state(self) -> dict[str, Any]:
+        return {
+            **_clone(self._state),
+            "idempotency": _clone(self._idempotency),
+        }
+
+    def export_growth_state(self) -> dict[str, Any] | None:
+        if self._growth is None:
+            return None
+        exporter = getattr(self._growth, "export_state", None)
+        return exporter() if exporter is not None else None
+
+    def upsert_approval(self, approval: dict[str, Any]) -> dict[str, Any]:
+        row = _clone(approval)
+        for index, existing in enumerate(self._state["approvals"]):
+            if existing.get("id") == row.get("id"):
+                self._state["approvals"][index] = row
+                return _clone(row)
+        self._state["approvals"].append(row)
+        return _clone(row)
 
     # ------------------------------------------------------------------
     # Read path
@@ -113,6 +158,8 @@ class GovernanceService:
         workspace is an oversight surface, so the snapshot is not row-filtered by
         role here (visibility is enforced by workspace navigation policy).
         """
+        if self._require_canonical:
+            self._refresh_canonical()
         approvals = self._merged_approvals()
         decisions = self._merged_decisions()
         return {
@@ -128,6 +175,7 @@ class GovernanceService:
             },
             "role_id": role_id,
             "correlation_id": correlation_id,
+            "source": "canonical" if self._require_canonical else "api",
         }
 
     def _merged_approvals(self) -> list[dict[str, Any]]:
@@ -184,6 +232,7 @@ class GovernanceService:
     def _growth_decisions(self) -> list[dict[str, Any]]:
         if self._growth is None:
             return []
+        freshness = self._growth.get_freshness()
         out: list[dict[str, Any]] = []
         for item in self._growth.list_decisions():
             verdict = str(item.get("verdict", ""))
@@ -204,12 +253,262 @@ class GovernanceService:
                     "reason": item.get("reason", ""),
                     "actor": item.get("decidedBy", "行銷經理"),
                     "decidedAt": item.get("occurredAt", ""),
-                    "model": "PriceOps-v0.9",
-                    "datasetSnapshot": "growth-2026-W27",
+                    "model": freshness.get("modelVersion"),
+                    "datasetSnapshot": freshness.get("sourceSnapshotId"),
                     "approvalId": item.get("ref", ""),
                 }
             )
         return out
+
+    def _refresh_canonical(self) -> None:
+        dependencies = {
+            "sitescore_decision_repository": self._sitescore_decision_repository,
+            "avm_repository": self._avm_repository,
+            "netplan_repository": self._netplan_repository,
+            "priceops_repository": self._priceops_repository,
+            "tenant_id": self._tenant_id,
+        }
+        missing = [name for name, value in dependencies.items() if not value]
+        if missing:
+            raise GovernancePolicyError(
+                "canonical governance dependencies are unavailable: "
+                + ", ".join(missing)
+            )
+
+        local_approvals = [
+            row for row in self._state["approvals"] if not row.get("_canonical")
+        ]
+        local_decisions = [
+            row for row in self._state["decisions"] if not row.get("_canonical")
+        ]
+        approvals: list[dict[str, Any]] = []
+        decisions: list[dict[str, Any]] = []
+        audit_rows: list[dict[str, Any]] = []
+
+        for decision in self._sitescore_decision_repository.list_decisions():
+            row = decision.to_dict()
+            approval = {
+                "id": decision.decision_id,
+                "module": "SiteScore",
+                "title": decision.candidate_site_id,
+                "status": (
+                    "pending"
+                    if decision.status.value in {
+                        "SYSTEM_RECOMMENDED",
+                        "PENDING_REVIEW",
+                    }
+                    else decision.status.value.lower()
+                ),
+                "entityRef": decision.candidate_site_id,
+                "systemRecommendation": decision.recommendation.value,
+                "modelVersion": decision.model_version,
+                "policyVersion": decision.policy_version,
+                "submittedAt": decision.created_at.isoformat(),
+                "_canonical": True,
+            }
+            approvals.append(approval)
+            if decision.is_terminal:
+                decisions.append(
+                    {
+                        "id": decision.decision_id,
+                        "module": "SiteScore",
+                        "item": decision.candidate_site_id,
+                        "systemRecommendation": decision.recommendation.value,
+                        "finalDecision": decision.status.value,
+                        "reason": (
+                            decision.history[-1].reason
+                            if decision.history
+                            else ""
+                        ),
+                        "actor": (
+                            decision.history[-1].actor
+                            if decision.history
+                            else decision.created_by
+                        ),
+                        "decidedAt": (
+                            decision.history[-1].at.isoformat()
+                            if decision.history
+                            else decision.created_at.isoformat()
+                        ),
+                        "model": decision.model_version,
+                        "datasetSnapshot": None,
+                        "approvalId": decision.decision_id,
+                        "_canonical": True,
+                    }
+                )
+            for transition in row["history"]:
+                audit_rows.append(
+                    {
+                        "id": (
+                            f"{decision.decision_id}:"
+                            f"{transition['at']}:{transition['action']}"
+                        ),
+                        "module": "SiteScore",
+                        "action": transition["action"],
+                        "actor": transition["actor"],
+                        "occurredAt": transition["at"],
+                        "entityRef": decision.decision_id,
+                        "reason": transition["reason"],
+                        "_canonical": True,
+                    }
+                )
+
+        for case in self._avm_repository.list_cases():
+            report = self._avm_repository.latest_report(case.case_id)
+            if report is None:
+                continue
+            approval = report.finance_approval
+            approvals.append(
+                {
+                    "id": report.report_id,
+                    "module": "AVM",
+                    "title": case.store_id,
+                    "status": "approved" if approval is not None else "pending",
+                    "entityRef": case.case_id,
+                    "systemRecommendation": report.fair_price.to_dict(),
+                    "modelVersion": report.model_version,
+                    "featureVersion": report.feature_version,
+                    "submittedAt": report.valued_at.isoformat(),
+                    "_canonical": True,
+                }
+            )
+            if approval is not None:
+                decisions.append(
+                    {
+                        "id": approval.decision_id,
+                        "module": "AVM",
+                        "item": case.store_id,
+                        "systemRecommendation": report.fair_price.to_dict(),
+                        "finalDecision": "APPROVED",
+                        "reason": approval.decision_reason,
+                        "actor": approval.actor_id,
+                        "decidedAt": approval.approved_at.isoformat(),
+                        "model": report.model_version,
+                        "datasetSnapshot": list(
+                            case.valuation_input.source_snapshot_ids
+                        ),
+                        "approvalId": report.report_id,
+                        "_canonical": True,
+                    }
+                )
+
+        for scenario in self._netplan_repository.list_scenarios():
+            if scenario.tenant_id != self._tenant_id:
+                continue
+            scenario_approvals = self._netplan_repository.list_approvals(
+                scenario.scenario_id
+            )
+            approvals.append(
+                {
+                    "id": scenario.scenario_id,
+                    "module": "NetPlan",
+                    "title": scenario.scenario_name,
+                    "status": (
+                        "pending"
+                        if scenario.status.value == "pending_approval"
+                        else scenario.status.value
+                    ),
+                    "entityRef": scenario.scenario_id,
+                    "modelVersion": scenario.model_version,
+                    "featureVersion": scenario.feature_version,
+                    "solverVersion": scenario.solver_version,
+                    "submittedAt": scenario.created_at.isoformat(),
+                    "_canonical": True,
+                }
+            )
+            for approval in scenario_approvals:
+                decisions.append(
+                    {
+                        "id": approval.approval_id,
+                        "module": "NetPlan",
+                        "item": scenario.scenario_name,
+                        "systemRecommendation": scenario.status.value,
+                        "finalDecision": approval.decision.upper(),
+                        "reason": approval.reason,
+                        "actor": approval.actor_id,
+                        "decidedAt": approval.decided_at.isoformat(),
+                        "model": scenario.model_version,
+                        "datasetSnapshot": None,
+                        "approvalId": scenario.scenario_id,
+                        "_canonical": True,
+                    }
+                )
+
+        plans = [
+            plan
+            for plan in self._priceops_repository.list_plans()
+            if plan.tenant_id == self._tenant_id
+        ]
+        for plan in plans:
+            plan_approvals = self._priceops_repository.list_approvals(plan.plan_id)
+            approvals.append(
+                {
+                    "id": plan.plan_id,
+                    "module": "PriceOps",
+                    "title": plan.plan_id,
+                    "status": (
+                        plan_approvals[-1].decision
+                        if plan_approvals
+                        else "pending"
+                    ),
+                    "entityRef": plan.plan_id,
+                    "submittedAt": plan.created_at.isoformat(),
+                    "_canonical": True,
+                }
+            )
+            for approval in plan_approvals:
+                decisions.append(
+                    {
+                        "id": approval.decision_id,
+                        "module": "PriceOps",
+                        "item": plan.plan_id,
+                        "systemRecommendation": plan.status.value,
+                        "finalDecision": approval.decision.upper(),
+                        "reason": approval.decision_reason,
+                        "actor": approval.actor_id,
+                        "decidedAt": approval.approved_at.isoformat(),
+                        "model": None,
+                        "datasetSnapshot": plan.plan_id,
+                        "approvalId": plan.plan_id,
+                        "_canonical": True,
+                    }
+                )
+
+        self._state["approvals"] = local_approvals + approvals
+        self._state["decisions"] = local_decisions + decisions
+        self._state["auditRows"] = [
+            row for row in self._state["auditRows"] if not row.get("_canonical")
+        ] + audit_rows
+        self._state["statusBoard"] = [
+            {
+                "name": "SiteScore decisions",
+                "status": "live",
+                "count": len(
+                    self._sitescore_decision_repository.list_decisions()
+                ),
+            },
+            {
+                "name": "AVM cases",
+                "status": "live",
+                "count": len(self._avm_repository.list_cases()),
+            },
+            {
+                "name": "NetPlan scenarios",
+                "status": "live",
+                "count": len(
+                    [
+                        scenario
+                        for scenario in self._netplan_repository.list_scenarios()
+                        if scenario.tenant_id == self._tenant_id
+                    ]
+                ),
+            },
+            {
+                "name": "PriceOps plans",
+                "status": "live",
+                "count": len(plans),
+            },
+        ]
 
     # ------------------------------------------------------------------
     # Write path — decisions
@@ -262,6 +561,12 @@ class GovernanceService:
 
         approval = self._find_local_approval(approval_id)
         if approval is not None:
+            if self._require_canonical and approval.get("_canonical"):
+                raise GovernanceConflict(
+                    f"approval {approval_id} is owned by "
+                    f"{approval.get('module', 'canonical domain')}; "
+                    "use its canonical decision endpoint"
+                )
             if approval["status"] != "pending":
                 raise GovernanceConflict(
                     f"approval {approval_id} already decided: {approval['status']}"
@@ -359,8 +664,16 @@ class GovernanceService:
             "reason": reason or "符合風險與預算規範",
             "actor": actor,
             "decidedAt": _now_iso_minute(),
-            "model": _module_model(module),
-            "datasetSnapshot": _module_dataset(module),
+            "model": (
+                (approval or {}).get("modelVersion")
+                if self._require_canonical
+                else _module_model(module)
+            ),
+            "datasetSnapshot": (
+                (approval or {}).get("datasetSnapshot")
+                if self._require_canonical
+                else _module_dataset(module)
+            ),
             "approvalId": approval_id,
         }
         self._state["decisions"].insert(0, entry)
@@ -764,4 +1077,18 @@ def _seed_state() -> dict[str, Any]:
         "nextDecisionOrdinal": 8900,
         "nextAuditOrdinal": 7200,
         "nextEvidenceOrdinal": 3,
+    }
+
+
+def _empty_state() -> dict[str, Any]:
+    return {
+        "approvals": [],
+        "decisions": [],
+        "auditRows": [],
+        "statusBoard": [],
+        "evidencePackages": [],
+        "nextDecisionOrdinal": 1,
+        "nextAuditOrdinal": 1,
+        "nextEvidenceOrdinal": 1,
+        "idempotency": {},
     }

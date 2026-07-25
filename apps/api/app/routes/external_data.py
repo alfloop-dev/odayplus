@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from apps.api.oday_api.runtime_mode import live_data_required
 from modules.external_data.workers import SourceFreshnessEvidence
 from shared.audit import InMemoryAuditLog
+
+_FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
+
+
+def _fixture_freshness_enabled() -> bool:
+    import os
+
+    product_mode = os.environ.get("ODP_PRODUCT_MODE", "").strip().lower()
+    provider_mode = os.environ.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
+    return (
+        product_mode in _FIXTURE_PRODUCT_MODES
+        and provider_mode != "live"
+        and not live_data_required()
+    )
+
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -31,6 +48,7 @@ else:
         *,
         ingestion_service: ExternalIngestionService | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        require_provider: Callable[[], None] | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
@@ -45,14 +63,16 @@ else:
 
         view_guard = Depends(require_permission("integration", Action.VIEW, engine=authz_engine))
         create_guard = Depends(require_permission("integration", Action.CREATE, engine=authz_engine))
+        ingestion_dependencies = [create_guard]
+        if require_provider is not None:
+            ingestion_dependencies.append(Depends(require_provider))
 
         @router.get("/freshness", dependencies=[view_guard])
         def list_external_data_freshness(request: Request) -> dict[str, Any]:
             evidence = service.store.freshness()
-            if not evidence:
-                # Cold store: fall back to the documented fixture so the
-                # product renders (and the freshness contract holds) before any
-                # run has been persisted.
+            fixture_used = False
+            if not evidence and _fixture_freshness_enabled():
+                fixture_used = True
                 evidence = [
                     SourceFreshnessEvidence(
                         provider_id="listing.partner_feed",
@@ -64,8 +84,22 @@ else:
                         correlation_id=request.state.correlation_id,
                     )
                 ]
+            availability = (
+                {
+                    "status": "AVAILABLE",
+                    "reason_code": None,
+                    "source": "fixture" if fixture_used else "persisted",
+                }
+                if evidence
+                else {
+                    "status": "UNAVAILABLE",
+                    "reason_code": "NO_PERSISTED_FRESHNESS_EVIDENCE",
+                    "source": "persisted",
+                }
+            )
             return {
                 "freshness": [item.to_dict() for item in evidence],
+                "availability": availability,
                 "correlation_id": request.state.correlation_id,
             }
 
@@ -95,7 +129,7 @@ else:
         @router.post(
             "/ingestion-runs",
             status_code=status.HTTP_202_ACCEPTED,
-            dependencies=[create_guard],
+            dependencies=ingestion_dependencies,
         )
         def trigger_ingestion_run(
             body: IngestionRunPayload,

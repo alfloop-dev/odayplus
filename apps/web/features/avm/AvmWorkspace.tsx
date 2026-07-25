@@ -8,6 +8,12 @@ import { Badge, PageHeader } from "@oday-plus/ui";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DataSourceBadge } from "../../src/components/DataSourceBadge.tsx";
 import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
+import {
   AVM_POLICY_VERSION,
   AVM_MODEL_VERSION,
   AVM_FEATURE_VERSION,
@@ -166,9 +172,7 @@ export function AvmWorkspace({
   isProduction: isProductionProp,
   currentUser,
 }: AvmWorkspaceProps) {
-  const isProduction = isProductionProp !== undefined ? isProductionProp : (
-    liveCases ? liveCases.source === "api" : false
-  );
+  const isProduction = resolveProductionMode(isProductionProp);
 
   const [liveCaseDetail, setLiveCaseDetail] = useState<ValuationCase | null>(null);
   const [loading, setLoading] = useState(false);
@@ -226,6 +230,10 @@ export function AvmWorkspace({
     };
   }, [activeCaseId, isProduction, currentUser]);
 
+  if (isProduction) {
+    return <ProductionAvmWorkspace binding={liveCases} caseId={caseId ?? activeCaseId} view={view} />;
+  }
+
   if (view === "cases") {
     return (
       <CasesListPage
@@ -248,6 +256,45 @@ export function AvmWorkspace({
     );
   }
   return <AvmOverview isProduction={isProduction} />;
+}
+
+function ProductionAvmWorkspace({
+  binding,
+  caseId,
+  view,
+}: {
+  binding?: ApiBinding<AvmCase>;
+  caseId?: string;
+  view: AvmRouteKey;
+}) {
+  const state = productionBindingState(binding);
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[{ label: "DealRoomAVM", href: "/avm" }, { label: caseId ?? view }]}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        summary="Production valuation workspace. Only persisted AVM case data is rendered."
+        title={caseId ? `估值案件 ${caseId}` : "DealRoomAVM 估值"}
+      />
+      <main className="odp-content" data-testid={`avm-${view}-production-page`}>
+        <WorkspaceNav active={view} />
+        <ProductionDataState binding={binding} resource="AVM cases" testId="avm-production-data-state">
+          {binding ? <LiveCasesPanel binding={binding} isProduction /> : null}
+        </ProductionDataState>
+        {binding?.state === "ready" && caseId && !binding.items.some((item) => item.case_id === caseId) ? (
+          <section className={styles.reportSection} data-testid="avm-case-not-found" role="status">
+            <h2>Case not found</h2>
+            <p>API 回傳資料中沒有 {caseId}；未以固定估值案件替代。</p>
+          </section>
+        ) : null}
+      </main>
+    </>
+  );
 }
 
 // Client-side Offline Indicator
@@ -349,7 +396,11 @@ function LiveCasesPanel({ binding, isProduction }: { binding: ApiBinding<AvmCase
     >
       <div className={styles.badgeRow}>
         <h2>估值案件（API live）</h2>
-        <DataSourceBadge binding={binding} testId="avm-data-source" />
+        {isProduction ? (
+          <ProductionDataBadge binding={binding} testId="avm-data-source" />
+        ) : (
+          <DataSourceBadge binding={binding} testId="avm-data-source" />
+        )}
         <ClientRetryButton />
       </div>
 

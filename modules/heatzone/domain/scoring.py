@@ -226,6 +226,41 @@ def score_heatzones(
     ]
 
 
+def score_heatzones_from_model_predictions(
+    features: Iterable[HeatZoneFeatureInput | GeoFeatureSnapshot | Mapping[str, Any]],
+    predictions: Iterable[float],
+    *,
+    model_version: str,
+    prediction_origin_time: datetime | None = None,
+    scored_at: datetime | None = None,
+) -> list[HeatZoneScoreResult]:
+    """Build HeatZone results whose priority score comes from the OSS model."""
+
+    origin = prediction_origin_time or datetime.now(UTC)
+    scored_time = scored_at or datetime.now(UTC)
+    inputs = [_coerce_feature(feature) for feature in features]
+    model_scores = [float(value) for value in predictions]
+    if len(inputs) != len(model_scores):
+        raise ValueError("HeatZone feature and model prediction counts differ")
+    scored = [
+        _score_feature(
+            feature,
+            priority_rank=0,
+            prediction_origin_time=origin,
+            scored_at=scored_time,
+            weights=DEFAULT_SCORING_WEIGHTS,
+            model_score=model_score,
+            model_version=model_version,
+        )
+        for feature, model_score in zip(inputs, model_scores, strict=True)
+    ]
+    ranked = sorted(scored, key=lambda item: (-item.score, item.h3_index))
+    return [
+        HeatZoneScoreResult(**{**result.__dict__, "priority_rank": index + 1})
+        for index, result in enumerate(ranked)
+    ]
+
+
 def _score_feature(
     feature: HeatZoneFeatureInput,
     *,
@@ -233,6 +268,8 @@ def _score_feature(
     prediction_origin_time: datetime,
     scored_at: datetime,
     weights: HeatZoneScoringWeights,
+    model_score: float | None = None,
+    model_version: str = HEATZONE_MODEL_VERSION,
 ) -> HeatZoneScoreResult:
     poi_demand = _bounded(feature.poi_count / 20.0)
     listing_availability = _bounded(feature.active_listing_count / 8.0)
@@ -262,7 +299,12 @@ def _score_feature(
         heat_zone_id=f"heatzone:{feature.h3_index}",
         h3_index=feature.h3_index,
         h3_resolution=feature.h3_resolution,
-        score=round(raw_score * 100.0, 2),
+        score=round(
+            max(0.0, min(100.0, model_score))
+            if model_score is not None
+            else raw_score * 100.0,
+            2,
+        ),
         priority_rank=priority_rank,
         unmet_demand_score=round(unmet_demand, 4),
         format_fit_score=round(format_fit, 4),
@@ -274,7 +316,7 @@ def _score_feature(
         feature_snapshot_time=feature.feature_snapshot_time,
         prediction_origin_time=prediction_origin_time,
         last_scored_at=scored_at,
-        model_version=HEATZONE_MODEL_VERSION,
+        model_version=model_version,
         feature_version=feature.view_version,
         source_snapshot_ids=feature.source_snapshot_ids,
         reasons=reasons,
@@ -409,4 +451,5 @@ __all__ = [
     "HeatZoneScoringWeights",
     "HeatZoneState",
     "score_heatzones",
+    "score_heatzones_from_model_predictions",
 ]

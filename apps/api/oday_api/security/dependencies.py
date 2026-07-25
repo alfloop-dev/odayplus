@@ -51,7 +51,6 @@ from shared.auth import (
     Role,
     Scope,
     default_registry,
-    evaluate_abac,
     rbac_allows,
 )
 
@@ -475,20 +474,49 @@ def _operator_scope_decision(
             "Operator Console tenant scope mismatch",
             policy_id="operator.tenant_isolation",
         )
-    return evaluate_abac(
-        AccessRequest(
-            principal=principal,
-            action=Action.VIEW,
-            resource=resource,
+    scope = principal.scope
+    for value, permits, reason, policy_id in (
+        (
+            resource.brand_id,
+            scope.permits_brand,
+            "brand outside principal scope",
+            "scope.brand",
+        ),
+        (
+            resource.region_id,
+            scope.permits_region,
+            "region outside principal scope",
+            "scope.region",
+        ),
+        (
+            resource.store_id,
+            scope.permits_store,
+            "store outside principal scope",
+            "scope.store",
+        ),
+    ):
+        # The Operator shell resource is a collection. A missing object id is
+        # constrained by tenant-aware repository queries, not denied here.
+        if value is not None and not permits(value):
+            return Decision.deny(reason, policy_id=policy_id)
+    if resource.module is not None and not scope.permits_module(resource.module):
+        return Decision.deny(
+            "module outside principal scope",
+            policy_id="scope.module",
         )
-    )
+    if not scope.permits_classification(resource.data_classification):
+        return Decision.deny(
+            "data classification exceeds principal clearance",
+            policy_id="data_classification",
+        )
+    return Decision.allow("Operator Console scope accepted")
 
 
 def require_operator_permission(
     resource_type: str = OPERATOR_CONSOLE_RESOURCE,
     action: Action = Action.VIEW,
     *,
-    tenant_id: str = OPERATOR_TENANT_ID,
+    tenant_id: str | None = None,
     module: str = "operator_console",
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
@@ -508,9 +536,10 @@ def require_operator_permission(
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
         principal = principal_from_headers(request.headers, boundary=boundary)
+        effective_tenant_id = tenant_id or principal.tenant_id
         resource = ResourceDescriptor(
             type=resource_type,
-            tenant_id=tenant_id,
+            tenant_id=effective_tenant_id,
             module=module,
             data_classification=data_classification,
         )
@@ -522,6 +551,14 @@ def require_operator_permission(
             )
             _record_operator_denial(active_engine, access, decision)
             _raise_unauthenticated(None)
+
+        if not effective_tenant_id:
+            decision = Decision.deny(
+                "Operator Console tenant scope is required",
+                policy_id="operator.tenant_isolation",
+            )
+            _record_operator_denial(active_engine, access, decision)
+            _raise_forbidden(decision)
 
         selected_role, role_decision = _select_operator_role(request, principal)
         if role_decision is not None:
@@ -542,6 +579,7 @@ def require_operator_permission(
             _raise_forbidden(scope_decision)
 
         request.state.operator_principal = principal
+        request.state.operator_tenant_id = effective_tenant_id
         request.state.operator_role_id = selected_role
         request.state.operator_subject_id = principal.subject_id
         request.state.operator_system_roles = ",".join(

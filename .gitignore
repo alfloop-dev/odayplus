@@ -44,6 +44,10 @@ htmlcov/
 # (uv.lock IS committed; only ignore the cache)
 .uv-cache/
 
+# Local MLflow tracking state
+mlflow.db
+mlruns/
+
 # --- Editors / OS ---
 .idea/
 *.swp

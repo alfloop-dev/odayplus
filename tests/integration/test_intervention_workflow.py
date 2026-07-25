@@ -618,6 +618,7 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
         json={
             "store_id": "store-api-1",
             "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-api",
             "expected_outcome": "recover GM",
             "planned_start": START.isoformat(),
             "planned_end": END.isoformat(),
@@ -627,6 +628,22 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
     )
     assert replay.json()["created"] is False
     assert replay.json()["intervention_id"] == iid
+
+    conflict = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-1",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "different-alert",
+            "expected_outcome": "recover GM",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "supervisor-a",
+        },
+        headers={"Idempotency-Key": "iv-idem-1"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
     client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "s"})
     client.post(f"/interventions/{iid}/action", json={"action_spec": {"pct": -5}, "actor": "p"})
