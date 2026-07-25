@@ -1,42 +1,48 @@
-# Operator Console: R7 rebuild decision + retirement plan
+# RETIRED: R5/Package-7 Operator Console shell
 
 - doc_id: ODP-OC-REACT-RETIREMENT-001
 - date: 2026-07-25
 - decision_by: owner (bjoe734)
-- status: DECISION recorded; physical retire+rebuild is fleet task ODP-OC-R7-FE-001
+- status: RETIRED (console shell removed, build-green); rebuild from R7/Package 10
 
-## Decision
+## What was removed (preserved in git history)
 
-The operator console is to be **rebuilt from the canonical R7 / Package 10 design**
-(API-connected) rather than carried forward as the current R5/Package-7 React.
+The R5/Package-7 operator **console shell** and its screens: `OperatorConsole.tsx`,
+`TodayWorkspace`, `DesignAlignedWorkspaces`, `GrowthWorkspace`, `GovernanceWorkspace`,
+`NetworkFindAreasWorkspace`, `OperatorDataUnavailableGate`, `StoreOpsWorkflowDialogs`,
+the network panels (Candidate/Compare/Review/Rebalance/SiteScore/ListingRadar/NetworkShell…),
+the intake panels/dialogs, view-models, state, adapters, policy, navigation view, and their
+tests + the operator e2e specs. `/operator` now serves a retirement stub.
+Recover with `git log --all -- apps/web/features/operator`.
 
-## Honest status of the current React (no spin)
+## What was intentionally KEPT (and why)
 
-The current React operator console (`apps/web/features/operator/**`) is **NOT broken
-garbage**. The CI label checker `scripts/e2e/check_product_grade_ci_gates.py` verifies it
-implements all **37 Package-7 (R5) screen labels**. What it is: an R5 implementation
-(canonical is R7/40 + VDC-001..005) whose **deployed instance never showed live data
-because web→API auth (401) was never wired**, and which the owner has chosen to replace
-with a clean R7 rebuild.
+The operator feature is a **load-bearing dependency of other features**, so a wholesale
+delete breaks the web build (proven by CI). These shared modules are retained under
+`apps/web/features/operator/network/` and `.../navigation.tsx`:
+- `network/operatorNetworkClient` — used by `features/shell/shellClient.ts`
+- `network/intake/AssistedIntakeSection` (+ its subtree) — used by `features/expansion/ExpansionWorkspace.tsx`
+- `navigation` `OperatorRoleId` type — used by expansion
 
-## Why it was NOT physically deleted in this change (important)
+The R7 rebuild (ODP-OC-R7-FE-001) owns whether to relocate these to a neutral shared module.
 
-A naive `rm -rf apps/web/features/operator` **breaks the web build**: the operator feature
-is a **load-bearing dependency of other features** —
-- `apps/web/features/shell/shellClient.ts` imports `../operator/network/operatorNetworkClient`
-- `apps/web/features/expansion/ExpansionWorkspace.tsx` imports `../operator/network/intake/AssistedIntakeSection`
-  and the `OperatorRoleId` type from `../operator/navigation`
+## Honest status (no spin)
 
-So retirement is **not a wholesale delete** — it requires the R7 rebuild to either preserve
-the shared modules (network client, assisted-intake section, role types) or refactor `shell`
-and `expansion` off them. That work belongs to the fleet task, done in a build-green way,
-not a hasty deletion that ships a red PR.
+The removed console was **CI-label-verified** for R5's 37 screen labels
+(`scripts/e2e/check_product_grade_ci_gates.py` PASS) — not "divergent garbage". It was
+retired because it only reached R5 (canonical is R7/40 + VDC-001..005), its deployed
+instance never showed live data (web→API **401** unwired), and the owner chose a clean R7
+rebuild. The empty "OPERATOR_DATA_LOADING" gate people saw was a **no-data/401 state**, not
+a wrong design.
 
-## Hard rules for the rebuild (ODP-OC-R7-FE-001)
+## Verification (local, before push)
 
-- Build the new console from the R7/Package 10 extracted design
-  (`docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted`) + binding
-  review `ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_RESPONSE_REVIEW_003.md`.
-- Handle the shell/expansion dependency explicitly; keep the web build green.
-- Do not treat the deployed empty gate as "design was wrong": it was a no-data/401 state.
-- Reuse the backend `/api/v1/operator/*` routes + durable persistence.
+`npm run -w @oday-plus/web typecheck` → 0 errors; `lint` → 0; `test` (vitest) → 189 passed.
+
+## Hard rule for all workers (human or LLM)
+
+- Do **not** restore the removed console shell. Build the new one from the R7/Package 10
+  extracted design (`docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted`)
+  and binding review `ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md`.
+- Do not re-diagnose the retired empty gate as "design was wrong": it was no-data/401.
+- Reuse the retained shared modules + backend `/api/v1/operator/*` routes.

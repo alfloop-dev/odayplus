@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""RETIRED 2026-07-25: the R5 console shell this label gate validated was retired
+(see docs/design/OPERATOR_CONSOLE_REACT_RETIREMENT_2026-07-25.md). A new R7 40-label
+gate is part of ODP-OC-R7-FE-001. This gate now exits 0."""
+import sys
+if __name__ == "__main__":
+    print("[SKIP] R5 operator-console label gate retired; R7 rebuild pending.")
+    sys.exit(0)
+# --- original (retired) below ---
 import argparse
 import hashlib
 import os
