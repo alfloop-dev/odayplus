@@ -9,6 +9,7 @@ import type {
   GovernanceDecisionAction,
   GovernanceDecisionPayload,
   GovernanceDecisionRow,
+  GovernanceEvidence,
   GovernanceRole,
   GovernanceWorkspaceCallbacks,
 } from "./governanceTypes";
@@ -254,8 +255,8 @@ const tabs: Array<{ id: GovernanceTab; label: string }> = [
   { id: "approvals", label: "核准中心" },
   { id: "decisions", label: "Decision Log" },
   { id: "audit", label: "Audit Trail" },
-  { id: "evidencePackage", label: "Evidence Package 匯出" },
-  { id: "statusBoard", label: "系統狀態盤" },
+  { id: "evidencePackage", label: "Evidence Package" },
+  { id: "statusBoard", label: "系統狀態" },
 ];
 
 const baseAuditCategories: GovernanceAuditCategory[] = [
@@ -339,8 +340,12 @@ export function GovernanceWorkspace({
 
   const [activeTab, setActiveTab] = useState<GovernanceTab>("approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(localApprovals[0]?.id ?? "");
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState(
+    localApprovals[0]?.evidence?.[0]?.id ?? "",
+  );
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState("");
+  const [decisionRunning, setDecisionRunning] = useState(false);
   const [auditCategory, setAuditCategory] = useState<GovernanceAuditCategory | "all">("all");
   const [lastAction, setLastAction] = useState("");
   const [localToast, setLocalToast] = useState<string | null>(null);
@@ -461,8 +466,33 @@ export function GovernanceWorkspace({
   }, [auditRows, apiActive]);
 
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
+  const sortedApprovals = useMemo(
+    () =>
+      [...localApprovals].sort((left, right) => {
+        if (left.status === right.status) return 0;
+        if (left.status === "pending") return -1;
+        if (right.status === "pending") return 1;
+        return 0;
+      }),
+    [localApprovals],
+  );
   const selectedApproval =
     localApprovals.find((approval) => approval.id === selectedApprovalId) ?? localApprovals[0];
+  const selectedEvidence =
+    selectedApproval?.evidence?.find((evidence) => evidence.id === selectedEvidenceId) ??
+    selectedApproval?.evidence?.[0];
+
+  useEffect(() => {
+    if (!selectedApproval) {
+      setSelectedEvidenceId("");
+      return;
+    }
+    setSelectedEvidenceId((current) =>
+      selectedApproval.evidence?.some((evidence) => evidence.id === current)
+        ? current
+        : selectedApproval.evidence?.[0]?.id ?? "",
+    );
+  }, [selectedApproval]);
 
   const auditCategories = useMemo(() => {
     const categorySet = new Set<GovernanceAuditCategory>(baseAuditCategories);
@@ -592,6 +622,7 @@ export function GovernanceWorkspace({
 
   function selectApproval(approval: GovernanceApproval) {
     setSelectedApprovalId(approval.id);
+    setSelectedEvidenceId(approval.evidence?.[0]?.id ?? "");
     setReason("");
     setReasonError("");
     setLastAction("");
@@ -599,7 +630,7 @@ export function GovernanceWorkspace({
   }
 
   async function submitDecision(action: GovernanceDecisionAction) {
-    if (!selectedApproval) {
+    if (!selectedApproval || decisionRunning) {
       return;
     }
 
@@ -612,6 +643,7 @@ export function GovernanceWorkspace({
     // API path: the server re-enforces the return/reject reason policy and
     // persists the decision + audit event so it survives reload.
     if (apiActive) {
+      setDecisionRunning(true);
       const outcome = await submitGovernanceDecision({
         approvalId: selectedApproval.id,
         action,
@@ -622,6 +654,7 @@ export function GovernanceWorkspace({
       });
       if (outcome.ok) {
         await refreshSnapshot();
+        setDecisionRunning(false);
         setReason("");
         setReasonError("");
         setLastAction(`${outcome.finalDecision} submitted for ${selectedApproval.id}`);
@@ -640,13 +673,16 @@ export function GovernanceWorkspace({
         return;
       }
       if (outcome.policyError) {
+        setDecisionRunning(false);
         setReasonError(outcome.detail);
         return;
       }
       if (!fixturesAllowed) {
+        setDecisionRunning(false);
         setReasonError(outcome.detail);
         return;
       }
+      setDecisionRunning(false);
     } else if (!fixturesAllowed) {
       setReasonError("決策未送出，Governance API 尚未就緒。");
       return;
@@ -794,13 +830,13 @@ export function GovernanceWorkspace({
     <section className={styles.workspace} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
       <header className={styles.header}>
         <div>
-          <p className={styles.kicker}>Governance</p>
-          <h2>Govern Approval Console</h2>
+          <h2>治理稽核</h2>
+          <p>核准、決策、稽核與證據 — 所有處置的可追溯層</p>
         </div>
         <div className={styles.headerStats} aria-label="Governance state">
-          <span>{pendingCount} pending</span>
+          <span>{pendingCount} 件待核准</span>
           <span>{role}</span>
-          <span>{canDecide ? "Can decide" : "View only"}</span>
+          <span>{canDecide ? "可決策" : "僅可查看"}</span>
         </div>
       </header>
 
@@ -815,19 +851,22 @@ export function GovernanceWorkspace({
             type="button"
           >
             {tab.label}
+            {tab.id === "approvals" && pendingCount > 0 ? (
+              <span className={styles.tabCount}>{pendingCount}</span>
+            ) : null}
           </button>
         ))}
       </nav>
 
       {activeTab === "approvals" ? (
         <section className={styles.approvalGrid} aria-label="Approval center">
-          <div className={styles.queuePanel}>
-            <div className={styles.panelHeader}>
-              <h3>Approval Queue</h3>
-              <span>{localApprovals.length} rows</span>
+          <div className={styles.queuePanel} aria-label="核准佇列">
+            <div className={styles.queueHeader}>
+              <h3>核准佇列</h3>
+              <span>{pendingCount} 待處理 · {localApprovals.length} 全部</span>
             </div>
             <div className={styles.queueList}>
-              {localApprovals.map((approval) => (
+              {sortedApprovals.map((approval) => (
                 <button
                   aria-current={selectedApproval?.id === approval.id ? "true" : undefined}
                   className={styles.queueItem}
@@ -836,21 +875,25 @@ export function GovernanceWorkspace({
                   type="button"
                 >
                   <span className={styles.queueTopline}>
-                    <span className={styles.module}>{approval.module}</span>
-                    <span className={styles.sla}>{approval.sla ?? "No SLA"}</span>
+                    <span className={styles.approvalId}>{approval.id}</span>
+                    <span className={moduleClass(approval.module)}>{approval.module}</span>
+                    <span className={priorityClass(approval.priority ?? "medium")}>
+                      風險 {priorityLabel(approval.priority ?? "medium")}
+                    </span>
+                    <span className={statusClass(approval.status)}>
+                      {approvalStatusLabel(approval.status)}
+                    </span>
                   </span>
                   <strong>{approval.title}</strong>
-                  <span className={styles.queueMeta}>
-                    {approval.entityRef ?? approval.id} · {approval.requestor}
-                  </span>
                   <span className={styles.queueFooter}>
-                    <span className={statusClass(approval.priority ?? "medium")}>
-                      {approval.priority ?? "medium"}
-                    </span>
-                    <span className={statusClass(approval.status)}>{approval.status}</span>
+                    <span>{approval.requestor}</span>
+                    <span className={styles.sla}>{approval.sla ?? "未設定 SLA"}</span>
                   </span>
                 </button>
               ))}
+              {sortedApprovals.length === 0 ? (
+                <div className={styles.queueEmpty}>目前沒有核准請求</div>
+              ) : null}
             </div>
           </div>
 
@@ -858,78 +901,97 @@ export function GovernanceWorkspace({
             {selectedApproval ? (
               <>
                 <div className={styles.detailHeader}>
-                  <div>
-                    <span className={styles.module}>{selectedApproval.module}</span>
-                    <h3>{selectedApproval.title}</h3>
+                  <div className={styles.detailIdentity}>
+                    <span className={styles.approvalId}>{selectedApproval.id}</span>
+                    <span className={moduleClass(selectedApproval.module)}>
+                      {selectedApproval.module}
+                    </span>
+                    <span className={priorityClass(selectedApproval.priority ?? "medium")}>
+                      風險 {priorityLabel(selectedApproval.priority ?? "medium")}
+                    </span>
                   </div>
-                  <span className={statusClass(selectedApproval.status)}>{selectedApproval.status}</span>
+                  <span className={statusClass(selectedApproval.status)}>
+                    {approvalStatusLabel(selectedApproval.status)}
+                  </span>
                 </div>
+                <h3 className={styles.detailTitle}>{selectedApproval.title}</h3>
 
                 <dl className={styles.detailMeta}>
                   <div>
-                    <dt>Approval</dt>
-                    <dd>{selectedApproval.id}</dd>
+                    <dt>申請人</dt>
+                    <dd>{selectedApproval.requestor}</dd>
                   </div>
                   <div>
-                    <dt>Entity</dt>
-                    <dd>{selectedApproval.entityRef ?? "None"}</dd>
+                    <dt>核准角色</dt>
+                    <dd>{selectedApproval.owner ?? role}</dd>
                   </div>
                   <div>
-                    <dt>Submitted</dt>
-                    <dd>{selectedApproval.submittedAt}</dd>
-                  </div>
-                  <div>
-                    <dt>Owner</dt>
-                    <dd>{selectedApproval.owner ?? "Unassigned"}</dd>
+                    <dt>SLA</dt>
+                    <dd className={styles.sla}>{selectedApproval.sla ?? "未設定"}</dd>
                   </div>
                 </dl>
 
                 <div className={styles.summaryGrid}>
                   <section>
-                    <h4>Request</h4>
-                    <p>{selectedApproval.summary ?? "No request summary supplied."}</p>
+                    <h4>申請摘要</h4>
+                    <p>{selectedApproval.summary ?? "未提供申請摘要。"}</p>
                   </section>
                   <section>
-                    <h4>System Recommendation</h4>
-                    <p>{selectedApproval.systemRecommendation ?? "No recommendation supplied."}</p>
+                    <h4>系統建議</h4>
+                    <p>{selectedApproval.systemRecommendation ?? "未提供系統建議。"}</p>
                   </section>
                   <section>
-                    <h4>Risk</h4>
-                    <p>{selectedApproval.risk ?? "No risk note supplied."}</p>
+                    <h4>風險說明</h4>
+                    <p>{selectedApproval.risk ?? "未提供風險說明。"}</p>
                   </section>
                   <section>
-                    <h4>Role Note</h4>
-                    <p>{selectedApproval.roleNote ?? `${role} decision context pending.`}</p>
+                    <h4>決策邊界</h4>
+                    <p>{selectedApproval.roleNote ?? `${role} 必須先完成證據審查。`}</p>
                   </section>
                 </div>
 
-                <section className={styles.evidenceBlock} aria-label="Evidence">
-                  <h4>Evidence</h4>
+                <section className={styles.evidenceBlock} aria-label="隨附證據">
+                  <div className={styles.sectionHeading}>
+                    <h4>隨附證據</h4>
+                    <span>{selectedApproval.evidence?.length ?? 0} 項</span>
+                  </div>
                   <div className={styles.evidenceChips}>
-                    {(selectedApproval.evidence ?? []).map((evidence) =>
-                      evidence.href ? (
-                        <a className={styles.evidenceChip} href={evidence.href} key={evidence.id}>
+                    {(selectedApproval.evidence ?? []).map((evidence) => (
+                        <button
+                          aria-pressed={selectedEvidence?.id === evidence.id}
+                          className={styles.evidenceChip}
+                          key={evidence.id}
+                          onClick={() => setSelectedEvidenceId(evidence.id)}
+                          type="button"
+                        >
                           <span>{evidence.label}</span>
                           <small>{evidence.state ?? evidence.type ?? "ready"}</small>
-                        </a>
-                      ) : (
-                        <span className={styles.evidenceChip} key={evidence.id}>
-                          <span>{evidence.label}</span>
-                          <small>{evidence.state ?? evidence.type ?? "ready"}</small>
-                        </span>
-                      ),
-                    )}
+                        </button>
+                      ))}
                     {selectedApproval.evidence?.length ? null : (
-                      <span className={styles.emptyChip}>No evidence</span>
+                      <span className={styles.emptyChip}>沒有可驗證證據</span>
                     )}
+                  </div>
+                  {selectedEvidence ? (
+                    <EvidenceDetail evidence={selectedEvidence} approval={selectedApproval} />
+                  ) : null}
+                  <div className={styles.referenceRow}>
+                    <span>關聯</span>
+                    <strong>{selectedApproval.entityRef ?? selectedApproval.id}</strong>
+                    <span>送出 {selectedApproval.submittedAt}</span>
                   </div>
                 </section>
 
                 <section className={styles.decisionBox} aria-label="Decision reason">
                   {selectedApproval.status === "pending" ? (
                     <>
-                      <label htmlFor="governance-reason">Reason</label>
+                      <label htmlFor="governance-reason">
+                        決策理由
+                        <span>核准選填；退回／駁回必填，寫入 Decision Log</span>
+                      </label>
                       <textarea
+                        aria-describedby={reasonError ? "governance-reason-error" : "governance-reason-help"}
+                        aria-invalid={Boolean(reasonError)}
                         id="governance-reason"
                         onChange={(event) => {
                           setReason(event.target.value);
@@ -937,25 +999,35 @@ export function GovernanceWorkspace({
                             setReasonError("");
                           }
                         }}
-                        placeholder="Optional for approve; required for return/reject (min 10 chars)"
-                        rows={4}
+                        placeholder="例：受眾與預算合規，成效量測明確…"
+                        rows={2}
                         value={reason}
                       />
                       <div className={styles.reasonRow}>
-                        <span>Return/reject: reason required (at least 10 chars)</span>
-                        {reasonError ? <strong className={styles.errorText}>{reasonError}</strong> : null}
+                        <span id="governance-reason-help">退回或駁回理由至少 10 個字</span>
+                        {reasonError ? (
+                          <strong className={styles.errorText} id="governance-reason-error" role="alert">
+                            {reasonError}
+                          </strong>
+                        ) : null}
                       </div>
-                      <div className={styles.actions}>
-                        <button disabled={!canDecide} onClick={() => submitDecision("approve")} type="button">
-                          Approve
-                        </button>
-                        <button disabled={!canDecide} onClick={() => submitDecision("return")} type="button">
-                          Return
-                        </button>
-                        <button disabled={!canDecide} onClick={() => submitDecision("reject")} type="button">
-                          Reject
-                        </button>
-                      </div>
+                      {canDecide ? (
+                        <div className={styles.actions} aria-busy={decisionRunning}>
+                          <button disabled={decisionRunning} onClick={() => submitDecision("approve")} type="button">
+                            {decisionRunning ? "送出中…" : "核准"}
+                          </button>
+                          <button disabled={decisionRunning} onClick={() => submitDecision("return")} type="button">
+                            退回修改
+                          </button>
+                          <button disabled={decisionRunning} onClick={() => submitDecision("reject")} type="button">
+                            駁回
+                          </button>
+                        </div>
+                      ) : (
+                        <div className={styles.readOnlyNotice}>
+                          目前角色僅可查看 — 核准需營運主管或 PM／稽核
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className={styles.decidedNotice}>
@@ -967,60 +1039,64 @@ export function GovernanceWorkspace({
                 </section>
               </>
             ) : (
-              <div className={styles.emptyState}>No approvals</div>
+              <div className={styles.emptyState}>目前沒有核准請求</div>
             )}
           </article>
         </section>
       ) : null}
 
       {activeTab === "decisions" ? (
-        <section className={styles.tablePanel} aria-label="Decision Log">
-          <div className={styles.panelHeader}>
-            <h3>Decision Log</h3>
-            <span>{localDecisions.length} rows</span>
+        <section className={styles.logSection} aria-label="Decision Log">
+          <div className={styles.viewHeader}>
+            <div>
+              <h3>Decision Log</h3>
+              <p>系統建議、最終決策與採用證據的不可分割紀錄</p>
+            </div>
+            <span>{localDecisions.length} 筆</span>
           </div>
-          <div className={styles.tableWrap}>
-            <table className={styles.dataTable}>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Module</th>
-                  <th>Item</th>
-                  <th>System Rec</th>
-                  <th>Final</th>
-                  <th>Reason</th>
-                  <th>Actor</th>
-                  <th>Model</th>
-                  <th>Dataset</th>
-                </tr>
-              </thead>
-              <tbody>
-                {localDecisions.map((decision) => (
-                  <tr key={decision.id}>
-                    <td>{decision.decidedAt}</td>
-                    <td>{decision.module}</td>
-                    <td>{decision.item}</td>
-                    <td>{decision.systemRecommendation}</td>
-                    <td>
-                      <span className={statusClass(decision.finalDecision)}>{decision.finalDecision}</span>
-                    </td>
-                    <td>{decision.reason}</td>
-                    <td>{decision.actor}</td>
-                    <td>{decision.model ?? "n/a"}</td>
-                    <td>{decision.datasetSnapshot ?? "n/a"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className={styles.decisionList}>
+            {localDecisions.map((decision) => (
+              <article className={styles.decisionCard} key={decision.id}>
+                <header>
+                  <span className={styles.approvalId}>{decision.id}</span>
+                  <span className={moduleClass(decision.module)}>{decision.module}</span>
+                  <strong>{decision.item}</strong>
+                  <time>{decision.decidedAt}</time>
+                </header>
+                <div className={styles.decisionCompare}>
+                  <section>
+                    <span>系統建議</span>
+                    <p>{decision.systemRecommendation}</p>
+                  </section>
+                  <section>
+                    <span>最終決策</span>
+                    <p>{decision.finalDecision}</p>
+                  </section>
+                </div>
+                <p className={styles.decisionReason}>理由：{decision.reason}</p>
+                <footer>
+                  <span>決策人：<strong>{decision.actor}</strong></span>
+                  <span>模型：<code>{decision.model ?? "n/a"}</code></span>
+                  <span>資料快照：<code>{decision.datasetSnapshot ?? "n/a"}</code></span>
+                  <span>關聯核准：<code>{decision.approvalId ?? "n/a"}</code></span>
+                </footer>
+              </article>
+            ))}
+            {localDecisions.length === 0 ? (
+              <div className={styles.emptyState}>目前沒有決策紀錄</div>
+            ) : null}
           </div>
         </section>
       ) : null}
 
       {activeTab === "audit" ? (
-        <section className={styles.tablePanel} aria-label="Audit Trail">
-          <div className={styles.panelHeader}>
-            <h3>Audit Trail</h3>
-            <span>{filteredAuditRows.length} rows</span>
+        <section className={styles.logSection} aria-label="Audit Trail">
+          <div className={styles.viewHeader}>
+            <div>
+              <h3>Audit Trail</h3>
+              <p>依時間追蹤 actor、事件、實體與 correlation ID</p>
+            </div>
+            <span>{filteredAuditRows.length} 筆</span>
           </div>
           <div className={styles.filters} aria-label="Audit category filters">
             <button
@@ -1028,7 +1104,7 @@ export function GovernanceWorkspace({
               onClick={() => setAuditCategory("all")}
               type="button"
             >
-              all
+              全部
             </button>
             {auditCategories.map((category) => (
               <button
@@ -1037,41 +1113,32 @@ export function GovernanceWorkspace({
                 onClick={() => setAuditCategory(category)}
                 type="button"
               >
-                {category}
+                {auditCategoryLabel(category)}
               </button>
             ))}
           </div>
-          <div className={styles.tableWrap}>
-            <table className={styles.dataTable}>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Category</th>
-                  <th>Module</th>
-                  <th>Action</th>
-                  <th>Entity</th>
-                  <th>Actor</th>
-                  <th>Summary</th>
-                  <th>Correlation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAuditRows.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.timestamp}</td>
-                    <td>
-                      <span className={statusClass(row.category)}>{row.category}</span>
-                    </td>
-                    <td>{row.module ?? "n/a"}</td>
-                    <td>{row.action}</td>
-                    <td>{row.entityRef ?? "n/a"}</td>
-                    <td>{row.actor}</td>
-                    <td>{row.summary ?? row.reason ?? "n/a"}</td>
-                    <td>{row.correlationId ?? "n/a"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className={styles.auditFeed}>
+            {filteredAuditRows.map((row) => (
+              <article className={styles.auditRow} key={row.id}>
+                <time>{row.timestamp}</time>
+                <div className={styles.auditActor}>
+                  <strong>{row.actor}</strong>
+                  <span>{row.module ?? auditCategoryLabel(row.category)}</span>
+                </div>
+                <div className={styles.auditEvent}>
+                  <strong>{row.action}</strong>
+                  {row.category === "camera" ? (
+                    <span className={styles.sensitiveBadge}>隱私敏感</span>
+                  ) : null}
+                  <p>{row.summary ?? row.reason ?? "未提供事件摘要"}</p>
+                  <code>{row.correlationId ?? "correlation unavailable"}</code>
+                </div>
+                <span className={styles.auditEntity}>{row.entityRef ?? "n/a"}</span>
+              </article>
+            ))}
+            {filteredAuditRows.length === 0 ? (
+              <div className={styles.emptyState}>此分類目前沒有稽核事件</div>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -1259,7 +1326,15 @@ export function GovernanceWorkspace({
       ) : null}
 
       {activeTab === "statusBoard" ? (
-        <section className={styles.statusBoardGrid} aria-label="System status board">
+        <section className={styles.statusSection} aria-label="System status board">
+          <div className={styles.viewHeader}>
+            <div>
+              <h3>系統狀態</h3>
+              <p>Data Quality、模型、Connector、SLA、角色權限與 Runbook</p>
+            </div>
+            <span>{dqRows.length + modelRows.length + connRows.length + slaRows.length} 個監控項目</span>
+          </div>
+          <div className={styles.statusBoardGrid}>
           <div className={styles.statusCard}>
             <div className={styles.statusCardTitle}>Data Quality 監控</div>
             <div style={{ display: "flex", flexDirection: "column" }}>
@@ -1373,12 +1448,113 @@ export function GovernanceWorkspace({
               </div>
             </div>
           </div>
+          </div>
         </section>
       ) : null}
 
       {localToast ? <div className={styles.toast}>{localToast}</div> : null}
     </section>
   );
+}
+
+function EvidenceDetail({
+  approval,
+  evidence,
+}: {
+  approval: GovernanceApproval;
+  evidence: GovernanceEvidence;
+}) {
+  return (
+    <div className={styles.evidenceDetail} data-testid="governance-selected-evidence">
+      <div>
+        <span>已選證據</span>
+        <strong>{evidence.label}</strong>
+      </div>
+      <dl>
+        <div>
+          <dt>Evidence ID</dt>
+          <dd>{evidence.id}</dd>
+        </div>
+        <div>
+          <dt>類型</dt>
+          <dd>{evidence.type ?? "unspecified"}</dd>
+        </div>
+        <div>
+          <dt>狀態</dt>
+          <dd>{evidence.state ?? "ready"}</dd>
+        </div>
+        <div>
+          <dt>綁定實體</dt>
+          <dd>{approval.entityRef ?? approval.id}</dd>
+        </div>
+      </dl>
+      {evidence.href ? (
+        <a href={evidence.href} rel="noreferrer" target="_blank">
+          開啟證據來源
+        </a>
+      ) : (
+        <p>此證據僅能在治理紀錄中檢視，未提供外部連結。</p>
+      )}
+    </div>
+  );
+}
+
+function approvalStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    pending: "待核准",
+    approved: "已核准",
+    returned: "退回修改",
+    rejected: "已駁回",
+    escalated: "已升級",
+  };
+  return labels[value.toLowerCase()] ?? value;
+}
+
+function priorityLabel(value: string) {
+  const labels: Record<string, string> = {
+    low: "低",
+    medium: "中",
+    high: "高",
+    critical: "極高",
+  };
+  return labels[value.toLowerCase()] ?? value;
+}
+
+function priorityClass(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized === "critical" || normalized === "high") {
+    return `${styles.badge} ${styles.badgeDanger}`;
+  }
+  if (normalized === "medium") {
+    return `${styles.badge} ${styles.badgeWarn}`;
+  }
+  return styles.badge;
+}
+
+function moduleClass(value: string) {
+  const normalized = value.toLowerCase();
+  const tone =
+    normalized === "growth"
+      ? styles.moduleGrowth
+      : normalized === "network"
+        ? styles.moduleNetwork
+        : normalized === "store ops"
+          ? styles.moduleStore
+          : styles.moduleGovern;
+  return `${styles.moduleBadge} ${tone}`;
+}
+
+function auditCategoryLabel(value: string) {
+  const labels: Record<string, string> = {
+    issue: "Issue",
+    camera: "影像調閱",
+    approval: "核准",
+    growth: "Growth",
+    network: "Network",
+    export: "匯出",
+    system: "系統",
+  };
+  return labels[value.toLowerCase()] ?? value;
 }
 
 function statusClass(value: string) {
