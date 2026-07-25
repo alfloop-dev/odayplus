@@ -115,7 +115,7 @@ export function ListingRadarPanel({
                 {sourceStatusLabel(source.status)}
               </span>
             </div>
-            <small className={styles.muted}>{source.lastSyncedAt ? `掃描 ${source.lastSyncedAt}` : "人工匯入"}</small>
+            <small className={styles.muted}>{source.lastSyncedAt ? `最近收件 ${source.lastSyncedAt}` : "人工匯入"}</small>
             <p>{source.complianceNote}</p>
             <small className={styles.muted}>新增 {rows.filter((row) => row.sourceId === source.id).length} · 合規模式</small>
           </article>
@@ -238,7 +238,7 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Convert
+                          轉為候選點
                         </button>
                       ) : null}
                       {canMerge && mergeTarget ? (
@@ -251,7 +251,7 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Merge
+                          標記重複
                         </button>
                       ) : null}
                       {canArchive ? (
@@ -264,11 +264,11 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Archive
+                          封存
                         </button>
                       ) : null}
                       {!canConvert && !canMerge && !canArchive ? (
-                        <span className={styles.muted}>{isBusy ? "Saving..." : "No action"}</span>
+                        <span className={styles.muted}>{isBusy ? "寫入中…" : "查看詳情"}</span>
                       ) : null}
                     </div>
                   </article>

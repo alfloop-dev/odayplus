@@ -21,22 +21,29 @@ export function NetworkShell({
     <>
       <ExpansionStepper activeTab={activeTab} onStepSelect={onTabChange} steps={steps} />
       <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
-        {tabs.map((tab, index) => (
-          <button
-            aria-current={index === activeTab ? "page" : undefined}
-            aria-selected={index === activeTab}
-            className={styles.tab}
-            data-testid={`network-tab-${index}`}
-            key={tab}
-            onClick={() => onTabChange(index)}
-            role="tab"
-            type="button"
-          >
-            {tab}
-          </button>
-        ))}
+        {tabs.map((tab, index) => {
+          const [label, englishLabel] = tab.split(" / ");
+          return (
+            <button
+              aria-controls="network-active-panel"
+              aria-current={index === activeTab ? "page" : undefined}
+              aria-selected={index === activeTab}
+              className={styles.tab}
+              data-testid={`network-tab-${index}`}
+              key={tab}
+              onClick={() => onTabChange(index)}
+              role="tab"
+              type="button"
+            >
+              <span>{label}</span>
+              {englishLabel ? <small>{englishLabel}</small> : null}
+            </button>
+          );
+        })}
       </nav>
-      {children}
+      <div className={styles.networkPanelHost} id="network-active-panel">
+        {children}
+      </div>
     </>
   );
 }
