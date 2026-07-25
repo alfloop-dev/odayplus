@@ -25,6 +25,7 @@ from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
 
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
+_POSTGRES_MODES = {"postgres", "postgresql", "pg", "cloudsql"}
 
 
 @dataclass(frozen=True)
@@ -143,16 +144,22 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
 
 
-def _durable_bundle(
-    db_path: str | Path, *, worm_sink: AuditWormSink | None = None
+def _engine_bundle(
+    engine: Any, *, mode: str, worm_sink: AuditWormSink
 ) -> PersistenceBundle:
+    """Assemble the durable bundle over any ``SqliteEngine``-compatible engine.
+
+    Both the SQLite and PostgreSQL backends implement the same engine surface
+    (``execute`` / ``query`` / ``query_one`` / ``next_ordinal`` /
+    ``table_columns`` / ``lock``), so the repository wiring below is identical
+    regardless of which backend the ``engine`` argument is.
+    """
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
-    from shared.infrastructure.persistence.engine import SqliteEngine
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
@@ -180,14 +187,10 @@ def _durable_bundle(
         DurableTransactionRepository,
     )
 
-    engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
-    worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
-    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
-        default_root=worm_root
-    )
+    resolved_worm_sink = worm_sink
     return PersistenceBundle(
-        mode="durable",
+        mode=mode,
         audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
         job_queue=DurableJobQueue(engine),
@@ -221,6 +224,32 @@ def _durable_bundle(
     )
 
 
+def _durable_bundle(
+    db_path: str | Path, *, worm_sink: AuditWormSink | None = None
+) -> PersistenceBundle:
+    from shared.infrastructure.persistence.engine import SqliteEngine
+
+    engine = SqliteEngine(db_path)
+    worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
+    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
+        default_root=worm_root
+    )
+    return _engine_bundle(engine, mode="durable", worm_sink=resolved_worm_sink)
+
+
+def _postgres_bundle(
+    *,
+    env: Any = None,
+    conninfo: Any = None,
+    worm_sink: AuditWormSink | None = None,
+) -> PersistenceBundle:
+    from shared.infrastructure.persistence.postgres_engine import PostgresEngine
+
+    engine = PostgresEngine(conninfo, env=env)
+    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    return _engine_bundle(engine, mode="postgres", worm_sink=resolved_worm_sink)
+
+
 def build_persistence(
     *,
     mode: str | None = None,
@@ -228,13 +257,30 @@ def build_persistence(
 ) -> PersistenceBundle:
     """Build the persistence bundle for the configured backend.
 
-    Args mirror the env knobs and override them when supplied (used by tests).
+    Selection (args override the matching env knob; used by tests):
+
+    - ``memory`` (default): in-memory implementations.
+    - ``durable`` / ``sqlite`` with no Postgres DSN: file-backed SQLite. This
+      stays the default for unit tests and Product-Grade E2E.
+    - ``durable`` with a Postgres DSN/Cloud SQL instance configured, or an
+      explicit ``postgres`` / ``pg`` mode: the Cloud SQL PostgreSQL backend.
     """
+    from shared.infrastructure.persistence.postgres_engine import (
+        postgres_dsn_configured,
+    )
+
     resolved_mode = (mode or os.environ.get("ODP_PERSISTENCE", "memory")).strip().lower()
     worm_sink = build_audit_worm_sink_from_env()
+
+    if resolved_mode in _POSTGRES_MODES:
+        return _postgres_bundle(worm_sink=worm_sink)
+
     if resolved_mode in _DURABLE_MODES:
+        if postgres_dsn_configured(os.environ):
+            return _postgres_bundle(worm_sink=worm_sink)
         resolved_path = db_path or os.environ.get("ODP_DB_PATH", DEFAULT_DB_PATH)
         return _durable_bundle(resolved_path, worm_sink=worm_sink)
+
     return _memory_bundle(worm_sink=worm_sink)
 
 

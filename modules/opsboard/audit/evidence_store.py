@@ -308,10 +308,7 @@ class DurableEvidenceBundleStore:
             self._worm_sink.write_retained_evidence(record)
 
     def _ensure_integrity_columns(self) -> None:
-        existing = {
-            str(row["name"])
-            for row in self._engine.query("PRAGMA table_info(durable_evidence_bundles)")
-        }
+        existing = self._engine.table_columns("durable_evidence_bundles")
         for column, column_type in _EVIDENCE_INTEGRITY_COLUMNS.items():
             if column not in existing:
                 self._engine.execute(

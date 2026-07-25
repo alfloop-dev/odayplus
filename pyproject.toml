@@ -22,6 +22,9 @@ dependencies = [
     # Data
     "duckdb>=1.0",
     "sqlalchemy>=2.0",
+    # Durable persistence: PostgreSQL / Cloud SQL backend (ODP-GAP-PERSIST-001).
+    # Imported lazily so the minimal CI env without the driver still collects.
+    "psycopg[binary]>=3.2",
     # HTTP client for the live listing-feed adapter (runtime code path).
     "httpx>=0.27",
 ]

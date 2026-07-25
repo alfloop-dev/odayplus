@@ -109,6 +109,12 @@ class SqliteEngine:
         with self._lock:
             return self._conn.execute(sql, params).fetchone()
 
+    def table_columns(self, table: str) -> set[str]:
+        """Column names of ``table`` (engine-neutral; mirrors PostgresEngine)."""
+        with self._lock:
+            rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {str(row["name"]) for row in rows}
+
     def next_ordinal(self, name: str) -> int:
         """Return the next monotonic ordinal for ``name`` (stable list order)."""
         with self._lock:

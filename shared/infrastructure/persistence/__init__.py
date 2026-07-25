@@ -37,6 +37,14 @@ from shared.infrastructure.persistence.outbox import (
     DurableOutboxRepository,
     InMemoryOutboxRepository,
 )
+from shared.infrastructure.persistence.postgres_engine import (
+    MigrationChecksumMismatch,
+    PostgresConfigurationError,
+    PostgresEngine,
+    build_postgres_conninfo,
+    postgres_dsn_configured,
+    redact_conninfo,
+)
 from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableAdLiftRepository,
@@ -114,9 +122,15 @@ __all__ = [
     "DurableOutboxRepository",
     "InMemoryOutboxRepository",
     "MigrationAsset",
+    "MigrationChecksumMismatch",
     "MigrationStep",
     "MissingLiveInputError",
     "PersistenceBundle",
+    "PostgresConfigurationError",
+    "PostgresEngine",
+    "build_postgres_conninfo",
+    "postgres_dsn_configured",
+    "redact_conninfo",
     "SnapshotSink",
     "SqliteDocumentStore",
     "SqliteEngine",

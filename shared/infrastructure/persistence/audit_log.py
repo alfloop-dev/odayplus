@@ -130,10 +130,7 @@ class DurableAuditLog:
         )
 
     def _ensure_integrity_columns(self) -> None:
-        existing = {
-            str(row["name"])
-            for row in self._engine.query("PRAGMA table_info(durable_audit_events)")
-        }
+        existing = self._engine.table_columns("durable_audit_events")
         for column, column_type in _INTEGRITY_COLUMNS.items():
             if column not in existing:
                 self._engine.execute(
