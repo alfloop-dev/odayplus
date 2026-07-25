@@ -389,8 +389,10 @@ class DurableJobQueue:
                 predicates.append("fence_token = ?")
                 params.append(fence_token)
 
+            # assignments/predicates hold only fixed literal fragments;
+            # every value is bound through ? placeholders in `params`.
             result = self._engine.execute(
-                "UPDATE durable_jobs SET "
+                "UPDATE durable_jobs SET "  # nosec B608 - fixed fragments, values bound via ? placeholders
                 + ", ".join(assignments)
                 + " WHERE "
                 + " AND ".join(predicates),
