@@ -288,6 +288,40 @@ def test_command_receipt_waits_for_concurrent_owner_and_replays(tmp_path) -> Non
         bundle.engine.close()
 
 
+def test_in_memory_command_receipt_reservation_is_atomic() -> None:
+    executions = 0
+    executions_lock = threading.Lock()
+    store = TenantScopedCommandReceiptStore(
+        queue=InMemoryJobQueue(),
+        service="priceops",
+    )
+
+    def invoke() -> object:
+        def operation(receipt_id: str) -> dict:
+            nonlocal executions
+            with executions_lock:
+                executions += 1
+            time.sleep(0.05)
+            return {"receipt_id": receipt_id, "plan_id": "plan-once"}
+
+        return store.run(
+            tenant_id=TENANT_A,
+            idempotency_key="memory-concurrent-key",
+            scope="priceops:create-plan",
+            payload={"rent": 50_000},
+            correlation_id="corr-memory-concurrent",
+            operation=operation,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        outcomes = list(executor.map(lambda _: invoke(), range(8)))
+
+    assert executions == 1
+    assert sum(not outcome.replayed for outcome in outcomes) == 1
+    assert len({outcome.receipt_id for outcome in outcomes}) == 1
+    assert {outcome.value["plan_id"] for outcome in outcomes} == {"plan-once"}
+
+
 def test_priceops_command_replays_after_app_restart_and_rejects_payload_change(
     tmp_path,
 ) -> None:

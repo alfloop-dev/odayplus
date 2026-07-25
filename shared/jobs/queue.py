@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -83,6 +84,7 @@ class InMemoryJobQueue:
     def __init__(self) -> None:
         self._jobs: dict[str, JobRecord] = {}
         self._idempotency_index: dict[str, str] = {}
+        self._reservation_lock = RLock()
 
     def count_active_jobs(self, *, tenant_id: str | None = None) -> int:
         return sum(
@@ -97,21 +99,22 @@ class InMemoryJobQueue:
         )
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
-        if request.idempotency_key:
-            existing_job_id = self._idempotency_index.get(request.idempotency_key)
-            if existing_job_id is not None:
-                return self._jobs[existing_job_id], False
+        with self._reservation_lock:
+            if request.idempotency_key:
+                existing_job_id = self._idempotency_index.get(request.idempotency_key)
+                if existing_job_id is not None:
+                    return self._jobs[existing_job_id], False
 
-        record = JobRecord(
-            job_type=request.job_type,
-            payload=request.payload,
-            correlation_id=correlation_id,
-            idempotency_key=request.idempotency_key,
-        )
-        self._jobs[record.job_id] = record
-        if request.idempotency_key:
-            self._idempotency_index[request.idempotency_key] = record.job_id
-        return record, True
+            record = JobRecord(
+                job_type=request.job_type,
+                payload=request.payload,
+                correlation_id=correlation_id,
+                idempotency_key=request.idempotency_key,
+            )
+            self._jobs[record.job_id] = record
+            if request.idempotency_key:
+                self._idempotency_index[request.idempotency_key] = record.job_id
+            return record, True
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._jobs.get(job_id)
