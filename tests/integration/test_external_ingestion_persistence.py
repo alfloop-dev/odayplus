@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from modules.external_data.application.ingestion_service import ExternalIngestionService
 from modules.external_data.application.ingestion_store import InMemoryIngestionRunStore
+from modules.external_data.connectors import ExternalProviderMode, ProviderValidationResult
 from modules.external_data.providers import ListingPartnerFeedProvider
 from modules.external_data.workers.scheduled_fetch import ExternalFetchJobSpec
 from shared.audit.events import InMemoryAuditLog
@@ -80,12 +81,14 @@ def test_manual_ingestion_persists_and_is_readable_via_api() -> None:
     assert listing.json()["count"] == 1
 
 
-def test_freshness_reads_persisted_run_state() -> None:
+def test_freshness_reads_persisted_run_state(monkeypatch) -> None:
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
     client = TestClient(create_app())
 
-    # Cold store -> documented fixture fallback.
+    # Explicit POC mode keeps the deterministic fixture for product tests.
     cold = client.get("/external-data/freshness", headers=EXTERNAL_DATA_HEADERS)
     assert cold.json()["freshness"][0]["source_snapshot_id"] == "snap-expansion-20260628-0100"
+    assert cold.json()["availability"]["source"] == "fixture"
 
     client.post(
         "/external-data/ingestion-runs",
@@ -98,6 +101,39 @@ def test_freshness_reads_persisted_run_state() -> None:
     # Now the persisted run's snapshot drives freshness, not the fixture.
     assert fresh["source_snapshot_id"] == "listing-2026-06-26"
     assert fresh["data_status"] == "FRESH"
+    assert warm.json()["availability"]["source"] == "persisted"
+
+
+def test_production_cold_store_fails_closed_without_live_runtime(monkeypatch) -> None:
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+    client = TestClient(create_app())
+
+    response = client.get("/external-data/freshness", headers=EXTERNAL_DATA_HEADERS)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "production_runtime_unavailable"
+    assert "snap-expansion-20260628-0100" not in response.text
+
+
+def test_live_provider_mode_never_uses_poc_freshness_fixture(monkeypatch) -> None:
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "live")
+    validation = ProviderValidationResult(
+        mode=ExternalProviderMode.LIVE,
+        correlation_id="corr-live-cold-store",
+        providers=(),
+    )
+    client = TestClient(create_app(external_provider_validation=validation))
+
+    response = client.get(
+        "/external-data/freshness",
+        headers={**EXTERNAL_DATA_HEADERS, "x-correlation-id": "corr-live-cold-store"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["freshness"] == []
+    assert response.json()["availability"]["status"] == "UNAVAILABLE"
+    assert response.json()["correlation_id"] == "corr-live-cold-store"
 
 
 # -- idempotent retry rejection + audit --------------------------------------

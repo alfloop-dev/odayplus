@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
@@ -14,6 +14,7 @@ import {
   conflictLevelTone,
   constraintTone,
   createGrowthDraft,
+  fetchGrowthApiData,
   formatLift,
   GROWTH_ENTRY_CARDS,
   GROWTH_KIND_PRESETS,
@@ -34,6 +35,12 @@ import {
   type GrowthSegment,
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  operatorFixturesAllowed,
+  toUnavailableOperatorStatus,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
 import styles from "./operator.module.css";
 import g from "./growth.module.css";
 
@@ -133,8 +140,8 @@ function itemKind(item: GrowthItem): GrowthKind {
  * Builder, server conflict gate, submit-for-approval and effectiveness/closeout
  * gate all carry over unchanged.
  *
- * Accepts optional `apiData` (fetched server-side) so the workspace renders real
- * API data on first load, falling back to fixtures when unavailable.
+ * Accepts optional `apiData` (fetched server-side) or loads the Growth API on
+ * mount. Production fails closed; local and test modes retain fixture support.
  */
 export function GrowthWorkspace({
   searchParams = {},
@@ -143,9 +150,10 @@ export function GrowthWorkspace({
 }: {
   searchParams?: SearchParams;
   basePath?: string;
-  /** Pre-fetched API data from the server component. Optional; falls back to fixtures. */
+  /** Optional pre-fetched API data. Client loading is used when omitted. */
   apiData?: GrowthApiData;
 }) {
+  const fixturesAllowed = operatorFixturesAllowed();
   const segmentId = readParam(searchParams.segment);
   const itemId = readParam(searchParams.item);
   const draftId = readParam(searchParams.draft);
@@ -160,8 +168,56 @@ export function GrowthWorkspace({
       ? builderParam
       : null;
 
-  const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, apiData);
-  const freshnessData = apiData?.freshness ?? {
+  const [resolvedApiData, setResolvedApiData] = useState<GrowthApiData | undefined>(apiData);
+  const [growthLoadState, setGrowthLoadState] = useState<OperatorDataAvailability>(() => {
+    if (!apiData) return fixturesAllowed ? "fixture" : "loading";
+    if (apiData.availability) return apiData.availability;
+    return apiData.fromApi ? "ready" : "fixture";
+  });
+  const [growthLoadError, setGrowthLoadError] = useState<string | null>(null);
+  const [growthReloadToken, setGrowthReloadToken] = useState(0);
+
+  useEffect(() => {
+    if (apiData) {
+      setResolvedApiData(apiData);
+      setGrowthLoadState(apiData.availability ?? (apiData.fromApi ? "ready" : "fixture"));
+      return undefined;
+    }
+
+    let cancelled = false;
+    if (!fixturesAllowed) setGrowthLoadState("loading");
+    setGrowthLoadError(null);
+
+    void fetchGrowthApiData(
+      { segmentId },
+      { allowFixtureFallback: fixturesAllowed },
+    ).then((result) => {
+      if (cancelled) return;
+      setResolvedApiData(result);
+      setGrowthLoadState(result.availability);
+      setGrowthLoadError(result.error ?? null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiData, fixturesAllowed, growthReloadToken, segmentId]);
+
+  if (
+    !fixturesAllowed &&
+    growthLoadState !== "ready"
+  ) {
+    return (
+      <OperatorDataUnavailableGate
+        detail={growthLoadError}
+        onRetry={() => setGrowthReloadToken((token) => token + 1)}
+        status={toUnavailableOperatorStatus(growthLoadState)}
+      />
+    );
+  }
+
+  const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, resolvedApiData);
+  const freshnessData = resolvedApiData?.freshness ?? {
     status: "FRESH" as const,
     updatedAt: "2026-07-09 14:20",
     modelVersion: "growth-uplift-v1.4.0",
@@ -230,7 +286,12 @@ export function GrowthWorkspace({
         </nav>
 
         {activeTab === "segments" ? (
-          <SegmentSection segments={vm.segments} selected={vm.selectedSegment} href={href} />
+          <SegmentSection
+            fixturesAllowed={fixturesAllowed}
+            href={href}
+            segments={vm.segments}
+            selected={vm.selectedSegment}
+          />
         ) : activeTab === "priceops" ? (
           <RecommendationSection recommendations={vm.recommendations} href={href} />
         ) : (
@@ -310,10 +371,12 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
 
 /** 會員分群 tab — segment cards with a scan-friendly filter chip bar. */
 function SegmentSection({
+  fixturesAllowed,
   segments,
   selected,
   href,
 }: {
+  fixturesAllowed: boolean;
   segments: GrowthSegment[];
   selected: GrowthSegment | null;
   href: (o: Record<string, string | undefined>) => string;
@@ -369,7 +432,9 @@ function SegmentSection({
         ))}
       </div>
       <p className={g.tabNote}>
-        分群由 CRM 流失風險與消費行為模型每日更新（mock）— 由分群建立的草稿仍走核准流程。
+        {fixturesAllowed
+          ? "分群由本機範例資料建立；由分群建立的草稿仍走核准流程。"
+          : "分群與模型版本來自 live API；由分群建立的草稿仍走核准流程。"}
       </p>
     </section>
   );
@@ -845,21 +910,22 @@ function CloseoutPanel({
       rationale: item.rationale,
     });
 
-    // Always record local audit trail regardless of API availability
+    // Console logging is diagnostic only and never substitutes for a durable write.
     const auditPayload = {
       action: "APPROVE_CLOSEOUT",
       itemId: item.id,
       decisionId: item.audit.decisionId,
       outcome: gate.outcome,
       requiredAction: gate.requiredAction,
-      apiResult: result ? { correlationId: result.correlationId } : "offline-fallback",
+      apiResult: result ? { correlationId: result.correlationId } : "api-write-failed",
       timestamp: new Date().toISOString(),
     };
     console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
 
     if (result === null) {
-      // API unavailable — record locally and proceed (fixture/offline fallback)
-      setApiError("API 暫時不可用，結案已記錄於本機稽核日誌。");
+      setApiError("API 暫時不可用，結案未送出。請稍後重試。");
+      setIsSubmitting(false);
+      return;
     }
 
     setIsSubmitting(false);
@@ -1010,7 +1076,7 @@ function GrowthBuilderModal({
       budget: form.budget,
       apiResult: created
         ? { id: created.id, correlationId: created.correlationId }
-        : "offline-fallback",
+        : "api-write-failed",
       approvalId,
       timestamp: new Date().toISOString(),
     };

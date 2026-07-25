@@ -42,6 +42,9 @@ class ListingRepository(Protocol):
     def get_listing(self, listing_id: str) -> Listing | None:
         ...
 
+    def get_address(self, address_id: str) -> AddressLocation | None:
+        ...
+
 
 @dataclass(frozen=True)
 class ListingPipelineRecord:

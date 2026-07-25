@@ -1,9 +1,8 @@
 """Minimal, dependency-free JOSE compact JWS/JWT verification.
 
-ODP-GAP-AUTH-001 needs a *live* token-verification boundary that runs in the
-lean runtime (no ``PyJWT`` / ``cryptography`` guaranteed). This module verifies
-the symmetric ``HS256`` family with the standard library so the boundary is
-fully exercisable in tests and CI.
+ODP-GAP-AUTH-001 needs a *live* token-verification boundary. This module
+verifies the symmetric ``HS256`` family with the standard library and
+production ``RS256`` keys with ``cryptography``.
 
 Design constraints (fail-closed):
 
@@ -11,11 +10,8 @@ Design constraints (fail-closed):
   ``alg`` header is never trusted to *select* a verification path beyond the
   explicit allow-list -- this is the classic JWT algorithm-confusion defence.
 - Signatures are compared with :func:`hmac.compare_digest` (constant time).
-- Asymmetric verification (``RS256``/``ES256`` against a live JWKS) is a
-  documented seam: :class:`SigningKey` carries the algorithm, and a deployment
-  that installs ``cryptography`` plugs an asymmetric verifier via
-  :func:`register_verifier` without changing boundary logic. Absent that, an
-  ``RS256`` token fails closed with :class:`UnsupportedAlgorithmError`.
+- ``RS256`` keys are obtained from the configured IdP JWKS endpoint. The key
+  record pins the expected algorithm, preventing HMAC/RSA confusion.
 """
 
 from __future__ import annotations
@@ -76,6 +72,26 @@ def register_verifier(
     """Register an asymmetric verifier for ``algorithm`` (e.g. ``RS256``)."""
 
     _ASYMMETRIC_VERIFIERS[algorithm] = verifier
+
+
+def _verify_rs256(key: SigningKey, signing_input: bytes, signature: bytes) -> bool:
+    """Verify an RSASSA-PKCS1-v1_5 SHA-256 signature from a PEM public key."""
+
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+        public_key = serialization.load_pem_public_key(key.secret)
+        if not isinstance(public_key, rsa.RSAPublicKey):
+            return False
+        public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+    except (InvalidSignature, TypeError, ValueError):
+        return False
+    return True
+
+
+register_verifier("RS256", _verify_rs256)
 
 
 def _b64url_encode(data: bytes) -> str:

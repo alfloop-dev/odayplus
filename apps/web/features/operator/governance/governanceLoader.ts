@@ -68,6 +68,7 @@ export type GovernanceSnapshot = {
   statusBoard: GovernanceStatusBoard;
   evidencePackages: GovernanceEvidencePackage[];
   correlationId?: string;
+  source?: string;
 };
 
 function newIdempotencyKey(): string {
@@ -118,6 +119,7 @@ export async function fetchGovernanceSnapshot(
     statusBoard: GovernanceStatusBoard;
     evidencePackages: GovernanceEvidencePackage[];
     correlation_id?: string;
+    source?: string;
   }>("/snapshot", { method: "GET", headers, roleId });
   if (!result.ok || !result.data) return null;
   const data = result.data;
@@ -128,6 +130,7 @@ export async function fetchGovernanceSnapshot(
     statusBoard: data.statusBoard,
     evidencePackages: data.evidencePackages ?? [],
     correlationId: data.correlation_id,
+    source: data.source,
   };
 }
 

@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from models.shared_ml.production_runtime import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from modules.adlift.domain.incrementality import (
     AdCampaign,
     IncrementalityReport,
@@ -22,7 +26,20 @@ class AdLiftResult:
 
 
 class AdLiftService:
-    def __init__(self, *, repository: InMemoryAdLiftRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: InMemoryAdLiftRepository | None = None,
+        runtime_mode: str | None = None,
+    ) -> None:
+        self.production_required = production_execution_required(runtime_mode)
+        strict_production_composition = runtime_mode is not None and self.production_required
+        if strict_production_composition and (
+            repository is None or isinstance(repository, InMemoryAdLiftRepository)
+        ):
+            raise ProductionExecutionConfigurationError(
+                "AdLift production requires an injected durable repository"
+            )
         self.repository = repository or InMemoryAdLiftRepository()
 
     def evaluate(
@@ -34,6 +51,12 @@ class AdLiftService:
         reports = tuple(
             self.repository.save_report(
                 run_incrementality(campaign, generated_at=generated_at)
+                if not self.production_required
+                else run_incrementality(
+                    campaign,
+                    generated_at=generated_at,
+                    require_statsmodels=True,
+                )
             )
             for campaign in campaigns
         )

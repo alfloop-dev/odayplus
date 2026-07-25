@@ -40,6 +40,7 @@ import {
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
+import { isOperatorProductionMode } from "../../operatorDataMode";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
@@ -48,10 +49,9 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 //                deep link), and every write through the typed client.
 // Not changing : the surrounding Listing Radar panel's own data flow.
 //
-// There is deliberately NO fixture fallback here. The other network panels
-// fall back to bundled fixtures when the API is down, which is right for
-// read-only analytics — but an intake queue is a record of real human
-// submissions and real governance decisions. Showing synthetic rows in its
+// There is deliberately NO fixture fallback here. Other network panels may
+// fall back to bundled fixtures in local/POC mode, but an intake queue records
+// real human submissions and governance decisions. Showing synthetic rows in its
 // place would present fabricated evidence, so an unreachable backend renders
 // an explicit error state instead.
 
@@ -67,6 +67,36 @@ export function AssistedIntakeSection({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [sessionSubjectId, setSessionSubjectId] = useState<string | undefined>(
+    activeSubjectId,
+  );
+
+  useEffect(() => {
+    if (activeSubjectId) {
+      setSessionSubjectId(activeSubjectId);
+      return;
+    }
+    if (!isOperatorProductionMode()) return;
+
+    let cancelled = false;
+    void fetch("/auth/session", {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as { subject?: string };
+      })
+      .then((payload) => {
+        if (!cancelled && payload?.subject) {
+          setSessionSubjectId(payload.subject);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSubjectId]);
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
 
@@ -81,6 +111,7 @@ export function AssistedIntakeSection({
   const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
+  const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -121,8 +152,8 @@ export function AssistedIntakeSection({
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
-    () => buildIntakeClient(activeRoleId, activeSubjectId),
-    [activeRoleId, activeSubjectId],
+    () => buildIntakeClient(activeRoleId, sessionSubjectId),
+    [activeRoleId, sessionSubjectId],
   );
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
@@ -186,6 +217,46 @@ export function AssistedIntakeSection({
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
+
+  // A durable detail link may point to a record outside the current inbox
+  // page. Resolve that record directly instead of depending on list pagination.
+  useEffect(() => {
+    if (dialog !== "detail" || !selectedId) {
+      setDetailLoadState("idle");
+      return undefined;
+    }
+    if (selected) {
+      setDetailLoadState("ready");
+      return undefined;
+    }
+    if (!client) {
+      setDetailLoadState("error");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setDetailLoadState("loading");
+    void intakeApi.get(client, selectedId).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setRecords((current) => {
+          const index = current.findIndex((item) => item.id === result.value.id);
+          if (index === -1) return [result.value, ...current];
+          const next = [...current];
+          next[index] = result.value;
+          return next;
+        });
+        setActionError(null);
+        setDetailLoadState("ready");
+      } else {
+        setActionError(result.error);
+        setDetailLoadState("error");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, dialog, selected, selectedId]);
 
   // Restore the durable promotion saga whenever a deep link or reloaded inbox
   // opens an intake. Until this lookup finishes the request form stays closed,
@@ -852,7 +923,9 @@ export function AssistedIntakeSection({
     : null;
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
-  const canPromote = canPerform("promote", activeRoleId);
+  const currentSubjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
+  const canPromote =
+    canPerform("promote", activeRoleId) && Boolean(currentSubjectId);
   // The promotion section renders on the READY branch of the real detail
   // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
   // every later saga state so the receipt and score job remain reachable.
@@ -876,7 +949,7 @@ export function AssistedIntakeSection({
         canRequest={canPromote}
         canReview={canPromote}
         currentOperator={{
-          id: operatorSubjectId(activeRoleId, activeSubjectId),
+          id: currentSubjectId,
           name: role.label,
           role: activeRoleId,
         }}
@@ -915,6 +988,33 @@ export function AssistedIntakeSection({
       {toast ? (
         <div className={styles.noteBox} data-testid="intake-toast" role="status">
           {toast}
+        </div>
+      ) : null}
+
+      {dialog === "detail" && !selected && detailLoadState === "loading" ? (
+        <div
+          aria-live="polite"
+          className={styles.noteBox}
+          data-testid="intake-direct-detail-loading"
+          role="status"
+        >
+          正在從後端載入收件 {selectedId}…
+        </div>
+      ) : null}
+
+      {dialog === "detail" && !selected && detailLoadState === "error" ? (
+        <div
+          className={styles.errorPanel}
+          data-testid="intake-direct-detail-error"
+          role="alert"
+        >
+          <span className={styles.errorSummary}>
+            {actionError?.code ?? "ODP-INTAKE-UNAVAILABLE"} ·{" "}
+            {actionError?.summary ?? "後端未提供此收件紀錄。"}
+          </span>
+          <span className={styles.errorNext}>
+            {actionError?.nextAction ?? "請重新整理或返回 Listing 收件匣。"}
+          </span>
         </div>
       ) : null}
 

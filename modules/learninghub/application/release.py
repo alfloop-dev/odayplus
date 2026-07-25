@@ -10,8 +10,11 @@ from typing import Any
 from uuid import uuid4
 
 from models.shared_ml import (
+    ArtifactKind,
+    ArtifactStore,
     FeatureDefinition,
     FeatureSet,
+    InMemoryArtifactStore,
     LabelDefinition,
     LabelSet,
     LocalModelArtifactStore,
@@ -50,6 +53,10 @@ from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
     LearningHubRepository,
     MlflowRegistryAdapter,
+)
+from modules.learninghub.runtime import (
+    LearningHubRuntimeConfigurationError,
+    learninghub_production_required,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
 
@@ -122,10 +129,41 @@ class LearningHubService:
         repository: LearningHubRepository | None = None,
         registry: MlflowRegistryAdapter | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        artifact_store: ArtifactStore | LocalModelArtifactStore | None = None,
+        runtime_mode: str | None = None,
     ) -> None:
+        self.production_required = learninghub_production_required(runtime_mode)
+        if self.production_required and (
+            repository is None or isinstance(repository, InMemoryLearningHubRepository)
+        ):
+            raise LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected durable repository"
+            )
+        if self.production_required and (
+            audit_log is None or isinstance(audit_log, InMemoryAuditLog)
+        ):
+            raise LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected durable audit log"
+            )
+        if self.production_required and (
+            artifact_store is None
+            or isinstance(
+                artifact_store,
+                (InMemoryArtifactStore, LocalModelArtifactStore),
+            )
+        ):
+            raise LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected durable artifact store"
+            )
         self.repository = repository or InMemoryLearningHubRepository()
-        self.registry = registry or MlflowRegistryAdapter(self.repository)
+        self.registry = registry or MlflowRegistryAdapter(
+            self.repository,
+            runtime_mode=runtime_mode,
+        )
+        if self.production_required:
+            self.registry.require_production_binding()
         self.audit_log = audit_log or InMemoryAuditLog()
+        self.artifact_store = artifact_store or LocalModelArtifactStore()
 
     def register_dataset_snapshot(
         self,
@@ -235,6 +273,8 @@ class LearningHubService:
         model_card: ModelCard,
         validation_run: ValidationRun,
     ) -> ModelVersion:
+        if self.production_required:
+            self.registry.validate_production_model_version(model_version)
         if validation_run.dataset_snapshot_id != model_version.dataset_snapshot_id:
             raise LearningHubError("validation run dataset does not match model version")
         if model_card.validation_run_id != validation_run.validation_run_id:
@@ -244,9 +284,31 @@ class LearningHubService:
         self.repository.save_validation_run(validation_run)
         self.repository.save_model_card(model_card)
 
-        # Save model card to local model artifact store
-        store = LocalModelArtifactStore()
-        store.save_model_card(model_card, artifact_uri=model_version.artifact_uri)
+        if isinstance(self.artifact_store, LocalModelArtifactStore):
+            self.artifact_store.save_model_card(
+                model_card,
+                artifact_uri=model_version.artifact_uri,
+            )
+        else:
+            card_bytes = json.dumps(
+                model_card.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+            record = self.artifact_store.put_artifact(
+                model_name=model_version.model_name,
+                version=model_version.version,
+                kind=ArtifactKind.MODEL_CARD,
+                data=card_bytes,
+                content_type="application/json",
+                metadata={
+                    "dataset_snapshot_id": model_version.dataset_snapshot_id,
+                    "validation_run_id": validation_run.validation_run_id,
+                },
+            )
+            if not self.artifact_store.verify(record.artifact_id):
+                raise LearningHubError("model card artifact verification failed")
 
         return self.registry.register_model_version(model_version)
 
@@ -583,9 +645,7 @@ class LearningHubService:
         breaches = evaluate_guardrails(observed_metrics, guardrails)
         status = MonitorStatus.BREACHED if breaches else MonitorStatus.HEALTHY
         recommended_action = (
-            RecommendedAction.ROLLBACK
-            if breaches and rollback_target
-            else RecommendedAction.NONE
+            RecommendedAction.ROLLBACK if breaches and rollback_target else RecommendedAction.NONE
         )
 
         audit_event = self.audit_log.record(

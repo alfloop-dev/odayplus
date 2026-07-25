@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from models.shared_ml import (
+    ProductionExecutionConfigurationError,
+    production_execution_required,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
@@ -14,6 +18,7 @@ else:
     from modules.netplan.application import (
         NetPlanApprovalError,
         NetPlanNotFoundError,
+        NetPlanProductionExecutor,
         NetPlanService,
     )
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
@@ -67,14 +72,46 @@ else:
         *,
         repository: InMemoryNetPlanRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
+        production_executor: NetPlanProductionExecutor | None = None,
+        runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
-        router = APIRouter(prefix="/netplan", tags=["netplan"])
-        service = NetPlanService(repository=repository or InMemoryNetPlanRepository())
+        production_required = production_execution_required(runtime_mode)
+        active_repository = (
+            repository
+            if production_required
+            else repository or InMemoryNetPlanRepository()
+        )
+        composition_error: ProductionExecutionConfigurationError | None = None
+        try:
+            service = NetPlanService(
+                repository=active_repository,
+                production_executor=production_executor,
+                runtime_mode=runtime_mode,
+            )
+        except ProductionExecutionConfigurationError as exc:
+            composition_error = exc
+            service = None
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
+
+        def require_runtime_binding() -> None:
+            if composition_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": composition_error.code,
+                        "message": str(composition_error),
+                    },
+                )
+
+        router = APIRouter(
+            prefix="/netplan",
+            tags=["netplan"],
+            dependencies=[Depends(require_runtime_binding)],
+        )
 
         @router.post("/scenarios", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
         def create_scenario(body: NetPlanScenarioPayload, request: Request) -> dict[str, Any]:

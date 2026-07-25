@@ -13,6 +13,10 @@
  * error to retry.
  */
 import { OdpApiError, type OdpApiClient } from "@oday-plus/openapi-client";
+import {
+  isEmptyApiPayload,
+  payloadContainsNonProductionData,
+} from "../../src/lib/api/liveData";
 
 export type ResourceState = "ready" | "forbidden" | "unauthorized" | "error" | "unconfigured";
 
@@ -45,6 +49,28 @@ export async function loadApiResource<T>(options: {
   }
   try {
     const data = await fetcher(client);
+    if (isEmptyApiPayload(data)) {
+      return {
+        state: "error",
+        data: null,
+        source: "none",
+        detail: "The API returned an empty resource.",
+        error: "LIVE_DATA_EMPTY",
+        baseUrl: client.baseUrl,
+        fetchedAt,
+      };
+    }
+    if (payloadContainsNonProductionData(data)) {
+      return {
+        state: "error",
+        data: null,
+        source: "none",
+        detail: "The API returned seed, fixture, mock, demo, or prototype data.",
+        error: "NON_PRODUCTION_DATA_BLOCKED",
+        baseUrl: client.baseUrl,
+        fetchedAt,
+      };
+    }
     return { state: "ready", data, source: "api", baseUrl: client.baseUrl, fetchedAt };
   } catch (error) {
     if (error instanceof OdpApiError) {

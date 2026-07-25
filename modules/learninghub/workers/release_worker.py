@@ -33,7 +33,6 @@ class LearningHubReleaseWorker:
             correlation_id=str(payload.get("correlation_id", "learninghub-release")),
         )
 
-
     def run_monitor(self, payload: dict[str, Any]) -> ReleaseMonitorAssessment:
         guardrails = tuple(
             MetricThreshold(

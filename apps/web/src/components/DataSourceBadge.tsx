@@ -11,9 +11,9 @@ const STATE_TONE: Record<BindingState, StatusTone> = {
 
 const STATE_LABEL: Record<BindingState, string> = {
   ready: "API live",
-  empty: "API empty · fixture fallback",
-  error: "API error · fixture fallback",
-  unconfigured: "Fixture (no API base URL)",
+  empty: "API empty · no production data",
+  error: "API unavailable · no production data",
+  unconfigured: "API unconfigured · no production data",
 };
 
 /**

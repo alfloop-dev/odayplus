@@ -1,6 +1,6 @@
 import React, { useSyncExternalStore } from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { AssistedIntakeSection } from "../AssistedIntakeSection";
@@ -267,6 +267,41 @@ afterEach(() => {
 });
 
 describe("promotion saga — live operator route integration", () => {
+  it("restores a deep-linked intake by fetching the record outside the current inbox page", async () => {
+    const record = readyIntake();
+    const { captured, routes, fetchStub } = buildFetchStub(record);
+    routes[`GET /api/v1/operator/network-listings/intake`] = () =>
+      new Response(JSON.stringify({
+        ...inboxPage(record),
+        items: [],
+        total: 0,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    vi.stubGlobal("fetch", fetchStub);
+
+    render(
+      <AssistedIntakeSection
+        activeRoleId="expansion-manager"
+        activeSubjectId={REVIEWER_ID}
+      />,
+    );
+    act(() => {
+      nav.replace(`/w/expansion/listings?selected=${INTAKE_ID}&dialog=detail`);
+    });
+
+    expect(await screen.findByTestId("intake-detail-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("intake-detail-id")).toHaveTextContent(INTAKE_ID);
+    expect(
+      requestsTo(
+        captured,
+        "GET",
+        `/api/v1/operator/network-listings/intake/${INTAKE_ID}`,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("hydrates an existing promotion and authoritative job receipt after reload", async () => {
     const record = readyIntake();
     const { captured, routes, fetchStub } = buildFetchStub(record);

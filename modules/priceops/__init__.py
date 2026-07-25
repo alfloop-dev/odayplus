@@ -53,7 +53,13 @@ from modules.priceops.domain import (
     recommended_price_violations,
     simulate_item,
 )
-from modules.priceops.infrastructure import InMemoryPriceOpsRepository
+from modules.priceops.infrastructure import (
+    PRICEOPS_OSS_SOLVER_VERSION,
+    InMemoryPriceOpsRepository,
+    PriceOpsProductionExecution,
+    PriceOpsProductionExecutionError,
+    PriceOpsProductionOptimizer,
+)
 from modules.priceops.workers import (
     PlanRequest,
     PriceOpsBatchResult,
@@ -66,6 +72,7 @@ __all__ = [
     "DEFAULT_STOP_CONDITIONS",
     "PRICEOPS_FEATURE_VERSION",
     "PRICEOPS_MODEL_VERSION",
+    "PRICEOPS_OSS_SOLVER_VERSION",
     "PRICEOPS_POLICY_VERSION",
     "PRICEOPS_SOLVER_VERSION",
     "VALID_TRANSITIONS",
@@ -94,6 +101,9 @@ __all__ = [
     "PriceOpsBatchResult",
     "PriceOpsOptimizerWorker",
     "PriceOpsService",
+    "PriceOpsProductionExecution",
+    "PriceOpsProductionExecutionError",
+    "PriceOpsProductionOptimizer",
     "PriceTreatment",
     "PricingEffectEvaluation",
     "PricingExecution",

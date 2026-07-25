@@ -9,6 +9,7 @@ fail-closed startup check for live-provider mode.
 from __future__ import annotations
 
 import os
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -23,6 +24,7 @@ class ExternalProviderMode(StrEnum):
 
 
 class ProviderCategory(StrEnum):
+    CONTROL_PLANE = "control_plane"
     LISTING = "listing"
     POI = "poi"
     GEOCODE = "geocode"
@@ -74,6 +76,7 @@ class ExternalProviderDefinition:
     provider_class: str
     credentials: tuple[ProviderCredential, ...]
     license: ProviderLicense
+    endpoint_env_var: str | None = None
     enabled_in_fixture: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
@@ -124,6 +127,7 @@ class ProviderValidationResult:
                 "provider_class": provider.provider_class,
                 "auth_modes": [mode.value for mode in provider.auth_modes],
                 "env_vars": list(provider.required_env_vars),
+                "endpoint_env_var": provider.endpoint_env_var,
                 "license": provider.license.to_dict(),
             }
             for provider in self.providers
@@ -151,6 +155,15 @@ class ExternalProviderConfigError(RuntimeError):
 
 
 LIVE_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
+PRODUCTION_PROVIDER_IDS_ENV_VAR = "ODP_PRODUCTION_PROVIDER_IDS"
+REQUIRED_PRODUCTION_PROVIDER_IDS = frozenset(
+    {
+        "listing.partner_feed",
+        "poi.commercial_api",
+        "geocode.primary_api",
+        "admin_boundary.official_dataset",
+    }
+)
 INVALID_AUTH_STATUSES = {"expired", "unauthorized", "revoked", "invalid"}
 PLACEHOLDER_VALUES = {"", "changeme", "change-me", "todo", "placeholder", "dummy", "example"}
 
@@ -169,6 +182,7 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_LISTING_PROVIDER_AUTH_STATUS",
             ),
         ),
+        endpoint_env_var="ODP_LISTING_PROVIDER_FEED_URL",
         license=ProviderLicense(
             attribution="Listing partner feed; internal expansion decisioning only",
             downstream_use_flags=("internal_decisioning", "derived_features"),
@@ -188,6 +202,7 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_POI_PROVIDER_AUTH_STATUS",
             ),
         ),
+        endpoint_env_var="ODP_POI_PROVIDER_URL",
         license=ProviderLicense(
             attribution="Commercial POI provider",
             downstream_use_flags=("internal_decisioning", "map_visualization"),
@@ -207,6 +222,7 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_GEOCODE_PROVIDER_AUTH_STATUS",
             ),
         ),
+        endpoint_env_var="ODP_GEOCODE_PROVIDER_URL",
         license=ProviderLicense(
             attribution="Primary geocode API",
             downstream_use_flags=("internal_decisioning", "geocode_enrichment"),
@@ -226,6 +242,7 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
                 status_env_var="ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
             ),
         ),
+        endpoint_env_var="ODP_ADMIN_BOUNDARY_PROVIDER_URL",
         license=ProviderLicense(
             attribution="Official admin boundary dataset",
             downstream_use_flags=("internal_decisioning", "map_visualization", "audit_evidence"),
@@ -275,9 +292,7 @@ def external_provider_mode(env: Mapping[str, str] | None = None) -> ExternalProv
         return ExternalProviderMode.FIXTURE
     if normalized == "live":
         return ExternalProviderMode.LIVE
-    raise ValueError(
-        f"{LIVE_MODE_ENV_VAR} must be fixture or live; got {raw!r}"
-    )
+    raise ValueError(f"{LIVE_MODE_ENV_VAR} must be fixture or live; got {raw!r}")
 
 
 def validate_external_providers(
@@ -296,12 +311,66 @@ def validate_external_providers(
     )
     corr = correlation_id or new_correlation_id()
     errors: list[ProviderValidationError] = []
-    deploy_env = source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
+    deploy_env = (
+        source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
+    )
     production_like = deploy_env in {"prod", "production"}
     now = _today_utc(source_env)
+    providers = PROVIDER_REGISTRY
 
     if resolved_mode is ExternalProviderMode.LIVE:
-        for provider in PROVIDER_REGISTRY:
+        raw_provider_ids = source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "")
+        selected_provider_ids = {
+            provider_id.strip()
+            for provider_id in raw_provider_ids.split(",")
+            if provider_id.strip()
+        }
+        known_provider_ids = {provider.provider_id for provider in PROVIDER_REGISTRY}
+        unknown_provider_ids = selected_provider_ids - known_provider_ids
+        if production_like and not selected_provider_ids:
+            errors.append(
+                ProviderValidationError(
+                    provider_id="provider_registry",
+                    category=ProviderCategory.CONTROL_PLANE,
+                    env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                    code="provider_allowlist_required",
+                    message=("Production live mode requires an explicit provider allowlist."),
+                )
+            )
+            providers = ()
+        elif selected_provider_ids:
+            for provider_id in sorted(unknown_provider_ids):
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider_id,
+                        category=ProviderCategory.CONTROL_PLANE,
+                        env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                        code="unknown_provider",
+                        message="The production provider allowlist contains an unknown provider ID.",
+                    )
+                )
+            providers = tuple(
+                provider
+                for provider in PROVIDER_REGISTRY
+                if provider.provider_id in selected_provider_ids
+            )
+        if production_like and selected_provider_ids:
+            missing_required_ids = REQUIRED_PRODUCTION_PROVIDER_IDS - selected_provider_ids
+            for provider_id in sorted(missing_required_ids):
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider_id,
+                        category=ProviderCategory.CONTROL_PLANE,
+                        env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                        code="required_provider_not_selected",
+                        message=(
+                            "Production live mode requires this provider in the "
+                            "explicit provider allowlist."
+                        ),
+                    )
+                )
+
+        for provider in providers:
             if production_like and not provider.license.allowed_in_production:
                 errors.append(
                     ProviderValidationError(
@@ -322,6 +391,54 @@ def validate_external_providers(
                         message="Provider license is expired; renew before live use.",
                     )
                 )
+            if production_like and provider.endpoint_env_var is not None:
+                endpoint = source_env.get(provider.endpoint_env_var, "").strip()
+                parsed_endpoint = urllib.parse.urlsplit(endpoint)
+                if not endpoint:
+                    errors.append(
+                        ProviderValidationError(
+                            provider_id=provider.provider_id,
+                            category=provider.category,
+                            env_var=provider.endpoint_env_var,
+                            code="missing_endpoint",
+                            message=("Required production provider endpoint is missing."),
+                        )
+                    )
+                elif (
+                    parsed_endpoint.scheme not in {"http", "https"}
+                    or not parsed_endpoint.netloc
+                    or parsed_endpoint.username is not None
+                    or parsed_endpoint.password is not None
+                ):
+                    errors.append(
+                        ProviderValidationError(
+                            provider_id=provider.provider_id,
+                            category=provider.category,
+                            env_var=provider.endpoint_env_var,
+                            code="invalid_endpoint",
+                            message=(
+                                "Production provider endpoint must be an absolute "
+                                "HTTP(S) URL without embedded credentials."
+                            ),
+                        )
+                    )
+                elif parsed_endpoint.scheme != "https" and parsed_endpoint.hostname not in {
+                    "127.0.0.1",
+                    "::1",
+                    "localhost",
+                }:
+                    errors.append(
+                        ProviderValidationError(
+                            provider_id=provider.provider_id,
+                            category=provider.category,
+                            env_var=provider.endpoint_env_var,
+                            code="insecure_endpoint",
+                            message=(
+                                "Production provider endpoint must use HTTPS; "
+                                "plain HTTP is allowed only for loopback tests."
+                            ),
+                        )
+                    )
             for credential in provider.credentials:
                 if not credential.required_in_live:
                     continue
@@ -359,7 +476,7 @@ def validate_external_providers(
     return ProviderValidationResult(
         mode=resolved_mode,
         correlation_id=corr,
-        providers=PROVIDER_REGISTRY,
+        providers=providers,
         errors=tuple(errors),
     )
 

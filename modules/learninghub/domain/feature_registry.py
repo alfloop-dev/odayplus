@@ -101,9 +101,7 @@ def has_blocked_features(
     """
     feature_set = registry.get_feature_set(feature_set_id)
     if feature_set is None:
-        raise FeatureRegistryError(
-            f"feature set {feature_set_id!r} not found; register it first"
-        )
+        raise FeatureRegistryError(f"feature set {feature_set_id!r} not found; register it first")
 
     blocked: list[str] = []
     for feat_ref in feature_set.features:

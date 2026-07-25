@@ -12,6 +12,13 @@ import type {
 } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 
+export type DurableReceiptVerification = {
+  status: "VERIFIED" | "UNVERIFIED" | "TAMPERED";
+  checksum?: string | null;
+  verifiedAt?: string | null;
+  wormState?: string | null;
+};
+
 export type DurableReceiptPanelProps = {
   record: AssistedIntake;
   submissionReceipt?: IntakeSubmissionReceipt;
@@ -19,9 +26,15 @@ export type DurableReceiptPanelProps = {
   decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
   slaReceipt?: SlaReceipt;
   correctionReceipts?: CorrectionReceipt[];
-  verificationStatus?: "Valid" | "Pending" | "Tampered";
+  verification?: DurableReceiptVerification;
   testId?: string;
 };
+
+const unavailable = "UNAVAILABLE";
+
+function present(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === "" ? unavailable : String(value);
+}
 
 export function DurableReceiptPanel({
   record,
@@ -30,62 +43,113 @@ export function DurableReceiptPanel({
   decisionReceipt,
   slaReceipt,
   correctionReceipts = [],
-  verificationStatus = "Valid",
+  verification,
   testId = "intake-durable-receipt-panel",
 }: DurableReceiptPanelProps) {
   const [copied, setCopied] = useState(false);
+  const verificationStatus = verification?.status ?? "UNVERIFIED";
+  const isPromotionReceipt =
+    decisionReceipt !== undefined && "promotion_decision_id" in decisionReceipt;
+  const promotionReceipt = isPromotionReceipt
+    ? (decisionReceipt as PromotionDecisionReceipt)
+    : undefined;
+  const hasAuthoritativeReceipt = Boolean(
+    submissionReceipt ||
+      assignmentReceipt ||
+      decisionReceipt ||
+      slaReceipt ||
+      correctionReceipts.length,
+  );
+  const canExport = verificationStatus === "VERIFIED" && hasAuthoritativeReceipt;
 
-  // Construct durable payload snapshot for receipt verification
+  // Export only verbatim server receipts and backend verification metadata.
+  // The intake read model is intentionally excluded: it is not a receipt.
   const receiptPayload = {
-    intake_id: record.id,
-    version: record.version,
-    stage: record.stage,
-    policy: record.policy,
-    submitted_at: record.capturedAt,
-    correlation_id: record.correlationId ?? `CORR-${record.id}`,
-    checksum: `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
-    submission: submissionReceipt,
-    assignment: assignmentReceipt,
-    decision: decisionReceipt,
-    sla: slaReceipt,
-    corrections: correctionReceipts,
+    ...(submissionReceipt ? { submission: submissionReceipt } : {}),
+    ...(assignmentReceipt ? { assignment: assignmentReceipt } : {}),
+    ...(decisionReceipt ? { decision: decisionReceipt } : {}),
+    ...(slaReceipt ? { sla: slaReceipt } : {}),
+    ...(correctionReceipts.length ? { corrections: correctionReceipts } : {}),
+    ...(verification ? { verification } : {}),
   };
-
   const jsonString = JSON.stringify(receiptPayload, null, 2);
 
   const handleCopy = () => {
-    navigator.clipboard?.writeText(jsonString);
+    if (!canExport) return;
+    void navigator.clipboard?.writeText(jsonString);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleExport = () => {
+    if (!canExport) return;
     const blob = new Blob([jsonString], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `receipt-${record.id}-v${record.version}.json`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `receipt-${record.id}-v${record.version}.json`;
+    anchor.click();
     URL.revokeObjectURL(url);
   };
 
+  const verificationCopy =
+    verificationStatus === "VERIFIED"
+      ? "VERIFIED"
+      : verificationStatus === "TAMPERED"
+        ? "TAMPERED"
+        : "UNVERIFIED";
+  const verificationTone =
+    verificationStatus === "VERIFIED"
+      ? { background: "#dcfce7", color: "#15803d" }
+      : verificationStatus === "TAMPERED"
+        ? { background: "#fee2e2", color: "#b91c1c" }
+        : { background: "#f1f5f9", color: "#475569" };
+
   return (
-    <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-        <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
-          <span>📜 持久化收據與簽章 DURABLE RECEIPTS</span>
+    <div
+      className={styles.sectionBox}
+      data-testid={testId}
+      style={{
+        border: "1px solid #eef1f6",
+        borderRadius: "8px",
+        padding: "14px",
+        background: "#ffffff",
+        marginBottom: "16px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "12px",
+          gap: "12px",
+          flexWrap: "wrap",
+        }}
+      >
+        <h4
+          style={{
+            margin: 0,
+            fontSize: "13px",
+            fontWeight: 700,
+            color: "#1e293b",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
+        >
+          <span>持久化收據 DURABLE RECEIPTS</span>
           <span
             style={{
               fontSize: "10.5px",
               fontWeight: 700,
               padding: "2px 8px",
               borderRadius: "999px",
-              background: verificationStatus === "Valid" ? "#dcfce7" : verificationStatus === "Pending" ? "#fef9c3" : "#fee2e2",
-              color: verificationStatus === "Valid" ? "#15803d" : verificationStatus === "Pending" ? "#a16207" : "#b91c1c",
+              ...verificationTone,
             }}
             data-testid="receipt-verification-status"
           >
-            {verificationStatus === "Valid" ? "✓ 簽章合法 (Verified Valid)" : verificationStatus === "Pending" ? "⌛ 待驗證 (Pending)" : "✕ 簽章異常 (Tampered)"}
+            {verificationCopy}
           </span>
         </h4>
 
@@ -93,99 +157,154 @@ export function DurableReceiptPanel({
           <button
             type="button"
             onClick={handleCopy}
+            disabled={!canExport}
             className={styles.secondaryButton}
             style={{ padding: "4px 10px", fontSize: "11px" }}
             data-testid="receipt-copy-button"
+            title={!canExport ? "後端尚未提供已驗證的 durable receipt" : undefined}
           >
-            {copied ? "✓ 已複製 JSON" : "複製收據 (Copy JSON)"}
+            {copied ? "已複製 JSON" : "複製收據"}
           </button>
           <button
             type="button"
             onClick={handleExport}
+            disabled={!canExport}
             className={styles.secondaryButton}
             style={{ padding: "4px 10px", fontSize: "11px" }}
             data-testid="receipt-export-button"
+            title={!canExport ? "後端尚未提供已驗證的 durable receipt" : undefined}
           >
-            下載收據 (Export JSON)
+            下載收據
           </button>
         </div>
       </div>
 
-      {/* 1. Receipts Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "10px", marginBottom: "14px" }}>
-        {/* Ingestion Submission Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
-            <span>📥 收件提交收據 Submission Receipt</span>
-            <span style={{ fontFamily: "monospace", color: "#64748b" }}>v{record.version}</span>
+      {!hasAuthoritativeReceipt ? (
+        <div className={styles.emptyState} data-testid="receipt-unavailable-state" role="status">
+          UNAVAILABLE - 後端尚未回傳 durable receipt；本頁不會建立替代識別碼或匯出檔案。
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "10px",
+          marginBottom: "14px",
+        }}
+      >
+        <div
+          style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            padding: "10px",
+            fontSize: "11px",
+          }}
+        >
+          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+            收件提交收據 Submission Receipt
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Intake ID: <code style={{ color: "#1e293b" }}>{record.id}</code></div>
-            <div>Correlation ID: <code style={{ color: "#1e293b" }}>{record.correlationId ?? `CORR-${record.id}`}</code></div>
-            <div>Submitted At: <span>{record.capturedAt ?? "—"}</span></div>
+            <div>Intake ID: <code>{present(submissionReceipt?.intake_id)}</code></div>
+            <div>Version: <span>{submissionReceipt ? `v${submissionReceipt.version}` : unavailable}</span></div>
+            <div>State: <strong>{present(submissionReceipt?.state)}</strong></div>
+            <div>Job ID: <code>{present(submissionReceipt?.job_id)}</code></div>
+            <div>Correlation ID: <code>{present(submissionReceipt?.correlation_id)}</code></div>
+            <div>Submitted At: <span>{present(submissionReceipt?.submitted_at)}</span></div>
           </div>
         </div>
 
-        {/* Assignment & SLA Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }} data-testid="durable-receipt-asg-sla">
+        <div
+          style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            padding: "10px",
+            fontSize: "11px",
+          }}
+          data-testid="durable-receipt-asg-sla"
+        >
           <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-            ⏱️ 指派與 SLA 收據 Assignment & SLA Receipt
+            指派與 SLA 收據 Assignment & SLA Receipt
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Owner: <strong data-testid="receipt-owner-id">{assignmentReceipt?.owner_subject_id ?? record.owner ?? "Unassigned"}</strong></div>
-            <div>Assignment Status: <strong data-testid="receipt-asg-status">{assignmentReceipt?.status ?? record.assignmentStatus ?? "ASSIGNED"}</strong></div>
-            <div>SLA State: <strong data-testid="receipt-sla-state">{slaReceipt?.state ?? record.slaState ?? "ON_TRACK"}</strong></div>
-            {assignmentReceipt?.assignment_id && (
-              <div>Assignment ID: <code data-testid="receipt-asg-id">{assignmentReceipt.assignment_id}</code></div>
-            )}
-            {assignmentReceipt?.version !== undefined && (
-              <div>Assignment Version: <span data-testid="receipt-asg-version">v{assignmentReceipt.version}</span></div>
-            )}
-            {assignmentReceipt?.due_at && (
-              <div>Assignment Due At: <span data-testid="receipt-asg-due">{assignmentReceipt.due_at}</span></div>
-            )}
-            {slaReceipt?.sla_instance_id && (
-              <div>SLA Instance ID: <code data-testid="receipt-sla-id">{slaReceipt.sla_instance_id}</code></div>
-            )}
-            {slaReceipt?.version !== undefined && (
-              <div>SLA Version: <span data-testid="receipt-sla-version">v{slaReceipt.version}</span></div>
-            )}
-            {slaReceipt?.paused_duration_seconds !== undefined && (
-              <div>Paused Duration: <span data-testid="receipt-sla-paused-sec">{slaReceipt.paused_duration_seconds}s</span></div>
-            )}
-            {slaReceipt?.correlation_id && (
-              <div>SLA Correlation: <code data-testid="receipt-sla-correlation">{slaReceipt.correlation_id}</code></div>
-            )}
-            <div>Audit Event: <code data-testid="receipt-audit-event-id">{assignmentReceipt?.audit_event_id ?? slaReceipt?.audit_event_id ?? `AUD-${record.id}`}</code></div>
+            <div>Owner: <strong data-testid="receipt-owner-id">{present(assignmentReceipt?.owner_subject_id)}</strong></div>
+            <div>Assignment Status: <strong data-testid="receipt-asg-status">{present(assignmentReceipt?.status)}</strong></div>
+            <div>SLA State: <strong data-testid="receipt-sla-state">{present(slaReceipt?.state)}</strong></div>
+            <div>Assignment ID: <code data-testid="receipt-asg-id">{present(assignmentReceipt?.assignment_id)}</code></div>
+            <div>Assignment Version: <span data-testid="receipt-asg-version">{assignmentReceipt ? `v${assignmentReceipt.version}` : unavailable}</span></div>
+            <div>Assignment Due At: <span data-testid="receipt-asg-due">{present(assignmentReceipt?.due_at)}</span></div>
+            <div>SLA Instance ID: <code data-testid="receipt-sla-id">{present(slaReceipt?.sla_instance_id)}</code></div>
+            <div>SLA Version: <span data-testid="receipt-sla-version">{slaReceipt ? `v${slaReceipt.version}` : unavailable}</span></div>
+            <div>Paused Duration: <span data-testid="receipt-sla-paused-sec">{slaReceipt ? `${slaReceipt.paused_duration_seconds}s` : unavailable}</span></div>
+            <div>SLA Correlation: <code data-testid="receipt-sla-correlation">{present(slaReceipt?.correlation_id)}</code></div>
+            <div>Assignment Audit: <code data-testid="receipt-audit-event-id">{present(assignmentReceipt?.audit_event_id)}</code></div>
+            <div>SLA Audit: <code>{present(slaReceipt?.audit_event_id)}</code></div>
           </div>
         </div>
 
-        {/* Decision / Promotion Receipt */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", fontSize: "11px" }}>
+        <div
+          style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            padding: "10px",
+            fontSize: "11px",
+          }}
+        >
           <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-            ⚖️ 決策與晉升收據 Decision Receipt
+            決策與晉升收據 Decision Receipt
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", color: "#475569" }}>
-            <div>Decision State: <strong>{record.matchResult?.outcome ?? "PENDING"}</strong></div>
-            <div>Promoted Site ID: <code>{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "—"}</code></div>
-            <div>Audit Event: <code>{decisionReceipt ? ("audit_event_id" in decisionReceipt ? decisionReceipt.audit_event_id : "AUD-DEC-99") : "—"}</code></div>
+            <div>Decision ID: <code>{present(
+              isPromotionReceipt
+                ? promotionReceipt?.promotion_decision_id
+                : (decisionReceipt as DecisionReceipt | undefined)?.decision_id,
+            )}</code></div>
+            <div>Decision State: <strong>{present(decisionReceipt?.status)}</strong></div>
+            <div>Audit Event: <code>{present(decisionReceipt?.audit_event_id)}</code></div>
+            <div>Correlation ID: <code>{present(
+              decisionReceipt && "correlation_id" in decisionReceipt
+                ? decisionReceipt.correlation_id
+                : undefined,
+            )}</code></div>
+            <div>Listing ID: <code>{present(promotionReceipt?.listing_id)}</code></div>
+            <div>Candidate Site ID: <code>{present(promotionReceipt?.candidate_site_id)}</code></div>
+            <div>SiteScore Job ID: <code>{present(promotionReceipt?.site_score_job_id)}</code></div>
           </div>
         </div>
       </div>
 
-      {/* 2. Cryptographic Digest & Traceability Links */}
-      <div style={{ background: "#1e293b", color: "#f8fafc", borderRadius: "8px", padding: "12px", fontFamily: "monospace", fontSize: "10.5px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", color: "#94a3b8" }}>
-          <span>CRYPTOGRAPHIC PAYLOAD CHECKSUM (SHA-256)</span>
-          <span style={{ color: "#34d399" }}>SECURE WORM LOGGED</span>
+      <div
+        style={{
+          background: "#1e293b",
+          color: "#f8fafc",
+          borderRadius: "8px",
+          padding: "12px",
+          fontFamily: "monospace",
+          fontSize: "10.5px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: "6px",
+            color: "#94a3b8",
+          }}
+        >
+          <span>BACKEND VERIFICATION</span>
+          <span data-testid="receipt-worm-state">WORM: {present(verification?.wormState)}</span>
         </div>
-        <div style={{ color: "#38bdf8", wordBreak: "break-all", marginBottom: "8px" }} data-testid="receipt-checksum">
-          sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        <div
+          style={{ color: "#38bdf8", wordBreak: "break-all", marginBottom: "8px" }}
+          data-testid="receipt-checksum"
+        >
+          Checksum: {present(verification?.checksum)}
         </div>
-
-        <div style={{ paddingTop: "6px", borderTop: "1px solid #334155", display: "flex", gap: "16px", color: "#cbd5e1" }}>
-          <span>Trace Canonical Listing: <code>LISTING-{record.id}</code></span>
-          <span>Candidate Site: <code>SITE-{record.matchResult?.targetListingId ?? (record.matchResult as any)?.matchedCandidateId ?? "NONE"}</code></span>
+        <div style={{ color: "#cbd5e1" }}>
+          Verified At: {present(verification?.verifiedAt)}
         </div>
       </div>
     </div>

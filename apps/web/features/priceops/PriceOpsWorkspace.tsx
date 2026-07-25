@@ -1,12 +1,41 @@
 import Link from "next/link";
 import { Badge, PageHeader } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
+import type { ApiBinding } from "../../src/lib/api/binding.ts";
+import {
+  ProductionDataBadge,
+  ProductionDataState,
+  productionBindingState,
+  resolveProductionMode,
+} from "../operations/ProductionDataState.tsx";
 import { constraintTone, freshness, lifecycleTone, pricePlans, type PricePlan } from "./data.ts";
 import styles from "../intervention/intervention.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-export function PriceOpsWorkspace({ searchParams = {} }: { searchParams?: SearchParams }) {
+export type LivePricePlan = {
+  plan_id?: string;
+  tenant_id?: string;
+  status?: string;
+  items?: unknown[];
+  created_at?: string;
+  correlation_id?: string;
+};
+
+type PriceOpsWorkspaceProps = {
+  searchParams?: SearchParams;
+  livePlans?: ApiBinding<LivePricePlan>;
+  isProduction?: boolean;
+};
+
+export function PriceOpsWorkspace({
+  searchParams = {},
+  livePlans,
+  isProduction: isProductionProp,
+}: PriceOpsWorkspaceProps) {
+  if (resolveProductionMode(isProductionProp)) {
+    return <ProductionPriceOpsWorkspace binding={livePlans} searchParams={searchParams} />;
+  }
   const selectedId = readParam(searchParams.selected) ?? pricePlans[0].id;
   const selected = pricePlans.find((item) => item.id === selectedId) ?? pricePlans[0];
 
@@ -43,6 +72,107 @@ export function PriceOpsWorkspace({ searchParams = {} }: { searchParams?: Search
             <PlanDrawer plan={selected} />
           </section>
         </div>
+      </main>
+    </>
+  );
+}
+
+function ProductionPriceOpsWorkspace({
+  binding,
+  searchParams,
+}: {
+  binding?: ApiBinding<LivePricePlan>;
+  searchParams: SearchParams;
+}) {
+  const state = productionBindingState(binding);
+  const selectedId = readParam(searchParams.selected);
+  const selected = binding?.items.find((plan) => plan.plan_id === selectedId);
+
+  return (
+    <>
+      <PageHeader
+        title="定價"
+        summary="Production PriceOps plans. Only persisted API plans are rendered."
+        breadcrumb={[{ label: "總覽", href: "/" }, { label: "定價 Pricing" }]}
+        status={{
+          label: state === "ready" ? "API live" : "DATA_UNAVAILABLE",
+          marker: state === "ready" ? "◆" : "!",
+          tone: state === "ready" ? "green" : state === "error" ? "red" : "gray",
+        }}
+        lastUpdated={binding?.fetchedAt ? `API checked ${binding.fetchedAt}` : "Live source not available"}
+      />
+      <main className="odp-content" data-testid="priceops-production-page">
+        <nav className={styles.workspaceNav} aria-label="Pricing module navigation">
+          <Link aria-current="page" href="/pricing">PriceOps Plans</Link>
+          <Link href="/adlift">AdLift Reports</Link>
+          <Link href="/interventions">Intervention handoff</Link>
+        </nav>
+        <ProductionDataState binding={binding} resource="PriceOps plans" testId="priceops-production-data-state">
+          {binding ? (
+            <section className={styles.panel} data-testid="priceops-live-plans">
+              <div className={styles.badgeRow}>
+                <h2>PriceOps plans（API live）</h2>
+                <ProductionDataBadge binding={binding} testId="priceops-data-source" />
+              </div>
+              <section className={styles.overviewGrid} aria-label="Live PriceOps overview">
+                <Summary title="Plans" value={String(binding.items.length)} copy="API plan count" />
+                <Summary
+                  title="Pending approval"
+                  value={String(binding.items.filter((plan) => plan.status === "PENDING_APPROVAL").length)}
+                  copy="API lifecycle state"
+                />
+                <Summary
+                  title="Rollback"
+                  value={String(binding.items.filter((plan) => plan.status === "ROLLBACK").length)}
+                  copy="API lifecycle state"
+                />
+              </section>
+              <div className={styles.tableWrap}>
+                <table className={styles.table} data-testid="priceops-live-table">
+                  <caption>Persisted PriceOps plans served by GET /priceops/plans.</caption>
+                  <thead>
+                    <tr>
+                      <th>Plan</th>
+                      <th>Tenant</th>
+                      <th>Status</th>
+                      <th>Items</th>
+                      <th>Created</th>
+                      <th>Correlation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {binding.items.map((plan) => {
+                      const planId = plan.plan_id || "unknown-plan";
+                      return (
+                        <tr key={planId} aria-selected={planId === selectedId} data-testid="priceops-live-row">
+                          <td><Link href={`/pricing?selected=${encodeURIComponent(planId)}`}>{planId}</Link></td>
+                          <td>{plan.tenant_id || "—"}</td>
+                          <td>{plan.status || "—"}</td>
+                          <td>{Array.isArray(plan.items) ? plan.items.length : 0}</td>
+                          <td>{plan.created_at || "—"}</td>
+                          <td>{plan.correlation_id || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {selectedId && !selected ? (
+                <p data-testid="priceops-plan-not-found">
+                  API 回傳資料中沒有 {selectedId}；未以固定方案替代。
+                </p>
+              ) : null}
+              {selected ? (
+                <aside className={styles.drawer} data-testid="priceops-live-plan-detail">
+                  <h2>{selected.plan_id}</h2>
+                  <p>status: {selected.status || "—"}</p>
+                  <p>created at: {selected.created_at || "—"}</p>
+                  <p>correlation: {selected.correlation_id || "—"}</p>
+                </aside>
+              ) : null}
+            </section>
+          ) : null}
+        </ProductionDataState>
       </main>
     </>
   );

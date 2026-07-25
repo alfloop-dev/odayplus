@@ -20,6 +20,8 @@ from modules.external_data.connectors import (
 )
 from modules.external_data.connectors.provider_registry import (
     LIVE_MODE_ENV_VAR,
+    PRODUCTION_PROVIDER_IDS_ENV_VAR,
+    provider_registry,
     validate_external_providers,
     validate_external_providers_or_raise,
 )
@@ -411,6 +413,9 @@ def _live_listing_env(endpoint_url: str, *, api_key: str = MOCK_PROVIDER_API_KEY
 def _all_live_provider_env() -> dict[str, str]:
     return {
         LIVE_MODE_ENV_VAR: "live",
+        PRODUCTION_PROVIDER_IDS_ENV_VAR: ",".join(
+            provider.provider_id for provider in provider_registry()
+        ),
         "ODP_LISTING_PROVIDER_API_KEY": "listing-approved-mock-key",
         "ODP_POI_PROVIDER_API_KEY": "poi-approved-mock-key",
         "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-approved-mock-key",

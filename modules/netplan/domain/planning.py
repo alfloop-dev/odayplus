@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -97,10 +97,16 @@ class ExistingStoreInput:
     def from_mapping(cls, data: Mapping[str, Any]) -> ExistingStoreInput:
         return cls(
             store_id=str(data["store_id"]),
-            baseline_gross_margin=float(data.get("baseline_gross_margin", data.get("baseline_gm", 0.0))),
-            improve_gross_margin_uplift=float(data.get("improve_gross_margin_uplift", data.get("improve_gm_uplift", 0.0))),
+            baseline_gross_margin=float(
+                data.get("baseline_gross_margin", data.get("baseline_gm", 0.0))
+            ),
+            improve_gross_margin_uplift=float(
+                data.get("improve_gross_margin_uplift", data.get("improve_gm_uplift", 0.0))
+            ),
             improve_cost=float(data.get("improve_cost", 0.0)),
-            move_gross_margin_uplift=float(data.get("move_gross_margin_uplift", data.get("move_gm_uplift", 0.0))),
+            move_gross_margin_uplift=float(
+                data.get("move_gross_margin_uplift", data.get("move_gm_uplift", 0.0))
+            ),
             move_cost=float(data.get("move_cost", 0.0)),
             exit_cost=float(data.get("exit_cost", 0.0)),
             keep_risk=_bounded(data.get("keep_risk", 0.1)),
@@ -125,7 +131,9 @@ class CandidateSiteInput:
     def from_mapping(cls, data: Mapping[str, Any]) -> CandidateSiteInput:
         return cls(
             candidate_site_id=str(data["candidate_site_id"]),
-            expected_gross_margin=float(data.get("expected_gross_margin", data.get("expected_gm", 0.0))),
+            expected_gross_margin=float(
+                data.get("expected_gross_margin", data.get("expected_gm", 0.0))
+            ),
             open_cost=float(data.get("open_cost", data.get("budget_cost", 0.0))),
             risk_score=_bounded(data.get("risk_score", data.get("risk", 0.3))),
             capacity_delta=int(data.get("capacity_delta", 1)),
@@ -227,12 +235,14 @@ class ScenarioSolveRecord:
     scenario_id: str
     result: NetworkPlanSolveResult
     solved_at: datetime
+    execution_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
             "result": self.result.to_dict(),
             "solved_at": self.solved_at.isoformat(),
+            "execution_metadata": self.execution_metadata,
         }
 
 
@@ -327,7 +337,8 @@ def build_scenario_options(
             ActionOption(
                 entity_id=store.store_id,
                 action=NetworkAction.IMPROVE,
-                expected_gross_margin=store.baseline_gross_margin + store.improve_gross_margin_uplift,
+                expected_gross_margin=store.baseline_gross_margin
+                + store.improve_gross_margin_uplift,
                 budget_cost=store.improve_cost,
                 risk_score=store.improve_risk,
                 capacity_delta=0,
