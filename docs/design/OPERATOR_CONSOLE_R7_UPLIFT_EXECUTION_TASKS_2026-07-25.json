@@ -1,69 +1,120 @@
 {
-  "schema": "oday-plus.fleet-execution-tasks.v1",
+  "schema": "oday-plus.fleet-execution-tasks.v2",
   "doc_id": "ODP-OC-R7-UPLIFT-001",
   "generated_at": "2026-07-25",
-  "status": "ready_for_fleet",
-  "corrected_premise": "React operator console is the CI-verified R5/37-label impl (check_product_grade_ci_gates.py PASS); do NOT delete or rewrite. Remaining work = fix web->API 401 + R5->R7 delta.",
+  "status": "dispatched",
+  "target_branch": "dev",
+  "baseline_ref": "a13a1075258be98222e5bddd0acd99636179a149",
   "canonical_design": {
     "version": "R7",
     "package": "Package 10",
-    "extracted_root": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted",
-    "labels": 40,
-    "react_current_labels": 37,
-    "review_binding": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md"
+    "archive": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10",
+    "review": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md"
   },
-  "do_not": [
-    "delete apps/web/features/operator/**",
-    "rewrite operator console from scratch",
-    "treat deployed empty gate as design-wrong (it is no-data/401)"
-  ],
+  "truth": {
+    "react_functionality": "substantial R5 implementation",
+    "package10_visual_parity": false,
+    "production_rollout": false,
+    "screen_label_count_is_completion_evidence": false,
+    "latest_deploy_dev_run": {
+      "id": 30161769381,
+      "sha": "a13a1075258be98222e5bddd0acd99636179a149",
+      "conclusion": "failure",
+      "rollout_executed": false
+    }
+  },
   "tasks": [
     {
-      "id": "ODP-OC-R7-AUTH-001",
-      "title": "Close web->API identity federation (fix 401)",
-      "owner_role": "Antigravity",
-      "reviewer_role": "Claude",
-      "status": "ready_for_fleet",
-      "scope": [
-        "apps/api/oday_api/security",
-        "modules/opsboard/auth",
-        "apps/web/src/lib/auth",
-        "cloud-run-deploy-config"
-      ],
-      "requires": [
-        "ODP_AUTH_ISSUER/JWKS_URI/AUDIENCES",
-        "BFF->API token+header defined",
-        "end-user subject+roles to operator guards",
-        "operator RBAC roles provisioned",
-        "fail-closed exact"
-      ],
-      "acceptance": "authenticated operator gets 200 real data at /api/v1/operator/bootstrap; unauth 401; wrong role 403; live transcript"
+      "id": "ODP-OC-R7-RUNTIME-001",
+      "status": "done_local_not_merged",
+      "owner": "Codex+Helmholtz",
+      "scope": ["Cloud Run service audience", "BFF upstream timeout", "bootstrap error transition"],
+      "local_commits": ["6fd6076a"]
     },
     {
-      "id": "ODP-OC-R7-FE-DELTA-001",
-      "title": "Uplift existing React R5(37)->R7(40) + VDC-001..005",
-      "owner_role": "Codex",
-      "reviewer_role": "Claude2",
-      "status": "ready_for_fleet",
-      "base": "existing apps/web/features/operator/** (delta, not rewrite)",
-      "design_source": "docs_archive/.../r7-20260720-package-10/extracted",
-      "vdc": {
-        "VDC-001": "Transfer/Pause runtime branch",
-        "VDC-002": "remove 390px mobile overflow",
-        "VDC-003": "a11y focus/contrast/landmark",
-        "VDC-004": "URL restorable inbox state",
-        "VDC-005": "discipline review outcomes"
-      },
-      "also": "update check_product_grade_ci_gates.py to Package 10 / 40 labels",
-      "acceptance": "40/40 R7 labels PASS; VDC evidence; a11y+mobile e2e pass; existing operator e2e green"
+      "id": "ODP-OC-R7-SHELL-001",
+      "status": "done_local_not_merged",
+      "owner": "Codex",
+      "scope": ["global R7 compact shell", "static navigation during production data gates"],
+      "local_commits": ["bd5b99f8"]
+    },
+    {
+      "id": "ODP-OC-R7-ROUTE-001",
+      "status": "done_local_not_merged",
+      "owner": "Turing (019f9b84-b8c4-77e2-aab0-1a067fadb52e)",
+      "agent_id": "019f9b84-b8c4-77e2-aab0-1a067fadb52e",
+      "scope": ["Network tab URL state", "cold open/reload/back/forward", "intake gate isolation"],
+      "local_commits": ["f5a995d3"]
+    },
+    {
+      "id": "ODP-OC-R7-TODAY-001",
+      "status": "in_progress",
+      "owner": "Hume (019f9b92-1bc2-7ee2-8dc0-7763332805e7)",
+      "agent_id": "019f9b92-1bc2-7ee2-8dc0-7763332805e7",
+      "scope": ["Today Package 10 composition", "responsive live-envelope rendering"]
+    },
+    {
+      "id": "ODP-OC-R7-INTAKE-VIS-001",
+      "status": "in_progress",
+      "owner": "Hubble (019f9b90-fd47-77a0-a67d-82164eb7f11f)",
+      "agent_id": "019f9b90-fd47-77a0-a67d-82164eb7f11f",
+      "scope": ["State Matrix", "durable detail surface", "side-by-side compare", "promotion confirmation"]
+    },
+    {
+      "id": "ODP-OC-R7-STORE-001",
+      "status": "in_progress",
+      "owner": "Descartes (019f9b9a-1ce7-7b72-9d1c-f861ba57c346)",
+      "agent_id": "019f9b9a-1ce7-7b72-9d1c-f861ba57c346",
+      "scope": ["Store Ops Package 10 visual and interaction parity"]
+    },
+    {
+      "id": "ODP-OC-R7-GROWTH-001",
+      "status": "in_progress",
+      "owner": "Goodall (019f9b9a-37e1-7ed3-882f-840ce86c7248)",
+      "agent_id": "019f9b9a-37e1-7ed3-882f-840ce86c7248",
+      "scope": ["Growth Package 10 visual and interaction parity"]
+    },
+    {
+      "id": "ODP-OC-R7-NETWORK-001",
+      "status": "in_progress",
+      "owner": "Lovelace (019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297)",
+      "agent_id": "019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297",
+      "scope": ["Find Areas", "Listing Radar", "Candidate", "SiteScore", "Compare", "Review", "Rebalance"]
+    },
+    {
+      "id": "ODP-OC-R7-GOVERN-001",
+      "status": "in_progress",
+      "owner": "Kierkegaard (019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0)",
+      "agent_id": "019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0",
+      "scope": ["Governance approvals", "decision evidence", "audit feed"]
+    },
+    {
+      "id": "ODP-OC-R7-REMOTE-VQA-001",
+      "status": "blocked_on_deploy",
+      "owner": "QA Fleet",
+      "scope": ["authenticated Cloud Run screenshots at 390/1024/1440", "canonical region-by-region diff"]
     },
     {
       "id": "ODP-OC-R7-DEPLOY-001",
-      "title": "Deploy delta + show live 40-label dashboard",
-      "owner_role": "Codex2",
-      "reviewer_role": "Claude",
-      "status": "blocked_on:ODP-OC-R7-AUTH-001",
-      "acceptance": "/operator renders real 40-label dashboard for authenticated operator; no production fixtures"
+      "status": "blocked_external",
+      "owner": "Human/Ops+Codex2",
+      "blocker": "GitHub dev environment has neither WIF nor service-account credentials",
+      "scope": ["deploy exact SHA", "verify Web/API version", "100 percent traffic", "rollback proof"]
     }
-  ]
+  ],
+  "acceptance": {
+    "required_routes": [
+      "/operator",
+      "/operator?ws=store",
+      "/operator?ws=growth",
+      "/operator?ws=network&tab=radar",
+      "/operator?ws=govern",
+      "/w/expansion/listings",
+      "/intake/:intakeId"
+    ],
+    "viewports": [390, 1024, 1440],
+    "requires_remote_authenticated_visual_run": true,
+    "forbids_fixture_operational_data_in_production": true,
+    "forbids_label_only_completion": true
+  }
 }

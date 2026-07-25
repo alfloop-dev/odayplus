@@ -1,71 +1,99 @@
-# Operator Console R5→R7 Uplift + Live Data — Fleet Execution Tasks
+# Operator Console R7 / Package 10 Parity and Live Deployment Tasks
 
 - doc_id: ODP-OC-R7-UPLIFT-001
 - date: 2026-07-25
-- status: ready_for_fleet
-- canonical_design: R7 / Package 10 (`docs_archive/00_source_zips/operator_console/LATEST.json`)
+- status: dispatched
+- target_branch: `dev`
+- baseline_ref: `origin/dev@a13a1075258be98222e5bddd0acd99636179a149`
+- canonical_design: R7 / Package 10
+- canonical_archive: `docs_archive/00_source_zips/operator_console/r7-20260720-package-10/`
 
-## Corrected premise (read first)
+## Corrected Truth
 
-An earlier assessment wrongly called the React operator console
-(`apps/web/features/operator/**`) "divergent" and proposed deleting it. **That was
-wrong.** The repo's CI gate `scripts/e2e/check_product_grade_ci_gates.py` verifies that
-**all 37 Package-7 (R5) screen labels are implemented in the React components** (PASS).
-The React is the CI-verified R5 implementation, **not** garbage — do **not** delete it.
+The React console contains substantial R5 functionality and must not be
+discarded. It is not, however, visually complete against Package 10.
 
-Two real facts define the remaining work:
+The prior product-grade gate checks Package 7 and accepts nine hard-coded
+screen labels as implementation proof. A screen-label inventory proves neither
+layout parity nor production rollout. Package 10 requires runtime screenshots
+and interaction checks against the canonical HTML at every target viewport.
 
-1. The deployed operator console shows a fail-closed "OPERATOR_DATA_LOADING / API required"
-   gate **because there is no authenticated live data (web→API returns 401)** — not
-   because the design is wrong. With data it renders the 37-label dashboard.
-2. The React is at **R5 / 37 labels**; the canonical design has advanced to
-   **R7 / Package 10 / 40 labels** with approval conditions VDC-001..VDC-005. That is a
-   **delta uplift**, not a rebuild.
+The Cloud Run screenshot reported on 2026-07-25 has three independent causes:
 
-## TASK-1 — ODP-OC-R7-AUTH-001: Close the web→API identity federation (fix the 401)
+1. `/operator` is blocked by the production bootstrap gate.
+2. the R7 compact shell was only enabled for the Network workspace;
+3. Deploy Dev has not delivered Package 10 to Cloud Run. The Package 10
+   integration run and every later run through `a13a1075` failed before rollout.
 
-- owner_role: `Antigravity`, reviewer_role: `Claude`
-- Root cause: the API auth boundary (ODP-GAP-AUTH-001, already in code) only activates when
-  `ODP_AUTH_*` is set, and deployed `oday-api` has none → no verified principal → 401.
-- Do: configure `ODP_AUTH_ISSUER` / `ODP_AUTH_JWKS_URI` / `ODP_AUTH_AUDIENCES`; define the
-  BFF→API token + verifying header; flow the **end-user subject + roles** to
-  `operator_view_guard` / `operator_write_guard`; provision operator RBAC roles; keep
-  fail-closed exact (misconfig → 401, never trust spoofable `x-subject-id`).
-- Accept: authenticated operator gets 200 + real data from `/api/v1/operator/bootstrap`;
-  unauth 401; wrong role 403; live transcript attached. THIS is what turns the deployed
-  empty gate into the real dashboard.
+## Binding Sources
 
-## TASK-2 — ODP-OC-R7-FE-DELTA-001: Uplift the existing React from R5 (37) to R7 (40) + VDC
+Workers must read these together:
 
-- owner_role: `Codex`, reviewer_role: `Claude2`
-- Base: the EXISTING `apps/web/features/operator/**` (do not rewrite from scratch).
-- Design source of truth: `docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted`
-  (binding review: `ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md`).
-- Do: add the 3 R7 screen labels beyond R5's 37 (bring the CI gate target to Package 10 / 40),
-  reconcile any R7 visual deltas, and apply VDC-001..VDC-005:
-  - VDC-001 fix Transfer/Pause runtime branch
-  - VDC-002 remove 390 px mobile overflow
-  - VDC-003 focus/contrast/landmark accessibility
-  - VDC-004 serialize restorable inbox state in the URL
-  - VDC-005 record discipline review outcomes
-- Do: update `check_product_grade_ci_gates.py` to target Package 10 (40 labels) once uplift lands.
-- Accept: 40/40 R7 labels PASS; VDC evidence attached; a11y + mobile e2e pass; existing
-  operator e2e still green.
+1. `docs_archive/00_source_zips/operator_console/LATEST.json`
+2. Package 10 source and standalone HTML under the canonical archive
+3. `ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md`
+4. Package 10 desktop/tablet/mobile evidence under
+   `docs/evidence/design_review/assisted_listing_intake_r7_package10/`
+5. System Design, OpenAPI, authorization, privacy, reliability, and persistence
+   contracts. These override mock behavior in the prototype.
 
-## TASK-3 — ODP-OC-R7-DEPLOY-001: Show live data on the real stack
+## Dispatched Work
 
-- owner_role: `Codex2`, reviewer_role: `Claude`
-- After TASK-1: deploy `oday-api`/`oday-web` from the delta HEAD, verify `/operator` renders
-  the real 40-label dashboard for an authenticated operator (no fixtures in production).
+| Task | Status | Owner | Scope |
+|---|---|---|---|
+| `ODP-OC-R7-RUNTIME-001` | done locally, not merged | Codex + Helmholtz | Cloud Run audience, bounded upstream/bootstrap timeout, explicit 504 |
+| `ODP-OC-R7-SHELL-001` | done locally, not merged | Codex | R7 compact shell for every workspace; retain static navigation during data gates |
+| `ODP-OC-R7-ROUTE-001` | done locally, not merged | Turing (`019f9b84-b8c4-77e2-aab0-1a067fadb52e`) | URL-restorable Network tab and intake cold-open; isolate intake from unrelated Network gates |
+| `ODP-OC-R7-TODAY-001` | in progress | Hume (`019f9b92-1bc2-7ee2-8dc0-7763332805e7`) | Package 10 Today composition using live envelope only |
+| `ODP-OC-R7-INTAKE-VIS-001` | in progress | Hubble (`019f9b90-fd47-77a0-a67d-82164eb7f11f`) | State Matrix, durable detail label, side-by-side compare, promotion confirmation |
+| `ODP-OC-R7-STORE-001` | in progress | Descartes (`019f9b9a-1ce7-7b72-9d1c-f861ba57c346`) | Store Ops page-by-page visual and interaction parity |
+| `ODP-OC-R7-GROWTH-001` | in progress | Goodall (`019f9b9a-37e1-7ed3-882f-840ce86c7248`) | Growth page-by-page visual and interaction parity |
+| `ODP-OC-R7-NETWORK-001` | in progress | Lovelace (`019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297`) | Find Areas, Listing Radar, Candidate, SiteScore, Compare, Review, Rebalance parity |
+| `ODP-OC-R7-GOVERN-001` | in progress | Kierkegaard (`019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0`) | Governance approvals, decision evidence, and audit feed parity |
+| `ODP-OC-R7-REMOTE-VQA-001` | blocked on deploy credentials | QA Fleet | Authenticated Cloud Run visual regression at 390, 1024, and 1440 px |
+| `ODP-OC-R7-DEPLOY-001` | blocked external | Human/Ops + Codex2 | Configure WIF or deploy service credentials, deploy exact SHA, verify traffic and rollback |
 
-## What NOT to do
+Current local integration branch:
+`fix/package10-live-parity-20260725`.
 
-- Do **not** delete or rewrite-from-scratch `apps/web/features/operator/**`. It is the
-  CI-verified R5 implementation; the task is a delta to R7, plus wiring live data.
-- Do **not** treat the deployed empty gate as proof the design is wrong — it is the
-  no-data fail-closed state pending TASK-1.
+## Route Contract
 
-## Sequencing
+These are separate acceptance surfaces and all must be checked:
 
-TASK-1 (auth) unblocks everything visible. TASK-2 (R7 delta) proceeds in parallel.
-TASK-3 deploys and verifies once both land.
+| Route | Required result |
+|---|---|
+| `/operator` | Package 10 shell and Today workspace |
+| `/operator?ws=store` | Package 10 Store Ops |
+| `/operator?ws=growth` | Package 10 Growth |
+| `/operator?ws=network&tab=radar` | Package 10 Network Listing Radar and assisted intake |
+| `/operator?ws=govern` | Package 10 Governance |
+| `/w/expansion/listings` | production Assisted Listing Intake list entry |
+| `/intake/:intakeId` | durable Assisted Listing Intake detail entry |
+
+The product routes may reuse a shared surface, but they may not drift into
+visually and behaviorally independent versions.
+
+## Acceptance Gates
+
+1. Do not mark a page complete from label presence, unit tests, or local API E2E
+   alone.
+2. Capture implementation and canonical screenshots at 390, 1024, and 1440 px.
+   Record visible differences by region and close every P0/P1 item.
+3. Assert route cold-open, reload, back, forward, and shareable-state behavior.
+4. Production must never render fixture operational rows. Static shell
+   navigation and role labels may render while data is loading or unavailable.
+5. Every API wait is bounded and produces a correlation-aware error/retry
+   surface.
+6. Web and API `/platform/version` values must equal the deployed `dev` SHA;
+   Cloud Run traffic must point 100% to that verified revision.
+7. The authenticated remote visual run, not a local Playwright run, closes
+   production visual approval.
+8. A failed or skipped deploy is a failed release. Completion evidence must
+   remain `implementation_complete`, not `deployed` or `visual_approved`.
+
+## External Blocker
+
+Deploy Dev run `30161769381` failed preflight with neither WIF nor service-account
+credentials available, so build and rollout were skipped. Repository code cannot
+provision those GitHub environment credentials. Human/Ops must configure the
+`dev` environment before `ODP-OC-R7-DEPLOY-001` can execute.
