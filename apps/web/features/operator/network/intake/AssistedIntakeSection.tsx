@@ -1008,7 +1008,13 @@ export function AssistedIntakeSection({
         selectedHeatZoneId={selectedHeatZoneId}
       /> : null}
 
-      {toast ? (
+      {/*
+        The status/toast row is rendered after the detail layer: in a detail
+        context nothing may precede the canonical detail (ADD-006 §3.1). In the
+        inbox context the inbox above it is still the first surface, so the
+        toast keeps its Package 10 position directly under the queue.
+      */}
+      {detailContextOpen ? null : toast ? (
         <div className={styles.noteBox} data-testid="intake-toast" role="status">
           {toast}
         </div>
@@ -1119,6 +1125,12 @@ export function AssistedIntakeSection({
           onReviewPromotion={handleReviewPromotion}
           testId="intake-detail-dialog"
         />
+        </div>
+      ) : null}
+
+      {detailContextOpen && toast ? (
+        <div className={styles.noteBox} data-testid="intake-toast" role="status">
+          {toast}
         </div>
       ) : null}
 
@@ -1264,8 +1276,14 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
   };
 }
 
-function validResourceVersion(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+/*
+ * The API If-Match contract (apps/api/app/routes/listings.py) accepts only
+ * `W/"[1-9][0-9]*"`, so version zero is not a usable concurrency token. It must
+ * fail closed here rather than producing an If-Match the backend rejects
+ * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
+ */
+export function validResourceVersion(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
 }
 
 export function buildInboxReturnHref(

@@ -722,14 +722,26 @@
   width: 22%;
 }
 
+/*
+ * `.fieldCell` styles native `th`/`td` elements in the lineage and comparison
+ * tables. It must NOT set `display`: flex/grid/block on a table cell removes
+ * table-cell layout, which collapsed every column into the first one and left
+ * most of the 1160px detail width blank (ADD-006 §3.2). Vertical label/chip
+ * composition belongs to the `.fieldCellStack` wrapper inside the cell.
+ */
 .fieldCell {
   font-size: 10.5px;
   padding: 6px 8px;
   border-bottom: 1px solid #f6f8fb;
   word-break: break-word;
+  vertical-align: top;
+}
+
+.fieldCellStack {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .identityMark {
@@ -1252,9 +1264,36 @@
 
   .fieldCell::before {
     content: attr(data-label);
+    display: block;
     font-size: 8.5px;
     font-weight: 700;
     color: #5a6478;
+  }
+
+  /*
+   * Only at 390-759px does parsed lineage stop being a four-column table:
+   * at that width fixed columns are ~85px wide and long URLs, parser IDs and
+   * correlation IDs wrap one character per line. The markup keeps native
+   * table/thead/tbody/tr/th/td semantics; the column header is replaced by the
+   * per-cell `data-label` already used by the comparison table. Desktop and
+   * tablet cells keep table-cell layout (ADD-006 §3.2).
+   */
+  .lineageGrid,
+  .lineageGrid tbody,
+  .lineageGrid tr {
+    display: block;
+    width: 100%;
+  }
+
+  .lineageGrid thead {
+    display: none;
+  }
+
+  .lineageGrid th,
+  .lineageGrid td,
+  .lineageGrid th:first-child {
+    display: block;
+    width: auto;
   }
 
   .possibleMatchOutcome .compareGrid,

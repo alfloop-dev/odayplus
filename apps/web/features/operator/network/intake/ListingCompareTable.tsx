@@ -288,37 +288,43 @@ export function ListingCompareTable({
               data-label="欄位"
               scope="row"
             >
-              <span className={styles.fieldLabelText}>{row.label}</span>
-              {row.contradiction ? (
-                <span className={styles.changeChip} data-testid={`signal-con-${row.key}`}>
-                  ▲ 矛盾 (Contradiction)
-                </span>
-              ) : row.unavailable ? (
-                <span className={styles.unavailableChip} data-testid={`signal-unavailable-${row.key}`}>
-                  ? 不可用 [UNAVAILABLE]
-                </span>
-              ) : row.changed ? (
-                <span className={styles.changeChip} data-testid={`signal-changed-${row.key}`}>
-                  ▲ 變更 (Changed)
-                </span>
-              ) : (
-                <span className={styles.chip} data-tone="good" data-testid={`signal-match-${row.key}`}>
-                  ✓ 一致 (Matched)
-                </span>
-              )}
-              <span className={styles.metaSub}>{row.detail}</span>
+              <div className={styles.fieldCellStack}>
+                <span className={styles.fieldLabelText}>{row.label}</span>
+                {row.contradiction ? (
+                  <span className={styles.changeChip} data-testid={`signal-con-${row.key}`}>
+                    ▲ 矛盾 (Contradiction)
+                  </span>
+                ) : row.unavailable ? (
+                  <span className={styles.unavailableChip} data-testid={`signal-unavailable-${row.key}`}>
+                    ? 不可用 [UNAVAILABLE]
+                  </span>
+                ) : row.changed ? (
+                  <span className={styles.changeChip} data-testid={`signal-changed-${row.key}`}>
+                    ▲ 變更 (Changed)
+                  </span>
+                ) : (
+                  <span className={styles.chip} data-tone="good" data-testid={`signal-match-${row.key}`}>
+                    ✓ 一致 (Matched)
+                  </span>
+                )}
+                <span className={styles.metaSub}>{row.detail}</span>
+              </div>
             </th>
             <td
               className={`${styles.fieldCell} ${styles.sourceValue} ${row.changed ? styles.compareCellChanged : ""}`}
               data-label="既有物件"
             >
-              <span>{row.targetValue}</span>
+              <div className={styles.fieldCellStack}>
+                <span>{row.targetValue}</span>
+              </div>
             </td>
             <td
               className={`${styles.fieldCell} ${row.changed ? styles.compareCellChanged : ""}`}
               data-label="本次送件"
             >
-              <span className={row.changed ? styles.correctedValue : undefined}>{row.submissionValue}</span>
+              <div className={styles.fieldCellStack}>
+                <span className={row.changed ? styles.correctedValue : undefined}>{row.submissionValue}</span>
+              </div>
             </td>
           </tr>
           ))}

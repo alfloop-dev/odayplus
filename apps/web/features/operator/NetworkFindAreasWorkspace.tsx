@@ -463,6 +463,29 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
   ];
 }
 
+/**
+ * True when the canonical intake detail owns the page, on either entry point:
+ * the Operator query context (`selected=<intakeId>` plus a detail dialog) or
+ * the durable `/intake/<intakeId>` route. `fix`, `decide` and `assignmentSla`
+ * are included because `AssistedIntakeSection` keeps the full-page detail
+ * mounted underneath those confirmation dialogs, and it must sit in the same
+ * canonical position there (ADD-006 §3.1).
+ */
+export function isNetworkIntakeDetailRoute(
+  pathname: string | null | undefined,
+  searchParams: Pick<URLSearchParams, "get">,
+): boolean {
+  if (/^\/intake\/[^/]+$/.test(pathname ?? "")) return true;
+  if (!searchParams.get("selected")) return false;
+  const dialog = searchParams.get("dialog");
+  return (
+    dialog === "detail" ||
+    dialog === "fix" ||
+    dialog === "decide" ||
+    dialog === "assignmentSla"
+  );
+}
+
 export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
@@ -497,9 +520,25 @@ export function NetworkFindAreasWorkspace({
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
-  const activeTab = searchParams.get("tab")
+  const intakeDetailOpen = isNetworkIntakeDetailRoute(pathname, searchParams);
+  const urlTab = searchParams.get("tab")
     ? parseNetworkTabIndex(searchParams)
     : parseNetworkTabIndex(`tab=${initialTabId ?? ""}`);
+  // A Network tab click has to survive the console's initial preference
+  // hydration, shell bootstrap and URL hydration. While any of those are still
+  // in flight the console keeps re-publishing the server-rendered
+  // `initialTabId`, and a tab selection that only existed in the pushed URL was
+  // silently dropped — the Listing Radar click was lost and Find Areas stayed
+  // on screen. The selection is therefore committed to workspace state at click
+  // time and stays authoritative until the URL reports a different tab, at
+  // which point the URL (deep link, back/forward) takes over again.
+  const [tabOverride, setTabOverride] = useState<{ from: number; requested: number } | null>(null);
+  const overrideApplies = tabOverride !== null && tabOverride.from === urlTab;
+  const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+
+  useEffect(() => {
+    setTabOverride((current) => (current !== null && current.from !== urlTab ? null : current));
+  }, [urlTab]);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
@@ -528,6 +567,7 @@ export function NetworkFindAreasWorkspace({
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   const changeActiveTab = useCallback((tabIndex: number) => {
+    setTabOverride({ from: urlTab, requested: tabIndex });
     const href = buildNetworkTabHref(
       pathname,
       tabIndex,
@@ -535,7 +575,7 @@ export function NetworkFindAreasWorkspace({
       typeof window === "undefined" ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [pathname, router, searchParams]);
+  }, [pathname, router, searchParams, urlTab]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -1134,6 +1174,61 @@ export function NetworkFindAreasWorkspace({
         ? rebalanceApiError
         : null;
 
+  const listingRadarPanel = (
+    <ListingRadarPanel
+      activeRoleId={activeRoleId}
+      busyListingId={busyListingId}
+      intakeDetailOpen={intakeDetailOpen}
+      listings={listingsEffective}
+      onArchive={archiveListing}
+      onConvert={convertListing}
+      onMerge={mergeListing}
+      rows={viewModel.listingRadar}
+      selectedHeatZoneId={effectiveSelectedId}
+      selectedZoneLabel={selectedZoneLabel}
+      sources={listingSourcesEffective}
+    />
+  );
+
+  const listingMergeDialog = mergeRequest ? (
+    <ListingMergeDialog
+      busy={mergeBusy}
+      error={mergeError}
+      onClose={() => {
+        setMergeRequest(null);
+        setMergeError(null);
+      }}
+      onSubmit={submitMergeListing}
+      request={mergeRequest}
+    />
+  ) : null;
+
+  /*
+   * Package 10 renders the intake detail as the first workspace surface under
+   * the global Operator topbar/status banner: no Network heading, KPI strip,
+   * expansion stepper, tab strip, compliance strip or Network status row may
+   * precede it. The canonical source cards and Listing Radar stay below the
+   * detail, inside the same single production graph
+   * (NetworkFindAreasWorkspace -> ListingRadarPanel -> AssistedIntakeSection),
+   * so no second intake UI, modal, drawer or fixed overlay is introduced. The
+   * unrelated Network tab data gate is bypassed here for the same reason the
+   * durable /intake/<id> route bypasses the shell bootstrap gate: the detail
+   * owns its own authoritative API binding (ADD-006 §3.1).
+   */
+  if (intakeDetailOpen) {
+    return (
+      <section
+        className={styles.workspace}
+        data-intake-detail-open="true"
+        data-screen-label="Network 展店與店網"
+        data-testid="network-find-areas-workspace"
+      >
+        {listingRadarPanel}
+        {listingMergeDialog}
+      </section>
+    );
+  }
+
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
@@ -1166,18 +1261,7 @@ export function NetworkFindAreasWorkspace({
             status={activeTabGateState}
           />
         ) : activeTab === 1 ? (
-          <ListingRadarPanel
-            activeRoleId={activeRoleId}
-            busyListingId={busyListingId}
-            listings={listingsEffective}
-            onArchive={archiveListing}
-            onConvert={convertListing}
-            onMerge={mergeListing}
-            rows={viewModel.listingRadar}
-            selectedHeatZoneId={effectiveSelectedId}
-            selectedZoneLabel={selectedZoneLabel}
-            sources={listingSourcesEffective}
-          />
+          listingRadarPanel
         ) : activeTab === 2 ? (
           <CandidatePanel
             busyCandidateId={busyCandidateId}
@@ -1241,18 +1325,7 @@ export function NetworkFindAreasWorkspace({
         )}
       </NetworkShell>
 
-      {mergeRequest ? (
-        <ListingMergeDialog
-          busy={mergeBusy}
-          error={mergeError}
-          onClose={() => {
-            setMergeRequest(null);
-            setMergeError(null);
-          }}
-          onSubmit={submitMergeListing}
-          request={mergeRequest}
-        />
-      ) : null}
+      {listingMergeDialog}
     </section>
   );
 }

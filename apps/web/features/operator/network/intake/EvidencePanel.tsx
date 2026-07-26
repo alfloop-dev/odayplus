@@ -107,21 +107,29 @@ export function EvidencePanel({
                   const correctedAvailable = hasValue(row.corrected);
                   return (
                     <tr data-testid={`lineage-row-${row.key}`} key={row.key}>
-                      <th className={styles.fieldCell} scope="row">
-                        <strong>{row.label}</strong>
-                        <span className={styles.metaSub}>{row.key} · classification {row.classification}</span>
+                      <th className={styles.fieldCell} data-label="欄位" scope="row">
+                        <div className={styles.fieldCellStack}>
+                          <strong>{row.label}</strong>
+                          <span className={styles.metaSub}>{row.key} · classification {row.classification}</span>
+                        </div>
                       </th>
-                      <td className={styles.fieldCell}>{masked ? "•••• [MASKED]" : available(row.parsed)}</td>
-                      <td className={styles.fieldCell}>{masked ? "•••• [MASKED]" : available(row.normalized)}</td>
-                      <td className={styles.fieldCell}>
-                        {masked ? "•••• [MASKED]" : correctedAvailable ? String(row.corrected) : row.missing ? "? [MISSING]" : "未人工修正"}
-                        {row.correctionReason ? <span className={styles.metaSub}>原因：{row.correctionReason}</span> : null}
-                        {row.lowConfidence ? <span className={styles.lowChip}>⚠ [LOW_CONFIDENCE]</span> : null}
-                        {onOpenFix ? (
-                          <button className={styles.fixButton} data-testid={`fix-field-${row.key}`} onClick={() => onOpenFix(row.key)} type="button">
-                            修正 {row.label}
-                          </button>
-                        ) : null}
+                      <td className={styles.fieldCell} data-label="Parsed">
+                        <div className={styles.fieldCellStack}>{masked ? "•••• [MASKED]" : available(row.parsed)}</div>
+                      </td>
+                      <td className={styles.fieldCell} data-label="Normalized">
+                        <div className={styles.fieldCellStack}>{masked ? "•••• [MASKED]" : available(row.normalized)}</div>
+                      </td>
+                      <td className={styles.fieldCell} data-label="Corrected / State">
+                        <div className={styles.fieldCellStack}>
+                          {masked ? "•••• [MASKED]" : correctedAvailable ? String(row.corrected) : row.missing ? "? [MISSING]" : "未人工修正"}
+                          {row.correctionReason ? <span className={styles.metaSub}>原因：{row.correctionReason}</span> : null}
+                          {row.lowConfidence ? <span className={styles.lowChip}>⚠ [LOW_CONFIDENCE]</span> : null}
+                          {onOpenFix ? (
+                            <button className={styles.fixButton} data-testid={`fix-field-${row.key}`} onClick={() => onOpenFix(row.key)} type="button">
+                              修正 {row.label}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );

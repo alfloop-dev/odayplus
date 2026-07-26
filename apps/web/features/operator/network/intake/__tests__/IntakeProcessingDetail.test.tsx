@@ -11,6 +11,7 @@ import {
   authoritativeSlaVersion,
   guardAssignmentResource,
   guardSlaResource,
+  validResourceVersion,
 } from "../AssistedIntakeSection";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import { jobStatusBadgeColors } from "../IntakeStageTimeline";
@@ -187,6 +188,49 @@ describe("IntakeProcessingDetail production composition", () => {
     expect(desktopRequired).toHaveTextContent("DESKTOP_REQUIRED");
     expect(desktopRequired.querySelector("a")).toHaveAttribute("href", `/intake/${possibleMatch.id}`);
     expect(screen.getByTestId("intake-mobile-preserved-values")).toHaveTextContent("台北市信義區松高路 1 號 1F");
+  });
+
+  // ADD-006 §3.2: `display: flex` on native th/td removed table-cell layout, so
+  // lineage and comparison columns collapsed into the first narrow column and
+  // wrapped one character per line while most of the 1160px detail width stayed
+  // blank. Cells keep table-cell layout; vertical composition lives in a wrapper.
+  it("keeps native table-cell layout for lineage and comparison columns", () => {
+    render(<IntakeProcessingDetail record={possibleMatch} targetListing={{ id: "LST-101", address: "台北市信義區松高路 1 號 1F", area: 30 }} onClose={vi.fn()} />);
+
+    const compare = screen.getByTestId("compare-table-grid");
+    const lineage = screen.getByTestId("intake-parsed-lineage").querySelector("table")!;
+    expect(compare.tagName).toBe("TABLE");
+    expect(lineage.tagName).toBe("TABLE");
+    for (const table of [compare, lineage]) {
+      expect(table.querySelector("thead")).not.toBeNull();
+      expect(table.querySelector("tbody")).not.toBeNull();
+      expect(table.querySelectorAll("tr").length).toBeGreaterThan(1);
+      const cells = Array.from(table.querySelectorAll("th, td"));
+      expect(cells.length).toBeGreaterThan(0);
+      for (const cell of cells) {
+        expect(["TH", "TD"]).toContain(cell.tagName);
+        expect((cell as HTMLElement).style.display).toBe("");
+      }
+    }
+    // Every stacked cell body is a wrapper inside the cell, never the cell itself.
+    for (const cell of Array.from(compare.querySelectorAll("tbody th, tbody td"))) {
+      expect(cell.firstElementChild?.className).toContain("fieldCellStack");
+    }
+    for (const cell of Array.from(lineage.querySelectorAll("tbody th, tbody td"))) {
+      expect(cell.firstElementChild?.className).toContain("fieldCellStack");
+    }
+
+    const css = readFileSync("features/operator/network/intake/intake.module.css", "utf8");
+    const desktopCss = css.slice(0, css.indexOf("@media"));
+    expect(desktopCss).toMatch(/\.fieldCell \{[^}]*\}/);
+    expect(desktopCss.match(/\.fieldCell \{[^}]*\}/)![0]).not.toMatch(/display:\s*(flex|grid|block)/);
+    expect(desktopCss).toMatch(/\.fieldCellStack \{[^}]*display:\s*flex/);
+    // Tablet (<=1024px) must not turn cells into flex/grid/block boxes either.
+    const tabletCss = css.slice(css.indexOf("@media (max-width: 1024px)"), css.indexOf("@media (max-width: 759px)"));
+    expect(tabletCss).not.toMatch(/\.(lineageGrid|compareGrid|fieldCell)[^{]*\{[^}]*display:\s*(flex|grid|block)/);
+    // Only at <=759px does lineage stack, and it keeps the native elements.
+    const mobileCss = css.slice(css.indexOf("@media (max-width: 759px)"));
+    expect(mobileCss).toMatch(/\.lineageGrid th,\s*\.lineageGrid td,[\s\S]*?display:\s*block/);
   });
 
   it("integrates target comparison, canonical signals, and truthful corrected/missing lineage", () => {
@@ -524,6 +568,76 @@ describe("AssistedIntakeSection production container", () => {
       /\/api\/v1\/(assignments|sla-instances)\//.test(String(input)),
     )).toBe(false);
   });
+
+  // ADD-006 §3.3: the API If-Match contract is `^W/"[1-9][0-9]*"$`, so version
+  // zero is not a usable concurrency token and must fail closed alongside
+  // negatives, fractions, strings, null and undefined.
+  it("accepts positive integer resource versions only", () => {
+    for (const rejected of [0, -1, -12, 1.5, 0.5, "1", "0", "", true, null, undefined, NaN, Infinity, {}, [3]]) {
+      expect(validResourceVersion(rejected)).toBeNull();
+    }
+    for (const accepted of [1, 2, 12, 34, Number.MAX_SAFE_INTEGER]) {
+      expect(validResourceVersion(accepted)).toBe(accepted);
+    }
+    expect(authoritativeAssignmentVersion(intake({ assignmentVersion: 0 } as Partial<AssistedIntake>))).toBeNull();
+    expect(authoritativeSlaVersion(intake({ slaVersion: 0 } as Partial<AssistedIntake>))).toBeNull();
+    expect(authoritativeAssignmentVersion(intake(), { version: 0 } as any)).toBeNull();
+    expect(authoritativeSlaVersion(intake(), { version: 0 } as any)).toBeNull();
+  });
+
+  it.each([
+    ["zero", 0, 0],
+    ["negative", -1, -2],
+    ["fraction", 1.5, 2.5],
+    ["string", "3" as unknown as number, "4" as unknown as number],
+    ["null", null as unknown as number, null as unknown as number],
+    ["undefined", undefined as unknown as number, undefined as unknown as number],
+  ])(
+    "fails claim, transfer, pause and resume closed for %s resource versions",
+    async (_label, assignmentVersion, slaVersion) => {
+      const record = intake({
+        owner: "reviewer-2",
+        assignmentId: "ASG-REJECTED-VERSION",
+        assignmentStatus: "ASSIGNED",
+        slaInstanceId: "SLA-REJECTED-VERSION",
+        slaState: "ON_TRACK",
+        version: 91,
+        assignmentVersion,
+        slaVersion,
+      } as Partial<AssistedIntake> & { assignmentVersion: unknown; slaVersion: unknown });
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const path = new URL(String(input), "http://localhost").pathname;
+        if (path === "/api/v1/operator/network-listings/intake") return json({
+          items: [record], total: 1, page: 1, pageSize: 10,
+          counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 },
+          evidenceState: "complete",
+        });
+        if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+        return json({ code: "NOT_FOUND" }, 404);
+      }));
+      nav.reset(`selected=${record.id}&dialog=assignmentSla&decision=transfer`);
+      render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+
+      expect(await screen.findByTestId("assignment-resource-version-unavailable")).toHaveTextContent("RESOURCE_VERSION_UNAVAILABLE");
+      expect(screen.getByTestId("sla-resource-version-unavailable")).toHaveTextContent("RESOURCE_VERSION_UNAVAILABLE");
+      expect(screen.queryByTestId("asg-btn-claim")).toBeNull();
+      expect(screen.queryByTestId("asg-btn-transfer")).toBeNull();
+      expect(screen.queryByTestId("asg-btn-pause")).toBeNull();
+      expect(screen.queryByTestId("asg-btn-resume")).toBeNull();
+      expect(screen.queryByTestId("transfer-intake-dialog")).toBeNull();
+      expect(screen.queryByTestId("pause-sla-dialog")).toBeNull();
+
+      const assignmentGuard = guardAssignmentResource(record);
+      const slaGuard = guardSlaResource(record);
+      expect(!assignmentGuard.ok && assignmentGuard.error.code).toBe("RESOURCE_VERSION_UNAVAILABLE");
+      expect(!slaGuard.ok && slaGuard.error.code).toBe("RESOURCE_VERSION_UNAVAILABLE");
+      expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([input]) =>
+        /\/api\/v1\/(assignments|sla-instances)\/[^/]+\/actions\/(claim|transfer|pause|resume)$/.test(
+          new URL(String(input), "http://localhost").pathname,
+        ),
+      )).toBe(false);
+    },
+  );
 });
 
 function json(body: unknown, status = 200): Response {
