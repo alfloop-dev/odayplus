@@ -1,24 +1,97 @@
 {
   "schema": "oday-plus.package10-wave-ack.v1",
   "task_id": "ODP-P10-CAN-002-R3",
-  "status": "reverified_and_independently_reviewed",
-  "program_status": "verified_ready_for_review",
+  "status": "owner_verified_pending_independent_review",
+  "program_status": "verified_pending_independent_review",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
   "prepared_at": "2026-07-26T16:45:00Z",
-  "closed_out_at": "2026-07-26T16:46:00Z",
+  "corrected_at": "2026-07-26T17:14:03Z",
+  "closed_out_at": null,
   "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-002-r3",
   "branch": "task/ODP-P10-CAN-002-R3",
   "pickup_head": "27c40cce28c1c0663e9c4a156e1498fb3fd35dac",
   "changes_committed": true,
+  "commits": {
+    "runtime_evidence_commit": {
+      "sha": "583aa3242268497febb4e1ba40df62499f3965a6",
+      "subject": "ODP-P10-CAN-002-R3: record API and security contract re-verification ACK",
+      "pushed": true,
+      "push_verification": "git ls-remote origin refs/heads/task/ODP-P10-CAN-002-R3 -> 583aa3242268497febb4e1ba40df62499f3965a6 at 2026-07-26T17:05Z"
+    },
+    "ack_correction_commit": {
+      "sha": null,
+      "note": "This ACK correction is committed and pushed on task/ODP-P10-CAN-002-R3; its exact 40-char SHA is recorded by a follow-up record-only commit on the same branch and by the ai-status delivery metadata. The follow-up commit carries no evidence claims of its own."
+    }
+  },
+  "sha_correction_note": "A previous status/handoff entry recorded 583aa3280ca7ff4791ee202f5a044670cf840f95, which is not an object in this repository and matches the real commit only on the 7-char prefix 583aa32. The exact committed and pushed SHA is 583aa3242268497febb4e1ba40df62499f3965a6.",
   "verification_results": {
     "api_security_tests_total": 69,
     "api_security_tests_passed": 69,
+    "api_security_tests_command": "uv run pytest -q tests/contract/test_operator_assisted_listing_api.py tests/contract/test_operator_network_listings_api.py tests/contract/test_operator_network_rebalance_api.py tests/contract/test_operator_network_review_api.py tests/contract/test_operator_network_scoring_api.py tests/integration/test_operator_canonical_wiring.py tests/security/test_assisted_listing_intake_authorization_matrix.py tests/security/test_operator_security_platform.py",
+    "api_security_tests_reruns": [
+      {
+        "by": "Antigravity",
+        "at": "2026-07-26T16:45:00Z",
+        "result": "69 passed"
+      },
+      {
+        "by": "Claude",
+        "at": "2026-07-26T17:13:00Z",
+        "result": "69 passed",
+        "exit_code": 0,
+        "note": "Owner re-run against the same committed runtime during the ACK correction; no product or test files were modified."
+      }
+    ],
+    "collected_per_file": {
+      "tests/contract/test_operator_assisted_listing_api.py": 23,
+      "tests/contract/test_operator_network_listings_api.py": 6,
+      "tests/contract/test_operator_network_rebalance_api.py": 3,
+      "tests/contract/test_operator_network_review_api.py": 12,
+      "tests/contract/test_operator_network_scoring_api.py": 6,
+      "tests/integration/test_operator_canonical_wiring.py": 4,
+      "tests/security/test_assisted_listing_intake_authorization_matrix.py": 11,
+      "tests/security/test_operator_security_platform.py": 4
+    },
     "git_diff_check": "passed",
     "external_conflict_reconciliation": {
       "task_id": "ODP-SITESCORE-OPERATOR-V2-001",
       "overlap_file": "tests/integration/test_operator_canonical_wiring.py",
-      "status": "reconciled_valid",
-      "note": "Re-verification of Package 10 committed runtime confirms all 69 contract and security tests pass fail-closed without regression or conflict."
+      "status": "unresolved_no_accepted_sha",
+      "recorded_last_known_sha": "4d26b09f",
+      "recorded_sha_valid_in_repo": false,
+      "observed_open_pr": 387,
+      "observed_pr_state": "OPEN",
+      "observed_head_sha": "e099489a9598ee81660fbefc4dbedfa9e51df2fe",
+      "observed_merge_commit": null,
+      "note": "The required fetch of an exact accepted SHA could not be satisfied: PR #387 is still open with no merge commit, so no accepted SHA exists, and the recorded last_known_sha 4d26b09f is not a valid object in this repository. For transparency the open head was fetched and diffed: origin/task/ODP-SITESCORE-OPERATOR-V2-001 changes the overlapping test by +14/-1 lines (adds models.shared_ml.output_contracts.SITESCORE_OUTPUT_TRANSFORM metadata, replaces the candidate_site_id row assertion with tenant_id/h3_index/view_version assertions, and extends the canonical row payload with geo fields).",
+      "impact_on_this_task": "Package 10 re-verification changed no product or test files and left the overlapping file untouched, so there is no overwrite of either lane. The 69/69 result is valid against the current Package 10 committed runtime only; it does not certify the not-yet-accepted SiteScore v2 contract.",
+      "required_follow_up": "ODP-P10-CAN-004-R3 must reconcile the exact accepted SiteScore v2 SHA (or carry an explicit coordinator no-go disposition) before any release or deployment readiness claim."
     }
+  },
+  "review": {
+    "self_review_forbidden": true,
+    "independent_reviewer": "Antigravity",
+    "independent_review_status": "pending",
+    "history": [
+      {
+        "at": "2026-07-26T17:02:41Z",
+        "by": "Claude",
+        "verdict": "not_approved",
+        "findings": [
+          "exact committed SHA recorded incorrectly (prefix-only match)",
+          "ACK recorded no committed/pushed SHA field",
+          "ACK asserted independent review before it ran",
+          "SiteScore overlap marked reconciled_valid without a valid accepted SHA"
+        ]
+      },
+      {
+        "at": "2026-07-26T17:06:15Z",
+        "by": "Claude",
+        "action": "owner_correction",
+        "note": "Coordinator reassigned this ACK-only correction to Claude as owner with Antigravity as reviewer after the Antigravity provider quota was reached at 2026-07-26T17:03Z. All four findings above are corrected in this file. Claude previously reviewed this task and is now the owner, so Claude may not approve it; Antigravity must review independently after quota recovery. No silent fallback."
+      }
+    ]
   },
   "test_files": [
     "tests/contract/test_operator_assisted_listing_api.py",
@@ -39,5 +112,8 @@
     "audit WORM trail enforced",
     "promotion saga authorization matrix fail-closed"
   ],
-  "web_visual_or_e2e_modified": false
+  "web_visual_or_e2e_modified": false,
+  "files_changed_by_this_task": [
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-002-R3.json"
+  ]
 }
