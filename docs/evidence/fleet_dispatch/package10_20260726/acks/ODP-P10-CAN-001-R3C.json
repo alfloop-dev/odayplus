@@ -7,10 +7,52 @@
   "owner": "Claude2",
   "reviewer": "Antigravity4",
   "coordinator": "Codex",
-  "prepared_at": "2026-07-26T19:45:00Z",
+  "prepared_at": "2026-07-26T19:38:28Z",
+  "revisions": [
+    {
+      "revision": 1,
+      "recorded_in_commit": "6337134c2d211d648764a2bcf05d9c659b7903f6",
+      "commit_time": "2026-07-26T19:34:47Z",
+      "declared_prepared_at": "2026-07-26T19:45:00Z",
+      "rejected_by": "Codex",
+      "rejection_reason": "prepared_at was 10 minutes ahead of the commit time and therefore in the future — an evidence document may not claim a preparation time that has not happened. The revision also omitted the exact canonical branch SHA, the mandatory ODP-P10-CAN-003-R3A legacy-E2E-retirement addendum, and the Antigravity4 quota-failure record."
+    },
+    {
+      "revision": 2,
+      "prepared_at": "2026-07-26T19:38:28Z",
+      "scope": "evidence_only",
+      "changed": [
+        "prepared_at corrected to the real UTC time of this correction pass (captured by date -u, not projected)",
+        "canonical_branch recorded with the exact current SHA",
+        "mandatory ODP-P10-CAN-003-R3A legacy-governance-E2E-retirement addendum referenced",
+        "independent_review records the Antigravity4 quota failure and reset estimate",
+        "commits.ack_commit.sha filled in now that revision 1 exists in history"
+      ],
+      "not_changed": "The five product/test files delivered in c743d34 are untouched by this revision; the diff is this ACK file only."
+    }
+  ],
   "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3c",
   "branch": "task/ODP-P10-CAN-001-R3C",
+  "pull_request": "https://github.com/alfloop-dev/odayplus/pull/396",
   "pickup_head": "05dac94fafb1387c93d738adb94d1e0d148b44db",
+  "canonical_branch": {
+    "name": "fix/package10-final-20260725",
+    "sha": "13b21f91807edaf40c58f63fa2f2fe60ce130055",
+    "subject": "docs(fleet): retire legacy governance E2E contract",
+    "committed_at": "2026-07-26T19:30:10Z",
+    "observed_at": "2026-07-26T19:38:28Z",
+    "is_pr_base": true,
+    "task_branch_relation": {
+      "merge_base": "05dac94fafb1387c93d738adb94d1e0d148b44db",
+      "behind_by": 3,
+      "commits_ahead_of_task_base": [
+        "1409a13 ODP-P10-CAN-001-R3C: archive Governance crash dispatch (#394)",
+        "24235e6 ODP-P10-CAN-001-R3D-DISPATCH: archive retry remediation (#395)",
+        "13b21f9 docs(fleet): retire legacy governance E2E contract"
+      ],
+      "assessment": "All three are documentation/dispatch-archive commits under docs/**. None touches apps/web/**, apps/api/** or tests/e2e/**, so none of them invalidates the verification recorded below, and no rebase of the product diff is required for this evidence-only correction."
+    }
+  },
   "changes_committed": true,
   "commits": {
     "rejected_checkpoints": [
@@ -32,9 +74,16 @@
       "note": "New forward commit on the same task branch; the rejected checkpoints are preserved as history."
     },
     "ack_commit": {
-      "sha": null,
+      "sha": "6337134c2d211d648764a2bcf05d9c659b7903f6",
       "subject": "ODP-P10-CAN-001-R3C: record governance envelope remediation ACK",
-      "note": "A commit cannot contain its own hash; the exact SHA is captured in the ai-status delivery metadata and in the task PR."
+      "committed_at": "2026-07-26T19:34:47Z",
+      "note": "Revision 1 of this ACK. Its own SHA could not be recorded at the time it was written; it is recorded here in revision 2, which is a separate forward commit."
+    },
+    "ack_correction_commit": {
+      "sha": null,
+      "subject": "ODP-P10-CAN-001-R3C: correct governance remediation ACK evidence",
+      "history_rewrite": false,
+      "note": "Revision 2 — this file only. A commit cannot contain its own hash; the exact SHA is captured in the ai-status delivery metadata and in PR #396."
     }
   },
   "root_cause": {
@@ -120,8 +169,66 @@
           "cause": "The spec asserts on page.locator('table'); the canonical Audit Trail renders article rows."
         }
       ],
-      "conflict_gate": "Fixing these requires editing tests/e2e/operator-governance.spec.ts, which is one of the 16 specs owned by ODP-P10-CAN-003-R3A. Per the pickup conflict gate this is an immediate NO-GO for this task; it is reported instead of edited."
+      "conflict_gate": "Fixing these requires editing tests/e2e/operator-governance.spec.ts, which is one of the 16 specs owned by ODP-P10-CAN-003-R3A. Per the pickup conflict gate this is an immediate NO-GO for this task; it is reported instead of edited.",
+      "mandatory_addendum": {
+        "path": "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-003-R3A-LEGACY-GOVERNANCE-E2E-RETIREMENT.md",
+        "json_path": "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-003-R3A-LEGACY-GOVERNANCE-E2E-RETIREMENT.json",
+        "introduced_in": "13b21f91807edaf40c58f63fa2f2fe60ce130055",
+        "available_on": "fix/package10-final-20260725 (the base branch of PR #396); not present on task/ODP-P10-CAN-001-R3C, which was cut from 05dac94, so it is cited here by canonical SHA rather than copied",
+        "status": "ready-for-fleet",
+        "owner": "Claude",
+        "reviewer": "Antigravity4",
+        "why_mandatory": "It is the program-level ruling on the same three failures reported above. It converts this ACK's claim from a self-assessment into an accepted fleet disposition: the failing assertions are retired Package 6 contracts, and repairing them is R3A work, not an R3C product regression.",
+        "corroborating_findings": {
+          "legacy_spec_sha": "19c7ab8e516ea6ee6ee62075f1e02686d23428e1",
+          "legacy_spec_last_changed": "2026-07-14",
+          "package10_runtime_redesign_sha": "919f3676766fcc24c3467ed1781b4ee6559010c4",
+          "package10_runtime_redesign_date": "2026-07-25",
+          "r3c_candidate_sha_cited_by_addendum": "c743d34",
+          "isolated_playwright_result_cited_by_addendum": "1 passed / 3 failed on web 3201 / api 8199 with reuse_existing_server=false",
+          "note": "The addendum independently reproduces this ACK's numbers (1 passed / 3 failed, same ports, same candidate SHA) and attributes the failures to stale locators — a retired <table>, an English Reject action, and legacy reason-validation copy — that fail after the required content has already rendered."
+        },
+        "constraints_this_task_must_respect": [
+          "R3A, not R3C, edits tests/e2e/operator-governance.spec.ts",
+          "no hidden or duplicate <table> may be added to satisfy the retired locator",
+          "no duplicate English Reject control may be added",
+          "no Package 6 visual markup, fixture-only path or archived copy may be restored",
+          "R3A may not edit apps/web/** or apps/api/**",
+          "the corrected spec is to be run against the accepted R3C product SHA on isolated ports"
+        ],
+        "r3c_compliance": "This task's diff adds no table, no English Reject control, no fixture path and no legacy markup; it changes only apps/web/features/operator/** and this ACK. R3C therefore satisfies every constraint the addendum places on it, and the corrected spec run named in the addendum's acceptance list remains R3A work that follows acceptance of this product SHA."
+      }
     }
+  },
+  "independent_review": {
+    "reviewer": "Antigravity4",
+    "state": "not_performed",
+    "fabricated": false,
+    "reissued": false,
+    "attempts": [
+      {
+        "attempt": 1,
+        "run_id": "antigravity-20260726T190405Z-94136315",
+        "dispatch_kind": "priority dispatch",
+        "outcome": "failed",
+        "failure_class": "account_quota"
+      },
+      {
+        "attempt": 2,
+        "dispatch_kind": "review_ready_dispatch",
+        "worker_started_at": "2026-07-26T19:36:18Z",
+        "worker_failed_at": "2026-07-26T19:36:28Z",
+        "outcome": "failed",
+        "failure_class": "account_quota",
+        "provider_error": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 46h2m31s.",
+        "reset_in": "46h02m31s",
+        "reset_estimate_utc": "2026-07-28T17:38:59Z",
+        "reset_estimate_basis": "worker_failed_at + the provider-reported 46h2m31s; the provider gives a relative duration, so this absolute time is derived, not quoted"
+      }
+    ],
+    "disposition": "Both Antigravity4 attempts failed on an account-level Individual quota, not on the content of this change. Per the coordinator ruling this correction pass does not retry-loop the reviewer, does not reissue the Antigravity review, and does not substitute a self-review or any other agent's review for the required independent one. The task stays in review and blocks on Codex.",
+    "blocked_on": "Codex",
+    "unblock_condition": "Codex either reissues the Antigravity4 review after the quota reset (estimated 2026-07-28T17:38:59Z) or names a different independent reviewer."
   },
   "acceptance": [
     { "item": "delayed shell envelope navigation has no route-error", "state": "met", "evidence": "runtime probe on web 3201 / api 8199: five paths, zero route-error nodes, zero page errors; plus 19 unit regression tests" },
@@ -130,9 +237,9 @@
     { "item": "no production fixture fallback", "state": "met", "evidence": "production fail-closed test still asserts the unavailable gate; fixtures remain gated behind operatorFixturesAllowed()" },
     { "item": "malformed external fields do not crash", "state": "met", "evidence": "malformed-row tests plus total badge helpers and explicit 未提供 markers" },
     { "item": "regression unit coverage", "state": "met", "evidence": "apps/web/features/operator/__tests__/GovernanceDelayedEnvelope.test.tsx (19 tests)" },
-    { "item": "web unit typecheck build and governance Playwright pass", "state": "partial", "evidence": "web unit, web typecheck, root typecheck and build pass; the governance Playwright spec has 3 failures owned by ODP-P10-CAN-003-R3A (see governance_e2e_failures)" },
-    { "item": "no R3A E2E files changed", "state": "met", "evidence": "the task diff touches only apps/web/features/operator/** and this ACK" },
-    { "item": "Antigravity independent review", "state": "pending", "evidence": "Antigravity priority dispatch run antigravity-20260726T190405Z-94136315 ended on an account-level Individual quota limit; review is not fabricated and the task stays in review" }
+    { "item": "web unit typecheck build and governance Playwright pass", "state": "partial", "evidence": "web unit, web typecheck, root typecheck and build pass; the governance Playwright spec has 3 failures owned by ODP-P10-CAN-003-R3A (see governance_e2e_failures). The program-level ruling in ODP-P10-CAN-003-R3A-LEGACY-GOVERNANCE-E2E-RETIREMENT.md (canonical SHA 13b21f91807edaf40c58f63fa2f2fe60ce130055) classifies these three as retired Package 6 assertions to be corrected inside R3A, so this item cannot reach met from within R3C" },
+    { "item": "no R3A E2E files changed", "state": "met", "evidence": "the task diff touches only apps/web/features/operator/** and this ACK; the addendum's forbidden-compatibility list (hidden table, duplicate English Reject, restored Package 6 markup, fixture-only path) is likewise not triggered" },
+    { "item": "Antigravity independent review", "state": "pending", "evidence": "two Antigravity4 dispatches failed on account-level Individual quota — run antigravity-20260726T190405Z-94136315, then the 19:36:18Z review_ready_dispatch that failed at 19:36:28Z with a 46h02m31s reset (estimated 2026-07-28T17:38:59Z). See independent_review. The review is neither fabricated nor reissued; the task stays in review and blocks on Codex" }
   ],
   "conflicts": [
     {
