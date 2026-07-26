@@ -458,7 +458,7 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         text = workflow.read_text(encoding="utf-8")
         if_lines = [line for line in text.splitlines() if line.strip().startswith("if:")]
         assert all("secrets." not in line for line in if_lines)
-        assert "env.HAS_GCP_SA_KEY" in text
+        assert "env.HAS_WIF" in text
         assert 'ODP_REQUIRE_LIVE_DATA: "true"' in text
         assert "ODP_DATA_BINDING_MODE: live" in text
         assert "ODP_PERSISTENCE: postgresql" in text

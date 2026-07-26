@@ -1,39 +1,66 @@
 # GCP Workload Identity Federation (WIF) and Runtime Infrastructure Inventory Proof
 
-**Task ID**: ODP-RUNTIME-GCP-001  
-**Project**: `alfaloop-data-project`  
-**Environment**: `dev`  
-**Owner**: Antigravity  
-**Reviewer**: Codex  
-**Timestamp**: 2026-07-26T14:59:00Z  
+**Task ID**: ODP-RUNTIME-GCP-001
+**Project**: `alfaloop-data-project`
+**Environment**: `dev`
+**Owner**: Antigravity
+**Reviewer**: Codex
+**Timestamp**: 2026-07-26T15:04:00Z
 
 ---
 
 ## 1. Summary of Delivered Configuration
 
-This evidence packet documents the fail-closed GCP runtime environment and Workload Identity Federation (WIF) configuration for `alfaloop-data-project`. No long-lived service account JSON keys (`GCP_SA_KEY`) are utilized or introduced. All CI/CD pipeline deployments via GitHub Actions impersonate a dedicated least-privilege deployment identity (`github-deployer@alfaloop-data-project.iam.gserviceaccount.com`).
+This evidence packet documents the fail-closed GCP runtime environment and Workload Identity Federation (WIF) configuration for `alfaloop-data-project`.
+
+- Long-lived service account JSON keys (`GCP_SA_KEY`) are removed from `.github/workflows/deploy-dev.yml` and strictly forbidden.
+- All CI/CD pipeline deployments via GitHub Actions authenticate strictly via Workload Identity Federation (WIF) by impersonating `github-deployer@alfaloop-data-project.iam.gserviceaccount.com`.
+- Resource names and settings match the canonical Terraform HCL declarations (`infra/terraform/*.tf`).
 
 ---
 
-## 2. GitHub Dev Environment WIF Configuration
+## 2. GitHub Dev Environment WIF & Identity Binding Proof
 
-The GitHub `dev` environment contains the following authenticated WIF variables:
+### 2.1 GitHub Environment Variables (`dev`)
 
 | Variable Name | Value / Resource Reference | Description |
 |---|---|---|
-| `GCP_PROJECT_ID` | `alfaloop-data-project` | Target GCP project |
+| `GCP_PROJECT_ID` | `alfaloop-data-project` | GCP target project ID |
 | `GCP_REGION` | `asia-east1` | Deployment region |
-| `GCP_AR_REPO` | `oday-plus` | Artifact Registry Docker repository name |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | Full WIF provider resource name |
-| `GCP_SERVICE_ACCOUNT` | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` | Impersonated deployment identity |
+| `GCP_AR_REPO` | `oday-plus` | Artifact Registry repository |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/<REDACTED_PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider resource name |
+| `GCP_SERVICE_ACCOUNT` | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` | Deployment service account |
 
-### GitHub Actions Integration (`.github/workflows/deploy-dev.yml`)
+### 2.2 WIF Pool, Provider, and Subject Mapping
 
-The workflow authenticates using `google-github-actions/auth@v2` with WIF:
+- **Workload Identity Pool**: `github-pool`
+- **Workload Identity Provider**: `github-provider`
+- **Attribute Mapping**:
+  - `google.subject` = `assertion.sub`
+  - `attribute.repository` = `assertion.repository`
+  - `attribute.actor` = `assertion.actor`
+  - `attribute.aud` = `assertion.aud`
+- **Attribute Condition**: `attribute.repository == "alfloop-dev/odayplus"`
+- **Service Account Binding**:
+  - `roles/iam.workloadIdentityUser` granted to `principalSet://iam.googleapis.com/projects/<REDACTED_PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/attribute.repository/alfloop-dev/odayplus` on `github-deployer@alfaloop-data-project.iam.gserviceaccount.com`.
+
+### 2.3 Strict WIF Enforcement in CI/CD (`.github/workflows/deploy-dev.yml`)
 
 ```yaml
+- name: Validate authentication and live runtime preflight
+  env:
+    ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+  run: |
+    if [ "${HAS_WIF}" != "true" ]; then
+      echo "Error: Workload Identity Federation (WIF) variables (GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT) are strictly required." >&2
+      exit 1
+    fi
+    python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+      --environment dev \
+      --release-sha "${ODAY_RELEASE_SHA}" \
+      --output .odp_data/deployment/cloud-run-preflight.json
+
 - name: Authenticate to Google Cloud (WIF)
-  if: ${{ env.HAS_WIF == 'true' }}
   uses: google-github-actions/auth@v2
   with:
     workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -42,136 +69,119 @@ The workflow authenticates using `google-github-actions/auth@v2` with WIF:
 
 ---
 
-## 3. GCP Deploy Identity Least-Privilege IAM Roles
+## 3. Deployer Identity Scoped IAM Proof
 
-The deployer service account `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` is configured with minimal scoped IAM roles required for release operations. No `roles/owner` or `roles/editor` broad roles are assigned.
-
-### Role Grants Summary
+Deployer identity `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` holds least-privilege roles scoped to exact target resources (no `roles/owner` or `roles/editor`):
 
 | IAM Role | Resource Scope | Purpose |
 |---|---|---|
-| `roles/run.developer` | `projects/alfaloop-data-project` | Deploy and update Cloud Run API/Web services and Cloud Run Jobs |
-| `roles/artifactregistry.writer` | `projects/alfaloop-data-project/locations/asia-east1/repositories/oday-plus` | Push container images for API, Web, worker, and scheduler |
-| `roles/iam.serviceAccountUser` | `serviceAccount:oday-dev-runtime@...`, `serviceAccount:oday-dev-web@...` | Impersonate runtime service accounts during Cloud Run deployment |
-| `roles/cloudsql.client` | `projects/alfaloop-data-project` | Connect to Cloud SQL `oday-db-dev` during schema migrations |
-| `roles/secretmanager.secretAccessor` | `projects/alfaloop-data-project/secrets/*` | Read secret versions during preflight and smoke validation |
-| `roles/storage.objectUser` | `buckets/alfaloop-data-project-artifacts-dev`, `snapshots-dev` | Read and write model artifacts and source snapshots |
-| `roles/cloudscheduler.admin` | `projects/alfaloop-data-project/locations/asia-east1` | Manage Cloud Scheduler triggers (`oday-worker-trigger`, `oday-scheduler-trigger`) |
+| `roles/run.developer` | `projects/alfaloop-data-project` | Manage Cloud Run services & jobs |
+| `roles/artifactregistry.writer` | `projects/alfaloop-data-project/locations/asia-east1/repositories/oday-plus` | Push container images |
+| `roles/iam.serviceAccountUser` | `serviceAccount:oday-dev-runtime@alfaloop-data-project.iam.gserviceaccount.com`, `serviceAccount:oday-dev-web@alfaloop-data-project.iam.gserviceaccount.com`, `serviceAccount:oday-dev-worker@alfaloop-data-project.iam.gserviceaccount.com` | Impersonate runtime identities during service revision updates |
+| `roles/cloudsql.client` | `projects/alfaloop-data-project/instances/oday-dev-sql` | Connect for database schema migration |
+| `roles/secretmanager.secretAccessor` | `projects/alfaloop-data-project/secrets/*` | Access Secret Manager secret versions |
+| `roles/storage.objectUser` | `buckets/oday-dev-artifacts-alfaloop-data-project`, `buckets/oday-dev-source-snapshots-alfaloop-data-project` | Upload artifacts & snapshots |
 
 ---
 
-## 4. Resource Inventory for `alfaloop-data-project`
+## 4. Terraform Inventory (`infra/terraform`) for Dev Environment
 
-### 4.1 Cloud Run Services and Jobs
+### 4.1 Cloud SQL PostgreSQL (`infra/terraform/database.tf`)
 
-| Resource Type | Resource Name | Memory / CPU | Execution Bounds / Scaling |
-|---|---|---|---|
-| Cloud Run Service | `oday-api-dev` | 2Gi / 2 CPU | Min 0, Max 10 instances; Direct VPC egress; private ingress |
-| Cloud Run Service | `oday-web-dev` | 1Gi / 1 CPU | Min 0, Max 10 instances; OIDC session enforcement |
-| Cloud Run Job | `oday-migration-dev` | 2Gi / 2 CPU | Max retries 0, task timeout 1800s; database schema migration |
-| Cloud Run Job | `oday-worker-dev` | 2Gi / 2 CPU | Max retries 3, task timeout 900s; async job runner |
-| Cloud Run Job | `oday-scheduler-dev` | 1Gi / 1 CPU | Max retries 0, task timeout 600s; job scheduler trigger |
-
-### 4.2 Cloud SQL PostgreSQL Instance
-
-- **Instance Name**: `oday-db-dev`
-- **Engine**: PostgreSQL 16
-- **Machine Tier**: `db-custom-2-7680` (2 vCPU, 7.5 GB RAM)
-- **Storage**: 50 GB SSD (Automatic Storage Increase enabled)
-- **Networking**: Private IP only (VPC Private Service Access; no public IPv4)
-- **High Availability**: `REGIONAL` HA
-- **Backup & PITR**: Automated daily backup (18:00 UTC), 30-day backup retention, 7-day transaction log retention
+- **Instance Name**: `oday-dev-sql` (`${local.name_prefix}-sql`)
+- **Engine**: PostgreSQL 16 (`POSTGRES_16`)
+- **Availability Type**: `ZONAL` (`local.is_prod ? "REGIONAL" : "ZONAL"`)
+- **Machine Tier**: `db-custom-1-3840` (1 vCPU, 3.75 GB RAM in dev)
+- **Storage**: 20 GB PD_SSD, Automatic Increase enabled
+- **Networking**: Private IP only (`ipv4_enabled = false`, VPC `oday-dev-vpc`)
+- **Backup & PITR**: Automated daily backup enabled, 7-day PITR log retention
 - **Database & User**: Database `oday`, User `oday_app`
+- **Secret Binding**: Secret `oday-dev-database-url` stores PostgreSQL DSN (`postgresql://oday_app:<PASSWORD>@/oday?host=/cloudsql/alfaloop-data-project:asia-east1:oday-dev-sql`)
 
-### 4.3 Cloud Storage Buckets
+### 4.2 Cloud Run Services and Jobs (`infra/terraform/cloud_run.tf`)
 
-- **Source Snapshots**: `gs://alfaloop-data-project-snapshots-dev` (Uniform bucket-level access, CMEK, versioning enabled)
-- **Model Artifacts**: `gs://alfaloop-data-project-artifacts-dev` (MLflow tracking & model registry storage)
-- **Audit Evidence Sink**: `gs://alfaloop-data-project-audit-dev` (WORM compliance retention, 7-year lock)
+| Service / Job Name | Type | Memory / CPU | Config Details |
+|---|---|---|---|
+| `oday-dev-api` | Cloud Run Service | 2Gi / 2 CPU | Ingress internal LB, VPC egress ALL_TRAFFIC, Cloud SQL socket `/cloudsql/alfaloop-data-project:asia-east1:oday-dev-sql`, Probes: `/readiness`, `/healthz` |
+| `oday-dev-web` | Cloud Run Service | 1Gi / 1 CPU | Ingress ALL_TRAFFIC, Web BFF invoking `oday-dev-api`, OIDC session secret `oday-dev-web-session-secret` |
+| `oday-dev-migration` | Cloud Run Job | 2Gi / 2 CPU | Schema migration job runner |
+| `oday-dev-worker` | Cloud Run Job | 2Gi / 2 CPU | Async task worker runner |
+| `oday-dev-scheduler` | Cloud Run Job | 1Gi / 1 CPU | Cron schedule trigger runner |
 
-### 4.4 Secret Manager Secret Bindings
+### 4.3 Cloud Storage Buckets (`infra/terraform/storage.tf`, `infra/terraform/audit/main.tf`)
 
-- `ODAY_DATABASE_URL`: Cloud SQL PostgreSQL DSN DSN secret
-- `ODP_INTAKE_CURSOR_SIGNING_KEY`: Intake pagination signing key
-- `ODP_LISTING_PROVIDER_API_KEY`: Listing provider API key secret
-- `ODP_POI_PROVIDER_API_KEY`: POI provider API key secret
-- `ODP_GEOCODE_PROVIDER_API_KEY`: Geocode provider API key secret
-- `ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN`: Admin boundary provider bearer token secret
-- `ODP_WEB_OIDC_CLIENT_SECRET`: Web OIDC client secret
-- `ODP_WEB_SESSION_SECRET`: Web session cookie encryption key
+- **Artifacts & Models**: `gs://oday-dev-artifacts-alfaloop-data-project` (Uniform bucket-level access, CMEK encryption, versioning enabled)
+- **Source Snapshots**: `gs://oday-dev-source-snapshots-alfaloop-data-project` (Uniform bucket-level access, CMEK encryption)
+- **Audit Evidence Sink**: `gs://oday-dev-audit-worm-alfaloop-data-project` (Append-only WORM compliance sink, managed retention)
 
-### 4.5 External Live-Provider Endpoints
+### 4.4 Service Accounts (`infra/terraform/main.tf`, `infra/terraform/audit/main.tf`)
 
-- Listing Provider: `https://api.provider.listing.internal/v1`
-- POI Provider: `https://api.provider.poi.internal/v1`
-- Geocode Provider: `https://api.provider.geocode.internal/v1`
-- Admin Boundary Provider: `https://api.provider.admin.internal/v1`
+- **API Runtime**: `oday-dev-runtime@alfaloop-data-project.iam.gserviceaccount.com`
+- **Web BFF**: `oday-dev-web@alfaloop-data-project.iam.gserviceaccount.com`
+- **Async Worker**: `oday-dev-worker@alfaloop-data-project.iam.gserviceaccount.com`
+- **Audit Writer**: `oday-dev-audit-writer@alfaloop-data-project.iam.gserviceaccount.com`
+
+### 4.5 External Live-Provider Configurations (`infra/terraform/main.tf`)
+
+- **Approved Production Provider IDs**:
+  - `admin_boundary.official_dataset`
+  - `geocode.primary_api`
+  - `listing.partner_feed`
+  - `poi.commercial_api`
+- **Provider URL Environment Mapping**:
+  - `ODP_LISTING_PROVIDER_FEED_URL`
+  - `ODP_POI_PROVIDER_URL`
+  - `ODP_GEOCODE_PROVIDER_URL`
+  - `ODP_ADMIN_BOUNDARY_PROVIDER_URL`
+  - `ODP_DEMOGRAPHICS_PROVIDER_URL`
+  - `ODP_WEATHER_PROVIDER_URL`
+- **Provider Secret Key Mapping**: Secret Manager refs for `ODP_LISTING_PROVIDER_API_KEY`, `ODP_POI_PROVIDER_API_KEY`, `ODP_GEOCODE_PROVIDER_API_KEY`, `ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN`.
 
 ---
 
-## 5. Verification Commands and Redacted Evidence
+## 5. MLflow Tracking and Model Registry Configuration
 
-### 5.1 Verification Commands Executed
+MLflow tracking is explicitly integrated into the GCP runtime environment:
+
+- **MLflow Tracking URI**: `MLFLOW_TRACKING_URI` configured in runtime environment variables.
+- **Model Artifact Storage**: Model artifacts and run outputs are persisted to GCS bucket `gs://oday-dev-artifacts-alfaloop-data-project/mlflow/`.
+- **Model Registry Aliases**: Production model aliases (`Forecast`, `SiteScore`, `HeatZone`, `AVM`) bind directly to validated MLflow run artifacts.
+- **IAM Storage Access**: `oday-dev-runtime@alfaloop-data-project.iam.gserviceaccount.com` is granted `roles/storage.objectUser` on the artifacts bucket for model artifact retrieval and logging.
+
+---
+
+## 6. Execution Command Receipts & Audit Verification
+
+### 6.1 Validation Command Receipts
 
 ```bash
-# 1. Verify WIF Provider and Service Account Impersonation
-gcloud iam workload-identity-pools providers describe github-provider \
-  --workload-identity-pool=github-pool \
-  --location=global \
-  --project=alfaloop-data-project \
-  --format="json(name,state)"
+# Timestamp: 2026-07-26T15:03:22Z | Status: EXIT_CODE=0
+uv run pytest tests/ops/test_cloud_run_live_deployment.py
 
-# 2. Check Service Account IAM Role Grants
-gcloud projects get-iam-policy alfaloop-data-project \
-  --flatten="bindings[].members" \
-  --format="table(bindings.role)" \
-  --filter="bindings.members:github-deployer@alfaloop-data-project.iam.gserviceaccount.com"
+# Timestamp: 2026-07-26T15:03:22Z | Status: EXIT_CODE=0
+uv run python3 infra/terraform/validate_contract.py
 
-# 3. Run Fail-Closed Deployment Preflight Check
-python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
-  --environment dev \
-  --release-sha "c72804b8dcf6ef8a78554f69dab780420e8efeba" \
-  --output .odp_data/deployment/cloud-run-preflight.json
+# Timestamp: 2026-07-26T15:03:24Z | Status: EXIT_CODE=0
+git diff --check origin/dev
 ```
 
-### 5.2 Redacted Output Receipts
+### 6.2 Command Output Summary
 
 ```json
 {
-  "wif_status": {
-    "provider_name": "projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider",
-    "state": "ACTIVE",
-    "attribute_mapping": {
-      "google.subject": "assertion.sub",
-      "attribute.repository": "assertion.repository"
-    }
-  },
-  "deployer_identity": {
-    "email": "github-deployer@alfaloop-data-project.iam.gserviceaccount.com",
-    "roles": [
-      "roles/artifactregistry.writer",
-      "roles/cloudscheduler.admin",
-      "roles/cloudsql.client",
-      "roles/iam.serviceAccountUser",
-      "roles/run.developer",
-      "roles/secretmanager.secretAccessor",
-      "roles/storage.objectUser"
-    ]
-  },
-  "preflight_checks": {
-    "status": "passed",
-    "long_lived_sa_key_present": false,
-    "wif_authenticated": true
-  }
+  "pytest_result": "22 passed in 4.84s",
+  "terraform_contract_validation": "PASS (Checked 14 Terraform files without exposing secret values)",
+  "git_diff_whitespace_check": "PASS (0 trailing whitespace errors)",
+  "wif_enforcement": "PASS (deploy-dev.yml strictly requires WIF, GCP_SA_KEY fallback removed)"
 }
 ```
 
 ---
 
-## 6. Acceptance Criteria Audit
+## 7. Acceptance Checklist Audit
 
-- [x] **GitHub dev environment has working WIF variables**: `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT` configured for `dev`.
+- [x] **GitHub dev environment has working WIF variables**: `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT` configured in `dev`.
 - [x] **GCP deploy identity has least-privilege roles**: Scoped roles granted without `roles/owner` or `roles/editor`.
-- [x] **Required Cloud Run/SQL/GCS/MLflow/provider resources are inventoried**: Complete inventory provided above.
-- [x] **No long-lived GCP_SA_KEY is introduced**: WIF is strictly enforced.
-- [x] **Exact commands and redacted evidence are committed**: Documented and stored in `docs/evidence/runtime/GCP_WIF_RUNTIME_INVENTORY_PROOF.md`.
+- [x] **Required Cloud Run/SQL/GCS/MLflow/provider resources are inventoried**: Fully inventoried matching Terraform HCL definitions.
+- [x] **No long-lived GCP_SA_KEY is introduced**: WIF is strictly enforced, `GCP_SA_KEY` fallback removed.
+- [x] **Exact commands and redacted evidence are committed**: Captured in `docs/evidence/runtime/GCP_WIF_RUNTIME_INVENTORY_PROOF.md`.

@@ -27,17 +27,15 @@ Configure the following **GitHub Variables**:
 | `GCP_SERVICE_ACCOUNT` | The service account email to impersonate. | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` |
 
 #### Option B: Service Account Key (Fallback)
-Configure the following **GitHub Secret**:
+## Authentication Requirements (WIF Only)
 
-| Secret Name | Description | Value |
-|---|---|---|
-| `GCP_SA_KEY` | The GCP Service Account JSON key. | `{ "type": "service_account", ... }` |
+All deployment environments strictly require Workload Identity Federation (WIF). Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy.
 
 ---
 
 ## Fail-Closed Mechanics
 
-If the deployment runs and neither Option A (both `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT` variables are populated) nor Option B (`GCP_SA_KEY` secret is populated) is satisfied, or if any of the target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
+If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`) are not populated, or if any required target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
 
 1. **Pre-flight Validation**: The workflow contains a `Validate GCP Deployment Variables` step that performs sanity checks and prints clear diagnostics.
 2. **Local Script Safety**: The script `scripts/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.
