@@ -16,7 +16,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 from apps.data_platform.store_opening import (
     MissingStoreOpeningAuthorityError,
@@ -84,13 +83,23 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     db_conn = None
-    db_url = args.db_url or os.getenv("ODAY_DATABASE_URL") or os.getenv("ODP_DATABASE_URL")
+    db_url = args.db_url or os.getenv("ODAY_DATABASE_URL") or os.getenv("ODP_DATABASE_URL") or os.getenv("INTAKE_TEST_DATABASE_URL")
+    db_err = None
+
     if db_url and "postgresql" in db_url.lower():
         try:
             import psycopg
             db_conn = psycopg.connect(db_url)
         except Exception as exc:
-            print(f"Warning: Could not connect to PostgreSQL ({exc}). Operating in dry/in-memory mode.", file=sys.stderr)
+            db_err = str(exc)
+
+    if not args.dry_run and db_conn is None:
+        err_msg = f" (connection error: {db_err})" if db_err else " (no DB URL configured)"
+        print(
+            f"FAIL CLOSED: Database connection is required when --dry-run is not specified{err_msg}",
+            file=sys.stderr,
+        )
+        return 1
 
     engine = StoreOpeningBackfillEngine(db_conn=db_conn)
 

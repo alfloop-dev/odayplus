@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
 import uuid
+from collections.abc import Sequence
+from typing import Any
 
 from apps.data_platform.store_opening import (
     ApprovedStoreOpeningAuthority,

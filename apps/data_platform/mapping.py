@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
@@ -94,6 +94,8 @@ class PlaceProjection:
     store_status: str
     store_format_code: str
     effective_from: datetime
+    opened_on: date | None = None
+
 
 
 @dataclass(frozen=True)
