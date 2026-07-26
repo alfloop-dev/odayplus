@@ -173,9 +173,9 @@ adapt existing response fields in `intakeClient.ts`, `intakeTypes.ts`, or
 If the existing API does not provide authoritative comparison data, R3B records
 a no-go blocker for CAN-002-R3. Placeholder data is forbidden.
 
-Current blockers are the pending program-recovery coordinator checkpoint and
-the incomplete R3A retirement prerequisite. This addendum does not claim
-either checkpoint complete.
+Program recovery and the R3A retirement prerequisite are committed and pushed.
+The only current blocker is the incomplete R3B canonical intake implementation;
+this addendum does not claim R3B complete.
 
 ## Writable/Delete Boundary
 
