@@ -2,7 +2,7 @@
   "program_id": "ODP-P10-CANONICAL-R3",
   "recovery_task_id": "ODP-P10-PROGRAM-RECOVERY-001",
   "status": "no_go_pending_CAN001_R3",
-  "next": "ODP-P10-CAN-001-R3A",
+  "next": "ODP-P10-CAN-001-R3B",
   "worktree": "/home/lupin/oday-plus-package10-final",
   "branch": "fix/package10-final-20260725",
   "execution_model": "strict_serial_ownership_transfer",
@@ -47,13 +47,15 @@
     "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json",
     "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md",
     "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.json",
     "immediately preceding ACK under docs/evidence/fleet_dispatch/package10_20260726/acks/"
   ],
   "waves": [
     {
       "order": 1,
       "task_id": "ODP-P10-CAN-001-R3A",
-      "status": "ready_for_pickup",
+      "status": "pass_committed_pushed",
       "scope": "retire old runtime, routes, feature roots, shells, navigation, loader, alternate legacy visuals, and 18 legacy visual specs while preserving canonical routes and reusable nonvisual/API/domain behavior",
       "forbidden": [
         "canonical intake redesign implementation",
@@ -66,7 +68,7 @@
     {
       "order": 2,
       "task_id": "ODP-P10-CAN-001-R3B",
-      "status": "blocked_on_CAN001_R3A",
+      "status": "ready_for_pickup",
       "scope": "canonical intake detail production integration through OperatorConsole -> NetworkFindAreasWorkspace -> AssistedIntakeSection and durable /intake/[intakeId], including continuous full-page detail, source and value provenance, match evidence, desktop compare, 390px inline DESKTOP_REQUIRED, tablet functionality, assignment/SLA, WORM/receipts, promotion, human decisions, timeline, and durable return/deep link",
       "forbidden": [
         "edits to canonical E2E specs",
@@ -154,8 +156,10 @@
     "persistence_state": "coordinator_checkpoint_complete",
     "dispatch_commit": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
     "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "r3a_product_commit": "ded04ac49504a1d948831eb5077625bef415ab50",
+    "r3a_ack_commit": "2442108400a77ba5fa4adafa8a083461529a03dd",
     "implementation_authorized": true,
-    "next": "ODP-P10-CAN-001-R3A",
+    "next": "ODP-P10-CAN-001-R3B",
     "status": "no_go_pending_CAN001_R3"
   }
 }

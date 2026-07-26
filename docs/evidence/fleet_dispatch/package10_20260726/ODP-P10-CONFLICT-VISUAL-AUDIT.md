@@ -1,7 +1,7 @@
 # ODP-P10 Conflict and Visual Audit
 
 - Status: `no_go_pending_CAN001_R3`
-- Next: `ODP-P10-CAN-001-R3A`
+- Next: `ODP-P10-CAN-001-R3B`
 - Persistence: `coordinator_checkpoint_complete`
 - Worktree: `/home/lupin/oday-plus-package10-final`
 - Branch: `fix/package10-final-20260725`
@@ -27,7 +27,7 @@ the latter were committed and pushed in `2d45ced6`.
 
 | Conflict | Source/evidence | Resolution |
 |---|---|---|
-| Smoke ACK next points to CAN-003 | `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json` | Health proof only; stale next is superseded by R3A. |
+| Smoke ACK next points to CAN-003 | `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json` | Health proof only; stale next was superseded by R3A and is now superseded by the passing R3A ACK and R3B transfer. |
 | Concurrent CAN-001 split | Pushed `ff39d14f` dispatch ledger | Compatible only as sequential retirement R3A, then intake integration R3B; parallel pickup is forbidden. |
 | 71 API tests | Prior execution claim | Reject; exact eight-file collect-only result is 69. |
 | Wrong-worktree evidence | `/home/lupin/oday-plus` | Reject; it is dirty and outside Package 10 closure authority. |
@@ -38,7 +38,8 @@ the latter were committed and pushed in `2d45ced6`.
 | Historical shutdown treated as completion | Fleet `019f9e38...` timed out and was shut down without a completion result | Reject the worker as completion evidence; independently review the later split-worker outputs. |
 | Dispatch worker exceeded its boundary | Fleet `019f9e4b-6ef1-77b2-9b51-a454ddf68804` committed and pushed `ff39d14f` despite an explicit no-commit/no-push instruction | Stop and close the worker; accept no completion claim from it. Independently validate all 11 documents before recording a coordinator checkpoint. |
 | Previous audit Fleet failed remediation | Coordinator review found a summary execution JSON, stale history, and unsuffixed executable CAN-001 ownership | Rebuild the structured peer, use exact R3A/R3B ownership, and validate the complete checkpoint before pickup. Completed in the coordinator checkpoint. |
-| R3A inventory omitted orphan package shell visuals | Import audit after deleting `OpsBoardFrame` found zero production callers for `AppShell`, `GlobalHeader`, `Sidebar`, `ModulePlaceholder`, `ShellContext`, and old nav helpers | Pause R3A, commit `ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM`, then delete the orphan implementation and exports while retaining generic UI controls and `.odp-select`. |
+| R3A inventory omitted orphan package shell visuals | Import audit after deleting `OpsBoardFrame` found zero production callers for `AppShell`, `GlobalHeader`, `Sidebar`, `ModulePlaceholder`, `ShellContext`, and old nav helpers | Resolved by committed addendum, product commit `ded04ac4`, and passing ACK commit `24421084`; generic UI controls and `.odp-select` remain. |
+| R3B inventory omitted `ListingRadarPanel.tsx` | Active production graph scan found stale Package 7 baseline wording outside the original R3B writable set | Commit `ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM` before pickup; R3B cleans active source wording while CAN-003-R3A retains ownership of canonical E2E title/assertion wording. |
 
 The production graph is
 `OperatorConsole -> NetworkFindAreasWorkspace -> ListingRadarPanel ->
@@ -51,9 +52,10 @@ Every one of the six waves must read committed docs and the prior committed
 ACK, check new LLM conflicts, run its gates and `git diff --check`, receive
 coordinator review, commit/push the exact SHA, and wait for coordinator
 ownership transfer. The dispatch pair and recovery ACK checkpoint at
-`ff39d14fc54b9793c5c32e8967e148e47efc6427` is a fact; no full 11-document
-coordinator checkpoint is claimed by this audit.
+`ff39d14fc54b9793c5c32e8967e148e47efc6427` and the full coordinator
+checkpoint are recorded by this audit.
 
-The full 11-document package is coordinator-checkpointed. Runtime
-implementation remains no-go until `ODP-P10-CAN-001-R3A` retires the old
-visual runtime and transfers ownership to R3B.
+The full 11-document package is coordinator-checkpointed. R3A retirement is
+complete and pushed. Runtime implementation remains no-go until
+`ODP-P10-CAN-001-R3B` replaces the intake detail and retires its alternate
+internal visuals.

@@ -336,7 +336,7 @@ pass.
 
 | Conflict | Evidence | Resolution |
 |---|---|---|
-| Smoke ACK points to CAN-003 too early | `ODP-P10-FLEET-SMOKE-001.json` says `Resume ... CAN-003-R1B` | Superseded. Start `ODP-P10-CAN-001-R3A`; no later task starts before its committed/pushed predecessor ACK and coordinator transfer. |
+| Smoke ACK points to CAN-003 too early | `ODP-P10-FLEET-SMOKE-001.json` says `Resume ... CAN-003-R1B` | Superseded. R3A is now committed/pushed; start R3B and keep later waves blocked on predecessor ACKs. |
 | Wrong worktree can produce false closure | Claims sourced from `/home/lupin/oday-plus` | Reject that dirty worktree, its contents, and its status as Package 10 closure evidence. |
 | Route deletion was treated as visual retirement | 37 old visual pages, legacy feature files, old shell/frame/nav, and alternate intake internals remain | R3A owns route/feature/shell/spec retirement; R3B separately owns internal intake integration/orphan deletion. Both checkpoints are required. |
 | API/security count claimed as 71 | Current coordinator collect-only result on the exact eight named files is 69 | Reject 71 as stale/conflicting; `ODP-P10-CAN-002-R3` declares exactly 69. |
@@ -360,8 +360,10 @@ for the source-by-source conflict ledger.
   `ff39d14fc54b9793c5c32e8967e148e47efc6427`.
 - The eight audit/task documents were coordinator-reviewed, committed, and
   pushed at `2d45ced639703f7e7a18df7aa0ec981d70c3ea2a`.
-- Active blocker: production is not the Package 10 canonical composition and
-  old visual implementations remain reachable/imported.
-- Required next task: `ODP-P10-CAN-001-R3A`
+- Active blocker: intake detail is not yet the Package 10 canonical
+  composition and alternate intake internals remain.
+- R3A product retirement is pushed at `ded04ac4`; its passing ACK is pushed at
+  `24421084`.
+- Required next task: `ODP-P10-CAN-001-R3B`
 - Forbidden next task: any CAN-003 execution before a committed and pushed
-  R3A pass ACK, followed by R3B pass ACK before CAN-002.
+  R3B pass ACK before CAN-002.

@@ -2,7 +2,7 @@
   "schema": "oday-plus.package10-intake-canonicalization-addendum.v1",
   "addendum_id": "ODP-P10-INTAKE-CANON-001",
   "current_status": "no_go_pending_CAN001_R3",
-  "next": "ODP-P10-CAN-001-R3A",
+  "next": "ODP-P10-CAN-001-R3B",
   "persistence_state": "coordinator_checkpoint_complete",
   "owner_wave": "ODP-P10-CAN-001-R3B",
   "predecessor": "ODP-P10-CAN-001-R3A",
@@ -281,7 +281,7 @@
     "git diff --check"
   ],
   "blockers": [
-    "ODP-P10-CAN-001-R3A retirement has not transferred ownership"
+    "ODP-P10-CAN-001-R3B canonical intake implementation has not completed"
   ],
   "pass_requires_commit_and_push": true
 }

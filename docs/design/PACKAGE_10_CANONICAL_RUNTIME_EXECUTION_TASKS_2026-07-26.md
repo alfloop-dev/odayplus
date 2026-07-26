@@ -2,8 +2,8 @@
 
 - Program ID: `ODP-P10-CANONICAL-R3`
 - Current status: `no_go_pending_CAN001_R3`
-- Active wave: `ODP-P10-CAN-001-R3A`
-- Next: `ODP-P10-CAN-001-R3A`
+- Active wave: `ODP-P10-CAN-001-R3B`
+- Next: `ODP-P10-CAN-001-R3B`
 - Worktree: `/home/lupin/oday-plus-package10-final`
 - Branch: `fix/package10-final-20260725`
 - Canonical package: `10`
@@ -23,7 +23,9 @@ Every Fleet must read the following committed artifacts before pickup:
 5. `docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md`
 6. For R3A:
    `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md`
-7. This ledger and the immediately preceding committed/pushed ACK.
+7. For R3B:
+   `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.md`
+8. This ledger and the immediately preceding committed/pushed ACK.
 
 Chat claims, orphan-component tests, and evidence from `/home/lupin/oday-plus`
 are not closure evidence.
@@ -32,8 +34,8 @@ are not closure evidence.
 
 | Order | Wave | Initial status | Start condition |
 |---|---|---|---|
-| 1 | `ODP-P10-CAN-001-R3A` | `ready_for_pickup` | Recovery documents and program recovery ACK coordinator-reviewed, committed, and pushed |
-| 2 | `ODP-P10-CAN-001-R3B` | `blocked_on_CAN001_R3A` | R3A pass ACK committed and pushed |
+| 1 | `ODP-P10-CAN-001-R3A` | `pass_committed_pushed` | Recovery documents and program recovery ACK coordinator-reviewed, committed, and pushed |
+| 2 | `ODP-P10-CAN-001-R3B` | `ready_for_pickup` | R3A pass ACK committed and pushed |
 | 3 | `ODP-P10-CAN-002-R3` | `blocked_on_CAN001_R3B` | R3B pass ACK committed and pushed |
 | 4 | `ODP-P10-CAN-003-R3A` | `blocked_on_CAN002_R3` | CAN-002 pass ACK committed and pushed |
 | 5 | `ODP-P10-CAN-003-R3B` | `blocked_on_CAN003_R3A` | CAN-003-R3A pass ACK committed and pushed |
@@ -262,6 +264,7 @@ apps/web/src/app/intake/[intakeId]/page.tsx
 apps/web/src/app/intake/layout.tsx
 apps/web/src/app/operator/operator-layout.css
 apps/web/features/operator/OperatorConsole.tsx
+apps/web/features/operator/network/ListingRadarPanel.tsx
 apps/web/features/operator/network/intake/AssistedIntakeSection.tsx
 apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx
 apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx

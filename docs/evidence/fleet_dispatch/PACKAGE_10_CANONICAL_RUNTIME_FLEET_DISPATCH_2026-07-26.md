@@ -3,7 +3,7 @@
 - Program ID: `ODP-P10-CANONICAL-R3`
 - Recovery task: `ODP-P10-PROGRAM-RECOVERY-001`
 - Status: `no_go_pending_CAN001_R3`
-- Next owner: `ODP-P10-CAN-001-R3A`
+- Next owner: `ODP-P10-CAN-001-R3B`
 - Worktree: `/home/lupin/oday-plus-package10-final`
 - Branch: `fix/package10-final-20260725`
 - Execution model: strict serial ownership transfer
@@ -71,6 +71,9 @@ At pickup, each wave must resolve and record the committed versions of:
 - for R3A:
   `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md`
   and its JSON peer
+- for R3B:
+  `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.md`
+  and its JSON peer
 - the immediately preceding ACK under
   `docs/evidence/fleet_dispatch/package10_20260726/acks/`
 
@@ -97,6 +100,7 @@ to infer its contents from chat.
 
 Program recovery persistence is `coordinator_checkpoint_complete`: dispatch
 and recovery ACK were pushed in `ff39d14f`, and the independently reviewed
-audit/task documents were pushed in `2d45ced6`. The total status remains
-`no_go_pending_CAN001_R3`; the next and only eligible owner is
-`ODP-P10-CAN-001-R3A`.
+audit/task documents were pushed in `2d45ced6`. R3A product retirement is
+pushed at `ded04ac4` and its passing ACK at `24421084`. The total status
+remains `no_go_pending_CAN001_R3`; the next and only eligible owner is
+`ODP-P10-CAN-001-R3B`.

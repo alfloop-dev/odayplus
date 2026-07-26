@@ -4,7 +4,7 @@
 - Current status: `no_go_pending_CAN001_R3`
 - Owner wave: `ODP-P10-CAN-001-R3B`
 - Predecessor: `ODP-P10-CAN-001-R3A`
-- Program next: `ODP-P10-CAN-001-R3A`
+- Program next: `ODP-P10-CAN-001-R3B`
 - Persistence state: `coordinator_checkpoint_complete`
 - Canonical source: Package 10
 - Canonical HTML detail landmark:

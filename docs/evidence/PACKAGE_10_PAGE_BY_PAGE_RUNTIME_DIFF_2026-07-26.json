@@ -2,7 +2,7 @@
   "schema": "oday-plus.package10-page-runtime-diff.v1",
   "audit_id": "ODP-P10-PAGE-AUDIT-001",
   "current_status": "no_go_pending_CAN001_R3",
-  "next": "ODP-P10-CAN-001-R3A",
+  "next": "ODP-P10-CAN-001-R3B",
   "persistence_state": "coordinator_checkpoint_complete",
   "worktree": "/home/lupin/oday-plus-package10-final",
   "branch": "fix/package10-final-20260725",
@@ -359,7 +359,7 @@
       "id": "stale_smoke_next",
       "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
       "evidence": "next says to resume CAN-003-R1B",
-      "resolution": "superseded; start ODP-P10-CAN-001-R3A only after coordinator checkpoint"
+      "resolution": "superseded; R3A is committed and pushed, so start ODP-P10-CAN-001-R3B and keep later waves blocked on predecessor ACKs"
     },
     {
       "id": "wrong_worktree",
@@ -418,9 +418,10 @@
     "stale_api_security_claim": 71
   },
   "blockers": [
-    "ODP-P10-CAN-001-R3A runtime and legacy-spec retirement is incomplete",
     "ODP-P10-CAN-001-R3B canonical intake integration and orphan deletion is incomplete"
   ],
-  "required_next_task": "ODP-P10-CAN-001-R3A",
+  "r3a_product_commit": "ded04ac49504a1d948831eb5077625bef415ab50",
+  "r3a_ack_commit": "2442108400a77ba5fa4adafa8a083461529a03dd",
+  "required_next_task": "ODP-P10-CAN-001-R3B",
   "forbidden_next_task": "any later wave before committed and pushed predecessor ACK plus coordinator ownership transfer"
 }

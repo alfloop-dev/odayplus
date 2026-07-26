@@ -1,0 +1,25 @@
+{
+  "schema": "oday-plus.package10-r3b-listing-radar-addendum.v1",
+  "addendum_id": "ODP-P10-CAN-001-R3B-ADD-001",
+  "parent_task": "ODP-P10-CAN-001-R3B",
+  "status": "ready_for_pickup",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "predecessor_product_commit": "ded04ac49504a1d948831eb5077625bef415ab50",
+  "predecessor_ack_commit": "2442108400a77ba5fa4adafa8a083461529a03dd",
+  "reason": "production intake graph contains active Package 7 baseline wording in a path omitted from the original R3B writable set",
+  "writable_path": "apps/web/features/operator/network/ListingRadarPanel.tsx",
+  "authorized_change": "remove or replace stale Package 7 visual-baseline wording; behavioral changes require a named parent-R3B composition necessity in the ACK",
+  "forbidden": [
+    "Listing Radar API binding changes unrelated to parent R3B",
+    "state model changes unrelated to parent R3B",
+    "tests/e2e edits",
+    "worker commit or push"
+  ],
+  "gates": [
+    "active app/package source in the production intake graph contains no Package 6 or Package 7 visual-baseline wording",
+    "tests/e2e/operator-network-assisted-intake.spec.ts remains unchanged for CAN-003-R3A",
+    "all parent R3B gates"
+  ],
+  "ack_requirement": "cite committed addendum and record the original writable path omission as an other-LLM/task-inventory conflict"
+}
