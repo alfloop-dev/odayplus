@@ -1,0 +1,43 @@
+{
+  "schema": "oday-plus.package10-wave-ack.v1",
+  "task_id": "ODP-P10-CAN-002-R3",
+  "status": "reverified_and_independently_reviewed",
+  "program_status": "verified_ready_for_review",
+  "prepared_at": "2026-07-26T16:45:00Z",
+  "closed_out_at": "2026-07-26T16:46:00Z",
+  "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-002-r3",
+  "branch": "task/ODP-P10-CAN-002-R3",
+  "pickup_head": "27c40cce28c1c0663e9c4a156e1498fb3fd35dac",
+  "changes_committed": true,
+  "verification_results": {
+    "api_security_tests_total": 69,
+    "api_security_tests_passed": 69,
+    "git_diff_check": "passed",
+    "external_conflict_reconciliation": {
+      "task_id": "ODP-SITESCORE-OPERATOR-V2-001",
+      "overlap_file": "tests/integration/test_operator_canonical_wiring.py",
+      "status": "reconciled_valid",
+      "note": "Re-verification of Package 10 committed runtime confirms all 69 contract and security tests pass fail-closed without regression or conflict."
+    }
+  },
+  "test_files": [
+    "tests/contract/test_operator_assisted_listing_api.py",
+    "tests/contract/test_operator_network_listings_api.py",
+    "tests/contract/test_operator_network_rebalance_api.py",
+    "tests/contract/test_operator_network_review_api.py",
+    "tests/contract/test_operator_network_scoring_api.py",
+    "tests/integration/test_operator_canonical_wiring.py",
+    "tests/security/test_assisted_listing_intake_authorization_matrix.py",
+    "tests/security/test_operator_security_platform.py"
+  ],
+  "contract_guarantees": [
+    "permissions fail-closed",
+    "tenant isolation enforced",
+    "source policy enforced",
+    "idempotency key validation enforced",
+    "optimistic concurrency version conflict enforced",
+    "audit WORM trail enforced",
+    "promotion saga authorization matrix fail-closed"
+  ],
+  "web_visual_or_e2e_modified": false
+}
