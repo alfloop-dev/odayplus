@@ -374,6 +374,12 @@ signal/compare/decision data, 390px `DESKTOP_REQUIRED`, 1024px full flow,
 1440px full flow, durable reload/return, axe, API reads/writes, and fail-closed
 states. A missing required UI returns the program to CAN-001-R3B.
 
+The Governance spec also has a mandatory legacy-retirement addendum:
+`docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-003-R3A-LEGACY-GOVERNANCE-E2E-RETIREMENT.md`.
+It records the exact Package 6 test/Package 10 runtime conflict. R3A must update
+the stale table, English-control, copy, and archived-baseline assertions without
+adding compatibility markup or restoring the retired visual.
+
 ## ODP-P10-CAN-003-R3B - Read-only Chromium Gate
 
 - Status: `blocked_on_CAN003_R3A`
