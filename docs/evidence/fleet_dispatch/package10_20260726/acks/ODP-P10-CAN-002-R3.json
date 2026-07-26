@@ -20,8 +20,11 @@
       "push_verification": "git ls-remote origin refs/heads/task/ODP-P10-CAN-002-R3 -> 583aa3242268497febb4e1ba40df62499f3965a6 at 2026-07-26T17:05Z"
     },
     "ack_correction_commit": {
-      "sha": null,
-      "note": "This ACK correction is committed and pushed on task/ODP-P10-CAN-002-R3; its exact 40-char SHA is recorded by a follow-up record-only commit on the same branch and by the ai-status delivery metadata. The follow-up commit carries no evidence claims of its own."
+      "sha": "4f2cf88a74b8c5bdb4638d91c3a0fe298c979345",
+      "subject": "ODP-P10-CAN-002-R3: correct ACK SHA, review state, and conflict record",
+      "pushed": true,
+      "push_verification": "git ls-remote origin refs/heads/task/ODP-P10-CAN-002-R3 -> 4f2cf88a74b8c5bdb4638d91c3a0fe298c979345 at 2026-07-26T17:15Z",
+      "note": "A commit cannot contain its own hash, so this exact SHA is written by the follow-up record-only commit on the same branch. That follow-up changes nothing except these commit-record fields and carries no evidence claims of its own; its SHA is captured in the ai-status delivery metadata and the handoff note."
     }
   },
   "sha_correction_note": "A previous status/handoff entry recorded 583aa3280ca7ff4791ee202f5a044670cf840f95, which is not an object in this repository and matches the real commit only on the 7-char prefix 583aa32. The exact committed and pushed SHA is 583aa3242268497febb4e1ba40df62499f3965a6.",
