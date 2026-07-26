@@ -516,7 +516,11 @@ class NetworkListingService:
         return res
 
     def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
-        from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
+        from modules.listing.domain.models import (
+            CandidateSiteDraft,
+            ListingHardRulePolicy,
+            ListingPipelineStatus,
+        )
         from shared.domain.models import CandidateSite
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
@@ -527,13 +531,22 @@ class NetworkListingService:
             address_id=addr_obj.address_id,
             site_status=d["status"],
         )
+        feasibility = tuple(d.get("feasibilityFlags") or ())
+        if not feasibility:
+            feasibility = ListingHardRulePolicy().evaluate(lst_obj, addr_obj)
+
         return CandidateSiteDraft(
             listing=lst_obj,
             address=addr_obj,
             candidate_site=cand_site,
-            heat_zone_id=d["heatZoneId"],
+            feasibility_flags=feasibility,
+            heat_zone_id=d.get("heatZoneId") or "",
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
+            prior_90d_cell_net_revenue=d.get("prior_90d_cell_net_revenue"),
+            prior_90d_cell_transaction_count=d.get("prior_90d_cell_transaction_count"),
+            prior_90d_cell_store_count=d.get("prior_90d_cell_store_count"),
+            feature_snapshot_time=d.get("feature_snapshot_time"),
         )
 
     def _sync_listing_to_repo(self, listing_id: str) -> None:

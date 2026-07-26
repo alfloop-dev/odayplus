@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -264,6 +264,10 @@ def _seed_candidate(harness: CanonicalHarness, tenant_id: str) -> str:
             listing_source=listing.source_id,
             model_version="",
             dataset_snapshot_id=listing.snapshot_id,
+            prior_90d_cell_net_revenue=180_000.0,
+            prior_90d_cell_transaction_count=30,
+            prior_90d_cell_store_count=1,
+            feature_snapshot_time=datetime.now(UTC),
         )
     )
     return candidate.candidate_site_id
@@ -502,6 +506,7 @@ def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(
                 "average_confidence": 0.9,
                 "data_quality_score": 0.9,
                 "source_snapshot_ids": ["snapshot-live-1"],
+                "feature_snapshot_time": datetime.now(UTC),
             }
         ]
     )[0]
@@ -622,3 +627,214 @@ def test_live_canonical_dependencies_fail_closed_instead_of_empty_success(
         assert response.json()["detail"]["dependency"] == "listing_repository"
     finally:
         bundle.engine.close()
+
+
+def test_canonical_scoring_fails_closed_when_point_in_time_features_missing(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "test-b1-missing-pit.sqlite3"
+    harness = CanonicalHarness(database_path)
+    address = AddressLocation(
+        address_id="addr-b1",
+        raw_address="台北市信義區測試路 1 號",
+        normalized_address="台北市信義區測試路1號",
+        city="台北市",
+        district="信義區",
+        latitude=25.033,
+        longitude=121.565,
+        geocode_confidence=0.96,
+        h3_res_9="892000000000001",
+    )
+    listing = Listing(
+        listing_id="lst-b1",
+        source_listing_id="src-b1",
+        source_id="approved-feed",
+        address_id=address.address_id,
+        rent_amount=120_000,
+        area_ping=35,
+        floor="1F",
+        frontage_m=5.5,
+        snapshot_id="snap-b1",
+        confidence=0.94,
+    )
+    candidate = CandidateSite(
+        candidate_site_id="cand-b1",
+        listing_id=listing.listing_id,
+        address_id=address.address_id,
+        target_format_code="ODAY_G2",
+        created_by="integration-test",
+    )
+    repository = harness.listing("tenant-a")
+    repository.save_listing(
+        listing,
+        address,
+        ListingDedupKey(
+            source_id=listing.source_id,
+            source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ),
+    )
+    # Missing prior_90d_cell_* features
+    repository.save_candidate(
+        CandidateSiteDraft(
+            listing=listing,
+            address=address,
+            candidate_site=candidate,
+            heat_zone_id=address.h3_res_9,
+            listing_source=listing.source_id,
+            feature_snapshot_time=datetime.now(UTC),
+        )
+    )
+    try:
+        with TestClient(harness.app()) as client:
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/cand-b1/score",
+                headers=_headers("tenant-a"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+        assert scored.status_code == 503
+        assert "missing features" in scored.json()["detail"]["message"].lower()
+    finally:
+        harness.close()
+
+
+def test_canonical_scoring_fails_closed_when_ungeocoded_cell_has_no_h3(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "test-b2-ungeocoded.sqlite3"
+    harness = CanonicalHarness(database_path)
+    address = AddressLocation(
+        address_id="addr-b2",
+        raw_address=" ungeocoded address ",
+        normalized_address="",
+        city="",
+        district="",
+        latitude=0.0,
+        longitude=0.0,
+        geocode_confidence=0.0,
+        h3_res_9="",
+    )
+    listing = Listing(
+        listing_id="lst-b2",
+        source_listing_id="src-b2",
+        source_id="approved-feed",
+        address_id=address.address_id,
+        rent_amount=120_000,
+        area_ping=35,
+        floor="1F",
+        snapshot_id="snap-b2",
+    )
+    candidate = CandidateSite(
+        candidate_site_id="cand-b2",
+        listing_id=listing.listing_id,
+        address_id=address.address_id,
+        target_format_code="ODAY_G2",
+    )
+    repository = harness.listing("tenant-a")
+    repository.save_listing(
+        listing,
+        address,
+        ListingDedupKey(
+            source_id=listing.source_id,
+            source_listing_id=listing.source_listing_id,
+            normalized_address=address.raw_address,
+            rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ),
+    )
+    repository.save_candidate(
+        CandidateSiteDraft(
+            listing=listing,
+            address=address,
+            candidate_site=candidate,
+            heat_zone_id="",
+            prior_90d_cell_net_revenue=100.0,
+            prior_90d_cell_transaction_count=1,
+            prior_90d_cell_store_count=1,
+            feature_snapshot_time=datetime.now(UTC),
+        )
+    )
+    try:
+        with TestClient(harness.app()) as client:
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/cand-b2/score",
+                headers=_headers("tenant-a"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+        assert scored.status_code in {422, 503}
+    finally:
+        harness.close()
+
+
+def test_canonical_scoring_fails_closed_when_feature_snapshot_time_is_stale_or_missing(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "test-b4-stale.sqlite3"
+    harness = CanonicalHarness(database_path)
+    address = AddressLocation(
+        address_id="addr-b4",
+        raw_address="台北市信義區測試路 1 號",
+        normalized_address="台北市信義區測試路1號",
+        city="台北市",
+        district="信義區",
+        latitude=25.033,
+        longitude=121.565,
+        geocode_confidence=0.96,
+        h3_res_9="892000000000001",
+    )
+    listing = Listing(
+        listing_id="lst-b4",
+        source_listing_id="src-b4",
+        source_id="approved-feed",
+        address_id=address.address_id,
+        rent_amount=120_000,
+        area_ping=35,
+        floor="1F",
+        snapshot_id="snap-b4",
+        confidence=0.94,
+    )
+    candidate = CandidateSite(
+        candidate_site_id="cand-b4",
+        listing_id=listing.listing_id,
+        address_id=address.address_id,
+        target_format_code="ODAY_G2",
+    )
+    repository = harness.listing("tenant-a")
+    repository.save_listing(
+        listing,
+        address,
+        ListingDedupKey(
+            source_id=listing.source_id,
+            source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ),
+    )
+    # Stale feature snapshot time (> 90 days ago)
+    stale_time = datetime.now(UTC) - timedelta(days=120)
+    repository.save_candidate(
+        CandidateSiteDraft(
+            listing=listing,
+            address=address,
+            candidate_site=candidate,
+            heat_zone_id=address.h3_res_9,
+            prior_90d_cell_net_revenue=180_000.0,
+            prior_90d_cell_transaction_count=30,
+            prior_90d_cell_store_count=1,
+            feature_snapshot_time=stale_time,
+        )
+    )
+    try:
+        with TestClient(harness.app()) as client:
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/cand-b4/score",
+                headers=_headers("tenant-a"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+        assert scored.status_code == 503
+        assert "stale" in scored.json()["detail"]["message"].lower()
+    finally:
+        harness.close()

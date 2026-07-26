@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -68,16 +68,16 @@ class SiteScoreFeatureInput:
     candidate_site_id: str
     tenant_id: str = ""
     target_format_code: str = "ODAY_G2"
-    feature_snapshot_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    feature_snapshot_time: datetime | None = None
     view_version: str = SITESCORE_FEATURE_VERSION
     heat_zone_id: str = ""
     h3_index: str = ""
     latitude: float = 0.0
     longitude: float = 0.0
     geocode_confidence: float = 0.0
-    prior_90d_cell_net_revenue: float = 0.0
-    prior_90d_cell_transaction_count: int = 0
-    prior_90d_cell_store_count: int = 0
+    prior_90d_cell_net_revenue: float | None = None
+    prior_90d_cell_transaction_count: int | None = None
+    prior_90d_cell_store_count: int | None = None
     heat_zone_score: float = 0.0  # 0..100 demand signal from HeatZone Radar
     poi_demand_index: float = 0.0  # 0..1 fallback demand when heat_zone_score missing
     monthly_rent: float = 0.0
@@ -101,22 +101,25 @@ class SiteScoreFeatureInput:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> SiteScoreFeatureInput:
+        prior_rev = data.get("prior_90d_cell_net_revenue")
+        prior_tx = data.get("prior_90d_cell_transaction_count")
+        prior_st = data.get("prior_90d_cell_store_count")
+        feat_time_raw = data.get("feature_snapshot_time")
+
         return cls(
             candidate_site_id=str(data["candidate_site_id"]),
             tenant_id=str(data.get("tenant_id") or ""),
             target_format_code=str(data.get("target_format_code") or "ODAY_G2"),
-            feature_snapshot_time=_parse_datetime(
-                data.get("feature_snapshot_time") or datetime.now(UTC)
-            ),
+            feature_snapshot_time=_parse_datetime(feat_time_raw) if feat_time_raw else None,
             view_version=str(data.get("view_version") or SITESCORE_FEATURE_VERSION),
             heat_zone_id=str(data.get("heat_zone_id") or ""),
             h3_index=str(data.get("h3_index") or data.get("heat_zone_id") or ""),
             latitude=float(data.get("latitude") or 0.0),
             longitude=float(data.get("longitude") or 0.0),
             geocode_confidence=_bounded(_first_present(data, "geocode_confidence", default=0.0)),
-            prior_90d_cell_net_revenue=float(data.get("prior_90d_cell_net_revenue") or 0.0),
-            prior_90d_cell_transaction_count=int(data.get("prior_90d_cell_transaction_count") or 0),
-            prior_90d_cell_store_count=int(data.get("prior_90d_cell_store_count") or 0),
+            prior_90d_cell_net_revenue=float(prior_rev) if prior_rev is not None else None,
+            prior_90d_cell_transaction_count=int(prior_tx) if prior_tx is not None else None,
+            prior_90d_cell_store_count=int(prior_st) if prior_st is not None else None,
             heat_zone_score=float(
                 _first_present(data, "heat_zone_score", "heatZoneScore", default=0.0)
             ),
@@ -528,37 +531,57 @@ def _coerce_feature(
     return SiteScoreFeatureInput.from_mapping(feature)
 
 
+SITESCORE_FEATURE_MAX_AGE = timedelta(days=90)
+
+
 def to_sitescore_model_row(
     feature: SiteScoreFeatureInput | Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    if isinstance(feature, Mapping):
-        missing = tuple(
-            name
-            for name in (
-                "tenant_id",
-                "target_format_code",
-                "h3_index",
-                "latitude",
-                "longitude",
-                "geocode_confidence",
-                "prior_90d_cell_net_revenue",
-                "prior_90d_cell_transaction_count",
-                "prior_90d_cell_store_count",
-            )
-            if name not in feature or feature[name] is None
-        )
-        if missing:
-            raise ValueError("SiteScore v2 model input is missing features: " + ", ".join(missing))
     value = _coerce_feature(feature)
+
+    missing: list[str] = []
+    if not value.tenant_id:
+        missing.append("tenant_id")
+    if not value.target_format_code:
+        missing.append("target_format_code")
+    if not value.h3_index:
+        missing.append("h3_index")
+    if value.latitude == 0.0 and value.longitude == 0.0:
+        missing.append("location(latitude/longitude)")
+    if value.prior_90d_cell_net_revenue is None:
+        missing.append("prior_90d_cell_net_revenue")
+    if value.prior_90d_cell_transaction_count is None:
+        missing.append("prior_90d_cell_transaction_count")
+    if value.prior_90d_cell_store_count is None:
+        missing.append("prior_90d_cell_store_count")
+    if value.feature_snapshot_time is None:
+        missing.append("feature_snapshot_time")
+
+    if missing:
+        raise ValueError("SiteScore v2 model input is missing features: " + ", ".join(missing))
+
     if (
         value.view_version != SITESCORE_FEATURE_VERSION
-        or not value.tenant_id
-        or not value.h3_index
         or not value.source_snapshot_ids
     ):
         raise ValueError(
             f"SiteScore production model input is not a complete {SITESCORE_FEATURE_VERSION} row"
         )
+
+    now = datetime.now(UTC)
+    snap_time = value.feature_snapshot_time
+    if snap_time.tzinfo is None:
+        snap_time = snap_time.replace(tzinfo=UTC)
+
+    if snap_time > now:
+        raise ValueError(
+            f"SiteScore v2 feature snapshot time {snap_time.isoformat()} is in the future"
+        )
+    if now - snap_time > SITESCORE_FEATURE_MAX_AGE:
+        raise ValueError(
+            f"SiteScore v2 feature snapshot is stale (snapshot_time={snap_time.isoformat()} exceeds max age {SITESCORE_FEATURE_MAX_AGE})"
+        )
+
     return {
         "tenant_id": value.tenant_id,
         "target_format_code": value.target_format_code,
@@ -569,7 +592,7 @@ def to_sitescore_model_row(
         "prior_90d_cell_net_revenue": value.prior_90d_cell_net_revenue,
         "prior_90d_cell_transaction_count": value.prior_90d_cell_transaction_count,
         "prior_90d_cell_store_count": value.prior_90d_cell_store_count,
-        "feature_snapshot_time": value.feature_snapshot_time,
+        "feature_snapshot_time": snap_time,
         "view_version": SITESCORE_FEATURE_VERSION,
         "source_snapshot_ids": value.source_snapshot_ids,
     }
