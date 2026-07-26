@@ -1,9 +1,10 @@
 {
   "schema": "oday-plus.package10-wave-ack.v1",
   "task_id": "ODP-P10-CAN-001-R3B",
-    "status": "add_006_remediated_pending_antigravity_review",
-    "program_status": "no_go_pending_independent_review_and_coordinator_acceptance",
+    "status": "add_006_remediated_and_independently_reviewed",
+    "program_status": "independent_review_approved_pending_coordinator_acceptance",
     "prepared_at": "2026-07-26T16:05:00Z",
+    "closed_out_at": "2026-07-26T16:40:00Z",
   "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3b",
   "branch": "task/ODP-P10-CAN-001-R3B",
   "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
@@ -20,7 +21,8 @@
         "task_branch": "task/ODP-P10-CAN-001-R3B",
         "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
         "implementation_commit": "f7fc68233d22d66f12991833c4e234436c76e094",
-        "evidence_and_ack_commit": "72fea66",
+        "evidence_and_ack_commit": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+        "evidence_and_ack_commit_note": "The earlier ACK recorded 72fea66, an orphaned pre-push revision of the same evidence commit that reached no branch. The reviewed and pushed evidence commit is e6ed422e17b6aa9774c5f368ebe2fe421872caac.",
         "pushed_ref": "origin/task/ODP-P10-CAN-001-R3B",
         "read_set": "ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.md/.json, the parent R3B dispatch/task ledger, PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md, ADD-001..ADD-005, the canonical Package 10 tablet/mobile detail evidence, the rejected runtime-r3b screenshots, and this ACK",
         "write_set": "parent R3B write set plus the ADD-006 authorized apps/web/features/operator/NetworkFindAreasWorkspace.tsx and apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx; tests/e2e/**, apps/api/**, auth middleware, source-policy decisions and permission rules were not edited",
@@ -459,14 +461,46 @@
             ],
             "gates": "focused route-gate and intake suites 39/39; full web unit 32 files 233 tests; web and root typecheck; root build; unchanged six-test accessibility spec 6/6 twice consecutively; recaptured 390/1024/1440 and direct-route runtime screenshots with measured geometry; unedited responsive E2E spec 4/4; git diff --check clean",
             "result": "remediated_pending_antigravity_independent_review"
+        },
+        {
+            "review_round": "add_006_independent_review",
+            "decision": "approved",
+            "reviewer": "Antigravity",
+            "reviewed_at": "2026-07-26T16:16:21Z",
+            "reviewed_sha": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+            "reviewed_ref": "task/ODP-P10-CAN-001-R3B",
+            "verdict": "ADD-006 visual runtime remediation independently reviewed and approved by Antigravity. Gates passed: web unit (32 files, 233 tests), web/root typecheck, root build, Playwright a11y E2E 6/6 twice consecutively, geometry and contract verified. Task ready for coordinator acceptance and closeout.",
+            "result": "independently_approved_pending_coordinator_acceptance"
         }
     ],
     "remaining_risks": [
-        "Antigravity has not yet performed the required independent visual and contract review, and Codex has not accepted the result; R3B stays no-go until both happen.",
+        "Codex has not yet accepted the reviewed result. R3B is owner-closed and independently approved, but the Package 10 program gate stays with the coordinator, and CAN-002 must not start before that acceptance.",
         "The two consecutive accessibility passes were produced in this worker environment (cold FastAPI + Next dev boot, then an immediate rerun). The coordinator should reproduce the two-run gate in the coordinator environment before acceptance.",
         "The intake detail context intentionally hides the Network tab strip, so the return path out of the detail is the canonical intake return/deep-link control rather than a Network tab.",
         "Pre-existing E2E specs that still assert retired R3A/R3B intake surfaces (for example operator-network-assisted-intake.spec.ts) were not touched and remain outside the ADD-006 write set.",
         "The rejected implementation and evidence remain preserved in pushed no-go checkpoint 4bf419e14a62a7cb24a85e117a0eef2f16c09d76."
     ],
-    "next": "Antigravity performs the independent visual and contract review of the ADD-006 implementation on task/ODP-P10-CAN-001-R3B; Codex then accepts or rejects. CAN-002 must not start until the coordinator accepts a committed and pushed R3B ACK and exact product SHA."
+    "closeout": {
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "coordinator": "Codex",
+        "dispatch_reason": "owned_finalize_dispatch",
+        "accepted_product_sha": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+        "accepted_product_ref": "origin/task/ODP-P10-CAN-001-R3B",
+        "merge_target_branch": "fix/package10-final-20260725",
+        "product_scope_unchanged_at_closeout": "No apps/web, apps/api, tests/e2e, playwright.config.ts, CSS or evidence-screenshot file was touched during closeout. The only closeout edit is this ACK, so the coordinator-facing product SHA remains exactly the SHA Antigravity reviewed.",
+        "reverification": {
+            "note": "Re-run on the reviewed worktree at e6ed422 before the ACK closeout commit, to confirm the approved scope is still true.",
+            "gates": [
+                { "command": "git diff --check", "status": "pass", "result": "exit 0, no whitespace or conflict markers" },
+                { "command": "npm run test --workspace=@oday-plus/web", "status": "pass", "result": "32 files, 233 tests passed" },
+                { "command": "npm run typecheck --workspace=@oday-plus/web", "status": "pass", "result": "tsc --noEmit exit 0" },
+                { "command": "npm run typecheck", "status": "pass", "result": "exit 0 across every TypeScript workspace" },
+                { "command": "npm run build", "status": "pass", "result": "exit 0; /operator, /intake/[intakeId] and /franchisee built" }
+            ],
+            "not_rerun": "The Playwright canonical accessibility gate and the runtime screenshot capture were not re-executed at closeout because no product, spec or configuration file changed after the reviewed SHA. Their evidence stands from the owner run (6/6 twice consecutively) and Antigravity's independent re-run recorded in the add_006_independent_review entry."
+        },
+        "result": "owner_closeout_complete_pending_coordinator_acceptance"
+    },
+    "next": "Codex accepts or rejects R3B against this committed and pushed ACK and product SHA e6ed422e17b6aa9774c5f368ebe2fe421872caac. CAN-002 must not start until the coordinator accepts; at CAN-002 pickup the ODP-SITESCORE-OPERATOR-V2-001 accepted SHA must be reconciled because tests/integration/test_operator_canonical_wiring.py overlaps."
 }
