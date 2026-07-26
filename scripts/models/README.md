@@ -36,16 +36,20 @@ ingestion runs, 28 daily history rows, a mature label, tenant/store scope, and
 | Key | View | Required realized label | Engine |
 |---|---|---|---|
 | `forecastops` | `model_ready.forecast_training_view` | `daily_net_revenue` | LightGBM quantile |
-| `avm` | `model_ready.valuation_view` | `realized_transaction_price` | LightGBM quantile |
+| `avm` | `model_ready.valuation_view` | DealRoom realized transaction outcome | LightGBM quantile |
+| `listing_property_avm` | `model_ready.listing_property_valuation_view` | official sale `realized_transaction_price` | LightGBM quantile |
 | `sitescore` | `model_ready.candidate_site_view` | `realized_site_success` | CatBoost |
 | `heatzone` | `model_ready.heatzone_training_view` | `realized_demand_score` | CatBoost |
 | `avm-liquidity` | `model_ready.avm_liquidity_training_view` | `duration_days` + `sold` | lifelines CoxPH |
 
-AVM, SiteScore, HeatZone, and AVM liquidity are intentionally non-trainable
-until their canonical outcome relations exist and can expose mature realized
-outcomes. HeatZone additionally requires point-in-time geo feature history so
-later POI, competitor, listing, or store updates cannot leak into older
-training rows.
+DealRoom AVM, SiteScore, HeatZone, and AVM liquidity are intentionally
+non-trainable until their canonical outcome relations exist and can expose
+mature realized outcomes. `listing_property_avm` is a separate research
+training contract over official MOI/NTPC property-sale outcomes. Its
+municipality/area/building features are not compatible with the DealRoom
+`dealroom_avm` runtime contract and do not satisfy platform model readiness.
+HeatZone additionally requires point-in-time geo feature history so later POI,
+competitor, listing, or store updates cannot leak into older training rows.
 The installer registers each missing contract as `BLOCKED` and does not create
 an empty or inferred outcome view. `asset.valuation_runs`, SiteScore
 recommendations, fixture constants, and current predictions are not accepted
