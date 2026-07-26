@@ -117,9 +117,15 @@ resource "google_service_account_iam_member" "github_deployer_wif" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/alfloop-dev/odayplus"
 }
 
-resource "google_project_iam_member" "github_deployer_run_developer" {
+resource "google_project_iam_member" "github_deployer_run_admin" {
   project = var.project_id
-  role    = "roles/run.developer"
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "github_deployer_cloudscheduler_admin" {
+  project = var.project_id
+  role    = "roles/cloudscheduler.admin"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
