@@ -101,25 +101,27 @@ jobs:
       - name: Generate SBOM
         run: python3 scripts/security/generate_sbom.py
 
-      - name: Validate authentication and live runtime preflight
-        env:
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+      - name: Validate WIF configuration requirement
         run: |
           if [ "${HAS_WIF}" != "true" ]; then
             echo "Error: Workload Identity Federation (WIF) variables (GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT) are strictly required." >&2
             exit 1
           fi
-          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
-            --environment dev \
-            --release-sha "${ODAY_RELEASE_SHA}" \
-            --output .odp_data/deployment/cloud-run-preflight.json
 
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Live runtime preflight validation
+        env:
+          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+        run: |
+          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+            --environment dev \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --output .odp_data/deployment/cloud-run-preflight.json
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2

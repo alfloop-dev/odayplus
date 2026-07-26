@@ -129,10 +129,12 @@ resource "google_project_iam_member" "github_deployer_cloudsql_client" {
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
-resource "google_project_iam_member" "github_deployer_ar_writer" {
-  project = var.project_id
-  role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+resource "google_artifact_registry_repository_iam_member" "github_deployer_ar_writer" {
+  project    = var.project_id
+  location   = var.region
+  repository = "oday-plus"
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
 resource "google_service_account_iam_member" "github_deployer_sa_user_runtime" {
