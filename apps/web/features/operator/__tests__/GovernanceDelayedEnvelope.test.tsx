@@ -17,7 +17,7 @@
  *   - production keeps failing closed instead of falling back to fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
@@ -101,6 +101,58 @@ const governanceSnapshot = {
     users: [],
   },
   source: "operator-governance-production",
+};
+
+/**
+ * A live Operator shell bootstrap envelope. `approvals` mirrors `decisions`
+ * exactly as `_build_envelope` emits it, which is what made the Govern route
+ * crash once the payload arrived after the route was already selected.
+ */
+const shellEnvelopePayload = {
+  meta: {
+    source: "operator-shell-live",
+    dataMode: "live",
+    role: {
+      id: "ops-lead",
+      label: "營運主管",
+      subtitle: "全域監控",
+      allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
+      heroName: "林承翰",
+    },
+    counts: { approvals: 2, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
+  },
+  navigation: {
+    roles: [],
+    workspaces: [
+      { id: "today", label: "Today 今日工作", shortLabel: "Today", description: "Today", allowed: true },
+      { id: "govern", label: "治理稽核", shortLabel: "Govern", description: "Govern", allowed: true },
+    ],
+    allowedWorkspaces: ["today", "govern"],
+  },
+  header: {
+    counts: { approvals: 2, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
+  },
+  today: {
+    hero: {
+      name: "林承翰",
+      roleLabel: "營運主管",
+      scope: "全品牌",
+      dateLabel: "2026-07-26",
+    },
+    kpis: [],
+    queue: [],
+    decisions: shellDecisionCards,
+    riskRows: [],
+    auditFeed: [],
+  },
+  search: { count: 0, items: [] },
+  notifications: [],
+  approvals: shellDecisionCards,
+  workQueue: [],
+  kpis: [],
+  decisions: shellDecisionCards,
+  riskRows: [],
+  auditFeed: [],
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -238,9 +290,8 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     window.sessionStorage.clear();
   });
 
-  it("navigates to Govern without a route error when the envelope resolves late", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-
+  /** Stub the console's two reads; the bootstrap envelope resolves only on release. */
+  function stubDelayedConsoleFetch() {
     const bootstrap: { release: () => void } = { release: () => undefined };
     const bootstrapGate = new Promise<void>((resolve) => {
       bootstrap.release = resolve;
@@ -252,52 +303,7 @@ describe("Operator console govern route with a delayed shell envelope", () => {
         const url = String(input);
         if (url.includes("/api/v1/operator/bootstrap")) {
           await bootstrapGate;
-          return jsonResponse({
-            meta: {
-              source: "operator-shell-live",
-              dataMode: "live",
-              role: {
-                id: "ops-lead",
-                label: "營運主管",
-                subtitle: "全域監控",
-                allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
-                heroName: "林承翰",
-              },
-              counts: { approvals: 2, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
-            },
-            navigation: {
-              roles: [],
-              workspaces: [
-                { id: "today", label: "Today", shortLabel: "Today", description: "Today", allowed: true },
-                { id: "govern", label: "治理稽核", shortLabel: "Govern", description: "Govern", allowed: true },
-              ],
-              allowedWorkspaces: ["today", "govern"],
-            },
-            header: {
-              counts: { approvals: 2, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
-            },
-            today: {
-              hero: {
-                name: "林承翰",
-                roleLabel: "營運主管",
-                scope: "全品牌",
-                dateLabel: "2026-07-26",
-              },
-              kpis: [],
-              queue: [],
-              decisions: shellDecisionCards,
-              riskRows: [],
-              auditFeed: [],
-            },
-            search: { count: 0, items: [] },
-            notifications: [],
-            approvals: shellDecisionCards,
-            workQueue: [],
-            kpis: [],
-            decisions: shellDecisionCards,
-            riskRows: [],
-            auditFeed: [],
-          });
+          return jsonResponse(shellEnvelopePayload);
         }
         if (url.includes("/api/v1/operator/governance/snapshot")) {
           return jsonResponse(governanceSnapshot);
@@ -306,19 +312,97 @@ describe("Operator console govern route with a delayed shell envelope", () => {
       }),
     );
 
-    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    return bootstrap;
+  }
 
-    // Route is selected while the shell envelope is still in flight.
-    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
-
-    bootstrap.release();
-
-    // The delayed envelope must not take the Govern route down.
+  /** The Govern route rendered without a route error and bound to the API. */
+  async function expectGovernRouteHealthy() {
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getAllByText("Approve SiteScore override").length).toBeGreaterThan(0),
     );
     // Shell decision cards are Today rows; they never become governance approvals.
     expect(screen.queryByText("SiteScore APR-501 複審")).not.toBeInTheDocument();
+  }
+
+  it("survives the delayed envelope on the direct /operator?ws=govern route", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const bootstrap = stubDelayedConsoleFetch();
+
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+
+    // Route is selected while the shell envelope is still in flight.
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    bootstrap.release();
+
+    await expectGovernRouteHealthy();
+  });
+
+  it("survives the delayed envelope on a reload of the Govern route", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+
+    const first = stubDelayedConsoleFetch();
+    const firstRender = render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    first.release();
+    await expectGovernRouteHealthy();
+    firstRender.unmount();
+
+    // Reload: a fresh mount replays the same deep link with the workspace
+    // preference already persisted in sessionStorage.
+    expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("govern");
+    const second = stubDelayedConsoleFetch();
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    second.release();
+
+    await expectGovernRouteHealthy();
+  });
+
+  it("survives the delayed envelope when Govern is opened from the workspace nav", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const bootstrap = stubDelayedConsoleFetch();
+
+    render(<OperatorConsole searchParams={{}} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    bootstrap.release();
+    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /治理稽核/ }));
+
+    await expectGovernRouteHealthy();
+  });
+
+  it("survives the delayed envelope when Govern is opened from the approval chip", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const bootstrap = stubDelayedConsoleFetch();
+
+    render(<OperatorConsole searchParams={{}} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    bootstrap.release();
+    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("operator-approval-count"));
+
+    await expectGovernRouteHealthy();
+  });
+
+  it("survives the delayed envelope when Govern is opened from the command palette", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const bootstrap = stubDelayedConsoleFetch();
+
+    render(<OperatorConsole searchParams={{}} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    bootstrap.release();
+    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("operator-command-trigger"));
+    const palette = await screen.findByTestId("operator-command-palette");
+    fireEvent.change(screen.getByRole("combobox", { name: /Command palette search/ }), {
+      target: { value: "治理稽核" },
+    });
+    fireEvent.click(await within(palette).findByRole("option", { name: /治理稽核/ }));
+
+    await expectGovernRouteHealthy();
   });
 });
