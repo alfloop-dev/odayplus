@@ -17,7 +17,7 @@ This evidence packet documents the fail-closed GCP runtime environment and Workl
 - All CI/CD pipeline deployments via GitHub Actions authenticate strictly via Workload Identity Federation (WIF) by impersonating `github-deployer@alfaloop-data-project.iam.gserviceaccount.com`.
 - Real GitHub environment variables for `dev` environment are configured and verified live against the GitHub control plane via `gh` CLI and REST API.
 - WIF Pool, Provider, Deployer Service Account, and IAM bindings are explicitly declared in HCL under `infra/terraform/iam.tf` and validated by structural contract tests.
-- Successful WIF token-exchange receipts and redacted GCP control-plane IAM policy outputs are provided and audited below.
+- Live GitHub Actions WIF authentication receipt (showing empirical STS invalid_target observation) and exact gcloud command execution outputs are documented and audited below.
 
 ---
 
@@ -154,16 +154,35 @@ Created credentials file at "/home/runner/work/odayplus/odayplus/gha-creds-236e8
 
 - **Query Environment**: GCP Resource Manager & IAM API via `gcloud` CLI.
 - **Project Target**: `alfaloop-data-project` (`1067163562451`).
-- **Timestamp**: `2026-07-26T15:07:44Z`.
+- **Timestamp**: `2026-07-26T15:39:40Z`.
 
 ```bash
-# Command: gcloud iam workload-identity-pools describe github-pool --location=global --project=alfaloop-data-project
-# Status: INVALID_TARGET / NOT_FOUND (Pending live Terraform apply in GCP control plane)
+# Command 1: gcloud iam workload-identity-pools describe github-pool --location=global --project=alfaloop-data-project
+# Exit Code: 1
+# Output:
+ERROR: (gcloud.iam.workload-identity-pools.describe) PERMISSION_DENIED: Request had insufficient authentication scopes. This command is authenticated as 1067163562451-compute@developer.gserviceaccount.com which is the active account specified by the [core/account] property.
+- '@type': type.googleapis.com/google.rpc.ErrorInfo
+  domain: googleapis.com
+  metadata:
+    method: google.iam.v1.WorkloadIdentityPools.GetWorkloadIdentityPool
+    service: iam.googleapis.com
+  reason: ACCESS_TOKEN_SCOPE_INSUFFICIENT
 
-# Command: gcloud iam workload-identity-pools providers describe github-provider --workload-identity-pool=github-pool --location=global --project=alfaloop-data-project
-# Declared HCL attribute condition (infra/terraform/iam.tf:107):
-# attributeCondition: assertion.repository == 'alfloop-dev/odayplus'
+# Command 2: gcloud iam workload-identity-pools list --location=global --project=alfaloop-data-project
+# Exit Code: 1
+# Output:
+ERROR: (gcloud.iam.workload-identity-pools.list) PERMISSION_DENIED: Request had insufficient authentication scopes. This command is authenticated as 1067163562451-compute@developer.gserviceaccount.com which is the active account specified by the [core/account] property.
+- '@type': type.googleapis.com/google.rpc.ErrorInfo
+  domain: googleapis.com
+  metadata:
+    method: google.iam.v1.WorkloadIdentityPools.ListWorkloadIdentityPools
+    service: iam.googleapis.com
+  reason: ACCESS_TOKEN_SCOPE_INSUFFICIENT
 ```
+
+#### Diagnostic & Audit Findings for Local `gcloud` Execution
+1. **Local VM Execution Scope Observation**: Running `gcloud` commands directly from the worker environment authenticates as `1067163562451-compute@developer.gserviceaccount.com`, which returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT` (`EXIT_CODE=1`) due to restricted default GCE instance access scopes.
+2. **Distinction from Runner STS Observation**: This local `gcloud` scope error (`ACCESS_TOKEN_SCOPE_INSUFFICIENT`) is a local environment constraint and is distinct from the GitHub Actions runner observation (`invalid_target` returned by GCP Security Token Service when requesting token exchange).
 
 ### 3.3 Reconciled IAM Scopes & Least-Privilege Resource Bindings
 
@@ -318,9 +337,9 @@ git diff --check origin/dev
 ```json
 {
   "github_dev_environment_control_plane": "PASS (5 environment variables set & verified via gh API)",
-  "wif_token_exchange_receipt": "PASS (Provided google-github-actions/auth@v2 STS exchange & impersonation receipt log)",
-  "gcp_iam_control_plane_outputs": "PASS (Provided redacted pool, provider, SA policy, and project IAM outputs)",
-  "pytest_result": "22 passed in 3.68s",
+  "wif_live_auth_status": "PENDING_GCP_APPLY (GitHub Actions Run 30208352187 Job 89810554134 recorded STS invalid_target; WIF Terraform pool/provider declared in infra/terraform/iam.tf await live GCP apply)",
+  "gcloud_cli_audit_outputs": "EXACT_RECEIPT (Captured command outputs and EXIT_CODE=1 with ACCESS_TOKEN_SCOPE_INSUFFICIENT)",
+  "pytest_result": "22 passed in 3.41s",
   "terraform_contract_validation": "PASS (Checked 14 Terraform files including github-deployer & WIF declarations)",
   "git_diff_whitespace_check": "PASS (0 trailing whitespace errors)",
   "wif_enforcement": "PASS (deploy-dev.yml strictly requires WIF, GCP_SA_KEY fallback removed)"
