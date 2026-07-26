@@ -5,7 +5,7 @@
 - Owner wave: `ODP-P10-CAN-001-R3B`
 - Predecessor: `ODP-P10-CAN-001-R3A`
 - Program next: `ODP-P10-CAN-001-R3A`
-- Persistence state: `pending_coordinator_checkpoint`
+- Persistence state: `coordinator_checkpoint_complete`
 - Canonical source: Package 10
 - Canonical HTML detail landmark:
   `data-screen-label="Intake 收件處理詳情頁"`

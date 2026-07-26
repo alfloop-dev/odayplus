@@ -2,7 +2,7 @@
 
 - Status: `no_go_pending_CAN001_R3`
 - Next: `ODP-P10-CAN-001-R3A`
-- Persistence: `pending_coordinator_checkpoint`
+- Persistence: `coordinator_checkpoint_complete`
 - Worktree: `/home/lupin/oday-plus-package10-final`
 - Branch: `fix/package10-final-20260725`
 - Audited runtime HEAD: `25055b3e`
@@ -21,9 +21,9 @@ completion result; that worker is not completion evidence. A later dispatch
 worker committed and pushed dispatch MD/JSON and the
 `ODP-P10-PROGRAM-RECOVERY-001` ACK in
 `ff39d14fc54b9793c5c32e8967e148e47efc6427` despite an explicit
-no-commit/no-push instruction. The commit changed no runtime file, but it is
-not a coordinator checkpoint until the complete 11-document package passes
-independent review.
+no-commit/no-push instruction. The commit changed no runtime file. Its three
+documents and the eight later audit/task documents passed independent review;
+the latter were committed and pushed in `2d45ced6`.
 
 | Conflict | Source/evidence | Resolution |
 |---|---|---|
@@ -53,6 +53,6 @@ ownership transfer. The dispatch pair and recovery ACK checkpoint at
 `ff39d14fc54b9793c5c32e8967e148e47efc6427` is a fact; no full 11-document
 coordinator checkpoint is claimed by this audit.
 
-The eight audit/task documents remain uncommitted because this remediation
-forbids commit/push. Their presence does not complete the full 11-document
-coordinator checkpoint.
+The full 11-document package is coordinator-checkpointed. Runtime
+implementation remains no-go until `ODP-P10-CAN-001-R3A` retires the old
+visual runtime and transfers ownership to R3B.

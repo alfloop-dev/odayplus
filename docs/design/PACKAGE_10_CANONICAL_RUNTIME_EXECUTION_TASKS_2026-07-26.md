@@ -10,7 +10,7 @@
 - Canonical ZIP SHA-256: `d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8`
 - Canonical HTML SHA-256: `cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d`
 - Execution mode: sequential ownership transfer
-- Persistence state: `pending_coordinator_checkpoint`
+- Persistence state: `coordinator_checkpoint_complete`
 
 ## Binding Source Order
 
@@ -30,7 +30,7 @@ are not closure evidence.
 
 | Order | Wave | Initial status | Start condition |
 |---|---|---|---|
-| 1 | `ODP-P10-CAN-001-R3A` | `blocked_pending_program_recovery_checkpoint` | Recovery documents and program recovery ACK coordinator-reviewed, committed, and pushed |
+| 1 | `ODP-P10-CAN-001-R3A` | `ready_for_pickup` | Recovery documents and program recovery ACK coordinator-reviewed, committed, and pushed |
 | 2 | `ODP-P10-CAN-001-R3B` | `blocked_on_CAN001_R3A` | R3A pass ACK committed and pushed |
 | 3 | `ODP-P10-CAN-002-R3` | `blocked_on_CAN001_R3B` | R3B pass ACK committed and pushed |
 | 4 | `ODP-P10-CAN-003-R3A` | `blocked_on_CAN002_R3` | CAN-002 pass ACK committed and pushed |

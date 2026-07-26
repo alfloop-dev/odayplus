@@ -7,7 +7,7 @@
   "branch": "fix/package10-final-20260725",
   "execution_model": "strict_serial_ownership_transfer",
   "prepared_at": "2026-07-26T12:01:23Z",
-  "persistence_state": "pending_coordinator_checkpoint",
+  "persistence_state": "coordinator_checkpoint_complete",
   "authority_rules": {
     "accepted": [
       "committed program documents",
@@ -51,7 +51,7 @@
     {
       "order": 1,
       "task_id": "ODP-P10-CAN-001-R3A",
-      "status": "blocked_pending_program_recovery_checkpoint",
+      "status": "ready_for_pickup",
       "scope": "retire old runtime, routes, feature roots, shells, navigation, loader, alternate legacy visuals, and 18 legacy visual specs while preserving canonical routes and reusable nonvisual/API/domain behavior",
       "forbidden": [
         "canonical intake redesign implementation",
@@ -148,9 +148,11 @@
     }
   ],
   "current_checkpoint": {
-    "program_recovery_docs": "prepared",
-    "persistence_state": "pending_coordinator_checkpoint",
-    "implementation_authorized": false,
+    "program_recovery_docs": "coordinator_reviewed_committed_and_pushed",
+    "persistence_state": "coordinator_checkpoint_complete",
+    "dispatch_commit": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
+    "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "implementation_authorized": true,
     "next": "ODP-P10-CAN-001-R3A",
     "status": "no_go_pending_CAN001_R3"
   }

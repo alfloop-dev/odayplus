@@ -3,10 +3,9 @@
   "addendum_id": "ODP-P10-INTAKE-CANON-001",
   "current_status": "no_go_pending_CAN001_R3",
   "next": "ODP-P10-CAN-001-R3A",
-  "persistence_state": "pending_coordinator_checkpoint",
+  "persistence_state": "coordinator_checkpoint_complete",
   "owner_wave": "ODP-P10-CAN-001-R3B",
   "predecessor": "ODP-P10-CAN-001-R3A",
-  "persistence_state": "pending_coordinator_checkpoint",
   "canonical_package": 10,
   "canonical_html_landmark": "data-screen-label=\"Intake 收件處理詳情頁\"",
   "binding_decisions": {
@@ -282,7 +281,6 @@
     "git diff --check"
   ],
   "blockers": [
-    "program recovery persistence remains pending coordinator checkpoint",
     "ODP-P10-CAN-001-R3A retirement has not transferred ownership"
   ],
   "pass_requires_commit_and_push": true

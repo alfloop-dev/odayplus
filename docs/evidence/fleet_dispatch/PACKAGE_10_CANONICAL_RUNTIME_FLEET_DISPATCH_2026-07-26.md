@@ -92,8 +92,8 @@ to infer its contents from chat.
 
 ## Current Checkpoint
 
-Program recovery documents are prepared, but persistence is
-`pending_coordinator_checkpoint`. No implementation wave is authorized yet.
-The total status remains `no_go_pending_CAN001_R3`; after the coordinator
-commits and pushes the recovery package, the next and only eligible owner is
+Program recovery persistence is `coordinator_checkpoint_complete`: dispatch
+and recovery ACK were pushed in `ff39d14f`, and the independently reviewed
+audit/task documents were pushed in `2d45ced6`. The total status remains
+`no_go_pending_CAN001_R3`; the next and only eligible owner is
 `ODP-P10-CAN-001-R3A`.

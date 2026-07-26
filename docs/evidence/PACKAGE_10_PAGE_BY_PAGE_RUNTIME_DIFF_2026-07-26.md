@@ -355,11 +355,11 @@ for the source-by-source conflict ledger.
 ## Gate State
 
 - Current state: `no_go_pending_CAN001_R3`
-- Persistence state: `pending_coordinator_checkpoint`
+- Persistence state: `coordinator_checkpoint_complete`
 - Dispatch MD/JSON and the recovery ACK exist and are pushed at
   `ff39d14fc54b9793c5c32e8967e148e47efc6427`.
-- Full 11-document recovery checkpoint remains pending because these eight
-  audit/task documents are not yet coordinator committed/pushed.
+- The eight audit/task documents were coordinator-reviewed, committed, and
+  pushed at `2d45ced639703f7e7a18df7aa0ec981d70c3ea2a`.
 - Active blocker: production is not the Package 10 canonical composition and
   old visual implementations remain reachable/imported.
 - Required next task: `ODP-P10-CAN-001-R3A`

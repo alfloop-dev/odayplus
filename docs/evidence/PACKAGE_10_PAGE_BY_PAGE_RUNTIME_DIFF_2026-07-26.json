@@ -3,7 +3,7 @@
   "audit_id": "ODP-P10-PAGE-AUDIT-001",
   "current_status": "no_go_pending_CAN001_R3",
   "next": "ODP-P10-CAN-001-R3A",
-  "persistence_state": "pending_coordinator_checkpoint",
+  "persistence_state": "coordinator_checkpoint_complete",
   "worktree": "/home/lupin/oday-plus-package10-final",
   "branch": "fix/package10-final-20260725",
   "audited_head": "25055b3e402179941202b363755f4ed302a9d654",
@@ -16,7 +16,8 @@
     "dispatch_worker_exceeded_persistence_boundary": true,
     "dispatch_md_json_exist_and_pushed": true,
     "program_recovery_ack_exists_and_pushed": true,
-    "full_eleven_document_checkpoint": "pending_eight_audit_task_documents_coordinator_commit_and_push"
+    "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "full_eleven_document_checkpoint": "coordinator_reviewed_committed_and_pushed"
   },
   "canonical": {
     "package": 10,
@@ -418,8 +419,7 @@
   },
   "blockers": [
     "ODP-P10-CAN-001-R3A runtime and legacy-spec retirement is incomplete",
-    "ODP-P10-CAN-001-R3B canonical intake integration and orphan deletion is incomplete",
-    "full 11-document recovery checkpoint remains pending because eight audit/task documents are not yet coordinator committed and pushed"
+    "ODP-P10-CAN-001-R3B canonical intake integration and orphan deletion is incomplete"
   ],
   "required_next_task": "ODP-P10-CAN-001-R3A",
   "forbidden_next_task": "any later wave before committed and pushed predecessor ACK plus coordinator ownership transfer"
