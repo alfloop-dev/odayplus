@@ -32,6 +32,10 @@ def test_sitescore_sql_has_fixed_mature_horizon_and_strict_prior_features() -> N
     assert "label_covered_days = 90" in body
     assert "identity_available_at < feature_cutoff_time" in body
     assert "prior_available_at < feature_cutoff_time" in body
+    assert "prior_run_available_at < feature_cutoff_time" in body
+    assert "feature_cutoff_time AS prediction_origin_time" in body
+    assert "label_maturity_time AS feature_snapshot_time" not in body
+    assert "label_maturity_time + interval '1 microsecond'" not in body
     assert "label_maturity_time <= CURRENT_TIMESTAMP" in body
     assert "REALIZED_REVENUE_LABEL_MISSING" in body
     assert "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING" not in sql
@@ -58,6 +62,10 @@ def test_heatzone_sql_has_forward_cell_label_and_no_feature_leakage() -> None:
     assert "label_covered_days = 28" in body
     assert "identity_available_at < feature_cutoff_time" in body
     assert "prior_available_at < feature_cutoff_time" in body
+    assert "prior_run_available_at < feature_cutoff_time" in body
+    assert "feature_cutoff_time AS prediction_origin_time" in body
+    assert "label_maturity_time AS feature_snapshot_time" not in body
+    assert "label_maturity_time + interval '1 microsecond'" not in body
     assert "label_maturity_time <= CURRENT_TIMESTAMP" in body
     assert "REALIZED_CELL_REVENUE_LABEL_MISSING" in body
     assert "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING" not in sql

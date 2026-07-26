@@ -32,6 +32,9 @@ def test_partial_geography_and_machine_event_evidence_are_durable() -> None:
     schema = _schema()
     assert "CREATE TABLE IF NOT EXISTS {{control_schema}}.place_geography" in schema
     assert "raw_address TEXT," in schema
+    assert "normalized_address TEXT," in schema
+    assert "h3_res_9 VARCHAR(15)," in schema
+    assert "h3_derivation_version TEXT" in schema
     assert "CHECK ((latitude IS NULL) = (longitude IS NULL))" in schema
     assert (
         "CREATE TABLE IF NOT EXISTS "
@@ -218,8 +221,14 @@ def test_place_upsert_casts_nullable_geography_parameters() -> None:
         SimpleNamespace(
             address_id=UUID("00000000-0000-4000-8000-000000000010"),
             raw_address="台北市測試路 1 號",
+            normalized_address="台北市測試路1號",
+            city="台北市",
+            district=None,
             latitude=None,
             longitude=None,
+            h3_res_8=None,
+            h3_res_9=None,
+            h3_res_10=None,
             store_id=UUID("00000000-0000-4000-8000-000000000011"),
             tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
             brand_id=UUID("00000000-0000-4000-8000-000000000002"),
@@ -233,6 +242,39 @@ def test_place_upsert_casts_nullable_geography_parameters() -> None:
     geography_sql = connection.statements[0][0]
     assert geography_sql.count("::double precision") == 6
     assert "ST_MakePoint" in geography_sql
+    assert "h3_res_9" in geography_sql
+    store_sql = connection.statements[1][0]
+    assert "opened_on" not in store_sql
+
+
+def test_place_geography_evidence_keeps_snapshot_run_and_h3_derivation(
+    envelope_factory,
+) -> None:
+    connection = _CaptureConnection()
+    store = _store()
+    envelope = _envelope(envelope_factory, SourceKind.PLACE)
+    store._upsert_place_geography(
+        connection,
+        envelope,
+        SimpleNamespace(
+            source_id="place-1",
+            tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
+            store_id=UUID("00000000-0000-4000-8000-000000000011"),
+            raw_address="台北市信義區信義路五段7號",
+            normalized_address="台北市信義區信義路五段7號",
+            latitude=Decimal("25.033964"),
+            longitude=Decimal("121.564468"),
+            h3_res_8="8826308281fffff",
+            h3_res_9="8926308280fffff",
+            h3_res_10="8a26308280f7fff",
+        ),
+    )
+
+    sql, params = connection.statements[0]
+    assert "source_snapshot_id" in sql
+    assert "run_id" in sql
+    assert "h3_derivation_version" in sql
+    assert "stable_h3_index-v1" in params
 
 
 def test_empty_partition_reconciles_when_dlt_did_not_create_a_raw_table() -> None:

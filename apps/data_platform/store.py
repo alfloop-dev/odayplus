@@ -528,11 +528,12 @@ class PsycopgCanonicalStore:
             connection.execute(
                 """
                 INSERT INTO core.address_locations (
-                    address_id, raw_address, normalized_address,
+                    address_id, raw_address, normalized_address, city, district,
                     latitude, longitude, geom, geocode_precision,
-                    geocode_confidence, manual_override_flag, created_at, updated_at
+                    geocode_confidence, h3_res_8, h3_res_9, h3_res_10,
+                    manual_override_flag, created_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
                     CASE
                         WHEN %s::double precision IS NULL
                           OR %s::double precision IS NULL THEN NULL
@@ -550,22 +551,29 @@ class PsycopgCanonicalStore:
                           OR %s::double precision IS NULL THEN NULL
                         ELSE 1.00
                     END,
-                    FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    %s, %s, %s, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (address_id) DO UPDATE SET
                     raw_address = EXCLUDED.raw_address,
                     normalized_address = EXCLUDED.normalized_address,
+                    city = EXCLUDED.city,
+                    district = EXCLUDED.district,
                     latitude = EXCLUDED.latitude,
                     longitude = EXCLUDED.longitude,
                     geom = EXCLUDED.geom,
                     geocode_precision = 'source',
                     geocode_confidence = EXCLUDED.geocode_confidence,
+                    h3_res_8 = EXCLUDED.h3_res_8,
+                    h3_res_9 = EXCLUDED.h3_res_9,
+                    h3_res_10 = EXCLUDED.h3_res_10,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     projection.address_id,
                     projection.raw_address,
-                    projection.raw_address,
+                    projection.normalized_address,
+                    projection.city,
+                    projection.district,
                     projection.latitude,
                     projection.longitude,
                     projection.longitude,
@@ -574,6 +582,9 @@ class PsycopgCanonicalStore:
                     projection.latitude,
                     projection.longitude,
                     projection.latitude,
+                    projection.h3_res_8,
+                    projection.h3_res_9,
+                    projection.h3_res_10,
                 ),
             )
         connection.execute(
@@ -619,12 +630,22 @@ class PsycopgCanonicalStore:
             f"""
             INSERT INTO {self._schema}.place_geography (
                 source_snapshot_id, source_id, tenant_id, store_id,
-                raw_address, latitude, longitude, run_id, observed_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                raw_address, normalized_address, latitude, longitude,
+                h3_res_8, h3_res_9, h3_res_10, h3_derivation_version,
+                run_id, observed_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
             ON CONFLICT (source_snapshot_id) DO UPDATE SET
                 raw_address = EXCLUDED.raw_address,
+                normalized_address = EXCLUDED.normalized_address,
                 latitude = EXCLUDED.latitude,
                 longitude = EXCLUDED.longitude,
+                h3_res_8 = EXCLUDED.h3_res_8,
+                h3_res_9 = EXCLUDED.h3_res_9,
+                h3_res_10 = EXCLUDED.h3_res_10,
+                h3_derivation_version = EXCLUDED.h3_derivation_version,
                 run_id = EXCLUDED.run_id,
                 observed_at = EXCLUDED.observed_at
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -634,8 +655,17 @@ class PsycopgCanonicalStore:
                 projection.tenant_id,
                 projection.store_id,
                 projection.raw_address,
+                projection.normalized_address,
                 projection.latitude,
                 projection.longitude,
+                projection.h3_res_8,
+                projection.h3_res_9,
+                projection.h3_res_10,
+                (
+                    "stable_h3_index-v1"
+                    if projection.h3_res_9 is not None
+                    else None
+                ),
                 envelope.run_id,
                 envelope.observed_at,
             ),

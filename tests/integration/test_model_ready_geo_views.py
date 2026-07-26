@@ -6,6 +6,8 @@ from uuid import UUID, uuid5
 
 import pytest
 
+from scripts.models.install_views import ELIGIBILITY_PREREQUISITE_SQL
+
 MODEL_READY_SQL = (
     Path(__file__).parents[2] / "scripts/models/sql/model_ready_views.sql"
 ).read_text(encoding="utf-8")
@@ -294,6 +296,22 @@ def test_postgresql_views_compute_real_causal_labels_and_isolate_tenants(
     with intake_blank_db.connect() as connection:
         _install_minimal_authoritative_schema(connection)
         tenant_a, target_a = _seed_point_in_time_history(connection)
+        prerequisite_cursor = connection.execute(ELIGIBILITY_PREREQUISITE_SQL)
+        prerequisite_columns = [
+            column.name for column in prerequisite_cursor.description
+        ]
+        prerequisite_counts = dict(
+            zip(
+                prerequisite_columns,
+                prerequisite_cursor.fetchone(),
+                strict=True,
+            )
+        )
+        assert prerequisite_counts["total_store_rows"] == 4
+        assert prerequisite_counts["stores_missing_opened_on"] == 0
+        assert prerequisite_counts["sitescore_anchor_prerequisite_rows"] == 4
+        assert prerequisite_counts["heatzone_cell_prerequisite_rows"] == 2
+        assert prerequisite_counts["successful_twd_transaction_rows"] == 4
         connection.execute(MODEL_READY_SQL)
 
         sitescore = connection.execute(
@@ -318,6 +336,17 @@ def test_postgresql_views_compute_real_causal_labels_and_isolate_tenants(
         assert site["label_horizon_days"] == 90
         assert site["feature_cutoff_time"] == _at(ORIGIN, 0)
         assert site["label_maturity_time"] >= _at(ORIGIN + timedelta(days=90), 0)
+        assert (
+            site["feature_snapshot_time"]
+            < site["prediction_origin_time"]
+            < site["label_maturity_time"]
+        )
+        for provenance_column in (
+            "feature_identity_available_at",
+            "feature_transaction_available_at",
+            "feature_partition_available_at",
+        ):
+            assert site[provenance_column] < site["prediction_origin_time"]
         assert site["is_training_eligible"] is True
         assert site["exclusion_reason"] is None
         assert site["source_snapshot_ids"]
@@ -344,6 +373,17 @@ def test_postgresql_views_compute_real_causal_labels_and_isolate_tenants(
         assert zone["label_horizon_days"] == 28
         assert zone["feature_cutoff_time"] == _at(ORIGIN, 0)
         assert zone["label_maturity_time"] >= _at(ORIGIN + timedelta(days=28), 0)
+        assert (
+            zone["feature_snapshot_time"]
+            < zone["prediction_origin_time"]
+            < zone["label_maturity_time"]
+        )
+        for provenance_column in (
+            "feature_identity_available_at",
+            "feature_transaction_available_at",
+            "feature_partition_available_at",
+        ):
+            assert zone[provenance_column] < zone["prediction_origin_time"]
         assert zone["is_training_eligible"] is True
         assert zone["exclusion_reason"] is None
         assert zone["source_snapshot_ids"]

@@ -495,6 +495,11 @@ evaluated AS (
 materialized AS (
     SELECT
         evaluated.*,
+        greatest(
+            identity_available_at,
+            prior_available_at,
+            prior_run_available_at
+        ) AS feature_snapshot_time,
         CASE
             WHEN opened_on IS NULL THEN NULL
             ELSE greatest(
@@ -532,9 +537,12 @@ SELECT
     target_format_code,
     opened_on,
     feature_cutoff_time,
-    label_maturity_time AS feature_snapshot_time,
-    label_maturity_time + interval '1 microsecond' AS prediction_origin_time,
+    feature_snapshot_time,
+    feature_cutoff_time AS prediction_origin_time,
     label_maturity_time,
+    identity_available_at AS feature_identity_available_at,
+    prior_available_at AS feature_transaction_available_at,
+    prior_run_available_at AS feature_partition_available_at,
     90::integer AS label_horizon_days,
     realized_90d_net_revenue,
     latitude,
@@ -570,6 +578,8 @@ SELECT
         AND prior_covered_days = 90
         AND prior_lineage_complete
         AND prior_available_at < feature_cutoff_time
+        AND prior_run_available_at < feature_cutoff_time
+        AND feature_snapshot_time < feature_cutoff_time
         AND prior_90d_cell_transaction_count > 0
         AND label_covered_days = 90
         AND label_lineage_complete
@@ -590,6 +600,8 @@ SELECT
         WHEN prior_covered_days <> 90 THEN 'PRIOR_90D_PARTITION_COVERAGE_INCOMPLETE'
         WHEN NOT prior_lineage_complete
           OR prior_available_at >= feature_cutoff_time
+          OR prior_run_available_at >= feature_cutoff_time
+          OR feature_snapshot_time >= feature_cutoff_time
             THEN 'PRIOR_FEATURE_LINEAGE_NOT_POINT_IN_TIME'
         WHEN prior_90d_cell_transaction_count = 0
             THEN 'PRIOR_CELL_HISTORY_MISSING'
@@ -923,6 +935,11 @@ materialized AS (
     SELECT
         evaluated.*,
         greatest(
+            identity_available_at,
+            prior_available_at,
+            prior_run_available_at
+        ) AS feature_snapshot_time,
+        greatest(
             feature_cutoff_time + interval '28 days',
             label_available_at,
             label_run_available_at
@@ -956,9 +973,12 @@ SELECT
     9::integer AS h3_resolution,
     origin_date,
     feature_cutoff_time,
-    label_maturity_time AS feature_snapshot_time,
-    label_maturity_time + interval '1 microsecond' AS prediction_origin_time,
+    feature_snapshot_time,
+    feature_cutoff_time AS prediction_origin_time,
     label_maturity_time,
+    identity_available_at AS feature_identity_available_at,
+    prior_available_at AS feature_transaction_available_at,
+    prior_run_available_at AS feature_partition_available_at,
     28::integer AS label_horizon_days,
     realized_28d_cell_net_revenue,
     cell_latitude,
@@ -995,6 +1015,8 @@ SELECT
         AND prior_covered_days = 90
         AND prior_lineage_complete
         AND prior_available_at < feature_cutoff_time
+        AND prior_run_available_at < feature_cutoff_time
+        AND feature_snapshot_time < feature_cutoff_time
         AND prior_90d_transaction_count > 0
         AND label_covered_days = 28
         AND label_lineage_complete
@@ -1012,6 +1034,8 @@ SELECT
         WHEN prior_covered_days <> 90 THEN 'PRIOR_90D_PARTITION_COVERAGE_INCOMPLETE'
         WHEN NOT prior_lineage_complete
           OR prior_available_at >= feature_cutoff_time
+          OR prior_run_available_at >= feature_cutoff_time
+          OR feature_snapshot_time >= feature_cutoff_time
             THEN 'PRIOR_FEATURE_LINEAGE_NOT_POINT_IN_TIME'
         WHEN prior_90d_transaction_count = 0 THEN 'PRIOR_CELL_HISTORY_MISSING'
         WHEN label_covered_days <> 28 THEN 'LABEL_28D_PARTITION_COVERAGE_INCOMPLETE'

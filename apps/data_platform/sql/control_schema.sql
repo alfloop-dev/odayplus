@@ -177,13 +177,24 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.place_geography (
     tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
     store_id UUID NOT NULL REFERENCES core.stores(store_id),
     raw_address TEXT,
+    normalized_address TEXT,
     latitude NUMERIC(10, 7),
     longitude NUMERIC(10, 7),
+    h3_res_8 VARCHAR(15),
+    h3_res_9 VARCHAR(15),
+    h3_res_10 VARCHAR(15),
+    h3_derivation_version TEXT,
     run_id UUID NOT NULL REFERENCES {{control_schema}}.ingestion_runs(run_id),
     observed_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK ((latitude IS NULL) = (longitude IS NULL))
 );
+ALTER TABLE {{control_schema}}.place_geography
+    ADD COLUMN IF NOT EXISTS normalized_address TEXT,
+    ADD COLUMN IF NOT EXISTS h3_res_8 VARCHAR(15),
+    ADD COLUMN IF NOT EXISTS h3_res_9 VARCHAR(15),
+    ADD COLUMN IF NOT EXISTS h3_res_10 VARCHAR(15),
+    ADD COLUMN IF NOT EXISTS h3_derivation_version TEXT;
 
 CREATE TABLE IF NOT EXISTS {{control_schema}}.machine_status_event_evidence (
     source_snapshot_id UUID PRIMARY KEY,

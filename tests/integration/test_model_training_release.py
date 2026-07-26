@@ -156,7 +156,19 @@ class FakeInstallationClient:
         self.relations = set(self.columns) - set(missing_relations)
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.transactions = 0
-        self.contract: dict[str, Any] | None = None
+        self.contracts: dict[str, dict[str, Any]] = {}
+        self.prerequisite_counts = {
+            "total_store_rows": 250,
+            "stores_with_opened_on": 220,
+            "stores_missing_opened_on": 30,
+            "stores_missing_address": 5,
+            "stores_missing_coordinates": 10,
+            "stores_missing_h3_res_9": 12,
+            "stores_missing_format": 3,
+            "sitescore_anchor_prerequisite_rows": 205,
+            "heatzone_cell_prerequisite_rows": 201,
+            "successful_twd_transaction_rows": 10_000,
+        }
 
     @contextmanager
     def transaction(self) -> Any:
@@ -166,18 +178,22 @@ class FakeInstallationClient:
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.executions.append((sql, params))
         if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
-            self.relations.add("model_ready.forecast_training_view")
-            self.contract = {
-                "relation_name": "model_ready.forecast_training_view",
-                "view_name": "forecast_training_view",
-                "view_version": "forecast-training-view-v2",
-                "contract_state": "ACTIVE",
-                "training_enabled": True,
-                "blocked_reason": None,
-                "installer_sha256": None,
-            }
-        if sql.startswith("UPDATE model_ready.view_contracts") and self.contract:
-            self.contract["installer_sha256"] = params[0]
+            from scripts.models.install_views import ACTIVE_VIEW_CONTRACTS
+
+            for relation_name, version in ACTIVE_VIEW_CONTRACTS.items():
+                self.relations.add(relation_name)
+                self.contracts[relation_name] = {
+                    "relation_name": relation_name,
+                    "view_name": relation_name.rsplit(".", 1)[-1],
+                    "view_version": version,
+                    "contract_state": "ACTIVE",
+                    "training_enabled": True,
+                    "blocked_reason": None,
+                    "installer_sha256": None,
+                }
+        if sql.startswith("UPDATE model_ready.view_contracts"):
+            for contract in self.contracts.values():
+                contract["installer_sha256"] = params[0]
 
     def query_one(
         self,
@@ -186,8 +202,8 @@ class FakeInstallationClient:
     ) -> dict[str, Any] | None:
         if "to_regclass" in sql:
             return {"relation": params[0] if params[0] in self.relations else None}
-        if "FROM model_ready.view_contracts" in sql:
-            return dict(self.contract) if self.contract else None
+        if "AS total_store_rows" in sql:
+            return dict(self.prerequisite_counts)
         return None
 
     def query(
@@ -195,13 +211,18 @@ class FakeInstallationClient:
         sql: str,
         params: tuple[Any, ...] = (),
     ) -> list[dict[str, Any]]:
-        if "information_schema.columns" not in sql:
-            return []
-        relation = f"{params[0]}.{params[1]}"
-        return [
-            {"column_name": column}
-            for column in self.columns.get(relation, ())
-        ]
+        if "information_schema.columns" in sql:
+            relation = f"{params[0]}.{params[1]}"
+            return [
+                {"column_name": column}
+                for column in self.columns.get(relation, ())
+            ]
+        if "FROM model_ready.view_contracts" in sql:
+            return [
+                dict(self.contracts[relation])
+                for relation in sorted(self.contracts)
+            ]
+        return []
 
 
 def _production_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -446,17 +467,78 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
 def test_model_ready_view_installer_preflights_and_applies_one_sql_transaction() -> None:
     client = FakeInstallationClient()
     installer = ModelReadyViewInstaller(client)
-    assert installer.preflight().ready
+    preflight = installer.preflight()
+    assert preflight.ready
+    inventory = preflight.to_dict()
+    assert inventory["optional_outcome_models"]["sitescore"][
+        "contract_installable"
+    ] is True
+    assert inventory["optional_outcome_models"]["heatzone"][
+        "contract_installable"
+    ] is True
+    assert inventory["eligible_row_prerequisite_evidence"]["counts"][
+        "stores_missing_opened_on"
+    ] == 30
     result = installer.install()
     assert result["status"] == "installed"
     assert len(result["sql_sha256"]) == 64
-    assert result["forecast"]["installer_sha256"] == result["sql_sha256"]
-    assert result["optional_outcome_models_trainable"] is False
+    assert set(result["active_contracts"]) == {
+        "model_ready.forecast_training_view",
+        "model_ready.candidate_site_view",
+        "model_ready.heatzone_training_view",
+    }
+    assert all(
+        contract["installer_sha256"] == result["sql_sha256"]
+        for contract in result["active_contracts"].values()
+    )
+    assert result["eligible_row_prerequisite_evidence"][
+        "sitescore_anchor_prerequisite_rows"
+    ] == 205
+    assert result["minimum_data_checks"] == "trainer"
     assert client.transactions == 1
     assert any(
         "pg_advisory_xact_lock" in statement
         for statement, _params in client.executions
     )
+
+
+def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
+    client = FakeInstallationClient()
+    client.columns["core.stores"] = tuple(
+        column
+        for column in client.columns["core.stores"]
+        if column != "opened_on"
+    )
+    client.columns["core.address_locations"] = tuple(
+        column
+        for column in client.columns["core.address_locations"]
+        if column != "h3_res_9"
+    )
+
+    preflight = ModelReadyViewInstaller(client).preflight()
+
+    assert not preflight.ready
+    assert preflight.missing_columns == {
+        "core.stores": ("opened_on",),
+        "core.address_locations": ("h3_res_9",),
+    }
+    assert preflight.prerequisite_counts == {}
+
+
+def test_model_ready_view_install_rejects_non_active_geo_contract() -> None:
+    class InactiveGeoContractClient(FakeInstallationClient):
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+            super().execute(sql, params)
+            if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
+                self.contracts["model_ready.heatzone_training_view"][
+                    "contract_state"
+                ] = "BLOCKED"
+
+    with pytest.raises(
+        RuntimeError,
+        match="model_ready.heatzone_training_view: not ACTIVE",
+    ):
+        ModelReadyViewInstaller(InactiveGeoContractClient()).install()
 
 
 def test_model_ready_view_install_and_inventory_fail_closed(
