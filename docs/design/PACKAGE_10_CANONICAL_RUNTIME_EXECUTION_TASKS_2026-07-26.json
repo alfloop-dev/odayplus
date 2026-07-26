@@ -6,6 +6,10 @@
   "persistence_state": "coordinator_checkpoint_complete",
   "worktree": "/home/lupin/oday-plus-package10-final",
   "branch": "fix/package10-final-20260725",
+  "binding_addenda": [
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.json"
+  ],
   "canonical": {
     "package": 10,
     "zip_sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",

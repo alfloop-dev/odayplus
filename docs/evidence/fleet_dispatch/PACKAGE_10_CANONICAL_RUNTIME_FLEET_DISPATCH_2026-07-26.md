@@ -68,6 +68,9 @@ At pickup, each wave must resolve and record the committed versions of:
 - `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.json`
 - `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.md`
 - `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json`
+- for R3A:
+  `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md`
+  and its JSON peer
 - the immediately preceding ACK under
   `docs/evidence/fleet_dispatch/package10_20260726/acks/`
 

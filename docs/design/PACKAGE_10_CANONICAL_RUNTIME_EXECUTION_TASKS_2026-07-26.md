@@ -21,7 +21,9 @@ Every Fleet must read the following committed artifacts before pickup:
 3. `docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE.md`
 4. `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md`
 5. `docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md`
-6. This ledger and the immediately preceding committed/pushed ACK.
+6. For R3A:
+   `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md`
+7. This ledger and the immediately preceding committed/pushed ACK.
 
 Chat claims, orphan-component tests, and evidence from `/home/lupin/oday-plus`
 are not closure evidence.

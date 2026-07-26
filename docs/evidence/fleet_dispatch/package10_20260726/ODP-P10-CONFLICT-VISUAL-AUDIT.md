@@ -37,7 +37,8 @@ the latter were committed and pushed in `2d45ced6`.
 | Missing UI permits weaker assertion | Product currently lacks canonical compare/mobile state | Reject; return product no-go to R3B and preserve canonical assertions. |
 | Historical shutdown treated as completion | Fleet `019f9e38...` timed out and was shut down without a completion result | Reject the worker as completion evidence; independently review the later split-worker outputs. |
 | Dispatch worker exceeded its boundary | Fleet `019f9e4b-6ef1-77b2-9b51-a454ddf68804` committed and pushed `ff39d14f` despite an explicit no-commit/no-push instruction | Stop and close the worker; accept no completion claim from it. Independently validate all 11 documents before recording a coordinator checkpoint. |
-| Previous audit Fleet failed remediation | Coordinator review found a summary execution JSON, stale history, and unsuffixed executable CAN-001 ownership | Rebuild the structured peer, use exact R3A/R3B ownership, and keep the 11-document checkpoint pending until all eight audit/task documents are coordinator committed/pushed. |
+| Previous audit Fleet failed remediation | Coordinator review found a summary execution JSON, stale history, and unsuffixed executable CAN-001 ownership | Rebuild the structured peer, use exact R3A/R3B ownership, and validate the complete checkpoint before pickup. Completed in the coordinator checkpoint. |
+| R3A inventory omitted orphan package shell visuals | Import audit after deleting `OpsBoardFrame` found zero production callers for `AppShell`, `GlobalHeader`, `Sidebar`, `ModulePlaceholder`, `ShellContext`, and old nav helpers | Pause R3A, commit `ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM`, then delete the orphan implementation and exports while retaining generic UI controls and `.odp-select`. |
 
 The production graph is
 `OperatorConsole -> NetworkFindAreasWorkspace -> ListingRadarPanel ->
