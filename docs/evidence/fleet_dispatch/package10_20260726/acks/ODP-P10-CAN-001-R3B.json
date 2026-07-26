@@ -7,8 +7,11 @@
   "worktree": "/home/lupin/oday-plus-package10-final",
   "branch": "fix/package10-final-20260725",
   "pickup_head": "c8dd829dc9c1b6f784b6ed124df4369a25ca4b8b",
-  "changes_committed": false,
-  "changes_pushed": false,
+    "changes_committed": true,
+    "changes_pushed": true,
+    "checkpoint_commit": "4bf419e14a62a7cb24a85e117a0eef2f16c09d76",
+    "checkpoint_ref": "origin/fix/package10-final-20260725",
+    "checkpoint_kind": "no_go_supervisor_handoff",
     "coordinator_review": "seventh_visual_runtime_rejection_add_006_ready",
   "authority": {
     "corrected_prerequisite_document": "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md",
@@ -370,7 +373,7 @@
         "ADD-006 must restore readable native lineage and compare table layout at 390px, 1024px and 1440px.",
         "ADD-006 must reject resource version zero and prove no assignment/SLA endpoint invocation.",
         "The unchanged accessibility suite must pass twice consecutively after the navigation hydration race is remediated.",
-        "Changes are intentionally uncommitted and unpushed pending coordinator review."
+        "The rejected implementation and evidence are preserved in pushed no-go checkpoint 4bf419e14a62a7cb24a85e117a0eef2f16c09d76; this is not an accepted R3B exit checkpoint."
     ],
     "next": "Create and push a no-go checkpoint so the dedicated supervisor can dispatch ADD-006 to Claude; Antigravity must independently review the returned implementation before coordinator acceptance."
 }
