@@ -573,51 +573,54 @@ class NetworkScoringService:
         address = draft.address if hasattr(draft, "address") else draft["address"]
         candidate = draft.candidate_site if hasattr(draft, "candidate_site") else draft["candidate_site"]
         normalized_address = address.normalized_address or address.raw_address
-        feasibility_flags = getattr(draft, "feasibility_flags", ())
-        if feasibility_flags is None and isinstance(draft, dict):
-            feasibility_flags = draft.get("feasibility_flags", ())
-        hard_rule_passed = not tuple(feasibility_flags or ())
 
-        feature_snapshot_time = getattr(draft, "feature_snapshot_time", None)
-        if feature_snapshot_time is None and isinstance(draft, dict):
-            feature_snapshot_time = draft.get("feature_snapshot_time")
+        def field(name: str, default: Any = None) -> Any:
+            """Read a draft field from either a dataclass or a mapping.
+
+            ``getattr`` alone cannot express this: an attribute that is present
+            but ``None`` must not fall through to the mapping lookup, otherwise
+            an explicit "no value recorded" turns into a different default.
+            """
+
+            if isinstance(draft, dict):
+                value = draft.get(name)
+            else:
+                value = getattr(draft, name, None)
+            return default if value is None else value
+
+        feasibility_flags = tuple(field("feasibility_flags", ()) or ())
+        hard_rule_passed = not feasibility_flags
+        heat_zone_id = field("heat_zone_id", "")
+
+        feature_snapshot_time = field("feature_snapshot_time")
         if feature_snapshot_time and feature_snapshot_time.tzinfo is None:
             feature_snapshot_time = feature_snapshot_time.replace(tzinfo=UTC)
 
-        prior_rev = getattr(draft, "prior_90d_cell_net_revenue", None)
-        if prior_rev is None and isinstance(draft, dict):
-            prior_rev = draft.get("prior_90d_cell_net_revenue")
-
-        prior_tx = getattr(draft, "prior_90d_cell_transaction_count", None)
-        if prior_tx is None and isinstance(draft, dict):
-            prior_tx = draft.get("prior_90d_cell_transaction_count")
-
-        prior_st = getattr(draft, "prior_90d_cell_store_count", None)
-        if prior_st is None and isinstance(draft, dict):
-            prior_st = draft.get("prior_90d_cell_store_count")
+        prior_rev = field("prior_90d_cell_net_revenue")
+        prior_tx = field("prior_90d_cell_transaction_count")
+        prior_st = field("prior_90d_cell_store_count")
 
         tenant_id = (
             self._tenant_id
-            or getattr(draft, "tenant_id", "")
+            or field("tenant_id", "")
             or getattr(candidate, "tenant_id", "")
-            or (draft.get("tenant_id") if isinstance(draft, dict) else "")
             or ""
         )
 
-        h3_index = address.h3_res_9 or getattr(draft, "heat_zone_id", "") or (draft.get("heat_zone_id") if isinstance(draft, dict) else "") or ""
+        h3_index = address.h3_res_9 or heat_zone_id or ""
 
         return {
             "id": candidate.candidate_site_id,
             "listingId": listing.listing_id,
-            "heatZoneId": getattr(draft, "heat_zone_id", "") if hasattr(draft, "heat_zone_id") else draft.get("heat_zone_id", ""),
+            "heatZoneId": heat_zone_id,
             "title": normalized_address or candidate.candidate_site_id,
-            "zoneLabel": address.district or (getattr(draft, "heat_zone_id", "") if hasattr(draft, "heat_zone_id") else draft.get("heat_zone_id", "")),
+            "zoneLabel": address.district or heat_zone_id,
             "address": normalized_address,
             "district": address.district,
             "modelVersion": "",
             "datasetSnapshotId": listing.snapshot_id,
             "generatedAt": candidate.created_at.isoformat(),
-            "missingEvidence": list(feasibility_flags or ()),
+            "missingEvidence": list(feasibility_flags),
             "data": {
                 "address": {"present": bool(normalized_address)},
                 "geocode": {
@@ -630,7 +633,7 @@ class NetworkScoringService:
                 "hardRule": {
                     "present": True,
                     "pass": hard_rule_passed,
-                    "note": ", ".join(feasibility_flags or ()),
+                    "note": ", ".join(feasibility_flags),
                 },
             },
             "canonicalFeature": SiteScoreFeatureInput(
@@ -639,7 +642,7 @@ class NetworkScoringService:
                 target_format_code=candidate.target_format_code or "ODAY_G2",
                 feature_snapshot_time=feature_snapshot_time,
                 view_version="candidate-site-view-v2",
-                heat_zone_id=getattr(draft, "heat_zone_id", "") if hasattr(draft, "heat_zone_id") else draft.get("heat_zone_id", ""),
+                heat_zone_id=heat_zone_id,
                 h3_index=h3_index,
                 latitude=address.latitude,
                 longitude=address.longitude,

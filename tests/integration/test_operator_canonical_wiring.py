@@ -47,6 +47,9 @@ from shared.infrastructure.persistence import (
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from shared.infrastructure.persistence.operator_network_listings import (
+    DurableAssistedIntakeRepository,
+)
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 from solver.netplan import NetPlanConstraints
@@ -843,6 +846,210 @@ def test_canonical_scoring_fails_closed_when_feature_snapshot_time_is_stale_or_m
         assert scored.status_code == 503
         detail = scored.json()["detail"]
         assert "stale" in detail["message"].lower()
+        assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
+        assert detail["retryable"] is False
+    finally:
+        harness.close()
+
+
+def _seed_convertible_listing(
+    harness: CanonicalHarness,
+    tenant_id: str,
+    *,
+    listing_id: str = "listing-convert-1",
+    snapshot_time: datetime | None = None,
+    prior_revenue: float | None = 180_000.0,
+) -> None:
+    """Seed a listing the operator can convert, with the v2 PIT contract.
+
+    The prior_90d_cell_* aggregates come from the model-ready views and have no
+    field on the domain ``Listing``, so the operator workflow carries them as
+    listing metadata — exactly the path a real intake/backfill writes.
+    """
+
+    address = AddressLocation(
+        address_id=f"ADDR-{listing_id}",
+        raw_address="台北市信義區松仁路 96 號 1F",
+        normalized_address="台北市信義區松仁路96號1F",
+        city="台北市",
+        district="信義區",
+        latitude=25.033964,
+        longitude=121.564468,
+        geocode_confidence=0.94,
+        h3_res_9="892000000000001",
+    )
+    listing = Listing(
+        listing_id=listing_id,
+        source_listing_id=f"source-{listing_id}",
+        source_id="approved-feed",
+        listing_status="new",
+        address_id=address.address_id,
+        rent_amount=58_000,
+        area_ping=18,
+        floor="1F",
+        frontage_m=6,
+        snapshot_id=f"snapshot-{listing_id}",
+        confidence=0.94,
+    )
+    repository = harness.listing(tenant_id)
+    repository.save_listing(
+        listing,
+        address,
+        ListingDedupKey(
+            source_id=listing.source_id,
+            source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ),
+    )
+    DurableAssistedIntakeRepository(
+        TenantScopedDocumentStore(harness.document_store, tenant_id)
+    ).save_listing_metadata(
+        listing_id,
+        {
+            "heatZoneId": address.h3_res_9,
+            "hardRuleFailures": [],
+            "hardRuleSummary": "3/3 pass",
+            "address": address.normalized_address,
+            "prior90dCellNetRevenue": prior_revenue,
+            "prior90dCellTransactionCount": 30,
+            "prior90dCellStoreCount": 1,
+            "featureSnapshotTime": (
+                snapshot_time or datetime.now(UTC)
+            ).isoformat(),
+        },
+    )
+
+
+def test_operator_convert_carries_point_in_time_contract_into_scoring(
+    tmp_path: Path,
+) -> None:
+    """B2: the production writer — not the test — must supply the v2 contract.
+
+    Drives ``POST /listings/{id}/convert`` through the API and then scores the
+    candidate it created. Nothing here calls ``repository.save_candidate``, so a
+    pass proves the point-in-time features survive
+    ``_candidate_to_dict``/``_dict_to_candidate`` and reach the model row.
+    """
+
+    runtime = RecordingSiteScoreRuntime()
+    harness = CanonicalHarness(tmp_path / "operator-convert-roundtrip.sqlite3", runtime)
+    _seed_convertible_listing(harness, "tenant-a")
+    try:
+        with TestClient(harness.app()) as client:
+            converted = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key="convert-live-1"),
+                json={"actorRoleId": "expansionManager", "actorName": "Expansion A"},
+            )
+            assert converted.status_code == 200, converted.text
+            candidate_id = converted.json()["candidate"]["id"]
+
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
+                headers=_headers("tenant-a", idempotency_key="score-convert-1"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+
+        assert scored.status_code == 200, scored.text
+        row = runtime.calls[0]["rows"][0]
+        assert row["prior_90d_cell_net_revenue"] == 180_000.0
+        assert row["prior_90d_cell_transaction_count"] == 30
+        assert row["prior_90d_cell_store_count"] == 1
+        assert row["geocode_confidence"] == 0.94
+        assert row["h3_index"] == "892000000000001"
+        assert row["latitude"] == 25.033964
+        assert row["longitude"] == 121.564468
+        assert row["feature_snapshot_time"] is not None
+
+        # The persisted draft must still carry the contract, so the next
+        # operator write does not silently wipe it.
+        draft = harness.listing("tenant-a").list_candidates()[0]
+        assert draft.prior_90d_cell_net_revenue == 180_000.0
+        assert draft.prior_90d_cell_transaction_count == 30
+        assert draft.prior_90d_cell_store_count == 1
+        assert draft.feature_snapshot_time is not None
+    finally:
+        harness.close()
+
+
+def test_operator_listing_write_does_not_wipe_candidate_features(
+    tmp_path: Path,
+) -> None:
+    """B2 (wipe path): re-syncing a complete candidate must be lossless.
+
+    ``_sync_candidate_to_repo`` rebuilds the persisted draft from the dict, so a
+    second operator write used to overwrite an already-complete candidate with
+    all four point-in-time features set to ``None``.
+    """
+
+    runtime = RecordingSiteScoreRuntime()
+    harness = CanonicalHarness(tmp_path / "operator-convert-nowipe.sqlite3", runtime)
+    _seed_convertible_listing(harness, "tenant-a")
+    try:
+        with TestClient(harness.app()) as client:
+            first = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key="convert-nowipe-1"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert first.status_code == 200, first.text
+            # A second convert re-runs the writer over the existing candidate.
+            second = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key="convert-nowipe-2"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert second.status_code == 200, second.text
+            candidate_id = second.json()["candidate"]["id"]
+
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
+                headers=_headers("tenant-a", idempotency_key="score-nowipe-1"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+
+        assert scored.status_code == 200, scored.text
+        draft = harness.listing("tenant-a").list_candidates()[0]
+        assert draft.prior_90d_cell_net_revenue == 180_000.0
+        assert draft.feature_snapshot_time is not None
+        # M7: the recorded hard-rule verdict must not be silently recomputed.
+        assert draft.feasibility_flags == ()
+    finally:
+        harness.close()
+
+
+def test_operator_convert_without_cell_aggregates_still_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Criterion 3 on the production path: a real gap must not be scored.
+
+    Carrying the contract must not become fabricating it — a listing whose cell
+    revenue was never resolved has to fail closed as a permanent data gap.
+    """
+
+    harness = CanonicalHarness(tmp_path / "operator-convert-gap.sqlite3")
+    _seed_convertible_listing(harness, "tenant-a", prior_revenue=None)
+    try:
+        with TestClient(harness.app()) as client:
+            converted = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key="convert-gap-1"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted.status_code == 200, converted.text
+            candidate_id = converted.json()["candidate"]["id"]
+
+            scored = client.post(
+                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
+                headers=_headers("tenant-a", idempotency_key="score-gap-1"),
+                json={"actorRoleId": "siteReviewer"},
+            )
+
+        assert scored.status_code == 503, scored.text
+        detail = scored.json()["detail"]
+        assert "prior_90d_cell_net_revenue" in detail["message"]
         assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
         assert detail["retryable"] is False
     finally:
