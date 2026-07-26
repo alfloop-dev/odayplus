@@ -38,12 +38,33 @@ from modules.external_data.connectors.provider_registry import (
     validate_external_providers_or_raise,
 )
 
+from modules.external_data.connectors.store_opening import (
+    ApprovedStoreOpeningAuthority,
+    MissingStoreOpeningAuthorityError,
+    StoreOpeningAuthorityConnector,
+    StoreOpeningBackfillEngine,
+    StoreOpeningBackfillResult,
+    StoreOpeningError,
+    TenantIsolationError,
+    UnauthoritativeStoreOpeningError,
+    validate_store_opening_record,
+)
+
 __all__ = [
     "AdminBoundaryConnector",
     "CompetitorStoreConnector",
     "GeocodeConnector",
     "ListingConnector",
     "PoiConnector",
+    "StoreOpeningAuthorityConnector",
+    "ApprovedStoreOpeningAuthority",
+    "StoreOpeningBackfillEngine",
+    "StoreOpeningBackfillResult",
+    "StoreOpeningError",
+    "UnauthoritativeStoreOpeningError",
+    "MissingStoreOpeningAuthorityError",
+    "TenantIsolationError",
+    "validate_store_opening_record",
     "build_external_connectors",
     "ProviderConnectivityResult",
     "ProviderProbeEvidence",
@@ -63,3 +84,4 @@ __all__ = [
     "validate_external_providers",
     "validate_external_providers_or_raise",
 ]
+
