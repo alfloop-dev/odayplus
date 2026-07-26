@@ -1,0 +1,51 @@
+{
+  "task_id": "ODP-P10-PROGRAM-RECOVERY-001",
+  "status": "program_recovery_docs_prepared",
+  "program_status": "no_go_pending_CAN001_R3",
+  "prepared_at": "2026-07-26T12:01:23Z",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "head_at_preparation": "25055b3e402179941202b363755f4ed302a9d654",
+  "read_before_work": [
+    "docs/evidence/fleet_dispatch/package10_20260726/PROGRAM_LEDGER_RECOVERY_TASK.md",
+    "docs/evidence/fleet_dispatch/README.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/FLEET_HEALTH_SMOKE_TASK.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md"
+  ],
+  "result": {
+    "program_recovery_docs": "prepared",
+    "strict_sequence_defined": true,
+    "ownership_transfer_defined": true,
+    "per_wave_committed_docs_and_prior_ack_required": true,
+    "per_wave_other_llm_conflict_check_required": true,
+    "per_wave_git_diff_check_required": true,
+    "per_wave_coordinator_review_required": true,
+    "per_wave_commit_push_sha_required": true
+  },
+  "persistence_state": "pending_coordinator_checkpoint",
+  "coordinator_checkpoint": {
+    "status": "pending",
+    "commit_sha": null,
+    "pushed_ref": null,
+    "review_decision": null
+  },
+  "changed_paths": [
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-PROGRAM-RECOVERY-001.json"
+  ],
+  "conflicts": [
+    {
+      "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+      "issue": "The next field says to resume CAN-003.",
+      "resolution": "The ACK remains valid only as Fleet health proof; its next field is stale and superseded by the recovered strict sequence beginning at CAN-001-R3A."
+    },
+    {
+      "source": "prior execution claims",
+      "issue": "Wrong-worktree, route-only retirement, orphan-component test, and Package 6/7 or OpsBoard visual claims can conflict with Package 10 runtime recovery.",
+      "resolution": "The dispatch rejects those claims and requires each wave to perform and record a fresh other-LLM conflict audit."
+    }
+  ],
+  "next": "ODP-P10-CAN-001-R3A"
+}
