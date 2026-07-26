@@ -1,13 +1,14 @@
 {
   "schema": "oday-plus.package10-wave-ack.v1",
   "task_id": "ODP-P10-CAN-002-R3",
-  "status": "owner_verified_pending_independent_review",
-  "program_status": "verified_pending_independent_review",
+  "status": "independent_review_approved_closed_out",
+  "program_status": "verified_independent_review_approved",
   "owner": "Claude",
-  "reviewer": "Antigravity",
+  "reviewer": "Antigravity4",
+  "reviewer_note": "Earlier revisions of this file recorded the reviewer as the generic name \"Antigravity\". The independent review was performed and approved by the assigned reviewer agent Antigravity4 at 2026-07-26T17:44:37Z.",
   "prepared_at": "2026-07-26T16:45:00Z",
   "corrected_at": "2026-07-26T17:14:03Z",
-  "closed_out_at": null,
+  "closed_out_at": "2026-07-26T17:55:40Z",
   "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-002-r3",
   "branch": "task/ODP-P10-CAN-002-R3",
   "pickup_head": "27c40cce28c1c0663e9c4a156e1498fb3fd35dac",
@@ -25,6 +26,18 @@
       "pushed": true,
       "push_verification": "git ls-remote origin refs/heads/task/ODP-P10-CAN-002-R3 -> 4f2cf88a74b8c5bdb4638d91c3a0fe298c979345 at 2026-07-26T17:15Z",
       "note": "A commit cannot contain its own hash, so this exact SHA is written by the follow-up record-only commit on the same branch. That follow-up changes nothing except these commit-record fields and carries no evidence claims of its own; its SHA is captured in the ai-status delivery metadata and the handoff note."
+    },
+    "ack_sha_record_commit": {
+      "sha": "5ece1b3ede1ad65b623b97df69bae11b9990f0e9",
+      "subject": "ODP-P10-CAN-002-R3: record exact ACK correction commit SHA",
+      "pushed": true,
+      "push_verification": "git ls-remote origin refs/heads/task/ODP-P10-CAN-002-R3 -> 5ece1b3ede1ad65b623b97df69bae11b9990f0e9 at 2026-07-26T17:55Z",
+      "note": "This is the record-only commit referenced above and the exact HEAD that reviewer Antigravity4 independently verified and approved."
+    },
+    "closeout_commit": {
+      "sha": null,
+      "subject": "ODP-P10-CAN-002-R3: close out approved API and security re-verification",
+      "note": "Same self-reference limitation: a commit cannot contain its own hash. The exact closeout SHA is captured in the ai-status delivery metadata written by scripts/ai-status.sh done and in the task PR merge record."
     }
   },
   "sha_correction_note": "A previous status/handoff entry recorded 583aa3280ca7ff4791ee202f5a044670cf840f95, which is not an object in this repository and matches the real commit only on the 7-char prefix 583aa32. The exact committed and pushed SHA is 583aa3242268497febb4e1ba40df62499f3965a6.",
@@ -44,6 +57,19 @@
         "result": "69 passed",
         "exit_code": 0,
         "note": "Owner re-run against the same committed runtime during the ACK correction; no product or test files were modified."
+      },
+      {
+        "by": "Antigravity4",
+        "at": "2026-07-26T17:44:37Z",
+        "result": "69 passed",
+        "note": "Independent reviewer re-run at HEAD 5ece1b3ede1ad65b623b97df69bae11b9990f0e9."
+      },
+      {
+        "by": "Claude",
+        "at": "2026-07-26T17:53:00Z",
+        "result": "69 passed",
+        "exit_code": 0,
+        "note": "Owner closeout re-run at HEAD 5ece1b3ede1ad65b623b97df69bae11b9990f0e9. Collection counts per file re-confirmed identical to collected_per_file below; git diff --check clean; branch diff against origin/fix/package10-final-20260725 touches only this ACK file."
       }
     ],
     "collected_per_file": {
@@ -69,13 +95,23 @@
       "observed_merge_commit": null,
       "note": "The required fetch of an exact accepted SHA could not be satisfied: PR #387 is still open with no merge commit, so no accepted SHA exists, and the recorded last_known_sha 4d26b09f is not a valid object in this repository. For transparency the open head was fetched and diffed: origin/task/ODP-SITESCORE-OPERATOR-V2-001 changes the overlapping test by +14/-1 lines (adds models.shared_ml.output_contracts.SITESCORE_OUTPUT_TRANSFORM metadata, replaces the candidate_site_id row assertion with tenant_id/h3_index/view_version assertions, and extends the canonical row payload with geo fields).",
       "impact_on_this_task": "Package 10 re-verification changed no product or test files and left the overlapping file untouched, so there is no overwrite of either lane. The 69/69 result is valid against the current Package 10 committed runtime only; it does not certify the not-yet-accepted SiteScore v2 contract.",
-      "required_follow_up": "ODP-P10-CAN-004-R3 must reconcile the exact accepted SiteScore v2 SHA (or carry an explicit coordinator no-go disposition) before any release or deployment readiness claim."
+      "required_follow_up": "ODP-P10-CAN-004-R3 must reconcile the exact accepted SiteScore v2 SHA (or carry an explicit coordinator no-go disposition) before any release or deployment readiness claim.",
+      "closeout_recheck": {
+        "at": "2026-07-26T17:56:00Z",
+        "by": "Claude",
+        "observed_pr_state": "OPEN",
+        "observed_head_sha": "e099489a9598ee81660fbefc4dbedfa9e51df2fe",
+        "observed_merge_commit": null,
+        "note": "Re-checked at closeout: PR #387 is unchanged and still open, so no accepted SiteScore v2 SHA exists yet. This task closes out with the overlap unresolved and the follow-up above still open; it is not a release readiness claim."
+      }
     }
   },
   "review": {
     "self_review_forbidden": true,
-    "independent_reviewer": "Antigravity",
-    "independent_review_status": "pending",
+    "independent_reviewer": "Antigravity4",
+    "independent_review_status": "approved",
+    "independent_review_at": "2026-07-26T17:44:37Z",
+    "independent_review_head": "5ece1b3ede1ad65b623b97df69bae11b9990f0e9",
     "history": [
       {
         "at": "2026-07-26T17:02:41Z",
@@ -93,6 +129,25 @@
         "by": "Claude",
         "action": "owner_correction",
         "note": "Coordinator reassigned this ACK-only correction to Claude as owner with Antigravity as reviewer after the Antigravity provider quota was reached at 2026-07-26T17:03Z. All four findings above are corrected in this file. Claude previously reviewed this task and is now the owner, so Claude may not approve it; Antigravity must review independently after quota recovery. No silent fallback."
+      },
+      {
+        "at": "2026-07-26T17:44:37Z",
+        "by": "Antigravity4",
+        "verdict": "approved",
+        "head": "5ece1b3ede1ad65b623b97df69bae11b9990f0e9",
+        "findings": [
+          "69/69 API/security tests passed fail-closed",
+          "git diff --check clean",
+          "zero apps/web or tests/e2e edits",
+          "ACK artifact exact SHAs and review history accurate"
+        ],
+        "note": "Independent review by the assigned reviewer agent; owner Claude did not self-approve. Handed back to owner Claude for closeout PR and done."
+      },
+      {
+        "at": "2026-07-26T17:55:40Z",
+        "by": "Claude",
+        "action": "owner_closeout",
+        "note": "Owner closeout only: re-confirmed the approved scope at the reviewed HEAD, recorded the approval and the record-only commit SHA in this file, and opened the task PR. No product, test, or evidence claim was changed beyond these closeout record fields."
       }
     ]
   },
