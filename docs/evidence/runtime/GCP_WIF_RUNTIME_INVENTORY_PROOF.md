@@ -350,7 +350,8 @@ git diff --check origin/dev
 
 ## 7. Acceptance Checklist Audit
 
-- [x] **GitHub dev environment WIF variables configured & enforced**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_AR_REPO`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, and `GCP_SERVICE_ACCOUNT` are set & verified live in `dev` via `gh` CLI/REST API, and strictly enforced in `.github/workflows/deploy-dev.yml`. *(Note: End-to-end STS token exchange requires GCP Workspace/Org Admins to execute live `terraform apply` on `infra/terraform/iam.tf` in `alfaloop-data-project`)*.
+- [x] **GitHub dev environment WIF variables configured & enforced**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_AR_REPO`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, and `GCP_SERVICE_ACCOUNT` are set & verified live in `dev` via `gh` CLI/REST API, and strictly enforced in `.github/workflows/deploy-dev.yml`.
+- [ ] **End-to-End Live WIF Token Exchange & Cloud Auth**: *PENDING LIVE GCP APPLY*. GitHub Actions Run 30208352187 Job 89810554134 recorded STS `invalid_target`. The WIF Workload Identity Pool (`github-pool`) and Provider (`github-provider`) HCL declarations in `infra/terraform/iam.tf` must be applied live to GCP project `alfaloop-data-project` by authorized GCP Organization Admins before live token exchange succeeds.
 - [x] **GCP deploy identity least-privilege roles declared & contract-verified**: Reconciled with GCP IAM resource-level binding semantics (project, AR repo, service account, SQL, secret, GCS bucket) without `roles/owner` or `roles/editor`, validated by `infra/terraform/validate_contract.py`.
 - [x] **Required Cloud Run/SQL/GCS/MLflow/provider resources are inventoried**: Fully inventoried matching Terraform HCL definitions.
 - [x] **No long-lived GCP_SA_KEY is introduced**: WIF is strictly enforced, `GCP_SA_KEY` fallback removed from `.github/workflows/deploy-dev.yml`.
