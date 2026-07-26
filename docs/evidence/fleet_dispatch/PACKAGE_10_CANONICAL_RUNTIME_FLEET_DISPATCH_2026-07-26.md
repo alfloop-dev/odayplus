@@ -68,6 +68,8 @@ At pickup, each wave must resolve and record the committed versions of:
 - `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.json`
 - `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.md`
 - `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json`
+- `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md`
+- `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json`
 - for R3A:
   `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md`
   and its JSON peer
@@ -98,9 +100,25 @@ to infer its contents from chat.
 
 ## Current Checkpoint
 
-Program recovery persistence is `coordinator_checkpoint_complete`: dispatch
-and recovery ACK were pushed in `ff39d14f`, and the independently reviewed
-audit/task documents were pushed in `2d45ced6`. R3A product retirement is
-pushed at `ded04ac4` and its passing ACK at `24421084`. The total status
-remains `no_go_pending_CAN001_R3`; the next and only eligible owner is
-`ODP-P10-CAN-001-R3B`.
+Program recovery persistence is `coordinator_checkpoint_current` at canonical
+HEAD `435c79e3`. R3A retirement is present at `ded04ac4` with ACK
+`24421084`; R3B was merged by PR #391 at `27c40cce`, including the independently
+reviewed runtime head `e6ed422e`; CAN-002 was merged by PR #393 at
+`05dac94f`.
+
+The current-head retirement verification is:
+
+- `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md`
+- `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json`
+
+It proves that only the three canonical pages remain, all 117 R3A/R3B deleted
+paths remain absent, the eight retired shell selector families are absent, and
+the alternate intake detail implementations have not returned.
+
+The total status is
+`no_go_pending_R3C_R3D_review_and_CAN003`. PR #396 and PR #397 are
+implementation-complete but require real Antigravity4 review. After both exact
+accepted SHAs are integrated, `ODP-P10-CAN-003-R3A` is the next executable
+implementation task, followed by the read-only 16-spec/107-test R3B gate and
+CAN-004 release reconciliation. No Fleet may restart CAN-001-R3B from this
+historical sequence.
