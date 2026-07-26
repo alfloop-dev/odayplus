@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./governance.module.css";
 import type {
   GovernanceApproval,
@@ -38,6 +38,13 @@ import {
 } from "./operatorDataMode";
 
 type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard";
+
+/**
+ * Rendered wherever a governance field is absent or unusable. The row keeps its
+ * place in the record, and the gap is shown as a gap: the workspace never fills
+ * a missing module, requestor, time, risk or status with a plausible value.
+ */
+const FIELD_UNAVAILABLE = "未提供";
 
 export type GovernanceWorkspaceProps = {
   approvals?: GovernanceApproval[];
@@ -341,6 +348,13 @@ export function GovernanceWorkspace({
     [auditRowsProp],
   );
 
+  // Whether each external row feed has ever supplied rows. Used to tell "this
+  // caller has no governance side channel" apart from "this caller's side
+  // channel went away", which must clear the rows it had supplied.
+  const externalApprovalsSeen = useRef(Boolean(approvals));
+  const externalDecisionsSeen = useRef(Boolean(decisions));
+  const externalAuditRowsSeen = useRef(Boolean(auditRows));
+
   const [localApprovals, setLocalApprovals] = useState<GovernanceApproval[]>(
     approvals ?? (fixturesAllowed ? fallbackApprovals : []),
   );
@@ -475,25 +489,33 @@ export function GovernanceWorkspace({
   }, [refreshSnapshot]);
 
   useEffect(() => {
-    if (apiActive || !approvals) return;
-    setLocalApprovals(approvals);
+    if (apiActive) return;
+    // A caller that had been supplying governance rows and now supplies none has
+    // withdrawn its side channel: the previous rows are stale and must not
+    // survive the withdrawal. A caller that never supplied any is left alone.
+    if (!approvals && !externalApprovalsSeen.current) return;
+    externalApprovalsSeen.current = externalApprovalsSeen.current || Boolean(approvals);
+    const nextApprovals = approvals ?? [];
+    setLocalApprovals(nextApprovals);
     setSelectedApprovalId((current) =>
-      approvals.some((approval) => approval.id === current) ? current : approvals[0]?.id ?? "",
+      nextApprovals.some((approval) => approval.id === current)
+        ? current
+        : nextApprovals[0]?.id ?? "",
     );
   }, [approvals, apiActive]);
 
   useEffect(() => {
     if (apiActive) return;
-    if (decisions) {
-      setLocalDecisions(decisions);
-    }
+    if (!decisions && !externalDecisionsSeen.current) return;
+    externalDecisionsSeen.current = externalDecisionsSeen.current || Boolean(decisions);
+    setLocalDecisions(decisions ?? []);
   }, [decisions, apiActive]);
 
   useEffect(() => {
     if (apiActive) return;
-    if (auditRows) {
-      setLocalAuditRows(auditRows);
-    }
+    if (!auditRows && !externalAuditRowsSeen.current) return;
+    externalAuditRowsSeen.current = externalAuditRowsSeen.current || Boolean(auditRows);
+    setLocalAuditRows(auditRows ?? []);
   }, [auditRows, apiActive]);
 
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
@@ -527,7 +549,11 @@ export function GovernanceWorkspace({
 
   const auditCategories = useMemo(() => {
     const categorySet = new Set<GovernanceAuditCategory>(baseAuditCategories);
-    localAuditRows.forEach((row) => categorySet.add(row.category));
+    // Rows without a category keep the canonical filter list unchanged; they
+    // stay reachable through 全部 instead of adding a nameless filter chip.
+    localAuditRows.forEach((row) => {
+      if (row.category) categorySet.add(row.category);
+    });
     return Array.from(categorySet);
   }, [localAuditRows]);
 
@@ -908,8 +934,8 @@ export function GovernanceWorkspace({
                   <span className={styles.queueTopline}>
                     <span className={styles.approvalId}>{approval.id}</span>
                     <span className={moduleClass(approval.module)}>{approval.module}</span>
-                    <span className={priorityClass(approval.priority ?? "medium")}>
-                      風險 {priorityLabel(approval.priority ?? "medium")}
+                    <span className={priorityClass(approval.priority)}>
+                      風險 {approval.priority ? priorityLabel(approval.priority) : FIELD_UNAVAILABLE}
                     </span>
                     <span className={statusClass(approval.status)}>
                       {approvalStatusLabel(approval.status)}
@@ -917,7 +943,7 @@ export function GovernanceWorkspace({
                   </span>
                   <strong>{approval.title}</strong>
                   <span className={styles.queueFooter}>
-                    <span>{approval.requestor}</span>
+                    <span>{approval.requestor ?? FIELD_UNAVAILABLE}</span>
                     <span className={styles.sla}>{approval.sla ?? "未設定 SLA"}</span>
                   </span>
                 </button>
@@ -937,8 +963,11 @@ export function GovernanceWorkspace({
                     <span className={moduleClass(selectedApproval.module)}>
                       {selectedApproval.module}
                     </span>
-                    <span className={priorityClass(selectedApproval.priority ?? "medium")}>
-                      風險 {priorityLabel(selectedApproval.priority ?? "medium")}
+                    <span className={priorityClass(selectedApproval.priority)}>
+                      風險{" "}
+                      {selectedApproval.priority
+                        ? priorityLabel(selectedApproval.priority)
+                        : FIELD_UNAVAILABLE}
                     </span>
                   </div>
                   <span className={statusClass(selectedApproval.status)}>
@@ -950,7 +979,7 @@ export function GovernanceWorkspace({
                 <dl className={styles.detailMeta}>
                   <div>
                     <dt>申請人</dt>
-                    <dd>{selectedApproval.requestor}</dd>
+                    <dd>{selectedApproval.requestor ?? FIELD_UNAVAILABLE}</dd>
                   </div>
                   <div>
                     <dt>核准角色</dt>
@@ -1009,7 +1038,7 @@ export function GovernanceWorkspace({
                   <div className={styles.referenceRow}>
                     <span>關聯</span>
                     <strong>{selectedApproval.entityRef ?? selectedApproval.id}</strong>
-                    <span>送出 {selectedApproval.submittedAt}</span>
+                    <span>送出 {selectedApproval.submittedAt ?? FIELD_UNAVAILABLE}</span>
                   </div>
                 </section>
 
@@ -1092,21 +1121,23 @@ export function GovernanceWorkspace({
                   <span className={styles.approvalId}>{decision.id}</span>
                   <span className={moduleClass(decision.module)}>{decision.module}</span>
                   <strong>{decision.item}</strong>
-                  <time>{decision.decidedAt}</time>
+                  <time>{decision.decidedAt ?? FIELD_UNAVAILABLE}</time>
                 </header>
                 <div className={styles.decisionCompare}>
                   <section>
                     <span>系統建議</span>
-                    <p>{decision.systemRecommendation}</p>
+                    <p>{decision.systemRecommendation ?? FIELD_UNAVAILABLE}</p>
                   </section>
                   <section>
                     <span>最終決策</span>
-                    <p>{decision.finalDecision}</p>
+                    <p>{decision.finalDecision ?? FIELD_UNAVAILABLE}</p>
                   </section>
                 </div>
-                <p className={styles.decisionReason}>理由：{decision.reason}</p>
+                <p className={styles.decisionReason}>
+                  理由：{decision.reason ?? FIELD_UNAVAILABLE}
+                </p>
                 <footer>
-                  <span>決策人：<strong>{decision.actor}</strong></span>
+                  <span>決策人：<strong>{decision.actor ?? FIELD_UNAVAILABLE}</strong></span>
                   <span>模型：<code>{decision.model ?? "n/a"}</code></span>
                   <span>資料快照：<code>{decision.datasetSnapshot ?? "n/a"}</code></span>
                   <span>關聯核准：<code>{decision.approvalId ?? "n/a"}</code></span>
@@ -1151,10 +1182,13 @@ export function GovernanceWorkspace({
           <div className={styles.auditFeed}>
             {filteredAuditRows.map((row) => (
               <article className={styles.auditRow} key={row.id}>
-                <time>{row.timestamp}</time>
+                <time>{row.timestamp ?? FIELD_UNAVAILABLE}</time>
                 <div className={styles.auditActor}>
-                  <strong>{row.actor}</strong>
-                  <span>{row.module ?? auditCategoryLabel(row.category)}</span>
+                  <strong>{row.actor ?? FIELD_UNAVAILABLE}</strong>
+                  <span>
+                    {row.module ??
+                      (row.category ? auditCategoryLabel(row.category) : FIELD_UNAVAILABLE)}
+                  </span>
                 </div>
                 <div className={styles.auditEvent}>
                   <strong>{row.action}</strong>
@@ -1532,7 +1566,8 @@ function EvidenceDetail({
 
 /**
  * Badge helpers run against externally sourced rows, so they must stay total:
- * a missing or non-string field renders a neutral badge instead of throwing.
+ * a missing or non-string field renders the explicit unavailable marker and a
+ * neutral badge tone instead of throwing or standing in for a real value.
  */
 function badgeText(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -1547,7 +1582,7 @@ function approvalStatusLabel(value: unknown) {
     rejected: "已駁回",
     escalated: "已升級",
   };
-  return labels[raw.toLowerCase()] ?? (raw || "未提供狀態");
+  return labels[raw.toLowerCase()] ?? (raw || FIELD_UNAVAILABLE);
 }
 
 function priorityLabel(value: unknown) {
@@ -1558,7 +1593,7 @@ function priorityLabel(value: unknown) {
     high: "高",
     critical: "極高",
   };
-  return labels[raw.toLowerCase()] ?? (raw || "中");
+  return labels[raw.toLowerCase()] ?? (raw || FIELD_UNAVAILABLE);
 }
 
 function priorityClass(value: unknown) {
@@ -1596,7 +1631,7 @@ function auditCategoryLabel(value: unknown) {
     export: "匯出",
     system: "系統",
   };
-  return labels[raw.toLowerCase()] ?? (raw || "系統");
+  return labels[raw.toLowerCase()] ?? (raw || FIELD_UNAVAILABLE);
 }
 
 function statusClass(value: unknown) {

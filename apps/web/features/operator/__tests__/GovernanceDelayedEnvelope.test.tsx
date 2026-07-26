@@ -12,8 +12,11 @@
  *
  * These tests pin the canonical product boundary:
  *   - the Govern workspace never crashes on foreign or malformed external rows;
+ *   - foreign and malformed rows are dropped, not repaired: no module,
+ *     requestor, time, risk or status value is ever invented for them;
+ *   - a governance side channel that disappears clears the rows it supplied,
+ *     so stale governance state cannot survive a newer envelope;
  *   - the Governance snapshot API stays the source of truth;
- *   - shell decision cards never masquerade as governance approvals;
  *   - production keeps failing closed instead of falling back to fixtures.
  */
 import "@testing-library/jest-dom/vitest";
@@ -25,6 +28,8 @@ import {
   normalizeGovernanceApprovals,
   normalizeGovernanceAuditRows,
   normalizeGovernanceDecisionRows,
+  normalizeGovernanceEvidencePackages,
+  normalizeGovernanceStatusBoard,
 } from "../governance/governanceEnvelope";
 
 /** Exactly the shape `normalizeShellEnvelope` produces for `envelope.approvals`. */
@@ -162,14 +167,14 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-describe("Govern workspace tolerates foreign and malformed external rows", () => {
+describe("Govern workspace admits only governance rows", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
-  it("renders instead of crashing when shell decision cards arrive on the approvals prop", async () => {
+  it("drops shell decision cards instead of crashing when they arrive on the approvals prop", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
@@ -184,11 +189,15 @@ describe("Govern workspace tolerates foreign and malformed external rows", () =>
     await waitFor(() =>
       expect(screen.getByTestId("governance-workspace")).toBeInTheDocument(),
     );
-    // Degraded but renderable: the card keeps its title instead of throwing.
-    expect(screen.getAllByText("SiteScore APR-501 複審").length).toBeGreaterThan(0);
+    // Today cards are not governance approvals: they are dropped whole, not
+    // rendered under an invented module, requestor or risk.
+    expect(screen.queryByText("SiteScore APR-501 複審")).not.toBeInTheDocument();
+    expect(screen.queryByText("會員回流活動核准")).not.toBeInTheDocument();
+    expect(screen.getAllByText("目前沒有核准請求").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("核准佇列")).toHaveTextContent("0 全部");
   });
 
-  it("renders malformed approval, decision and audit fields without throwing", async () => {
+  it("drops malformed approval, decision and audit rows without throwing", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
@@ -209,9 +218,68 @@ describe("Govern workspace tolerates foreign and malformed external rows", () =>
     );
 
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
-    expect(screen.getAllByText("No module or status").length).toBeGreaterThan(0);
-    // The unusable rows are dropped rather than rendered as anonymous entries.
-    expect(screen.getByLabelText("核准佇列")).toHaveTextContent("2 全部");
+    // Every row above is missing a field that identifies it as governance data,
+    // so none of them reaches the queue under a fabricated value.
+    expect(screen.queryByText("No module or status")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("核准佇列")).toHaveTextContent("0 全部");
+  });
+
+  it("renders an incomplete governance row with explicit unavailable fields", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+
+    // Shape emitted by the canonical Governance modules: identified and
+    // classified, but with no requestor, priority or evidence.
+    render(
+      <GovernanceWorkspace
+        roleId="ops-lead"
+        approvals={
+          [
+            {
+              id: "SITE-CANON-1",
+              module: "SiteScore",
+              title: "CANDIDATE-77",
+              status: "pending",
+              submittedAt: "2026-07-26T02:00:00Z",
+            },
+          ] as never
+        }
+      />,
+    );
+
+    expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
+    expect(screen.getAllByText("CANDIDATE-77").length).toBeGreaterThan(0);
+    // Absent risk and requestor are shown as gaps, never as 中 or a stand-in name.
+    expect(screen.queryByText("風險 中")).not.toBeInTheDocument();
+    expect(screen.getAllByText("風險 未提供").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("未提供").length).toBeGreaterThan(0);
+  });
+
+  it("clears rows supplied by a governance side channel that goes away", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+
+    const { rerender } = render(
+      <GovernanceWorkspace
+        roleId="ops-lead"
+        approvals={governanceSnapshot.approvals as never}
+        auditRows={governanceSnapshot.auditRows as never}
+        decisions={governanceSnapshot.decisions as never}
+      />,
+    );
+
+    expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
+    expect(screen.getAllByText("Approve SiteScore override").length).toBeGreaterThan(0);
+
+    // The next envelope carries no governance side channel at all.
+    rerender(<GovernanceWorkspace roleId="ops-lead" />);
+
+    await waitFor(() =>
+      expect(screen.queryByText("Approve SiteScore override")).not.toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("目前沒有核准請求").length).toBeGreaterThan(0);
+    // Withdrawal fails closed; it does not fall back to the local fixtures.
+    expect(screen.queryByText("Close escalated service issue")).not.toBeInTheDocument();
   });
 
   it("keeps the Governance snapshot API as the source of truth over shell rows", async () => {
@@ -243,20 +311,62 @@ describe("Govern workspace tolerates foreign and malformed external rows", () =>
   });
 });
 
-describe("normalizeGovernance* adapters", () => {
-  it("drops non-records and coerces every required field to a safe string", () => {
-    const rows = normalizeGovernanceApprovals([
-      null,
-      "x",
-      7,
-      { id: "A", module: { nested: true }, status: null, priority: [], submittedAt: undefined },
+describe("normalizeGovernance* admission gate", () => {
+  it("drops non-records and records that do not identify themselves as governance rows", () => {
+    expect(
+      normalizeGovernanceApprovals([
+        null,
+        "x",
+        7,
+        { id: "A", module: { nested: true }, status: null, priority: [] },
+        { id: "B", title: "No module", status: "pending" },
+        { module: "Govern", title: "No id", status: "pending" },
+        { id: "C", module: "Govern", title: "No status" },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      normalizeGovernanceDecisionRows([{ id: "D", module: "Govern" }, { module: "Govern", item: "x" }]),
+    ).toEqual([]);
+
+    // An audit entry that cannot say what happened is not an audit entry.
+    expect(normalizeGovernanceAuditRows([{ id: "AUD", category: "system" }])).toEqual([]);
+  });
+
+  it("never fabricates a missing module, requestor, time, risk or status", () => {
+    const [approval] = normalizeGovernanceApprovals([
+      { id: "A", module: "SiteScore", title: "CANDIDATE-77", status: "PENDING_REVIEW" },
     ]);
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "A", module: "Govern", status: "pending", priority: "medium" });
-    expect(typeof rows[0].requestor).toBe("string");
-    expect(typeof rows[0].submittedAt).toBe("string");
-    expect(rows[0].evidence).toEqual([]);
+    expect(approval).toEqual({
+      id: "A",
+      module: "SiteScore",
+      title: "CANDIDATE-77",
+      status: "PENDING_REVIEW",
+    });
+    expect(approval).not.toHaveProperty("requestor");
+    expect(approval).not.toHaveProperty("submittedAt");
+    expect(approval).not.toHaveProperty("priority");
+    expect(approval).not.toHaveProperty("risk");
+    expect(approval).not.toHaveProperty("evidence");
+  });
+
+  it("drops fields whose value cannot be rendered as text", () => {
+    const [decision] = normalizeGovernanceDecisionRows([
+      {
+        id: "DEC-AVM-1",
+        module: "AVM",
+        item: "STORE-3",
+        // The canonical AVM builder emits a structured fair-price payload here.
+        systemRecommendation: { amount: 1200, currency: "TWD" },
+        datasetSnapshot: ["snap-1", "snap-2"],
+        finalDecision: "APPROVED",
+      },
+    ]);
+
+    expect(decision).not.toHaveProperty("systemRecommendation");
+    expect(decision).not.toHaveProperty("datasetSnapshot");
+    expect(decision.finalDecision).toBe("APPROVED");
   });
 
   it("returns an empty list for non-array input", () => {
@@ -269,6 +379,7 @@ describe("normalizeGovernance* adapters", () => {
     const [approval] = normalizeGovernanceApprovals(governanceSnapshot.approvals);
     expect(approval.module).toBe("Network");
     expect(approval.priority).toBe("critical");
+    expect(approval.requestor).toBe("Expansion Manager");
     expect(approval.evidence).toEqual([
       { id: "EV-9", label: "SiteScore v4.8", type: "model", state: "ready" },
     ]);
@@ -279,6 +390,51 @@ describe("normalizeGovernance* adapters", () => {
     const [audit] = normalizeGovernanceAuditRows(governanceSnapshot.auditRows);
     expect(audit.category).toBe("approval");
     expect(audit.correlationId).toBe("corr-site-9");
+  });
+
+  it("reads the canonical transition timestamp without inventing one", () => {
+    const [audit] = normalizeGovernanceAuditRows([
+      {
+        id: "SITE-1:2026-07-26T02:00:00Z:APPROVE",
+        module: "SiteScore",
+        action: "APPROVE",
+        actor: "expansion-manager",
+        occurredAt: "2026-07-26T02:00:00Z",
+      },
+    ]);
+
+    expect(audit.timestamp).toBe("2026-07-26T02:00:00Z");
+    expect(audit).not.toHaveProperty("category");
+
+    const [undated] = normalizeGovernanceAuditRows([
+      { id: "AUD-2", action: "APPROVE", actor: "expansion-manager" },
+    ]);
+    expect(undated).not.toHaveProperty("timestamp");
+  });
+
+  it("drops status-board rows and evidence packages that are not fully reported", () => {
+    const board = normalizeGovernanceStatusBoard({
+      dataQuality: [
+        { source: "Listings", status: "正常", good: true, note: "live" },
+        { source: "Camera Events", status: "延遲", note: "missing good flag" },
+        { status: "正常", good: true, note: "unnamed subject" },
+      ],
+      models: "nope",
+    });
+
+    expect(board?.dataQuality).toEqual([
+      { source: "Listings", status: "正常", good: true, note: "live" },
+    ]);
+    expect(board?.models).toEqual([]);
+
+    expect(
+      normalizeGovernanceEvidencePackages([
+        { id: "EVD-1", range: "2026-06", mod: "Govern", fmt: "PDF", t: "2026-07-01 10:15", by: "周明德" },
+        { id: "EVD-2", range: "2026-05", mod: "Govern", fmt: "CSV", t: "2026-06-15 14:22" },
+      ]),
+    ).toEqual([
+      { id: "EVD-1", range: "2026-06", mod: "Govern", fmt: "PDF", t: "2026-07-01 10:15", by: "周明德" },
+    ]);
   });
 });
 
@@ -404,5 +560,78 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     fireEvent.click(await within(palette).findByRole("option", { name: /治理稽核/ }));
 
     await expectGovernRouteHealthy();
+  });
+
+  it("clears a governance side channel that the next envelope no longer carries", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+
+    /** Two roles so the console can switch role and reload the shell envelope. */
+    const roles = [
+      {
+        id: "ops-lead",
+        label: "營運主管",
+        subtitle: "全域監控",
+        allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
+      },
+      {
+        id: "cs-lead",
+        label: "客服主管",
+        subtitle: "評論、客服案件與門市回覆",
+        allowedWorkspaces: ["today", "store", "govern"],
+      },
+    ];
+    const withSideChannel = {
+      ...shellEnvelopePayload,
+      navigation: { ...shellEnvelopePayload.navigation, roles },
+      governanceApprovals: [
+        {
+          id: "APR-SIDE-1",
+          module: "Govern",
+          title: "Superseded side-channel approval",
+          requestor: "PM／稽核",
+          submittedAt: "2026-07-26T01:00:00Z",
+          status: "pending",
+        },
+      ],
+    };
+    const withoutSideChannel = {
+      ...shellEnvelopePayload,
+      navigation: { ...shellEnvelopePayload.navigation, roles },
+    };
+
+    let bootstrapCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/operator/bootstrap")) {
+          bootstrapCalls += 1;
+          return jsonResponse(bootstrapCalls === 1 ? withSideChannel : withoutSideChannel);
+        }
+        // The Govern API stays unavailable so the side channel is what renders.
+        return jsonResponse({ detail: "down" }, 503);
+      }),
+    );
+
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getAllByText("Superseded side-channel approval").length).toBeGreaterThan(0),
+    );
+
+    // Switching role reloads the shell envelope; the new one has no
+    // `governanceApprovals`, so the rows it replaces must not survive.
+    fireEvent.click(screen.getByTestId("operator-command-trigger"));
+    const palette = await screen.findByTestId("operator-command-palette");
+    fireEvent.change(screen.getByRole("combobox", { name: /Command palette search/ }), {
+      target: { value: "切換角色：客服主管" },
+    });
+    fireEvent.click(await within(palette).findByRole("option", { name: /切換角色：客服主管/ }));
+
+    await waitFor(() => expect(bootstrapCalls).toBeGreaterThan(1));
+    await waitFor(() =>
+      expect(screen.queryByText("Superseded side-channel approval")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("governance-workspace")).toBeInTheDocument();
   });
 });

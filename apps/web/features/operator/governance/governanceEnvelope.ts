@@ -1,5 +1,5 @@
 /**
- * Govern workspace external-row normalizers — ODP-P10-CAN-001-R3C.
+ * Govern workspace external-row admission — ODP-P10-CAN-001-R3C.
  *
  * The Govern workspace consumes rows from two independent producers:
  *
@@ -15,11 +15,18 @@
  * module/status badge helpers call `.toLowerCase()` on missing fields and take
  * the whole Govern route down once a delayed shell envelope landed.
  *
- * These normalizers are total: any input shape produces a renderable row set,
- * unknown records are dropped, and every field the workspace reads is coerced
- * to a defined value.  They fill in presentational defaults only — they never
- * fabricate operational rows, so a missing or unusable payload still yields an
- * empty list and lets the workspace fail closed.
+ * These functions are an admission gate, not a repair shop:
+ *
+ *   - a record that does not carry the identifying governance fields is a
+ *     foreign or malformed row and is dropped;
+ *   - a field that is present and usable is carried through verbatim;
+ *   - a field that is absent or unusable stays absent — no module, requestor,
+ *     time, risk or status value is ever invented, because a fabricated field
+ *     would be indistinguishable from governance truth downstream.
+ *
+ * Absent fields are surfaced by the workspace as an explicit unavailable
+ * marker, so a partial payload degrades visibly instead of crashing or
+ * pretending to be complete.
  *
  * Owned by: ODP-P10-CAN-001-R3C
  * Composes with: apps/web/features/operator/GovernanceWorkspace.tsx,
@@ -27,7 +34,6 @@
  */
 import type {
   GovernanceApproval,
-  GovernanceApprovalStatus,
   GovernanceAuditRow,
   GovernanceDecisionRow,
   GovernanceEvidence,
@@ -38,101 +44,93 @@ import type {
   GovernanceStatusRow,
 } from "./governanceLoader";
 
-const APPROVAL_STATUSES: GovernanceApprovalStatus[] = [
-  "pending",
-  "approved",
-  "returned",
-  "rejected",
-  "escalated",
-];
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
 
-/** Coerce to a trimmed string; objects, arrays, null and undefined become "". */
-function text(value: unknown): string {
-  if (typeof value === "string") return value.trim();
+/**
+ * A usable text field: a string or a finite number, trimmed and non-empty.
+ * Everything else (objects, arrays, booleans, null, undefined, blank strings)
+ * is unusable and reported as `undefined` so the caller can drop the row or the
+ * field rather than substitute a value for it.
+ */
+function usableText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "boolean") return String(value);
-  return "";
+  return undefined;
 }
 
-function textOr(value: unknown, fallback: string): string {
-  return text(value) || fallback;
-}
-
-/** Optional string field: preserved when usable, dropped otherwise. */
-function optionalText(value: unknown): string | undefined {
-  const normalized = text(value);
-  return normalized ? normalized : undefined;
+/** Spread helper: `{ ...field("risk", record.risk) }` keeps absent fields absent. */
+function field<K extends string>(key: K, value: unknown): Partial<Record<K, string>> {
+  const normalized = usableText(value);
+  return normalized === undefined ? {} : ({ [key]: normalized } as Record<K, string>);
 }
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function normalizeList<T>(value: unknown, normalize: (item: unknown, index: number) => T | null): T[] {
+function normalizeList<T>(value: unknown, normalize: (item: unknown) => T | null): T[] {
   return asArray(value)
-    .map((item, index) => normalize(item, index))
+    .map((item) => normalize(item))
     .filter((item): item is T => item !== null);
 }
 
-function normalizeApprovalStatus(value: unknown): GovernanceApprovalStatus {
-  const normalized = text(value).toLowerCase();
-  const known = APPROVAL_STATUSES.find((status) => status === normalized);
-  return known ?? "pending";
-}
-
-function normalizeEvidence(value: unknown, index: number): GovernanceEvidence | null {
+/** Evidence entries need an id and a label to be selectable and readable. */
+function normalizeEvidence(value: unknown): GovernanceEvidence | null {
   const record = asRecord(value);
   if (!record) return null;
-  const id = textOr(record.id, `evidence-${index + 1}`);
+  const id = usableText(record.id);
+  const label = usableText(record.label);
+  if (!id || !label) return null;
   return {
     id,
-    label: textOr(record.label ?? record.name ?? record.title, id),
-    ...(optionalText(record.type) ? { type: text(record.type) } : {}),
-    ...(optionalText(record.href ?? record.url) ? { href: text(record.href ?? record.url) } : {}),
-    ...(optionalText(record.state) ? { state: text(record.state) } : {}),
+    label,
+    ...field("type", record.type),
+    ...field("href", record.href),
+    ...field("state", record.state),
   };
 }
 
 /**
- * Normalize one governance approval.  Records without a usable id are dropped
- * so a malformed payload cannot produce anonymous, undecidable queue rows.
+ * Admit one governance approval.  A record must identify itself (`id`), state
+ * which governance module owns it (`module`), name the item under review
+ * (`title`) and report its approval state (`status`).  Shell decision cards
+ * carry no `module`, so they are rejected here instead of being rendered as
+ * governance approvals with an invented module.
  */
 export function normalizeGovernanceApproval(value: unknown): GovernanceApproval | null {
   const record = asRecord(value);
   if (!record) return null;
-  const id = text(record.id ?? record.approvalId ?? record.approval_id);
-  if (!id) return null;
+  const id = usableText(record.id);
+  const module = usableText(record.module);
+  const title = usableText(record.title);
+  const status = usableText(record.status);
+  if (!id || !module || !title || !status) return null;
 
   return {
     id,
-    module: textOr(record.module, "Govern"),
-    title: textOr(record.title ?? record.item ?? record.name, id),
-    requestor: textOr(record.requestor ?? record.requestedBy ?? record.requester, "未提供申請人"),
-    submittedAt: textOr(record.submittedAt ?? record.submitted_at ?? record.createdAt, "未提供送出時間"),
-    status: normalizeApprovalStatus(record.status),
-    priority: textOr(record.priority ?? record.severity, "medium"),
-    ...(optionalText(record.owner) ? { owner: text(record.owner) } : {}),
-    ...(optionalText(record.sla) ? { sla: text(record.sla) } : {}),
-    ...(optionalText(record.entityRef ?? record.entity_ref)
-      ? { entityRef: text(record.entityRef ?? record.entity_ref) }
+    module,
+    title,
+    status,
+    ...field("requestor", record.requestor),
+    ...field("submittedAt", record.submittedAt),
+    ...field("priority", record.priority),
+    ...field("owner", record.owner),
+    ...field("sla", record.sla),
+    ...field("entityRef", record.entityRef),
+    ...field("summary", record.summary),
+    ...field("systemRecommendation", record.systemRecommendation),
+    ...field("risk", record.risk),
+    ...field("roleNote", record.roleNote),
+    ...field("reason", record.reason),
+    ...(Array.isArray(record.evidence)
+      ? { evidence: normalizeList(record.evidence, normalizeEvidence) }
       : {}),
-    ...(optionalText(record.summary ?? record.meta)
-      ? { summary: text(record.summary ?? record.meta) }
-      : {}),
-    ...(optionalText(record.systemRecommendation ?? record.system_recommendation)
-      ? { systemRecommendation: text(record.systemRecommendation ?? record.system_recommendation) }
-      : {}),
-    ...(optionalText(record.risk) ? { risk: text(record.risk) } : {}),
-    ...(optionalText(record.roleNote ?? record.role_note)
-      ? { roleNote: text(record.roleNote ?? record.role_note) }
-      : {}),
-    ...(optionalText(record.reason) ? { reason: text(record.reason) } : {}),
-    evidence: normalizeList(record.evidence, normalizeEvidence),
   };
 }
 
@@ -140,31 +138,31 @@ export function normalizeGovernanceApprovals(value: unknown): GovernanceApproval
   return normalizeList(value, normalizeGovernanceApproval);
 }
 
+/**
+ * Admit one Decision Log row.  Identity is `id` + `module` + `item`; the
+ * decision content is carried through only when it is present and textual, so
+ * a structured `systemRecommendation` cannot reach the render path.
+ */
 export function normalizeGovernanceDecisionRow(value: unknown): GovernanceDecisionRow | null {
   const record = asRecord(value);
   if (!record) return null;
-  const id = text(record.id ?? record.decisionId ?? record.decision_id);
-  if (!id) return null;
+  const id = usableText(record.id);
+  const module = usableText(record.module);
+  const item = usableText(record.item);
+  if (!id || !module || !item) return null;
 
   return {
     id,
-    module: textOr(record.module, "Govern"),
-    item: textOr(record.item ?? record.title, id),
-    systemRecommendation: textOr(
-      record.systemRecommendation ?? record.system_recommendation,
-      "—",
-    ),
-    finalDecision: textOr(record.finalDecision ?? record.final_decision ?? record.status, "—"),
-    reason: textOr(record.reason, "未提供決策理由"),
-    actor: textOr(record.actor ?? record.decidedBy, "未提供決策人"),
-    decidedAt: textOr(record.decidedAt ?? record.decided_at ?? record.timestamp, "未提供決策時間"),
-    ...(optionalText(record.model) ? { model: text(record.model) } : {}),
-    ...(optionalText(record.datasetSnapshot ?? record.dataset_snapshot)
-      ? { datasetSnapshot: text(record.datasetSnapshot ?? record.dataset_snapshot) }
-      : {}),
-    ...(optionalText(record.approvalId ?? record.approval_id)
-      ? { approvalId: text(record.approvalId ?? record.approval_id) }
-      : {}),
+    module,
+    item,
+    ...field("systemRecommendation", record.systemRecommendation),
+    ...field("finalDecision", record.finalDecision),
+    ...field("reason", record.reason),
+    ...field("actor", record.actor),
+    ...field("decidedAt", record.decidedAt),
+    ...field("model", record.model),
+    ...field("datasetSnapshot", record.datasetSnapshot),
+    ...field("approvalId", record.approvalId),
   };
 }
 
@@ -172,31 +170,30 @@ export function normalizeGovernanceDecisionRows(value: unknown): GovernanceDecis
   return normalizeList(value, normalizeGovernanceDecisionRow);
 }
 
-export function normalizeGovernanceAuditRow(
-  value: unknown,
-  index = 0,
-): GovernanceAuditRow | null {
+/**
+ * Admit one Audit Trail row.  An audit entry must identify itself (`id`) and
+ * say what happened (`action`).  Canonical Governance API transitions timestamp
+ * with `occurredAt` and carry no category, so `timestamp` accepts that alias
+ * and an absent category is left absent rather than defaulted to "system".
+ */
+export function normalizeGovernanceAuditRow(value: unknown): GovernanceAuditRow | null {
   const record = asRecord(value);
   if (!record) return null;
-  const id = textOr(record.id ?? record.auditEventId ?? record.audit_event_id, `audit-${index + 1}`);
+  const id = usableText(record.id);
+  const action = usableText(record.action);
+  if (!id || !action) return null;
 
   return {
     id,
-    category: textOr(record.category, "system"),
-    timestamp: textOr(record.timestamp ?? record.time ?? record.occurredAt, "未提供時間"),
-    actor: textOr(record.actor, "未提供 actor"),
-    action: textOr(record.action ?? record.detail, "未提供事件"),
-    ...(optionalText(record.module) ? { module: text(record.module) } : {}),
-    ...(optionalText(record.entityRef ?? record.entity_ref)
-      ? { entityRef: text(record.entityRef ?? record.entity_ref) }
-      : {}),
-    ...(optionalText(record.summary ?? record.detail)
-      ? { summary: text(record.summary ?? record.detail) }
-      : {}),
-    ...(optionalText(record.reason) ? { reason: text(record.reason) } : {}),
-    ...(optionalText(record.correlationId ?? record.correlation_id)
-      ? { correlationId: text(record.correlationId ?? record.correlation_id) }
-      : {}),
+    action,
+    ...field("category", record.category),
+    ...field("timestamp", record.timestamp ?? record.occurredAt),
+    ...field("actor", record.actor),
+    ...field("module", record.module),
+    ...field("entityRef", record.entityRef),
+    ...field("summary", record.summary),
+    ...field("reason", record.reason),
+    ...field("correlationId", record.correlationId),
   };
 }
 
@@ -204,19 +201,27 @@ export function normalizeGovernanceAuditRows(value: unknown): GovernanceAuditRow
   return normalizeList(value, normalizeGovernanceAuditRow);
 }
 
+/**
+ * Admit one status-board row.  A row is meaningful only as a named subject with
+ * a reported state, so `status`, the boolean health flag and the note must all
+ * be present; a row missing any of them is dropped instead of shown as healthy
+ * or unhealthy on invented evidence.
+ */
 function normalizeStatusRow(value: unknown): GovernanceStatusRow | null {
   const record = asRecord(value);
   if (!record) return null;
-  const source = optionalText(record.source);
-  const name = optionalText(record.name);
-  if (!source && !name) return null;
+  const source = usableText(record.source);
+  const name = usableText(record.name);
+  const status = usableText(record.status);
+  if ((!source && !name) || !status) return null;
+  if (typeof record.good !== "boolean" || typeof record.note !== "string") return null;
   return {
     ...(source ? { source } : {}),
     ...(name ? { name } : {}),
-    ...(optionalText(record.version) ? { version: text(record.version) } : {}),
-    status: textOr(record.status, "未提供狀態"),
-    good: record.good === true,
-    note: textOr(record.note, ""),
+    ...field("version", record.version),
+    status,
+    good: record.good,
+    note: record.note,
   };
 }
 
@@ -232,7 +237,7 @@ function normalizeStatusRows(value: unknown): GovernanceStatusRow[] {
 export function normalizeGovernanceStatusBoard(value: unknown): GovernanceStatusBoard | null {
   const record = asRecord(value);
   if (!record) return null;
-  const board: GovernanceStatusBoard = {
+  return {
     dataQuality: normalizeStatusRows(record.dataQuality),
     models: normalizeStatusRows(record.models),
     connectors: normalizeStatusRows(record.connectors),
@@ -240,22 +245,24 @@ export function normalizeGovernanceStatusBoard(value: unknown): GovernanceStatus
     users: normalizeStatusRows(record.users),
     runbooks: normalizeStatusRows(record.runbooks),
   };
-  return board;
 }
 
+/**
+ * Admit evidence-package history rows.  The Governance API emits the whole
+ * record together (id / range / modules / format / time / actor); a partial row
+ * would misdescribe what was exported, so it is dropped rather than completed.
+ */
 export function normalizeGovernanceEvidencePackages(value: unknown): GovernanceEvidencePackage[] {
   return normalizeList(value, (item) => {
     const record = asRecord(item);
     if (!record) return null;
-    const id = text(record.id);
-    if (!id) return null;
-    return {
-      id,
-      range: textOr(record.range, "未提供範圍"),
-      mod: textOr(record.mod ?? record.modules, "未提供模組"),
-      fmt: textOr(record.fmt ?? record.format, "PDF"),
-      t: textOr(record.t ?? record.generatedAt ?? record.time, "未提供時間"),
-      by: textOr(record.by ?? record.actor, "未提供匯出者"),
-      };
+    const id = usableText(record.id);
+    const range = usableText(record.range);
+    const mod = usableText(record.mod);
+    const fmt = usableText(record.fmt);
+    const t = usableText(record.t);
+    const by = usableText(record.by);
+    if (!id || !range || !mod || !fmt || !t || !by) return null;
+    return { id, range, mod, fmt, t, by };
   });
 }
